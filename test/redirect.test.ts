@@ -122,9 +122,11 @@ describe("redirect", () => {
     const d = await seed();
     await addLink(d, "k");
     const orig = env.CACHE.put;
-    env.CACHE.put = (() => Promise.reject(new Error("429"))) as typeof env.CACHE.put;
+    let calls = 0;
+    env.CACHE.put = (() => { calls++; return Promise.reject(new Error("429")); }) as typeof env.CACHE.put;
     try {
       expect((await get(d.host, "/k", { redirect: "manual" })).status).toBe(302);
+      expect(calls).toBeGreaterThan(0);
     } finally {
       env.CACHE.put = orig;
     }
@@ -141,5 +143,15 @@ describe("redirect", () => {
     const d = await seed();
     await addLink(d, "q", { url: "https://x.com/a?q=a%20b" });
     expect((await get(d.host, "/q?ref=qr", { redirect: "manual" })).headers.get("location")).toBe("https://x.com/a?q=a%20b&ref=qr");
+  });
+
+  it("reserved-word slugs that are stored stay reachable", async () => {
+    const d = await seed();
+    await addLink(d, "app", { url: "https://x.com/app" });
+    await addLink(d, "qr", { url: "https://x.com/qr" });
+    for (const s of ["app", "qr"]) {
+      const r = await get(d.host, `/${s}`, { redirect: "manual" });
+      expect([r.status, r.headers.get("location")]).toEqual([302, `https://x.com/${s}`]);
+    }
   });
 });
