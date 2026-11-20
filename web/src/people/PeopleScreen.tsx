@@ -48,6 +48,8 @@ function auditQuery(actor: string | null, kind: Kind, cursor: string | null): st
 
 export function PeopleScreen() {
   const app = useApp();
+  // Link counts change on other screens; refresh them each time People opens.
+  useEffect(() => { app.reloadUsers().catch(() => undefined); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const { me, users, domains, overlay } = app;
   const { query } = useRoute();
   const q = (query.get("q") ?? "").toLowerCase();
