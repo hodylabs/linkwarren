@@ -28,7 +28,7 @@ function ScreenView({ screen }: { screen: Screen }) {
 }
 
 function Shell() {
-  const { signedOut } = useApp();
+  const { signedOut, loadError, retryLoad } = useApp();
   const { screen } = useRoute();
   return (
     <div className="app">
@@ -39,6 +39,14 @@ function Shell() {
             {errorText("network")}
             <button type="button" className="btn" onClick={() => location.reload()}>
               Reload
+            </button>
+          </div>
+        )}
+        {loadError && (
+          <div className="banner" role="alert">
+            Could not load your domains. {loadError}
+            <button type="button" className="btn" onClick={retryLoad}>
+              Retry
             </button>
           </div>
         )}

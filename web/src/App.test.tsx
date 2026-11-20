@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import App from "./App";
 import type { Domain, Me } from "./api";
@@ -53,9 +53,7 @@ describe("App shell", () => {
 
   it("owner loads the people list", async () => {
     const { calls } = boot(owner);
-    await screen.findByRole("navigation");
-    await new Promise((r) => setTimeout(r, 0));
-    expect(calls.some((c) => c.path === "/api/users")).toBe(true);
+    await waitFor(() => expect(calls.some((c) => c.path === "/api/users")).toBe(true));
   });
 
   it("/analytics shows its coming-soon text", async () => {
@@ -108,6 +106,19 @@ describe("App shell", () => {
     const banner = await screen.findByRole("alert");
     expect(banner.textContent).toContain("You are signed out. Reload the page to sign in.");
     expect(screen.getByRole("navigation")).toBeTruthy();
+  });
+
+  it("a 500 on the first domains load shows an error with Retry, and Retry recovers", async () => {
+    localStorage.setItem("lw.domain", "d2");
+    let fail = true;
+    boot(owner, { "GET /api/domains": () => (fail ? { status: 500, body: { error: "internal" } } : { body: domains }) });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Could not load your domains. Something went wrong (internal)");
+    expect(screen.getByRole("button", { name: "Switch domain, current All domains" })).toBeTruthy();
+    fail = false;
+    screen.getByRole("button", { name: "Retry" }).click();
+    expect(await screen.findByRole("button", { name: "Switch domain, current team.example.com" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("the domain button shows the remembered domain, or All domains", async () => {

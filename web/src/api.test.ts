@@ -37,6 +37,15 @@ describe("api", () => {
     expect(new Headers(del[1].headers).get("content-type")).toBeNull();
   });
 
+  it.each(["https://evil.example/api/x", "//evil.example/api/x", "/apix", "api/me"])("refuses the non-API path %s before fetching", async (p) => {
+    const f = vi.fn();
+    vi.stubGlobal("fetch", f);
+    const err = (await api("GET", p).catch((e: unknown) => e)) as Error;
+    expect(err).not.toBeInstanceOf(ApiError);
+    expect(err.message).toContain("/api/");
+    expect(f).not.toHaveBeenCalled();
+  });
+
   it("204 resolves undefined", async () => {
     fakeApi({ "DELETE /api/links/x": () => ({ status: 204 }) });
     await expect(api("DELETE", "/api/links/x")).resolves.toBeUndefined();

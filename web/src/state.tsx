@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, onSignedOut, type Domain, type Me, type UserItem } from "./api";
+import { api, ApiError, onSignedOut, type Domain, type Me, type UserItem } from "./api";
+import { errorText } from "./copy";
 
 export type Overlay =
   | { kind: "palette" }
@@ -25,6 +26,9 @@ export type AppState = {
   close(): void;
   announce(msg: string): void;
   signedOut: boolean;
+  /** Set when the first load of domains or users failed (not a sign-out); the shell shows it with a retry. */
+  loadError: string | null;
+  retryLoad(): void;
 };
 
 export const AppContext = createContext<AppState | null>(null);
@@ -65,35 +69,33 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
 
   useEffect(() => onSignedOut(() => setSignedOut(true)), []);
 
-  // Errors other than signed-out leave the previous list in place; screens report their own failures.
+  // Failures reject so callers decide; signed-out ones have already raised the banner through onSignedOut.
   const reloadDomains = useCallback(async () => {
-    try {
-      setDomains(await api<Domain[]>("GET", "/api/domains"));
-    } catch {
-      /* signed-out errors raise the banner through onSignedOut */
-    }
+    setDomains(await api<Domain[]>("GET", "/api/domains"));
   }, []);
   const reloadUsers = useCallback(async () => {
     if (me.role !== "owner") return;
-    try {
-      setUsers((await api<{ items: UserItem[] }>("GET", "/api/users")).items);
-    } catch {
-      /* as above */
-    }
+    setUsers((await api<{ items: UserItem[] }>("GET", "/api/users")).items);
   }, [me.role]);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadTry, setLoadTry] = useState(0);
   useEffect(() => {
-    void reloadDomains();
-    void reloadUsers();
-  }, [reloadDomains, reloadUsers]);
+    setLoadError(null);
+    Promise.all([reloadDomains(), reloadUsers()]).catch((e: unknown) => {
+      const signedOutError = e instanceof ApiError && (e.status === 0 || e.status === 401);
+      if (!signedOutError) setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
+    });
+  }, [reloadDomains, reloadUsers, loadTry]);
 
   const setCurrentDomain = useCallback((id: string | null) => {
     writeDomain(id);
     setChosen(id);
   }, []);
 
-  // A remembered domain that is gone (deleted, access removed) means all domains; keep it while the list is loading.
-  const currentDomainId = domains === null || domains.some((d) => d.id === chosen) ? chosen : null;
+  // A remembered domain that is gone (deleted, access removed) means all domains. While the list loads the choice is kept;
+  // if loading failed there is no list to trust, so it is all domains (the Rail shows the same).
+  const currentDomainId = domains === null ? (loadError === null ? chosen : null) : domains.some((d) => d.id === chosen) ? chosen : null;
 
   const value = useMemo<AppState>(
     () => ({
@@ -111,8 +113,10 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
       close: () => setOverlay(null),
       announce: (text: string) => setAnnouncement((a) => ({ text, n: a.n + 1 })),
       signedOut,
+      loadError,
+      retryLoad: () => setLoadTry((n) => n + 1),
     }),
-    [me, domains, users, currentDomainId, setCurrentDomain, reloadDomains, reloadUsers, linksVersion, overlay, signedOut],
+    [me, domains, users, currentDomainId, setCurrentDomain, reloadDomains, reloadUsers, linksVersion, overlay, signedOut, loadError],
   );
 
   return (

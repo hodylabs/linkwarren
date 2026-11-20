@@ -28,6 +28,11 @@ const ERRORS: Record<string, string> = {
   bad_query: "That search could not be read.",
   not_invited: "This email is not invited to this linkwarren. Ask the owner to invite you.",
   disabled: "Your access has been turned off. Ask the owner.",
+  too_many: "Too many at once. Try fewer.",
+  bad_cursor: "That page of results expired. Reload the list.",
+  invalid_body: "The request was not understood. Reload and try again.",
+  forbidden_origin: "This request came from another site and was refused.",
+  unsupported_media_type: "The request was not understood. Reload and try again.",
   network: "You are signed out. Reload the page to sign in.",
   unauthenticated: "You are signed out. Reload the page to sign in.",
 };

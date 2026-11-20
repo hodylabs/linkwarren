@@ -7,8 +7,10 @@ The dashboard is a React app in `web/`, built by Vite into `web/dist`, which the
 ```sh
 npm test           # Worker tests (Workers pool), then web tests (jsdom, web/vitest.config.ts)
 npm run typecheck  # Worker, scripts and web/
-npm run build:web  # writes web/dist
+npm run build:web  # writes web/dist, then runs check:web
 ```
+
+`check:web` fails the build if anything in `web/dist` contains `data:font`. The dashboard CSP allows fonts and images only from the same origin, so an inlined font would be blocked; `web/vite.config.ts` sets `assetsInlineLimit: 0` so Vite never inlines assets.
 
 ## Running the dashboard against a local Worker
 
