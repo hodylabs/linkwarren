@@ -1,11 +1,9 @@
 import { Hono } from "hono";
 import type { Env } from "../env";
-import { rowToUser, type UserRow } from "../types";
+import { rowToUser, type UserListItem, type UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const users = new Hono<E>();
-
-export type UserListItem = UserRow & { linkCount: number; domains: { id: string; host: string; via: "owner" | "member" }[] };
 
 users.get("/", async (c) => {
   if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);

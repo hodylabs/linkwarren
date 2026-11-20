@@ -1,15 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import type { UserRow } from "../types";
+import type { AuditItem, UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const audit = new Hono<E>();
-
-export type AuditItem = {
-  id: number; at: number; actorId: string; actorEmail: string | null; actorName: string | null; via: string | null;
-  action: string; targetType: string; targetId: string; detail: Record<string, unknown>;
-};
 
 const PAGE = 50;
 const SECRET = /secret|token|password|authorization|cookie|api_?key/i;

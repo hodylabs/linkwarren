@@ -13,6 +13,11 @@ export type LinkRow = {
   redirectCode: 301 | 302; startsAt: number | null; expiresAt: number | null; passQuery: boolean;
   createdBy: string; updatedBy: string; createdAt: number; updatedAt: number;
 };
+export type UserListItem = UserRow & { linkCount: number; domains: { id: string; host: string; via: "owner" | "member" }[] };
+export type AuditItem = {
+  id: number; at: number; actorId: string; actorEmail: string | null; actorName: string | null; via: string | null;
+  action: string; targetType: string; targetId: string; detail: Record<string, unknown>;
+};
 
 type R = Record<string, unknown>;
 
