@@ -1,0 +1,11 @@
+{
+  "name": "linkwarren",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // No ids or vars here: real ids and hosts live in wrangler.instance.jsonc (gitignored). This file only feeds the tests;
+  // without DASHBOARD_HOST the Worker answers 500 misconfigured, so it is safe if deployed or run by mistake.
+  "d1_databases": [{ "binding": "DB", "database_name": "linkwarren", "migrations_dir": "migrations" }],
+  "kv_namespaces": [{ "binding": "CACHE" }]
+}
