@@ -126,6 +126,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       if (copy) copied = await navigator.clipboard.writeText(short).then(() => true, () => false);
       app.close();
       app.bumpLinks();
+      app.reloadDomains().catch(() => undefined); // link counts
       navigate(`/links?sel=${encodeURIComponent(link.id)}`);
       app.announce(`Created ${host}/${link.slug}${copy ? (copied ? " and copied" : ", could not copy") : ""}`);
     } catch (e) {

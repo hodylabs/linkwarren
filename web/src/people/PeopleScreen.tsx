@@ -233,7 +233,7 @@ export function PeopleScreen() {
           )}
           <ul className="log">
             {items.map((a) => {
-              const d = describeAudit(a, me.id);
+              const d = describeAudit(a, me.id, domains);
               return (
                 <li key={a.id}>
                   <time dateTime={new Date(a.at * 1000).toISOString()}>{clock(a.at)}</time>

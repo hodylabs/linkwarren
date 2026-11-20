@@ -21,7 +21,7 @@ describe("describeAudit", () => {
   });
   it("link.create and link.update and link.delete", () => {
     expect(d({ action: "link.create", detail: { host: "go.test", slug: "spring" } })).toMatchObject({ text: "created", code: "go.test/spring" });
-    expect(d({ action: "link.update", detail: { host: "go.test", slug: "spring" } })).toMatchObject({ text: "changed the destination of", code: "go.test/spring" });
+    expect(d({ action: "link.update", detail: { host: "go.test", slug: "spring" } })).toMatchObject({ text: "changed", code: "go.test/spring" });
     expect(d({ action: "link.delete", detail: { host: "go.test", slug: "spring" } })).toMatchObject({
       text: "deleted", code: "go.test/spring",
     });
@@ -40,8 +40,14 @@ describe("describeAudit", () => {
     expect(t("domain.members")).toBe("changed who can use");
     expect(d({ action: "domain.approve", targetType: "domain", detail }).code).toBe("go.test");
   });
-  it("lock.release uses the host from detail, else the target id", () => {
-    expect(d({ action: "lock.release", targetType: "lock", detail: { host: "go.test" } })).toMatchObject({ text: "released the locked slug", code: "go.test" });
+  it("lock.release shows host/slug from the server shape (targetId domainId/key, detail domainId + slugKeys)", () => {
+    const row = { action: "lock.release", targetType: "lock", targetId: "d1/spring", detail: { domainId: "d1", slugKeys: ["spring"] } };
+    expect(describeAudit(mk(row), "uo", [{ id: "d1", host: "go.test" }])).toMatchObject({ text: "released the locked slug", code: "go.test/spring" });
+  });
+  it("lock.release falls back to the target id when the domain is unknown or the detail is malformed", () => {
+    const row = { action: "lock.release", targetType: "lock", targetId: "d9/spring", detail: { domainId: "d9", slugKeys: ["spring"] } };
+    expect(describeAudit(mk(row), "uo", [{ id: "d1", host: "go.test" }]).code).toBe("d9/spring");
+    expect(describeAudit(mk({ ...row, detail: { domainId: 5 } }), "uo", [{ id: "d1", host: "go.test" }]).code).toBe("d9/spring");
     expect(d({ action: "lock.release", targetType: "lock", targetId: "k9" }).code).toBe("k9");
   });
   it("user and import actions", () => {

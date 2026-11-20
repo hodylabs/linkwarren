@@ -61,7 +61,7 @@ function Shell() {
         )}
         {loadError && (
           <div className="banner" role="alert">
-            Could not load your domains. {loadError}
+            Could not load the dashboard data. {loadError}
             <button type="button" className="btn" onClick={retryLoad}>
               Retry
             </button>

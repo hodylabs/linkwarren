@@ -108,6 +108,16 @@ describe("New link sheet", () => {
     await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("https://go.test/spring"));
   });
 
+  it("after a create the domains reload so link counts update", async () => {
+    const { api, user } = boot();
+    await open(user);
+    await user.type(slugBox(), "spring");
+    setVal(dest(), "https://x.com/a");
+    const before = api.calls.filter((c) => c.path === "/api/domains").length;
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/domains").length).toBe(before + 1));
+  });
+
   it("a 409 taken shows at the slug, keeps the sheet and the values", async () => {
     const { user } = boot({ routes: { "POST /api/links": () => ({ status: 409, body: { error: "taken" } }) } });
     await open(user);

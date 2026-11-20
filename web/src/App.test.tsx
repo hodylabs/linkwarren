@@ -74,7 +74,7 @@ describe("App shell", () => {
   it.each(["/nope", "/"])("%s lands on Links", async (path) => {
     boot(owner, {}, path);
     expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
-    expect(location.pathname).toBe("/links");
+    await waitFor(() => expect(location.pathname).toBe("/links")); // the router replace lands after the first render
   });
 
   it("nav links navigate without a page load", async () => {
@@ -114,7 +114,7 @@ describe("App shell", () => {
     let fail = true;
     boot(owner, { "GET /api/domains": () => (fail ? { status: 500, body: { error: "internal" } } : { body: domains }) });
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Could not load your domains. Something went wrong (internal)");
+    expect(alert.textContent).toContain("Could not load the dashboard data. Something went wrong (internal)");
     expect(screen.getByRole("button", { name: "Switch domain, current All domains" })).toBeTruthy();
     fail = false;
     screen.getByRole("button", { name: "Retry" }).click();
