@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { beforeBatch } from "./helpers/race";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -209,6 +210,37 @@ describe("patch", () => {
       expect((await call("a", "PATCH", `/api/links/${l.id}`, bad)).status).toBe(400);
     expect((await call("a", "PATCH", `/api/links/${l.id}`, { expiresAt: null })).status).toBe(200);
     expect((await call("a", "PATCH", "/api/links/nope", { url: "https://x.com" })).status).toBe(404);
+  });
+});
+
+describe("patch concurrency", () => {
+  it("two PATCHes from the same snapshot: the second gets 409 conflict and the first's change survives", async () => {
+    const l = await mk("a", "pc");
+    let first: Response | undefined;
+    // The second PATCH has read the row; the first runs to completion before the second writes.
+    const restore = beforeBatch(1, async () => { first = await call("a", "PATCH", `/api/links/${l.id}`, { url: "https://first.com/" }); });
+    let second: Response;
+    try { second = await call("a", "PATCH", `/api/links/${l.id}`, { passQuery: false }); } finally { restore(); }
+    expect(first!.status).toBe(200);
+    expect([second.status, await second.json()]).toEqual([409, { error: "conflict" }]);
+    expect(await one("SELECT url, pass_query FROM links WHERE id = ?", l.id)).toEqual({ url: "https://first.com/", pass_query: 1 });
+    expect(await audits("link.update")).toBe(1);
+  });
+
+  it("a PATCH of only passQuery leaves the url unchanged", async () => {
+    const l = await mk("a", "pq");
+    await run("UPDATE links SET url = 'https://elsewhere.com/' WHERE id = ?", l.id);
+    // The handler reads the row it writes, so a field it was not asked to change is never rewritten from the request.
+    const r = await call("a", "PATCH", `/api/links/${l.id}`, { passQuery: false });
+    expect(r.status).toBe(200);
+    expect(await one("SELECT url, pass_query FROM links WHERE id = ?", l.id)).toEqual({ url: "https://elsewhere.com/", pass_query: 0 });
+  });
+
+  it("a PATCH on a link deleted after the read is 404, not 409", async () => {
+    const l = await mk("a", "pd");
+    const restore = beforeBatch(1, () => run("DELETE FROM links WHERE id = ?", l.id));
+    try { expect((await call("a", "PATCH", `/api/links/${l.id}`, { passQuery: false })).status).toBe(404); } finally { restore(); }
+    expect(await audits("link.update")).toBe(0);
   });
 });
 
