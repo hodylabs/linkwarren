@@ -158,18 +158,30 @@ links.patch("/:id", async (c) => {
     ...link, url, redirectCode: b.redirectCode ?? link.redirectCode, passQuery: b.passQuery ?? link.passQuery,
     startsAt: b.startsAt === undefined ? link.startsAt : b.startsAt,
     expiresAt: b.expiresAt === undefined ? link.expiresAt : b.expiresAt,
-    updatedBy: user.id, updatedAt: Math.floor(Date.now() / 1000),
+    // updated_at is the revision: always move it forward, even within the same second.
+    updatedBy: user.id, updatedAt: Math.max(Math.floor(Date.now() / 1000), link.updatedAt + 1),
   };
+  // The write below only lands on the row read here, so this window is the one that gets stored.
   if (badWindow(next.startsAt, next.expiresAt)) return c.json({ error: "bad_window" }, 400);
+  const cols: [string, unknown][] = [];
+  if (b.url !== undefined) cols.push(["url", next.url]);
+  if (b.redirectCode !== undefined) cols.push(["redirect_code", next.redirectCode]);
+  if (b.startsAt !== undefined) cols.push(["starts_at", next.startsAt]);
+  if (b.expiresAt !== undefined) cols.push(["expires_at", next.expiresAt]);
+  if (b.passQuery !== undefined) cols.push(["pass_query", next.passQuery ? 1 : 0]);
+  cols.push(["updated_by", user.id], ["updated_at", next.updatedAt]);
+  // Audit first, only while the row is still the revision read, so a lost race writes neither.
   const res = await c.env.DB.batch([
-    c.env.DB.prepare(
-      "UPDATE links SET url=?, redirect_code=?, starts_at=?, expires_at=?, pass_query=?, updated_by=?, updated_at=? WHERE id=?",
-    ).bind(next.url, next.redirectCode, next.startsAt, next.expiresAt, next.passQuery ? 1 : 0, user.id, next.updatedAt, link.id),
     auditStmt(c.env, { actorId: user.id, action: "link.update", targetType: "link", targetId: link.id,
       detail: { host: domain.host, slug: link.slug, url: next.url } },
-    { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] }),
+    { sql: "EXISTS (SELECT 1 FROM links WHERE id = ? AND updated_at = ?)", binds: [link.id, link.updatedAt] }),
+    c.env.DB.prepare(`UPDATE links SET ${cols.map(([k]) => `${k}=?`).join(", ")} WHERE id=? AND updated_at=?`)
+      .bind(...cols.map(([, v]) => v), link.id, link.updatedAt),
   ]);
-  if (res[0]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
+  if (res[1]!.meta.changes === 0) {
+    const gone = !(await c.env.DB.prepare("SELECT 1 FROM links WHERE id = ?").bind(link.id).first());
+    return gone ? c.json({ error: "not_found" }, 404) : c.json({ error: "conflict" }, 409);
+  }
   await purge(c.env, link.domainId, link.slugKey);
   return c.json(next);
 });
