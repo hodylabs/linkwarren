@@ -1,9 +1,11 @@
 import { Hono } from "hono";
+import { requireUser } from "./auth";
 import type { Env } from "./env";
+import type { UserRow } from "./types";
 import { normalizeHost } from "./host";
 import { handleRedirect } from "./redirect";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
 
 // Short hosts never serve app routes; only the dashboard host gets past this point.
 app.use("*", async (c, next) => {
@@ -12,6 +14,9 @@ app.use("*", async (c, next) => {
   }
   await next();
 });
+
+app.use("/api/*", requireUser);
+app.get("/api/me", (c) => c.json({ email: c.var.user.email, role: c.var.user.role }));
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 
