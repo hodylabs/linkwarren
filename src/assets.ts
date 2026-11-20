@@ -9,7 +9,8 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
 
 /** Dashboard host only (the caller gates the host). Unknown extensionless paths get the SPA shell; a missing file stays 404. */
 export async function serveDashboard(req: Request, env: Env): Promise<Response> {
-  if (!env.ASSETS) return new Response(JSON.stringify({ error: "no_assets" }), { status: 503, headers: { "content-type": "application/json" } });
+  if (!env.ASSETS)
+    return new Response(JSON.stringify({ error: "no_assets" }), { status: 503, headers: { "content-type": "application/json", ...SECURITY_HEADERS } });
   const url = new URL(req.url);
   let res = await env.ASSETS.fetch(req);
   if (res.status === 404 && !url.pathname.split("/").pop()!.includes("."))

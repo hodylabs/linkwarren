@@ -71,12 +71,14 @@ links.get("/", async (c) => {
   const status = c.req.query("status");
   if (status !== undefined) {
     const now = Math.floor(Date.now() / 1000);
-    const w = {
+    const windows = {
       active: ["(starts_at IS NULL OR starts_at <= ?) AND (expires_at IS NULL OR expires_at > ?)", [now, now]],
       scheduled: ["starts_at > ?", [now]],
       expired: ["expires_at <= ?", [now]],
-    }[status];
-    if (!w) return c.json({ error: "bad_status" }, 400);
+    } as const;
+    // Own keys only: "constructor" or "__proto__" must not reach the prototype.
+    if (!Object.hasOwn(windows, status)) return c.json({ error: "bad_status" }, 400);
+    const w = windows[status as keyof typeof windows];
     where.push(`(${w[0]})`);
     binds.push(...w[1]);
   }

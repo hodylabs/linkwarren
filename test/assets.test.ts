@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { SECURITY_HEADERS } from "../src/assets";
 
 const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -76,6 +77,9 @@ describe("dashboard host", () => {
       const r = await get("dash.test", "/");
       expect(r.status).toBe(503);
       expect(await r.json()).toEqual({ error: "no_assets" });
+      expect(r.headers.get("content-security-policy")).toBe(SECURITY_HEADERS["Content-Security-Policy"]);
+      expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(r.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
     } finally {
       e.ASSETS = saved;
     }

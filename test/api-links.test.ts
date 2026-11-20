@@ -293,6 +293,10 @@ describe("list filters", () => {
     const r = await call("a", "GET", "/api/links?status=bogus");
     expect([r.status, await r.json()]).toEqual([400, { error: "bad_status" }]);
   });
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])("status=%s is 400 bad_status, not a 500", async (s) => {
+    const r = await call("a", "GET", `/api/links?status=${s}`);
+    expect([r.status, await r.json()]).toEqual([400, { error: "bad_status" }]);
+  });
   it("mine=1 returns own links only and pages with the cursor", async () => {
     await ins("b1", "ub", 5, null, null);
     for (let i = 0; i < 51; i++) await ins(`m${String(i).padStart(2, "0")}`, "ua", 100 + i, null, null);
