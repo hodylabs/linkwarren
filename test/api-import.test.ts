@@ -193,6 +193,19 @@ describe("rules", () => {
     }
     expect(reads).toBeLessThanOrEqual(2);
   });
+  it("a domain created by a request takes the case mode of that request's twins only", async () => {
+    const r1 = await rep(await owner(body([
+      { host: "x.test", slug: "Ab", destination: "https://e.org/1" }, { host: "x.test", slug: "ab", destination: "https://e.org/2" },
+    ], [D("x.test"), D("y.test")])));
+    expect(r1).toMatchObject({ created: 2, caseSensitiveDomains: ["x.test"], domainsCreated: ["x.test", "y.test"] });
+    // y.test was created by a request without its twins, so later twins can no longer make it case-sensitive.
+    const r2 = await rep(await owner(body([
+      { host: "y.test", slug: "Cd", destination: "https://e.org/3" }, { host: "y.test", slug: "cd", destination: "https://e.org/4" },
+    ], [D("y.test")])));
+    expect(r2.conflicts.map((c) => c.reason)).toEqual(["case_twin", "case_twin"]);
+    expect(await all("SELECT host, case_sensitive FROM domains ORDER BY host")).toEqual([{ host: "x.test", case_sensitive: 1 }, { host: "y.test", case_sensitive: 0 }]);
+  });
+
   it("duplicate rows within one export are skipped when identical", async () => {
     const l = { host: "a.test", slug: "x", destination: "https://e.org/" };
     expect(await rep(await owner(body([l, l])))).toMatchObject({ created: 1, skipped: 1 });
