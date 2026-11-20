@@ -79,6 +79,11 @@ describe("approve and disable", () => {
     const red = await exports.default.fetch("https://priv.test/p", { redirect: "manual" });
     expect([red.status, red.headers.get("location")]).toEqual([302, "https://x.com/"]);
   });
+  it("approve from disabled reactivates", async () => {
+    await run("UPDATE domains SET status='disabled' WHERE id='dm'");
+    expect(await (await call("owner", "POST", "/api/domains/dm/approve")).json()).toMatchObject({ status: "active" });
+    expect(await audits("domain.approve")).toBe(1);
+  });
   it("approve of an active domain is an idempotent 200", async () => {
     expect((await call("owner", "POST", "/api/domains/dm/approve")).status).toBe(200);
   });
@@ -131,6 +136,39 @@ describe("settings", () => {
     expect((await call("owner", "PATCH", "/api/domains/dc", { caseSensitive: true })).status).toBe(200);
     expect(await one("SELECT slug_key k FROM links WHERE id='t1'")).toEqual({ k: "Fall" });
   });
+  it("locks stay case-insensitive: a deleted Fall blocks Fall and fall after flipping ON", async () => {
+    await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('t1','dm','Fall','fall','https://x.com/','uo','uo',1,1)");
+    await status(await call("owner", "DELETE", "/api/links/t1"), 204);
+    expect((await call("owner", "PATCH", "/api/domains/dm", { caseSensitive: true })).status).toBe(200);
+    for (const slug of ["Fall", "fall"])
+      await status(await call("owner", "POST", "/api/links", { domainId: "dm", slug, url: "https://x.com" }), 409, { error: "locked" });
+  });
+  it("OFF is refused when a lock and a live link are case twins with different keys; nothing changes", async () => {
+    await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('t1','dc','Fall','Fall','https://x.com/','uo','uo',1,1)");
+    await status(await call("owner", "DELETE", "/api/links/t1"), 204);
+    await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('t2','dc','fall','fall','https://x.com/','uo','uo',1,1)");
+    await status(await call("owner", "PATCH", "/api/domains/dc", { caseSensitive: false }), 409, { error: "case_conflict" });
+    expect(await one("SELECT case_sensitive c FROM domains WHERE id='dc'")).toEqual({ c: 1 });
+    expect(await one("SELECT slug_key k FROM links WHERE id='t2'")).toEqual({ k: "fall" });
+    expect(await audits("domain.update")).toBe(0);
+  });
+  it("twin locks survive a flip", async () => {
+    await run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dc','Fall',1,'uo'),('dc','fall',1,'uo')");
+    expect((await call("owner", "PATCH", "/api/domains/dc", { caseSensitive: false })).status).toBe(200);
+    expect((await one<{ n: number }>("SELECT COUNT(*) n FROM slug_locks WHERE domain_id='dc'"))!.n).toBe(2);
+  });
+  it("a flip drops stale cached link entries under both spellings", async () => {
+    await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('t1','dm','Fall','fall','https://x.com/','uo','uo',1,1)");
+    await env.CACHE.put("l:dm:fall", "null");
+    await env.CACHE.put("l:dm:Fall", "null");
+    await call("owner", "PATCH", "/api/domains/dm", { caseSensitive: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect([await env.CACHE.get("l:dm:fall"), await env.CACHE.get("l:dm:Fall")]).toEqual([null, null]);
+  });
+  it("a redirect target whose normalized href exceeds 2048 is refused", async () => {
+    const raw = `https://example.com/${"a".repeat(2000)}${"\u00e9".repeat(10)}`; // raw 2030 chars, href 2080
+    await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw }), 400, { error: "too_long" });
+  });
   it("404 unknown; strict body", async () => {
     await status(await call("owner", "PATCH", "/api/domains/nope", { noindex: true }), 404);
     await status(await call("owner", "PATCH", "/api/domains/dm", { host: "x.example.com" }), 400);
@@ -147,6 +185,9 @@ describe("members", () => {
     await call("owner", "PUT", "/api/domains/ds/members", { userIds: ["ub"] });
     expect(await env.DB.prepare("SELECT user_id FROM domain_members WHERE domain_id='ds'").all()).toMatchObject({ results: [{ user_id: "ub" }] });
     expect(await audits("domain.members")).toBe(2);
+  });
+  it("a member cannot set members on their own private domain", async () => {
+    await status(await call("a", "PUT", "/api/domains/dp/members", { userIds: ["ub"] }), 403);
   });
   it("400 for main domains and unknown users (state unchanged), 404 unknown domain", async () => {
     await status(await call("owner", "PUT", "/api/domains/dm/members", { userIds: [] }), 400);
