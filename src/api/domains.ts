@@ -129,8 +129,9 @@ domains.patch("/:id", async (c) => {
   if (flip) stmts.push(c.env.DB.prepare(
     `UPDATE links SET slug_key = ${next.caseSensitive ? "slug" : "lower(slug)"} WHERE domain_id = ? AND ${unchanged.sql}`,
   ).bind(d.id, ...unchanged.binds));
-  stmts.push(c.env.DB.prepare(`UPDATE domains SET ${cols.map(([k]) => `${k}=?`).join(", ") || "id=id"} WHERE ${unchanged.sql}`)
-    .bind(...cols.map(([, v]) => v), ...unchanged.binds));
+  // The guard is an uncorrelated EXISTS, so the row key must be in the outer predicate.
+  stmts.push(c.env.DB.prepare(`UPDATE domains SET ${cols.map(([k]) => `${k}=?`).join(", ") || "id=id"} WHERE id = ? AND ${unchanged.sql}`)
+    .bind(...cols.map(([, v]) => v), d.id, ...unchanged.binds));
   let res;
   try {
     res = await c.env.DB.batch(stmts);
