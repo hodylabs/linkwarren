@@ -16,7 +16,7 @@ Required secret:
 
 - `OWNER_EMAIL`: the email that becomes the owner on first sign-in. Only that email can bootstrap, and only while the users table is empty.
 
-Set `OWNER_EMAIL` only with `wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it to `vars`: a var with the same name replaces the secret on the next deploy.
+Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it to `vars`: a var with the same name replaces the secret on the next deploy.
 
 `ACCESS_JWKS_JSON` is **test-only**. It replaces the real Access signing keys with a local key set. Never set it in production; the app logs a warning if it is set.
 
@@ -24,20 +24,20 @@ Set `OWNER_EMAIL` only with `wrangler secret put OWNER_EMAIL -c wrangler.instanc
 
 ## Local development
 
-`npm run dev` runs `wrangler dev -c wrangler.instance.jsonc`, so it needs the instance config:
+`npm run dev` runs `npx wrangler dev -c wrangler.instance.jsonc`, so it needs the instance config:
 
 1. Copy `wrangler.instance.example.jsonc` to `wrangler.instance.jsonc` if you have not already.
 2. Set `DASHBOARD_HOST` to the host you open locally, for example `localhost` (the port is ignored).
 3. Put `OWNER_EMAIL=you@example.com` in `.dev.vars` (gitignored); local dev reads secrets from there.
-4. Apply migrations to the local database: `wrangler d1 migrations apply linkwarren --local -c wrangler.instance.jsonc`.
+4. Apply migrations to the local database: `npx wrangler d1 migrations apply linkwarren --local -c wrangler.instance.jsonc`.
 
 Without the instance config `npm run dev` fails to start, and a Worker run without `DASHBOARD_HOST` answers every request with `500 {"error":"misconfigured"}`.
 
 ## Steps
 
-1. Create the D1 database and the KV namespace (`wrangler d1 create`, `wrangler kv namespace create`) and put their ids in `wrangler.instance.jsonc`.
-2. Apply migrations to the remote database: `wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
-3. Deploy: `wrangler deploy -c wrangler.instance.jsonc`.
+1. Create the D1 database and the KV namespace (`npx wrangler d1 create`, `npx wrangler kv namespace create`) and put their ids in `wrangler.instance.jsonc`.
+2. Apply migrations to the remote database: `npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
+3. Deploy: `npx wrangler deploy -c wrangler.instance.jsonc`.
 4. Add one route per short domain plus the dashboard host (custom domains in the config).
 
 ## Access
