@@ -114,6 +114,7 @@ export function PeopleScreen() {
       if (g !== generation.current) return;
       setItems((cur) => [...cur, ...p.items]);
       setNext(p.next);
+      setError(null);
     } catch (e) {
       if (g === generation.current) setError(errorText(e instanceof ApiError ? e.code : "internal"));
     } finally {
@@ -189,7 +190,7 @@ export function PeopleScreen() {
                   key={u.id}
                   ref={(el) => void (el ? rowRefs.current.set(u.id, el) : rowRefs.current.delete(u.id))}
                   aria-selected={u.id === sel}
-                  tabIndex={u.id === sel || (!selected && i === 0) ? 0 : -1}
+                  tabIndex={u.id === sel || (at < 0 && i === 0) ? 0 : -1}
                   onClick={() => select(u.id)}
                   onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && select(u.id)}
                 >

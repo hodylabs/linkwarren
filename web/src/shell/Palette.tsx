@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { checkSlugShape } from "../../../src/validate";
-import { api, type Link, type Page } from "../api";
+import { api, ApiError, type Link, type Page } from "../api";
+import { errorText } from "../copy";
 import { navigate } from "../router";
 import { useApp } from "../state";
 import { Kbd } from "./ui";
@@ -33,7 +34,7 @@ export function Palette() {
   const [text, setText] = useState("");
   const [sel, setSel] = useState(0);
   const [recent, setRecent] = useState<Link[]>([]);
-  const [found, setFound] = useState<{ q: string; items: Link[] } | null>(null);
+  const [found, setFound] = useState<{ q: string; items: Link[]; error?: string } | null>(null);
 
   const linksPath = (q?: string) => {
     const p = new URLSearchParams();
@@ -57,7 +58,7 @@ export function Palette() {
     const t = setTimeout(() => {
       api<Page<Link>>("GET", linksPath(text), undefined, ctrl.signal)
         .then((r) => !ctrl.signal.aborted && setFound({ q: text, items: r.items.slice(0, 5) }))
-        .catch(() => !ctrl.signal.aborted && setFound({ q: text, items: [] }));
+        .catch((e: unknown) => !ctrl.signal.aborted && setFound({ q: text, items: [], error: e instanceof ApiError ? e.code : "internal" }));
     }, 150);
     return () => {
       clearTimeout(t);
@@ -95,7 +96,8 @@ export function Palette() {
   const flat = sections.flatMap((s) => s.items);
   const at = Math.min(sel, Math.max(flat.length - 1, 0));
   const settled = text !== "" && found?.q === text;
-  const nothing = settled && flat.length === 0;
+  const failed = settled && found.error !== undefined;
+  const nothing = settled && !failed && flat.length === 0;
   const canCreate = checkSlugShape(text).ok;
 
   const choose = (run: () => void) => {
@@ -165,6 +167,11 @@ export function Palette() {
             ))}
           </div>
         ))}
+        {failed && (
+          <div className="p-sec" role="alert">
+            Could not search links: {errorText(found!.error!)}
+          </div>
+        )}
         {nothing && (
           <div className="p-sec">
             Nothing matches "{text}".{canCreate && " Press Enter to create a link with that slug."}

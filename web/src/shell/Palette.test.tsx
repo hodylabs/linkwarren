@@ -187,6 +187,17 @@ describe("Ctrl+K palette", () => {
     expect(within(screen.getByRole("listbox")).getByText(/People/)).toBeTruthy();
   });
 
+  it("a failed search says so instead of Nothing matches, and Enter creates nothing", async () => {
+    const { user } = await boot(owner, {
+      "GET /api/links": ({ url }) => (url.searchParams.get("q") ? { status: 500, body: { error: "internal" } } : { body: { items: [], next: null } }),
+    });
+    await user.keyboard("{Control>}k{/Control}qzx");
+    expect(await screen.findByText(/Could not search links/)).toBeTruthy();
+    expect(screen.queryByText(/Nothing matches/)).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("dialog", { name: "New link" })).toBeNull();
+  });
+
   it("Enter on the Nothing-matches state opens newLink with the slug", async () => {
     const { user } = await boot(owner);
     await user.keyboard("{Control>}k{/Control}qzx");

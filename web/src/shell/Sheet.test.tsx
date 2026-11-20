@@ -26,6 +26,22 @@ function Two() {
 }
 
 describe("Sheet stack", () => {
+  it("closing the inner sheet keeps focus in the outer one; closing the last returns it to the opener", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<button type="button">opener</button>);
+    screen.getByRole("button", { name: "opener" }).focus();
+    rerender(
+      <>
+        <button type="button">opener</button>
+        <Two />
+      </>,
+    );
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Outer" }).contains(document.activeElement)).toBe(true);
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "opener" }));
+  });
+
   it("counts open sheets, and each Esc closes only the topmost", async () => {
     const user = userEvent.setup();
     render(<Two />);

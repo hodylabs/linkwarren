@@ -136,6 +136,31 @@ describe("People screen", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
   });
 
+  it("a successful Load more retry clears the earlier error", async () => {
+    let tries = 0;
+    const { user } = boot({
+      audit: (url) =>
+        url.searchParams.get("cursor") !== "2"
+          ? { body: { items: [au(3), au(2)], next: "2" } }
+          : ++tries === 1
+            ? { status: 500, body: { error: "internal" } }
+            : { body: { items: [au(1)], next: null } },
+    });
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Something went wrong");
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a selected person hidden by a filter leaves the first visible row tabbable", async () => {
+    const { user } = boot({ path: "/people?sel=ud" });
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    await user.click(screen.getByRole("button", { name: "Invited" }));
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]!.tabIndex).toBe(0);
+  });
+
   it("changing the filter starts from the first page without the old cursor", async () => {
     const { api, user } = boot({ audit: () => ({ body: { items: [au(3)], next: "3" } }) });
     await user.click(await screen.findByRole("button", { name: "Load more" }));

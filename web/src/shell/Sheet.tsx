@@ -4,7 +4,7 @@ import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 let carried: Element | null = null;
 
 // Open sheets, bottom to top. Only the top one handles Esc and Tab; the shell reads the count to keep its hotkeys out.
-const stack: object[] = [];
+const stack: HTMLElement[] = []; // the panels
 const subs = new Set<() => void>();
 const changed = () => subs.forEach((f) => f());
 const subscribe = (f: () => void) => {
@@ -37,7 +37,7 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
     const items = () => [...p.querySelectorAll<HTMLElement>(FOCUSABLE)];
     // A child that autofocused (the palette box) keeps focus.
     if (!p.contains(document.activeElement)) (items()[0] ?? p).focus();
-    const self = {};
+    const self = p;
     stack.push(self);
     changed();
     const onKey = (e: KeyboardEvent) => {
@@ -72,7 +72,11 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
       changed();
       carried = opener;
       setTimeout(() => (carried = null), 0);
-      if (opener?.isConnected) opener.focus();
+      // A sheet still open keeps focus inside it (unless the opener is in it); the last one to close returns it to the opener.
+      const top = stack[stack.length - 1];
+      if (top && !(opener && top.contains(opener))) {
+        if (!top.contains(document.activeElement)) (top.querySelector<HTMLElement>(FOCUSABLE) ?? top).focus();
+      } else if (opener?.isConnected) opener.focus();
     };
   }, []);
 
