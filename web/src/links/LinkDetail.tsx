@@ -39,6 +39,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
     }, [link.id, link.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const copy = () => {
+      if (!host) return app.announce("Cannot copy: this link's domain is unknown");
       navigator.clipboard.writeText(shortUrl(host, link.slug)).then(
         () => app.announce("Copied"),
         () => app.announce("Could not copy"),
@@ -88,7 +89,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
           </div>
           <div className="row">
             <Tag tone={state.tone}>{state.label}</Tag>
-            <button type="button" className="btn ghost" onClick={copy} aria-keyshortcuts="C">
+            <button type="button" className="btn ghost" onClick={copy} disabled={!host} aria-keyshortcuts="C">
               Copy <kbd>C</kbd>
             </button>
             {canEdit && (
@@ -104,7 +105,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
               {host}/<b>{link.slug}</b>
             </span>
             <span>&rarr;</span>
-            <span className="arr">{draft.code}</span>
+            <span className="arr">{link.redirectCode}</span>
             <span>&rarr;</span>
             <span>{link.url}</span>
           </div>

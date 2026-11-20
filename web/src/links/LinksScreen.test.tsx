@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -18,7 +18,7 @@ const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
 });
 const L1 = mk("l1", "spring"), L2 = mk("l2", "menu"), L3 = mk("l3", "app", { createdBy: "u9" });
 
-function boot(opts: { me?: Me; routes?: FakeRoutes; page?: () => FakeRes; path?: string } = {}) {
+function boot(opts: { me?: Me; routes?: FakeRoutes; page?: () => FakeRes | Promise<FakeRes>; path?: string } = {}) {
   history.replaceState(null, "", opts.path ?? "/links");
   const api = fakeApi({
     "GET /api/me": () => ({ body: opts.me ?? owner }),
@@ -73,6 +73,43 @@ describe("Links screen list", () => {
     await user.keyboard("k");
     expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(rows()[0]);
+  });
+
+  it("Load more after a filter change never sends the old cursor or mixes rows", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    let n = 0;
+    const { api, user } = boot({
+      page: async () => {
+        if (++n === 1) return { body: { items: [L1], next: "100.l1" } };
+        await gate; // the new first page is slow
+        return { body: { items: [L2], next: null } };
+      },
+    });
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Active" }));
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    await user.keyboard("jj");
+    release!();
+    await waitFor(() => expect(screen.getByText("menu")).toBeTruthy());
+    expect(rows()).toHaveLength(1);
+    expect(api.calls.some((c) => c.path.includes("cursor="))).toBe(false);
+  });
+
+  it("two rapid loads send one request and no duplicate rows", async () => {
+    let n = 0;
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: async () => {
+        if (++n === 1) return { body: { items: [L1], next: "100.l1" } };
+        await new Promise((r) => setTimeout(r, 30));
+        return { body: { items: [L2], next: null } };
+      },
+    });
+    await ready();
+    await user.keyboard("jj");
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(api.calls.filter((c) => c.path.includes("cursor=")).length).toBe(1);
   });
 
   it("J on the last row loads the next page", async () => {
@@ -141,6 +178,33 @@ describe("Link detail", () => {
     await user.type(urlInput(), "https://example.com/new");
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
+  });
+
+  it("clearing a date sends that field as null", async () => {
+    const bodies: unknown[] = [];
+    const dated = { ...L1, expiresAt: 4102444800 };
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [dated], next: null } }),
+      routes: patchOk(bodies),
+    });
+    await ready();
+    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: "" } });
+    await user.click(urlInput());
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(bodies).toEqual([{ expiresAt: null }]));
+  });
+
+  it("double Enter on the delete confirm sends one DELETE", async () => {
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      routes: { "DELETE /api/links/l1": async () => { await new Promise((r) => setTimeout(r, 30)); return { status: 204 }; } },
+    });
+    await ready();
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}{Enter}");
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(api.calls.filter((c) => c.method === "DELETE").length).toBe(1);
   });
 
   it("nothing changed sends no request", async () => {

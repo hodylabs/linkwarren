@@ -26,6 +26,9 @@ export function LinksScreen() {
   const [confirming, setConfirming] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const generation = useRef(0);
+  const loading = useRef(false); // a next-page request is in flight
+  const deleting = useRef(false);
+  const lastScope = useRef<unknown>(null);
   const detailRef = useRef<DetailHandle>(null);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const focusRow = useRef(false);
@@ -42,6 +45,11 @@ export function LinksScreen() {
   // New scope or an explicit reload: start over. A stale answer (older generation) is dropped.
   useEffect(() => {
     const g = ++generation.current;
+    loading.current = false;
+    // The cursor belongs to the old scope: drop it now, and the rows too when the scope itself changed.
+    setNext(null);
+    if (lastScope.current !== scope) setItems([]);
+    lastScope.current = scope;
     setLoadError(null);
     fetchPage(null).then(
       (p) => {
@@ -56,11 +64,12 @@ export function LinksScreen() {
         setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
       },
     );
-  }, [fetchPage, linksVersion]);
+  }, [fetchPage, scope, linksVersion]);
 
   const loadMore = async (): Promise<Link[]> => {
-    if (!next) return [];
+    if (!next || loading.current) return [];
     const g = generation.current;
+    loading.current = true;
     try {
       const p = await fetchPage(next);
       if (g !== generation.current) return [];
@@ -70,6 +79,8 @@ export function LinksScreen() {
     } catch (e) {
       if (g === generation.current) setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
       return [];
+    } finally {
+      if (g === generation.current) loading.current = false;
     }
   };
 
@@ -103,12 +114,15 @@ export function LinksScreen() {
   };
 
   const confirmDelete = async () => {
-    if (!selected) return;
+    if (!selected || deleting.current) return;
+    deleting.current = true;
     try {
       await api("DELETE", `/api/links/${encodeURIComponent(selected.id)}`);
     } catch (e) {
       setDeleteError(errorText(e instanceof ApiError ? e.code : "internal"));
       return;
+    } finally {
+      deleting.current = false;
     }
     const neighbour = items[at + 1] ?? items[at - 1];
     setItems((cur) => cur.filter((l) => l.id !== selected.id));
