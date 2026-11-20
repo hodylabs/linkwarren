@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { csrf } from "hono/csrf";
+import { HTTPException } from "hono/http-exception";
 import { requireUser } from "./auth";
 import type { Env } from "./env";
 import type { UserRow } from "./types";
@@ -10,6 +12,12 @@ import { importApi } from "./api/import";
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
 
+// Missing config fails closed with a clear error instead of a throw.
+app.use("*", async (c, next) => {
+  if (!c.env.DASHBOARD_HOST?.trim()) return c.json({ error: "misconfigured" }, 500);
+  await next();
+});
+
 // Short hosts never serve app routes; only the dashboard host gets past this point.
 app.use("*", async (c, next) => {
   if (normalizeHost(c.req.header("host") ?? new URL(c.req.url).host) !== normalizeHost(c.env.DASHBOARD_HOST)) {
@@ -18,6 +26,18 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+// CSRF: only the dashboard origin may send unsafe requests, and bodies must be JSON (a cross-site
+// text/plain form could otherwise reach c.req.json()). A missing Origin is allowed for non-browser clients.
+const dashboardOrigin = (host: string) => `https://${normalizeHost(host)}`;
+app.use("/api/*", (c, next) => csrf({ origin: dashboardOrigin(c.env.DASHBOARD_HOST) })(c, next));
+app.use("/api/*", async (c, next) => {
+  if (/^(GET|HEAD|OPTIONS)$/.test(c.req.method)) return next();
+  const origin = c.req.header("origin");
+  if (origin !== undefined && origin !== dashboardOrigin(c.env.DASHBOARD_HOST)) return c.json({ error: "forbidden_origin" }, 403);
+  if (c.req.raw.body !== null && !/^application\/json\s*(;|$)/i.test(c.req.header("content-type") ?? ""))
+    return c.json({ error: "unsupported_media_type" }, 415);
+  await next();
+});
 app.use("/api/*", requireUser);
 app.get("/api/me", (c) => c.json({ email: c.var.user.email, role: c.var.user.role }));
 
@@ -27,5 +47,12 @@ app.route("/api/locks", locks);
 app.route("/api/import", importApi);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
+
+app.notFound((c) => c.json({ error: "not_found" }, 404));
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse();
+  console.error("unhandled error", String(err));
+  return c.json({ error: "internal" }, 500);
+});
 
 export default app;

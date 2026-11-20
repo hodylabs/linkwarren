@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { exportJWK, generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
 
 export const ISS = "https://team.example.cloudflareaccess.com";
@@ -26,3 +26,8 @@ export async function token(o: Opts = {}) {
   return jwt.sign(o.key ?? priv);
 }
 export const tokenFor = (email: string) => token({ email });
+
+export const ORIGIN = "https://dash.test";
+/** Fetches the dashboard host the way the browser app does: same-origin Origin header unless the test overrides it. */
+export const dash = (path: string, init: RequestInit = {}) =>
+  exports.default.fetch(`${ORIGIN}${path}`, { ...init, headers: { origin: ORIGIN, ...(init.headers as Record<string, string> | undefined) } });
