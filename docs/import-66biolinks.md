@@ -21,14 +21,14 @@ SELECT JSON_OBJECT(
     FROM domains d),
   'links', (
     SELECT COALESCE(JSON_ARRAYAGG(JSON_OBJECT(
-      'host', d.host,
+      'host', CASE WHEN l.domain_id = 0 THEN NULL ELSE d.host END,
       'slug', l.url,
       'destination', l.location_url,
       'enabled', IF(l.is_enabled = 1, CAST('true' AS JSON), CAST('false' AS JSON)),
       'startDate', DATE_FORMAT(l.start_date, '%Y-%m-%d %H:%i:%s'),
       'endDate', DATE_FORMAT(l.end_date, '%Y-%m-%d %H:%i:%s'))), JSON_ARRAY())
     FROM links l LEFT JOIN domains d ON d.domain_id = l.domain_id
-    WHERE l.type = 'link')
+    WHERE l.type = 'link' AND (l.domain_id = 0 OR d.host IS NOT NULL))
 ) AS export;
 ```
 
@@ -38,7 +38,7 @@ Run it and keep the output as a file (`--raw` stops the client from escaping the
 mysql --batch --raw --skip-column-names -e "<the query>" <database> > export.json
 ```
 
-Links on the main domain have `host: null` in the export (the left join finds no domain row); the scripts treat them as belonging to `mainHost`. The export contains your destinations: keep it out of the repository.
+`host` is null only for main-domain links (`domain_id = 0`); the scripts treat them as belonging to `mainHost`. Links whose custom domain no longer exists (`l.domain_id <> 0 AND d.host IS NULL`) are excluded from the export, because their host is unknown. List them separately for review: `SELECT l.url, l.location_url FROM links l LEFT JOIN domains d ON d.domain_id = l.domain_id WHERE l.type = 'link' AND l.domain_id <> 0 AND d.host IS NULL;`. The export contains your destinations: keep it out of the repository.
 
 ## 2. Audit what will not be imported
 
@@ -78,7 +78,7 @@ The script sends the links in requests of 500 (the server accepts at most 1000),
 - Case-sensitive domains: a new domain whose export has two slugs differing only by case is created case sensitive so both keep working. On an existing case-insensitive domain such twins are conflicts and the domain is never flipped.
 - Disabled legacy links become slug locks only: they keep returning not found and nobody can claim the slug.
 
-Every real run writes one `import.run` audit row. Running the same command again must report `created 0`.
+Every real request (up to 500 links) writes one `import.run` audit row, so a large import leaves several. `created` counts rows actually inserted. If a chunk fails, the script prints the running totals of the chunks already completed and exits 1; fixing the cause and re-running is safe because the import is idempotent. Running the same command again must report `created 0`.
 
 ## 5. Verify
 

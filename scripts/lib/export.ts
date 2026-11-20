@@ -60,24 +60,45 @@ export function toCsv(rows: Record<string, string | number | boolean | null>[]):
   const cols = Object.keys(rows[0]!);
   const cell = (v: string | number | boolean | null): string => {
     let s = v === null ? "" : String(v);
-    if (typeof v === "string" && /^[=+\-@]/.test(s)) s = `'${s}`;
+    if (typeof v === "string" && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return [cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c] ?? null)).join(","))].join("\r\n") + "\r\n";
 }
 
 /**
- * Splits links into request-sized chunks without ever separating slugs that differ only by case
- * (the server decides a new domain's case sensitivity per request, so twins must travel together).
+ * Splits links into request-sized chunks. The server decides a new domain's case sensitivity per request, so the first
+ * chunk touching a host must hold every case-twin group of that host: those links sort first and may overflow the chunk
+ * size. Throws when that forces a chunk above maxChunk (the server cap).
  */
-export function chunkLinks(e: Export, size: number): ExportLink[][] {
-  const gk = (l: ExportLink) => `${linkHost(e, l)}\0${l.slug.toLowerCase()}`;
-  const sorted = [...e.links].sort((a, b) => (gk(a) < gk(b) ? -1 : gk(a) > gk(b) ? 1 : 0));
-  const chunks: ExportLink[][] = [];
-  for (const l of sorted) {
-    const cur = chunks[chunks.length - 1];
-    if (cur && (cur.length < size || gk(cur[cur.length - 1]!) === gk(l))) cur.push(l);
-    else chunks.push([l]);
+export function chunkLinks(e: Export, size: number, maxChunk = 1000): ExportLink[][] {
+  const groups = new Map<string, Set<string>>();
+  for (const l of e.links) {
+    const k = `${linkHost(e, l)}\0${l.slug.toLowerCase()}`;
+    groups.set(k, (groups.get(k) ?? new Set()).add(l.slug));
   }
+  const twin = (l: ExportLink) => groups.get(`${linkHost(e, l)}\0${l.slug.toLowerCase()}`)!.size > 1;
+  const key = (l: ExportLink) => `${linkHost(e, l)}\0${twin(l) ? 0 : 1}\0${l.slug.toLowerCase()}`;
+  const sorted = [...e.links].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  const chunks: ExportLink[][] = [];
+  let cur: ExportLink[] = [];
+  const flush = () => { if (cur.length) chunks.push(cur); cur = []; };
+  for (let i = 0; i < sorted.length;) {
+    const host = linkHost(e, sorted[i]!);
+    let j = i;
+    while (j < sorted.length && linkHost(e, sorted[j]!) === host && twin(sorted[j]!)) j++;
+    const twins = sorted.slice(i, j);
+    if (twins.length) {
+      if (cur.length + twins.length > size) flush();
+      cur.push(...twins);
+      if (cur.length > maxChunk) throw new Error(`host ${host} has too many case-twin links (${cur.length}) for one request (max ${maxChunk})`);
+    }
+    i = j;
+    for (; i < sorted.length && linkHost(e, sorted[i]!) === host; i++) {
+      if (cur.length >= size) flush();
+      cur.push(sorted[i]!);
+    }
+  }
+  flush();
   return chunks;
 }

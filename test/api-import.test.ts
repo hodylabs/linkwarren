@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import fixture from "./fixtures/66biolinks-export.json";
-import { filterHosts, parseExport } from "../scripts/lib/export";
+import { chunkLinks, filterHosts, parseExport } from "../scripts/lib/export";
 import { setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -11,7 +11,7 @@ const audits = async (a: string) => (await all<{ n: number }>("SELECT COUNT(*) n
 
 type L = { host: string | null; slug: string; destination: string; enabled?: boolean; startDate?: string | null; endDate?: string | null };
 const link = (l: L) => ({ enabled: true, startDate: null, endDate: null, ...l });
-const body = (links: L[], domains: unknown[] = [], mainHost = "hody.link") => ({ mainHost, domains, links: links.map(link) });
+const body = (links: L[], domains: unknown[] = [], mainHost = "main.example") => ({ mainHost, domains, links: links.map(link) });
 async function imp(who: string, b: unknown, q = "") {
   return exports.default.fetch(`https://dash.test/api/import${q}`, {
     method: "POST",
@@ -31,19 +31,19 @@ beforeEach(async () => {
   await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('um','m@example.com','member','active',1)");
 });
 
-describe("fixture import (hody.link only)", () => {
-  const filtered = () => filterHosts(parseExport(fixture), ["hody.link"]);
+describe("fixture import (main.example only)", () => {
+  const filtered = () => filterHosts(parseExport(fixture), ["main.example"]);
   it("first run creates domain and links with exact slugs; second run skips all", async () => {
     const r1 = await owner(filtered());
     expect(r1.status).toBe(200);
-    expect(await rep(r1)).toEqual({ created: 4, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: ["hody.link"], ignored: [] });
+    expect(await rep(r1)).toEqual({ created: 4, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: ["main.example"], ignored: [] });
     const dom = (await all<Record<string, unknown>>("SELECT * FROM domains"))[0]!;
-    expect(dom).toMatchObject({ host: "hody.link", type: "private", status: "active", owner_id: "uo", bare_redirect: "https://example.org/home", notfound_redirect: "https://example.org/missing" });
+    expect(dom).toMatchObject({ host: "main.example", type: "private", status: "active", owner_id: "uo", bare_redirect: "https://example.org/home", notfound_redirect: "https://example.org/missing" });
     expect((await all<{ slug: string }>("SELECT slug FROM links ORDER BY slug")).map((r) => r.slug)).toEqual(["Spring", "app", "promo"]);
     expect((await all<{ slug_key: string }>("SELECT slug_key FROM slug_locks")).map((r) => r.slug_key)).toEqual(["old"]);
     const promo = (await all<{ starts_at: number; expires_at: number }>("SELECT * FROM links WHERE slug='promo'"))[0]!;
     expect([promo.starts_at, promo.expires_at]).toEqual([Date.UTC(2026, 0, 1) / 1000, Date.UTC(2026, 1, 1, 12, 30) / 1000]);
-    expect((await get("hody.link", "/spring")).headers.get("location")).toBe("https://example.org/spring");
+    expect((await get("main.example", "/spring")).headers.get("location")).toBe("https://example.org/spring");
     expect(await audits("import.run")).toBe(1);
 
     const r2 = await rep(await owner(filtered()));
@@ -133,6 +133,29 @@ describe("rules", () => {
     expect(dry.created).toBe(2);
     expect(await count("domains") + await count("links") + await count("slug_locks") + await count("audit_log")).toBe(0);
     expect(await rep(await owner(b))).toMatchObject({ created: 2 });
+  });
+  it("disabled `abc` beside live `Abc` is a conflict, not a lock", async () => {
+    const r = await rep(await owner(body([
+      { host: "a.test", slug: "Abc", destination: "https://e.org/" }, { host: "a.test", slug: "abc", destination: "https://e.org/", enabled: false },
+    ])));
+    expect(r).toMatchObject({ created: 1, conflicts: [{ host: "a.test", slug: "abc", reason: "exists" }] });
+    expect(await count("slug_locks")).toBe(0);
+  });
+  it("multi-request import with twins sorting last still creates the domain case-sensitive", async () => {
+    const mk = (slug: string) => ({ host: "big.test", slug, destination: "https://e.org/" + slug, enabled: true, startDate: null, endDate: null });
+    const links = [...["a", "b", "c", "d"].map(mk), mk("zz"), mk("ZZ")];
+    const chunks = chunkLinks({ mainHost: "big.test", domains: [], links }, 2);
+    expect(chunks.length).toBeGreaterThan(1);
+    let created = 0;
+    for (const ch of chunks) {
+      const r = await rep(await owner({ mainHost: "big.test", domains: [], links: ch }));
+      expect(r.conflicts).toEqual([]);
+      created += r.created;
+    }
+    expect(created).toBe(6);
+    expect((await all<{ case_sensitive: number }>("SELECT case_sensitive FROM domains"))[0]!.case_sensitive).toBe(1);
+    expect((await get("big.test", "/zz")).headers.get("location")).toBe("https://e.org/zz");
+    expect((await get("big.test", "/ZZ")).headers.get("location")).toBe("https://e.org/ZZ");
   });
   it("duplicate rows within one export are skipped when identical", async () => {
     const l = { host: "a.test", slug: "x", destination: "https://e.org/" };

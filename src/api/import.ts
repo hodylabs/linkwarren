@@ -130,10 +130,12 @@ importApi.post("/", async (c) => {
     plans.link.push({ dom, slug: l.slug, key, url: href, startsAt, expiresAt });
     out[i] = { kind: "create", sql: "link" };
   });
+  // Case variants count as the same key here (locks are case-insensitive): disabled `abc` beside live `Abc` is a conflict.
+  const liveLower = new Map([...live].map(([id, m]) => [id, new Set([...m.keys()].map((k) => k.toLowerCase()))] as const));
   for (const i of disabled) {
     const l = b.links[i]!, dom = doms.get(hostOf(l.host))!;
     const key = slugKey(l.slug, dom.cs);
-    if (live.get(dom.id)!.has(key)) { conflict(i, "exists"); continue; }
+    if (liveLower.get(dom.id)!.has(key.toLowerCase())) { conflict(i, "exists"); continue; }
     if (locks.get(dom.id)!.has(key.toLowerCase())) { out[i] = { kind: "skip" }; continue; }
     locks.get(dom.id)!.add(key.toLowerCase());
     plans.lock.push({ dom, slug: l.slug, key, url: "", startsAt: null, expiresAt: null });
@@ -141,20 +143,21 @@ importApi.post("/", async (c) => {
   }
 
   const conflicts = out.flatMap((o, i) => o.kind === "conflict" ? [{ host: hostOf(b.links[i]!.host), slug: b.links[i]!.slug, reason: o.reason }] : []);
-  const created = plans.link.length + plans.lock.length;
+  const planned = plans.link.length + plans.lock.length;
   const skipped = out.filter((o) => o.kind === "skip").length;
   const newDoms = [...doms.values()].filter((d) => d.isNew);
   const report = {
-    created, skipped, conflicts, caseSensitiveDomains: newDoms.filter((d) => d.cs).map((d) => d.host),
+    created: planned, skipped, conflicts, caseSensitiveDomains: newDoms.filter((d) => d.cs).map((d) => d.host),
     domainsCreated: newDoms.map((d) => d.host), ignored,
   };
   if (dry) return c.json(report);
 
   const now = Math.floor(Date.now() / 1000);
   const db = c.env.DB;
+  const counted = new Set<number>(); // indexes of link/lock inserts, whose meta.changes is the real created count
   const stmts: D1PreparedStatement[] = [
     auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "66biolinks",
-      detail: { created, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } }),
+      detail: { created: planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } }),
   ];
   for (const d of newDoms) {
     stmts.push(db.prepare(
@@ -167,15 +170,22 @@ importApi.post("/", async (c) => {
     if (d.fillNf) stmts.push(db.prepare("UPDATE domains SET notfound_redirect = ? WHERE id = ? AND notfound_redirect IS NULL").bind(d.nf, d.id));
   }
   for (const p of plans.link) {
+    counted.add(stmts.length);
     stmts.push(db.prepare(
       `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
        SELECT ?,?,?,?,?,302,?,?,1,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
     ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, p.startsAt, p.expiresAt, user.id, user.id, now, now, p.dom.id, p.key));
   }
   for (const p of plans.lock) {
+    counted.add(stmts.length);
     stmts.push(db.prepare("INSERT OR IGNORE INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES (?,?,?,?)").bind(p.dom.id, p.key, now, user.id));
   }
-  for (let i = 0; i < stmts.length; i += CHUNK) await db.batch(stmts.slice(i, i + CHUNK));
+  let inserted = 0; // INSERT OR IGNORE can lose a race; report what was really written
+  for (let i = 0; i < stmts.length; i += CHUNK) {
+    const res = await db.batch(stmts.slice(i, i + CHUNK));
+    res.forEach((r, k) => { if (counted.has(i + k)) inserted += r.meta.changes; });
+  }
+  report.created = inserted;
 
   // Clears cached misses for everything written (errors are swallowed; entries expire by TTL anyway).
   await Promise.all([...doms.values()].map((d) => purgeHost(c.env, d.host)));

@@ -7,8 +7,8 @@ const exp = parseExport(fixture);
 
 describe("parseExport", () => {
   it("accepts the fixture and normalizes hosts", () => {
-    const e = parseExport({ ...fixture, mainHost: "Hody.Link.", domains: [{ host: "OTHER.example:443" }] });
-    expect(e.mainHost).toBe("hody.link");
+    const e = parseExport({ ...fixture, mainHost: "Main.Example.", domains: [{ host: "OTHER.example:443" }] });
+    expect(e.mainHost).toBe("main.example");
     expect(e.domains).toEqual([{ host: "other.example", customIndexUrl: null, customNotFoundUrl: null }]);
   });
   it("rejects malformed exports", () => {
@@ -21,8 +21,8 @@ describe("parseExport", () => {
 
 describe("filterHosts", () => {
   it("keeps only listed hosts; null host counts as the main host", () => {
-    const f = filterHosts(exp, ["hody.link"]);
-    expect(f.domains.map((d) => d.host)).toEqual(["hody.link"]);
+    const f = filterHosts(exp, ["main.example"]);
+    expect(f.domains.map((d) => d.host)).toEqual(["main.example"]);
     expect(f.links.map((l) => l.slug)).toEqual(["Spring", "promo", "old", "app"]);
   });
   it("is case-insensitive on the list and requires a non-empty list", () => {
@@ -37,14 +37,28 @@ describe("chunkLinks", () => {
     const mk = (slug: string) => ({ host: "a.test", slug, destination: "https://e.org/", enabled: true, startDate: null, endDate: null });
     const e = { mainHost: "a.test", domains: [], links: ["b", "A", "c", "a", "d", "B"].map(mk) };
     const chunks = chunkLinks(e, 1);
-    expect(chunks.map((c) => c.map((l) => l.slug))).toEqual([["A", "a"], ["b", "B"], ["c"], ["d"]]);
+    expect(chunks.map((c) => c.map((l) => l.slug))).toEqual([["A", "a", "b", "B"], ["c"], ["d"]]);
     expect(chunks.flat()).toHaveLength(6);
+  });
+});
+
+describe("chunkLinks twins first", () => {
+  const mk = (host: string, slug: string) => ({ host, slug, destination: "https://e.org/", enabled: true, startDate: null, endDate: null });
+  it("puts a host's twin groups in its first chunk even when they sort last", () => {
+    const links = [...["a", "b", "c", "d", "e"].map((s) => mk("t.test", s)), mk("t.test", "zz"), mk("t.test", "ZZ")];
+    const chunks = chunkLinks({ mainHost: "t.test", domains: [], links }, 2);
+    expect(chunks[0]!.map((l) => l.slug).sort()).toEqual(["ZZ", "zz"]);
+    expect(chunks.flat()).toHaveLength(7);
+  });
+  it("throws when twins exceed the server cap", () => {
+    const links = Array.from({ length: 6 }, (_, i) => mk("t.test", i % 2 ? `a${i >> 1}` : `A${i >> 1}`));
+    expect(() => chunkLinks({ mainHost: "t.test", domains: [], links }, 2, 4)).toThrow(/case-twin/);
   });
 });
 
 describe("audit", () => {
   it("excludedRows is exactly the other.example rows", () => {
-    const rows = excludedRows(exp, ["hody.link"]);
+    const rows = excludedRows(exp, ["main.example"]);
     expect(rows.map((r) => [r.host, r.slug])).toEqual([["other.example", "x1"], ["other.example", 'x2,"q"']]);
     expect(rows[1]).toMatchObject({ enabled: false, destination: "https://example.org/x2" });
   });
@@ -55,6 +69,7 @@ describe("audit", () => {
   it("toCsv neutralises formula injection", () => {
     const csv = toCsv([{ a: "=1+1", b: "+x", c: "-x", d: "@x", e: "ok" }]);
     expect(csv).toBe("a,b,c,d,e\r\n'=1+1,'+x,'-x,'@x,ok\r\n");
+    expect(toCsv([{ a: "\tx", b: "\rx" }])).toBe("a,b\r\n'\tx,\"'\rx\"\r\n");
   });
   it("toCsv of no rows is empty", () => expect(toCsv([])).toBe(""));
 });
@@ -63,7 +78,7 @@ describe("verify", () => {
   it("probeTargets lists every link with its host (null -> main host)", () => {
     const t = probeTargets(exp);
     expect(t).toHaveLength(6);
-    expect(t[0]).toEqual({ host: "hody.link", slug: "Spring", path: "/Spring" });
+    expect(t[0]).toEqual({ host: "main.example", slug: "Spring", path: "/Spring" });
   });
   it("compareProbe matches on status and location", () => {
     const a = { status: 302, location: "https://x.com/" };

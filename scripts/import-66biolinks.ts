@@ -23,21 +23,26 @@ console.log(`${dry ? "DRY RUN: " : ""}importing ${exp.links.length} links, ${exp
 
 type Report = { created: number; skipped: number; conflicts: { host: string; slug: string; reason: string }[]; caseSensitiveDomains: string[]; domainsCreated: string[]; ignored: { host: string; field: string }[] };
 const total: Report = { created: 0, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: [], ignored: [] };
-for (const links of chunkLinks(exp, CHUNK)) {
+let chunks;
+try { chunks = chunkLinks(exp, CHUNK); } catch (e) { die((e as Error).message); }
+const uniq = (a: string[]) => [...new Set(a)];
+const summary = () => {
+  console.log(`created ${total.created}, skipped ${total.skipped}, conflicts ${total.conflicts.length}`);
+  console.log(`domains created: ${uniq(total.domainsCreated).join(", ") || "none"}`);
+  console.log(`case-sensitive domains: ${uniq(total.caseSensitiveDomains).join(", ") || "none"}`);
+  for (const i of total.ignored) console.log(`ignored invalid ${i.field} on ${i.host}`);
+  for (const c of total.conflicts) console.log(`conflict ${c.reason}: ${c.host}/${c.slug}`);
+};
+for (const links of chunks!) {
   const res = await fetch(new URL(`/api/import${dry ? "?dryRun=1" : ""}`, api), {
     method: "POST", redirect: "manual",
     headers: { "content-type": "application/json", "cf-access-token": token! },
     body: JSON.stringify({ mainHost: exp.mainHost, domains: exp.domains, links }),
   });
-  if (!res.ok) { console.error(`import failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`); process.exit(1); }
+  if (!res.ok) { console.log("totals of completed chunks before the failure:"); summary(); console.error(`import failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`); process.exit(1); }
   const r = (await res.json()) as Report;
   total.created += r.created; total.skipped += r.skipped;
   total.conflicts.push(...r.conflicts); total.ignored.push(...r.ignored);
   total.caseSensitiveDomains.push(...r.caseSensitiveDomains); total.domainsCreated.push(...r.domainsCreated);
 }
-const uniq = (a: string[]) => [...new Set(a)];
-console.log(`created ${total.created}, skipped ${total.skipped}, conflicts ${total.conflicts.length}`);
-console.log(`domains created: ${uniq(total.domainsCreated).join(", ") || "none"}`);
-console.log(`case-sensitive domains: ${uniq(total.caseSensitiveDomains).join(", ") || "none"}`);
-for (const i of total.ignored) console.log(`ignored invalid ${i.field} on ${i.host}`);
-for (const c of total.conflicts) console.log(`conflict ${c.reason}: ${c.host}/${c.slug}`);
+summary();
