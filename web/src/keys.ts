@@ -58,3 +58,28 @@ export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>, enab
     return () => window.removeEventListener("keydown", onKey);
   }, [enabled]);
 }
+
+const CHORD_MS = 1500;
+
+/**
+ * Two-key "G then letter" chords outside text fields. Registered in the capture phase so a chord letter never reaches a screen hotkey.
+ * The arm time is a timestamp, not a timer: nothing to clean up and a stale "g" simply expires.
+ */
+export function useChord(onChord: (letter: string) => boolean, enabled = true): void {
+  const latest = useRef(onChord);
+  latest.current = onChord;
+  useEffect(() => {
+    if (!enabled) return;
+    let armedAt = 0;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
+      const key = e.key.toLowerCase();
+      const armed = armedAt !== 0 && Date.now() - armedAt <= CHORD_MS;
+      armedAt = 0;
+      if (armed && latest.current(key)) e.preventDefault();
+      else if (key === "g" && !e.shiftKey) armedAt = Date.now();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [enabled]);
+}

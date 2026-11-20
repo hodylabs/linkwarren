@@ -1,7 +1,11 @@
-import { useRoute, type Screen } from "./router";
+import { useChord, useHotkeys } from "./keys";
+import { navigate, useRoute, type Screen } from "./router";
 import { ComingSoon } from "./shell/ComingSoon";
 import { Gate } from "./shell/Gate";
+import { DomainSwitcher } from "./shell/DomainSwitcher";
+import { Palette } from "./shell/Palette";
 import { Rail, SCREEN_TITLES } from "./shell/Rail";
+import { Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
 
@@ -28,8 +32,19 @@ function ScreenView({ screen }: { screen: Screen }) {
 }
 
 function Shell() {
-  const { signedOut, loadError, retryLoad } = useApp();
+  const { signedOut, loadError, retryLoad, overlay, open, close, me } = useApp();
   const { screen } = useRoute();
+  // Ctrl+K toggles the palette; any other sheet keeps it out so unsaved form input is never lost (R10).
+  useHotkeys({
+    "mod+k": () => (overlay === null ? open({ kind: "palette" }) : overlay.kind === "palette" ? close() : undefined),
+    "?": () => (overlay === null ? open({ kind: "shortcuts" }) : undefined),
+  });
+  useChord((letter) => {
+    const to = { l: "links", d: "domains", a: "analytics", p: "people", i: "agents", s: "settings" }[letter];
+    if (!to || (OWNER_ONLY.has(to as Screen) && me.role !== "owner")) return false;
+    navigate(`/${to}`);
+    return true;
+  }, overlay === null);
   return (
     <div className="app">
       <Rail />
@@ -52,6 +67,9 @@ function Shell() {
         )}
         <ScreenView screen={screen} />
       </main>
+      {overlay?.kind === "palette" && <Palette />}
+      {overlay?.kind === "switcher" && <DomainSwitcher />}
+      {overlay?.kind === "shortcuts" && <Shortcuts />}
     </div>
   );
 }
