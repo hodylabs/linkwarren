@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
-import { canManageDomain, canUseDomain } from "../perm";
-import { rowToDomain, rowToLink, type LinkRow, type UserRow } from "../types";
+import { canManageDomain, canUseDomain, usableDomainsSql } from "../perm";
+import { rowToLink, type LinkRow, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
 import { destination, getDomain, isMember, purge } from "./shared";
 
@@ -47,30 +47,24 @@ links.get("/check", async (c) => {
 
 links.get("/", async (c) => {
   const user = c.var.user;
-  const members = new Set(
-    (await c.env.DB.prepare("SELECT domain_id FROM domain_members WHERE user_id = ?").bind(user.id).all<{ domain_id: string }>())
-      .results.map((r) => r.domain_id),
-  );
-  const domains = (await c.env.DB.prepare("SELECT * FROM domains").all()).results.map(rowToDomain);
-  let ids = domains.filter((d) => canUseDomain(user, d, members.has(d.id))).map((d) => d.id);
+  const where: string[] = [], binds: unknown[] = [];
   const want = c.req.query("domain");
   if (want) {
-    if (!domains.some((d) => d.id === want)) return c.json({ error: "not_found" }, 404);
-    if (!ids.includes(want)) return c.json(forbidden, 403);
-    ids = [want];
-  }
-  if (ids.length === 0) return c.json({ items: [], next: null });
-  // shortcut: one bind per usable domain; D1 caps binds at 100, switch to a join if a user can reach more domains.
-  // The owner can use every domain, so without a filter no domain clause is needed.
-  const where: string[] = [], binds: unknown[] = [];
-  if (want || user.role !== "owner") {
-    where.push(`domain_id IN (${ids.map(() => "?").join(",")})`);
-    binds.push(...ids);
+    const d = await getDomain(c.env, want);
+    if (!d) return c.json({ error: "not_found" }, 404);
+    if (!canUseDomain(user, d, await isMember(c.env, d.id, user.id))) return c.json(forbidden, 403);
+    where.push("domain_id = ?");
+    binds.push(want);
+  } else if (user.role !== "owner") {
+    // The owner can use every domain, so only members need the authorization subquery.
+    where.push(`domain_id IN (${usableDomainsSql})`);
+    binds.push(user.id);
   }
   const q = c.req.query("q");
-  if (q !== undefined && q.length > 200) return c.json({ error: "q_too_long" }, 400);
   if (q) {
     const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+    // D1 caps LIKE patterns at 50 bytes.
+    if (new TextEncoder().encode(like).length > 50) return c.json({ error: "q_too_long" }, 400);
     where.push("(slug LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')");
     binds.push(like, like);
   }
