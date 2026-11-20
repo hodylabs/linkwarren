@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ApiError, type Domain } from "../api";
 import { errorText } from "../copy";
+import { rebase } from "../draft";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
 import { Switch, Tag } from "../shell/ui";
@@ -57,7 +58,8 @@ export function DomainDetail({ domain, onModal }: { domain: Domain; onModal(open
       setFormError(null);
       if (Object.keys(bad).length > 0 || Object.keys(body).length === 0) return;
       try {
-        setDraft(draftOf(await api<Domain>("PATCH", `/api/domains/${encodeURIComponent(domain.id)}`, body))); // the server may normalize a URL
+        const saved = draftOf(await api<Domain>("PATCH", `/api/domains/${encodeURIComponent(domain.id)}`, body)); // the server may normalize a URL
+        setDraft((now) => rebase(saved, draft, now)); // edits typed while the save was pending stay
         app.announce("Saved");
         await refresh();
       } catch (e) {

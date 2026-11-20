@@ -189,6 +189,24 @@ describe("Link detail", () => {
     await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
   });
 
+  it("a URL typed while the save is pending is kept, not replaced by the saved revision", async () => {
+    let release!: () => void;
+    const { user } = boot({
+      path: "/links?sel=l1",
+      routes: { "PATCH /api/links/l1": ({ body }) => new Promise((r) => (release = () => r({ body: { ...L1, ...(body as object), updatedAt: 101 } }))) },
+    });
+    await ready();
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/b" } });
+    await user.click(urlInput());
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/c" } });
+    release();
+    await waitFor(() => expect(within(detail()).getByText("https://example.com/b")).toBeTruthy());
+    expect(urlInput().value).toBe("https://example.com/c");
+    expect(document.activeElement).toBe(urlInput());
+  });
+
   it("clearing a date sends that field as null", async () => {
     const bodies: unknown[] = [];
     const dated = { ...L1, expiresAt: 4102444800 };

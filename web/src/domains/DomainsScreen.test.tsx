@@ -122,6 +122,26 @@ describe("Domain settings (owner)", () => {
     expect(patches(api)[1]!.body).toEqual({ bareRedirect: null });
   });
 
+  it("an edit typed while the save is pending stays; the saved field takes the server value", async () => {
+    let cur = MAIN;
+    let release!: () => void;
+    const { user } = boot({
+      list: () => [cur, PEND],
+      routes: {
+        "PATCH /api/domains/d1": ({ body }) =>
+          new Promise((r) => (release = () => r({ body: (cur = { ...cur, bareRedirect: `${(body as { bareRedirect: string }).bareRedirect}norm` }) }))),
+      },
+      path: "/domains?sel=d1",
+    });
+    await screen.findByLabelText("The bare domain");
+    await user.type(screen.getByLabelText("The bare domain"), "https://x.com/{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await user.type(screen.getByLabelText("A missing or deleted link"), "https://y.com/");
+    release();
+    await waitFor(() => expect((screen.getByLabelText("The bare domain") as HTMLInputElement).value).toBe("https://x.com/norm"));
+    expect((screen.getByLabelText("A missing or deleted link") as HTMLInputElement).value).toBe("https://y.com/");
+  });
+
   it("an unchanged form sends nothing", async () => {
     const { api, user } = boot({ path: "/domains?sel=d1" });
     await screen.findByLabelText("The bare domain");

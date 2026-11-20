@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
 import { api, ApiError, type Domain, type Link } from "../api";
 import { errorText } from "../copy";
+import { rebase } from "../draft";
 import { Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
@@ -30,11 +31,15 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
     const [error, setError] = useState<{ code: string } | null>(null);
     const [busy, setBusy] = useState(false);
     const urlRef = useRef<HTMLInputElement>(null);
+    const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
     const host = domain?.host ?? "";
 
     // A new revision (after a save or a reload) replaces the form; typing never triggers this.
+    // After this form's own save, fields edited while it was pending keep what was typed.
     useEffect(() => {
-      setDraft(draftOf(link));
+      const s = sent.current;
+      sent.current = null;
+      setDraft((now) => (s?.id === link.id ? rebase(draftOf(link), s.draft, now) : draftOf(link)));
       setError(null);
     }, [link.id, link.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -54,7 +59,9 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
       setBusy(true);
       setError(null);
       try {
-        onSaved(await api<Link>("PATCH", `/api/links/${encodeURIComponent(link.id)}`, body));
+        const saved = await api<Link>("PATCH", `/api/links/${encodeURIComponent(link.id)}`, body);
+        sent.current = { id: link.id, draft };
+        onSaved(saved);
         app.announce("Saved");
       } catch (e) {
         setError({ code: e instanceof ApiError ? e.code : "internal" }); // typed values stay in the form
