@@ -24,6 +24,10 @@ describe("paletteKey", () => {
     expect(r).toMatchObject({ s: { buf: "", text: "go" }, consumed: true });
     expect(r.run).toBeUndefined();
   });
+  it("keeps the typed case when falling back to text", () => {
+    expect(press(press(empty, "G").s, "x").s).toEqual({ buf: "", text: "Gx" });
+    expect(press(press(empty, "G").s, "L").run?.keys).toBe("gl");
+  });
   it("a key that starts nothing is normal typing", () => {
     expect(press(empty, "x").consumed).toBe(false);
   });

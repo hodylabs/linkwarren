@@ -1,5 +1,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
+// Set when a sheet closes so a sheet opened in the same tick (palette -> switcher) returns focus to the original opener.
+let carried: Element | null = null;
+
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /**
@@ -14,7 +17,8 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
   const openerRef = useRef(document.activeElement);
 
   useEffect(() => {
-    const opener = openerRef.current instanceof HTMLElement ? openerRef.current : null;
+    const from = carried ?? openerRef.current;
+    const opener = from instanceof HTMLElement ? from : null;
     const p = panel.current!;
     const items = () => [...p.querySelectorAll<HTMLElement>(FOCUSABLE)];
     // A child that autofocused (the palette box) keeps focus.
@@ -46,6 +50,8 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
+      carried = opener;
+      setTimeout(() => (carried = null), 0);
       if (opener?.isConnected) opener.focus();
     };
   }, []);

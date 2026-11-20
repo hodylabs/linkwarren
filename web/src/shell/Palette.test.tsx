@@ -2,6 +2,8 @@ import { render, screen, waitFor, within, fireEvent, act } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import { AppProvider, useApp } from "../state";
+import { Palette } from "./Palette";
 import type { Domain, Me } from "../api";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 
@@ -191,6 +193,40 @@ describe("Ctrl+K palette", () => {
     expect(await screen.findByText(/Nothing matches "qzx"\. Press Enter to create a link with that slug\./)).toBeTruthy();
     await user.keyboard("{Enter}");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Enter on Nothing matches sets the overlay to newLink with the slug", async () => {
+    fakeApi({ "GET /api/domains": () => ({ body: domains }), "GET /api/users": () => ({ body: { items: [] } }), "GET /api/links": () => ({ body: { items: [], next: null } }) });
+    const Probe = () => <output data-testid="ov">{JSON.stringify(useApp().overlay)}</output>;
+    const user = userEvent.setup();
+    render(<AppProvider me={owner}><Probe /><Palette /></AppProvider>);
+    await user.type(box(), "qzx");
+    await screen.findByText(/Nothing matches/);
+    await user.keyboard("{Enter}");
+    expect(screen.getByTestId("ov").textContent).toBe('{"kind":"newLink","slug":"qzx"}');
+  });
+
+  it("a paste after a buffered g keeps the g", async () => {
+    const { user } = await boot(owner);
+    await user.keyboard("{Control>}k{/Control}g");
+    await user.paste("xyz");
+    expect((box() as HTMLInputElement).value).toBe("gxyz");
+    expect(screen.queryByText(/G …/)).toBeNull();
+  });
+
+  it("G then x keeps the typed case", async () => {
+    const { user } = await boot(owner);
+    await user.keyboard("{Control>}k{/Control}Gx");
+    expect((box() as HTMLInputElement).value).toBe("Gx");
+  });
+
+  it("focus returns to the original opener after palette to switcher or shortcuts", async () => {
+    const { user } = await boot(owner);
+    rail().focus();
+    await user.keyboard("{Control>}k{/Control}sd{Escape}");
+    expect(document.activeElement).toBe(rail());
+    await user.keyboard("{Control>}k{/Control}?{Escape}");
+    expect(document.activeElement).toBe(rail());
   });
 
   it("Nothing-matches for text that is not a slug has no create hint", async () => {

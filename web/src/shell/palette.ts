@@ -15,10 +15,12 @@ export function paletteKey(s: PaletteState, e: KeyInfo, cmds: Command[]): { s: P
   if (e.ctrl || e.meta || e.alt || e.composing || s.text) return pass;
   if (e.key === "Backspace") return s.buf ? { s: { buf: s.buf.slice(0, -1), text: "" }, consumed: true } : pass;
   if (e.key.length !== 1) return pass;
-  const next = s.buf + e.key.toLowerCase();
-  const exact = cmds.find((c) => c.keys === next);
+  // buf keeps the typed case (it becomes search text on a miss); matching is case-insensitive.
+  const next = s.buf + e.key;
+  const lower = next.toLowerCase();
+  const exact = cmds.find((c) => c.keys === lower);
   if (exact) return { s: { buf: "", text: "" }, run: exact, consumed: true };
-  if (cmds.some((c) => c.keys.startsWith(next))) return { s: { buf: next, text: "" }, consumed: true };
+  if (cmds.some((c) => c.keys.startsWith(lower))) return { s: { buf: next, text: "" }, consumed: true };
   if (s.buf) return { s: { buf: "", text: s.buf + e.key }, consumed: true };
   return pass;
 }

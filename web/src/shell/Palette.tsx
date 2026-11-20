@@ -69,7 +69,7 @@ export function Palette() {
   const cmdItem = (c: Command): Item => ({ id: `c-${c.keys}`, label: c.label, keys: c.keys, run: c.run });
   const linkItem = (l: Link): Item => ({
     id: `l-${l.id}`, label: l.slug, sub: hostOf(l.domainId), mono: true,
-    run: () => navigate(`/links?q=${encodeURIComponent(l.slug)}&sel=${l.id}`),
+    run: () => navigate(`/links?q=${encodeURIComponent(l.slug)}&sel=${encodeURIComponent(l.id)}`),
   });
   const cmdSections = (list: Command[]): Section[] =>
     (["Go to", "Create", "Switch", "Help"] as const)
@@ -82,12 +82,12 @@ export function Palette() {
     if (found?.q === text && found.items.length) sections.push({ title: "Links", items: found.items.map(linkItem) });
     const doms = domains.filter((d) => includes(d.host, text));
     if (doms.length)
-      sections.push({ title: "Domains", items: doms.map((d) => ({ id: `d-${d.id}`, label: d.host, mono: true, run: () => navigate(`/domains?sel=${d.id}`) })) });
+      sections.push({ title: "Domains", items: doms.map((d) => ({ id: `d-${d.id}`, label: d.host, mono: true, run: () => navigate(`/domains?sel=${encodeURIComponent(d.id)}`) })) });
     const people = isOwner ? (users ?? []).filter((u) => includes(u.name, text) || includes(u.email, text)) : [];
     if (people.length)
-      sections.push({ title: "People", items: people.map((u) => ({ id: `p-${u.id}`, label: u.name || u.email, sub: u.name ? u.email : undefined, run: () => navigate(`/people?sel=${u.id}`) })) });
+      sections.push({ title: "People", items: people.map((u) => ({ id: `p-${u.id}`, label: u.name || u.email, sub: u.name ? u.email : undefined, run: () => navigate(`/people?sel=${encodeURIComponent(u.id)}`) })) });
   } else if (buf) {
-    sections.push(...cmdSections(cmds.filter((c) => c.keys.startsWith(buf))));
+    sections.push(...cmdSections(cmds.filter((c) => c.keys.startsWith(buf.toLowerCase()))));
   } else {
     sections.push(...cmdSections(cmds.filter((c) => c.section !== "Help")));
     if (recent.length) sections.push({ title: "Recent links", items: recent.map(linkItem) });
@@ -145,7 +145,7 @@ export function Palette() {
           autoComplete="off"
           value={text}
           onChange={(e) => {
-            setText(e.target.value);
+            setText(buf + e.target.value); // a paste or IME commit after buffered letters keeps them
             setBuf("");
             setSel(0);
           }}
