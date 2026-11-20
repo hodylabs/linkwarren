@@ -27,7 +27,8 @@ function probe(b: URL, host: string, path: string, sni: boolean): Promise<Probe>
     const req = mod.request({
       hostname: b.hostname, port: b.port || undefined, path, method: "GET", timeout: 10_000,
       headers: { host, "user-agent": "linkwarren-verify" },
-      ...(b.protocol === "https:" && sni ? { servername: host } : {}),
+      // Explicit SNI on every HTTPS probe: the original host for the old origin, the connect host otherwise (never derived from the Host header).
+      ...(b.protocol === "https:" ? { servername: sni ? host : b.hostname } : {}),
     }, (res) => {
       res.resume(); // redirects are never followed
       resolve({ status: res.statusCode ?? null, location: (res.headers.location as string | undefined) ?? null });
