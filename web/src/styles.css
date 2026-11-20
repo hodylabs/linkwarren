@@ -143,6 +143,7 @@ td:first-child,th:first-child{padding-left:20px}
 .sh-head .x{margin-left:auto;color:var(--faint);font-size:12px}
 .sh-body{padding:16px 18px;display:grid;gap:14px}
 .f label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:5px}
+.f .lbl{margin:0 0 5px;font-size:12.5px;font-weight:400;color:var(--muted)}
 .f label kbd{font-size:10.5px}
 .ctl{border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;background:var(--panel)}
 .ctl:focus-within{border-color:var(--signal);box-shadow:0 0 0 3px var(--signal-wash)}
@@ -215,3 +216,11 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .sh-foot .btn.primary .k2{color:#7D8591}
 .hint{color:var(--faint);margin:0 0 8px;font-size:12px}
 .muted{color:var(--muted)}
+
+/* people */
+.body.people{grid-template-columns:minmax(0,1fr) 420px}
+.d-head .title{font-weight:600}
+.d-head .row{flex-wrap:wrap}
+.log div b{font-weight:600}
+.avatar.plain{background:var(--line-soft);color:var(--muted)}
+.chip.only{display:inline-flex;align-items:center;gap:6px;background:var(--signal-wash);border-color:var(--signal);color:var(--graphite)}
