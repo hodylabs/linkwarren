@@ -58,3 +58,33 @@ describe("canManageDomain", () => {
     }
   });
 });
+
+describe("usableDomainsSql mirrors canUseDomain", () => {
+  it("returns exactly the domains canUseDomain allows, for every user status and role", async () => {
+    const { env } = await import("cloudflare:workers");
+    const { usableDomainsSql } = await import("../src/perm");
+    const { rowToDomain, rowToUser } = await import("../src/types");
+    const db = env.DB;
+    await db.batch(["links", "slug_locks", "audit_log", "domain_members", "domains", "users"].map((t) => db.prepare(`DELETE FROM ${t}`)));
+    const users: [string, string, string][] = [];
+    for (const role of ["owner", "member"]) for (const status of ["active", "invited", "disabled"]) users.push([`${role}-${status}`, role, status]);
+    await db.batch(users.map(([id, role, status]) => db.prepare("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,?,?,0)").bind(id, `${id}@x.dev`, role, status)));
+    const stmts: D1PreparedStatement[] = [];
+    let n = 0;
+    for (const type of ["main", "shared", "private"]) for (const status of ["active", "pending", "disabled"])
+      for (const owner of ["member-active", "owner-active"]) for (const member of [false, true]) {
+        const id = `d${n++}`;
+        stmts.push(db.prepare("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,?,?,?,0)").bind(id, `${id}.test`, type, status, owner));
+        if (member) for (const [u] of users) stmts.push(db.prepare("INSERT INTO domain_members (domain_id,user_id) VALUES (?,?)").bind(id, u));
+      }
+    await db.batch(stmts);
+    const domains = (await db.prepare("SELECT * FROM domains").all()).results.map(rowToDomain);
+    for (const [uid] of users) {
+      const u = rowToUser((await db.prepare("SELECT * FROM users WHERE id = ?").bind(uid).first())!);
+      const mem = new Set((await db.prepare("SELECT domain_id FROM domain_members WHERE user_id = ?").bind(uid).all<{ domain_id: string }>()).results.map((r) => r.domain_id));
+      const expected = domains.filter((d) => canUseDomain(u, d, mem.has(d.id))).map((d) => d.id).sort();
+      const got = (await db.prepare(`SELECT id FROM domains WHERE id IN (${usableDomainsSql})`).bind(uid).all<{ id: string }>()).results.map((r) => r.id).sort();
+      expect([uid, got]).toEqual([uid, expected]);
+    }
+  });
+});

@@ -275,6 +275,38 @@ describe("list", () => {
     expect(((await (await call("owner", "GET", "/api/links")).json()) as { items: unknown[] }).items).toHaveLength(2);
   });
 
+  it("a member who can use 120 domains lists links across all of them (no bind cap)", async () => {
+    const stmts: D1PreparedStatement[] = [];
+    for (let i = 0; i < 120; i++) {
+      stmts.push(env.DB.prepare("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,'shared','active','uo',1)").bind(`x${i}`, `x${i}.test`));
+      stmts.push(env.DB.prepare("INSERT INTO domain_members (domain_id,user_id) VALUES (?, 'ua')").bind(`x${i}`));
+      stmts.push(env.DB.prepare("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?,?,'s','s','https://x.com/','uo','uo',?,1)").bind(`lx${i}`, `x${i}`, 2000 + i));
+    }
+    await env.DB.batch(stmts);
+    const seen = new Set<string>();
+    let next: string | null = "";
+    while (next !== null) {
+      const r: Response = await call("a", "GET", `/api/links${next ? `?cursor=${next}` : ""}`);
+      expect(r.status).toBe(200);
+      const j = (await r.json()) as { items: { id: string }[]; next: string | null };
+      j.items.forEach((i) => seen.add(i.id));
+      next = j.next;
+    }
+    expect(seen.size).toBe(120);
+    expect((await call("b", "GET", "/api/links")).status).toBe(200);
+  });
+
+  it("q is capped by D1's 50-byte LIKE pattern (with the % wrappers, after escaping, in UTF-8)", async () => {
+    const st = async (q: string) => (await call("a", "GET", `/api/links?q=${encodeURIComponent(q)}`)).status;
+    expect(await st("a".repeat(48))).toBe(200);
+    const r = await call("a", "GET", `/api/links?q=${"a".repeat(49)}`);
+    expect([r.status, await r.json()]).toEqual([400, { error: "q_too_long" }]);
+    expect(await st("\u00e9".repeat(24))).toBe(200); // 48 bytes
+    expect(await st("\u00e9".repeat(25))).toBe(400); // 25 chars, 50 bytes before wrappers
+    expect(await st("%".repeat(24))).toBe(200); // escapes to 48 bytes
+    expect(await st("%".repeat(25))).toBe(400);
+  });
+
   it("q matches slug or url and treats % _ and backslash literally", async () => {
     await mk("a", "alpha", { url: "https://x.com/promo" });
     await mk("a", "be_ta", { url: "https://x.com/b" });
