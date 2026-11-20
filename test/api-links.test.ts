@@ -265,7 +265,44 @@ describe("check", () => {
     expect(await st("locked1")).toEqual({ status: "locked" });
     expect(await st("api")).toEqual({ status: "reserved" });
     expect(await st("a b")).toEqual({ status: "invalid", reason: "charset" });
+    expect(await st("x".repeat(65))).toEqual({ status: "invalid", reason: "slug_too_long" });
     expect((await call("a", "GET", "/api/links/check?domain=ds&slug=x")).status).toBe(403);
+  });
+});
+
+describe("me", () => {
+  it("returns id, email, name and role", async () => {
+    await run("UPDATE users SET name = 'Ann' WHERE id = 'ua'");
+    expect(await (await call("a", "GET", "/api/me")).json()).toEqual({ id: "ua", email: EMAIL.a, name: "Ann", role: "member" });
+  });
+});
+
+describe("list filters", () => {
+  const ins = (id: string, by: string, at: number, s: number | null, x: number | null) =>
+    run("INSERT INTO links (id,domain_id,slug,slug_key,url,starts_at,expires_at,created_by,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
+      id, "dm", id, id, "https://x.com", s, x, by, by, at);
+  const ids = async (who: string, q: string) =>
+    ((await (await call(who, "GET", `/api/links?${q}`)).json()) as { items: { id: string }[] }).items.map((i) => i.id).sort();
+  it("status filters by window; bogus is 400", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await ins("A", "ua", 10, null, null); await ins("B", "ua", 11, now + 3600, null);
+    await ins("C", "ua", 12, null, now - 1); await ins("D", "ua", 13, null, now + 3600);
+    expect(await ids("a", "status=active")).toEqual(["A", "D"]);
+    expect(await ids("a", "status=scheduled")).toEqual(["B"]);
+    expect(await ids("a", "status=expired")).toEqual(["C"]);
+    const r = await call("a", "GET", "/api/links?status=bogus");
+    expect([r.status, await r.json()]).toEqual([400, { error: "bad_status" }]);
+  });
+  it("mine=1 returns own links only and pages with the cursor", async () => {
+    await ins("b1", "ub", 5, null, null);
+    for (let i = 0; i < 51; i++) await ins(`m${String(i).padStart(2, "0")}`, "ua", 100 + i, null, null);
+    expect(await ids("a", "mine=1&status=active")).toHaveLength(50);
+    const p1 = (await (await call("a", "GET", "/api/links?mine=1")).json()) as { items: { id: string; createdBy: string }[]; next: string };
+    expect(p1.items).toHaveLength(50);
+    expect(p1.items.every((i) => i.createdBy === "ua")).toBe(true);
+    const p2 = (await (await call("a", "GET", `/api/links?mine=1&cursor=${p1.next}`)).json()) as { items: { id: string }[]; next: string | null };
+    expect(p2.items.map((i) => i.id)).toEqual(["m00"]);
+    expect(p2.next).toBeNull();
   });
 });
 

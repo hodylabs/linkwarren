@@ -29,7 +29,7 @@ describe("requireUser", () => {
     await seed("A@Example.com", "active", "member");
     const res = await asUser({ email: "a@example.com" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ email: "A@Example.com", role: "member" });
+    expect(await res.json()).toMatchObject({ email: "A@Example.com", role: "member", name: null, id: expect.any(String) });
   });
 
   it("activates an invited user on first sign-in and audits it", async () => {
@@ -106,6 +106,14 @@ describe("requireUser", () => {
     expect(await count()).toBe(1);
   });
 
+  it.each(["", "   "])("a token signed with the same blank aud %j is still 401", async (aud) => {
+    await seed("a@example.com", "active");
+    const t = await token({ aud });
+    e.ACCESS_AUD = aud;
+    expect((await me({ "Cf-Access-Jwt-Assertion": t })).status).toBe(401);
+    expect(await count()).toBe(1);
+  });
+
   it("fails closed when ACCESS_TEAM_DOMAIN is unset, even for a token whose iss would match", async () => {
     await seed("a@example.com", "active");
     const t = await token({ iss: "https://undefined" });
@@ -139,7 +147,7 @@ describe("requireUser", () => {
   it("bootstraps exactly one owner on first run, then 403s anyone else", async () => {
     const res = await asUser({ email: "Owner@Example.com" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ email: "Owner@Example.com", role: "owner" });
+    expect(await res.json()).toMatchObject({ email: "Owner@Example.com", role: "owner", name: null });
     expect(await count()).toBe(1);
     expect(await audits("user.bootstrap")).toBe(1);
     const second = await asUser({ email: "b@example.com" });

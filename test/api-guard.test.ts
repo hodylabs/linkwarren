@@ -66,6 +66,19 @@ describe("csrf and json-only bodies", () => {
       const r = await dash("/api/domains/dp/approve", { method: "POST", headers: { ...(await authed()), "content-length": "0" } });
       expect(r.status).toBe(200);
     });
+    it("a streamed text/plain body with no content-length is 415", async () => {
+      const body = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(good)); c.close(); } });
+      const r = await dash("/api/domains", {
+        method: "POST", headers: { ...(await authed()), "content-type": "text/plain", "transfer-encoding": "chunked" },
+        body, duplex: "half",
+      } as RequestInit);
+      expect(r.status).toBe(415);
+      expect(await count("domains")).toBe(0);
+    });
+    it("a bodyless DELETE with no content-length reaches the route", async () => {
+      const r = await dash("/api/links/nope", { method: "DELETE", headers: await authed() });
+      expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
+    });
     it("a foreign Origin bodyless DELETE is still 403", async () => {
       await seed();
       const r = await dash("/api/links/l1", { method: "DELETE", headers: { ...(await authed()), "content-length": "0", origin: "https://evil.example" } });

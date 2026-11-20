@@ -207,6 +207,14 @@ describe("rules", () => {
     expect(await all("SELECT host, case_sensitive FROM domains ORDER BY host")).toEqual([{ host: "x.test", case_sensitive: 1 }, { host: "y.test", case_sensitive: 0 }]);
   });
 
+  it("a link blocked by a lock that landed after planning is reported as locked", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dx','x.test','private','active','uo',1)");
+    const restore = beforeBatch(2, () => run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dx','abc',1,'uo')"));
+    let r;
+    try { r = await rep(await owner(body([{ host: "x.test", slug: "abc", destination: "https://e.org/" }]))); } finally { restore(); }
+    expect(r).toMatchObject({ created: 0, conflicts: [{ host: "x.test", slug: "abc", reason: "locked" }] });
+  });
+
   it("a domain whose case mode changed after planning gets no links; they are reported as mode_changed", async () => {
     await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dx','x.test','private','active','uo',1)");
     // Batch 1 is the planning read; batch 2 is the first write.

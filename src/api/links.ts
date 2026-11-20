@@ -38,7 +38,7 @@ links.get("/check", async (c) => {
   if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))) return c.json(forbidden, 403);
   const slug = c.req.query("slug") ?? "";
   const s = checkSlug(slug, domain.reservedExtra);
-  if (!s.ok) return c.json(s.reason === "reserved" ? { status: "reserved" } : { status: "invalid", reason: s.reason });
+  if (!s.ok) return c.json(s.reason === "reserved" ? { status: "reserved" } : { status: "invalid", reason: s.reason === "too_long" ? "slug_too_long" : s.reason });
   const key = slugKey(slug, domain.caseSensitive);
   if (await hasLock(c.env, domain.id, key)) return c.json({ status: "locked" });
   const taken = await c.env.DB.prepare("SELECT 1 FROM links WHERE domain_id = ? AND slug_key = ?").bind(domain.id, key).first();
@@ -68,6 +68,19 @@ links.get("/", async (c) => {
     where.push("(slug LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')");
     binds.push(like, like);
   }
+  const status = c.req.query("status");
+  if (status !== undefined) {
+    const now = Math.floor(Date.now() / 1000);
+    const w = {
+      active: ["(starts_at IS NULL OR starts_at <= ?) AND (expires_at IS NULL OR expires_at > ?)", [now, now]],
+      scheduled: ["starts_at > ?", [now]],
+      expired: ["expires_at <= ?", [now]],
+    }[status];
+    if (!w) return c.json({ error: "bad_status" }, 400);
+    where.push(`(${w[0]})`);
+    binds.push(...w[1]);
+  }
+  if (c.req.query("mine") === "1") { where.push("created_by = ?"); binds.push(user.id); }
   const cursor = c.req.query("cursor");
   if (cursor !== undefined) {
     const dot = cursor.indexOf(".");

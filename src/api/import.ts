@@ -208,14 +208,21 @@ importApi.post("/", async (c) => {
   // Explain the writes a guard refused: a changed case mode, or a slug that went live before its lock.
   // Other lost races (a concurrent identical link or lock) stay uncounted, as before.
   if (lostLinks.length || lostLocks.length) {
-    const [modes, live] = await db.batch<{ id?: string; case_sensitive?: number; i?: number }>([
+    const [modes, live, locked] = await db.batch<{ id?: string; case_sensitive?: number; i?: number }>([
       db.prepare("SELECT id, case_sensitive FROM domains WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(lostLinks.map((p) => p.dom.id))),
       db.prepare(`SELECT j.key AS i FROM json_each(?) j WHERE EXISTS (SELECT 1 FROM links
         WHERE domain_id = json_extract(j.value, '$[0]') AND lower(slug_key) = lower(json_extract(j.value, '$[1]')))`)
         .bind(JSON.stringify(lostLocks.map((p) => [p.dom.id, p.key]))),
+      db.prepare(`SELECT j.key AS i FROM json_each(?) j WHERE EXISTS (SELECT 1 FROM slug_locks
+        WHERE domain_id = json_extract(j.value, '$[0]') AND lower(slug_key) = lower(json_extract(j.value, '$[1]')))`)
+        .bind(JSON.stringify(lostLinks.map((p) => [p.dom.id, p.key]))),
     ]);
     const mode = new Map(modes!.results.map((r) => [r.id!, !!r.case_sensitive]));
-    for (const p of lostLinks) if (mode.get(p.dom.id) !== p.dom.cs) report.conflicts.push({ host: p.dom.host, slug: p.slug, reason: "mode_changed" });
+    const lockedAt = new Set(locked!.results.map((r) => r.i!));
+    lostLinks.forEach((p, i) => {
+      const reason = mode.get(p.dom.id) !== p.dom.cs ? "mode_changed" : lockedAt.has(i) ? "locked" : null;
+      if (reason) report.conflicts.push({ host: p.dom.host, slug: p.slug, reason });
+    });
     for (const r of live!.results) { const p = lostLocks[r.i!]!; report.conflicts.push({ host: p.dom.host, slug: p.slug, reason: "exists" }); }
   }
 

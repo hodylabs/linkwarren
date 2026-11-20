@@ -32,8 +32,8 @@ app.use("/api/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
 });
 
-// CSRF: only the dashboard origin may send unsafe requests, and bodies must be JSON (a cross-site
-// text/plain form could otherwise reach c.req.json()). A missing Origin is allowed for non-browser clients.
+// CSRF: the Origin check plus the Access JWT are the defence; the JSON-only 415 guard is best-effort.
+// A missing Origin is allowed for non-browser clients.
 const dashboardOrigin = (host: string) => `https://${normalizeHost(host)}`;
 app.use("/api/*", (c, next) => csrf({ origin: dashboardOrigin(c.env.DASHBOARD_HOST) })(c, next));
 app.use("/api/*", async (c, next) => {
@@ -47,7 +47,7 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 app.use("/api/*", requireUser);
-app.get("/api/me", (c) => c.json({ email: c.var.user.email, role: c.var.user.role }));
+app.get("/api/me", (c) => c.json({ id: c.var.user.id, email: c.var.user.email, name: c.var.user.name, role: c.var.user.role }));
 
 app.route("/api/domains", domains);
 app.route("/api/links", links);
