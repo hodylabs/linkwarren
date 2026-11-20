@@ -134,6 +134,20 @@ describe("delete, locks and takeover", () => {
     expect([await audits("link.delete"), await audits("lock.release")]).toEqual([1, 1]);
   });
 
+  it("a second delete of the same link is 404 and writes one audit row", async () => {
+    const l = await mk("a", "twice");
+    expect((await call("a", "DELETE", `/api/links/${l.id}`)).status).toBe(204);
+    expect((await call("a", "DELETE", `/api/links/${l.id}`)).status).toBe(404);
+    expect(await audits("link.delete")).toBe(1);
+  });
+
+  it("lock release normalizes case on a case-insensitive domain", async () => {
+    const l = await mk("a", "gone2");
+    await call("a", "DELETE", `/api/links/${l.id}`);
+    expect((await call("owner", "DELETE", "/api/locks/dm/GONE2")).status).toBe(204);
+    expect(await one("SELECT 1 FROM slug_locks")).toBeNull();
+  });
+
   it("a member cannot edit or delete another member's link; the owner can", async () => {
     const l = await mk("a", "mine");
     expect((await call("b", "PATCH", `/api/links/${l.id}`, { url: "https://evil.com" })).status).toBe(403);
@@ -167,6 +181,12 @@ describe("patch", () => {
     expect((await exports.default.fetch("https://go.test/fresh", { redirect: "manual" })).status).toBe(404);
     await mk("a", "fresh");
     expect((await exports.default.fetch("https://go.test/fresh", { redirect: "manual" })).status).toBe(302);
+  });
+
+  it("hostile destinations are rejected on PATCH too (loop, userinfo)", async () => {
+    const l = await mk("a", "hp");
+    for (const url of ["https://go.test/x", "https://shared.test/x", "https://u:p@x.com/"])
+      expect((await call("a", "PATCH", `/api/links/${l.id}`, { url })).status).toBe(400);
   });
 
   it("domainId and slug are immutable (400); hostile url 400; window re-checked against stored values", async () => {
@@ -214,11 +234,31 @@ describe("list", () => {
     await env.DB.batch(stmts);
     const p1 = (await (await call("a", "GET", "/api/links")).json()) as { items: { id: string }[]; next: string };
     expect(p1.items).toHaveLength(50);
-    expect(p1.next).toBe(p1.items[49]!.id);
+    expect(p1.next).toMatch(/^\d+\.id\d+$/);
     const p2 = (await (await call("a", "GET", `/api/links?cursor=${p1.next}`)).json()) as { items: { id: string }[]; next: string | null };
     expect(p2.items).toHaveLength(5);
     expect(p2.next).toBeNull();
     expect(new Set([...p1.items, ...p2.items].map((i) => i.id)).size).toBe(55);
+  });
+
+  it("cursor survives deletion of the row it points at", async () => {
+    await env.DB.batch(Array.from({ length: 55 }, (_, i) =>
+      env.DB.prepare("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
+        .bind(`id${String(i).padStart(3, "0")}`, "dm", `s${i}`, `s${i}`, "https://x.com", "ua", "ua", 1000 + Math.floor(i / 2), 1)));
+    const p1 = (await (await call("a", "GET", "/api/links")).json()) as { items: { id: string }[]; next: string };
+    expect((await call("owner", "DELETE", `/api/links/${p1.items[49]!.id}`)).status).toBe(204);
+    const p2 = (await (await call("a", "GET", `/api/links?cursor=${p1.next}`)).json()) as { items: unknown[]; next: string | null };
+    expect(p2.items).toHaveLength(5);
+  });
+
+  it("bad cursor and over-long q are 400; owner lists everything without a domain filter", async () => {
+    for (const cur of ["x", "abc.def", ".id", "5."])
+      expect(((await call("a", "GET", `/api/links?cursor=${cur}`)).status)).toBe(400);
+    const r = await call("a", "GET", `/api/links?q=${"a".repeat(201)}`);
+    expect([r.status, await r.json()]).toEqual([400, { error: "q_too_long" }]);
+    await mk("a", "own1", {}, "dp");
+    await mk("owner", "own2");
+    expect(((await (await call("owner", "GET", "/api/links")).json()) as { items: unknown[] }).items).toHaveLength(2);
   });
 
   it("q matches slug or url and treats % _ and backslash literally", async () => {

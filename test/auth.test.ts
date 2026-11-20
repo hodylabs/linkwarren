@@ -1,40 +1,21 @@
 import { env, exports } from "cloudflare:workers";
-import { exportJWK, generateKeyPair, SignJWT, type JWK, type CryptoKey } from "jose";
+import { SignJWT } from "jose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AUD, ISS, other, setupAccess, token, type Opts } from "./helpers/access";
 
-const ISS = "https://team.example.cloudflareaccess.com";
-const AUD = "test-aud";
-let priv: CryptoKey;
-let other: CryptoKey;
 const e = env as { ACCESS_JWKS_JSON?: string; ACCESS_AUD?: string; ACCESS_TEAM_DOMAIN?: string };
 const orig = { jwks: e.ACCESS_JWKS_JSON, aud: e.ACCESS_AUD, team: e.ACCESS_TEAM_DOMAIN };
 afterAll(() => {
   e.ACCESS_JWKS_JSON = orig.jwks; e.ACCESS_AUD = orig.aud; e.ACCESS_TEAM_DOMAIN = orig.team;
 });
 
-beforeAll(async () => {
-  const kp = await generateKeyPair("RS256", { extractable: true });
-  const bad = await generateKeyPair("RS256");
-  priv = kp.privateKey;
-  other = bad.privateKey;
-  const pub = { ...(await exportJWK(kp.publicKey)), kid: "k1", alg: "RS256", use: "sig" } as JWK;
-  (env as { ACCESS_JWKS_JSON?: string }).ACCESS_JWKS_JSON = JSON.stringify({ keys: [pub] });
-});
+beforeAll(setupAccess);
 
 beforeEach(async () => {
   e.ACCESS_AUD = orig.aud; e.ACCESS_TEAM_DOMAIN = orig.team;
   await env.DB.batch([env.DB.prepare("DELETE FROM users"), env.DB.prepare("DELETE FROM audit_log")]);
 });
 
-type Opts = { noExp?: boolean; email?: string | null; iss?: string; aud?: string; exp?: string | number; key?: CryptoKey };
-async function token(o: Opts = {}) {
-  const claims = o.email === null ? {} : { email: o.email ?? "a@example.com" };
-  const jwt = new SignJWT(claims)
-    .setProtectedHeader({ alg: "RS256", kid: "k1" })
-    .setIssuer(o.iss ?? ISS).setAudience(o.aud ?? AUD).setIssuedAt();
-  if (!o.noExp) jwt.setExpirationTime(o.exp ?? "5m");
-  return jwt.sign(o.key ?? priv);
-}
 const me = (headers: Record<string, string> = {}) => exports.default.fetch("https://dash.test/api/me", { headers });
 const asUser = async (o?: Opts) => me({ "Cf-Access-Jwt-Assertion": await token(o) });
 const count = async () => (await env.DB.prepare("SELECT COUNT(*) n FROM users").first<{ n: number }>())!.n;

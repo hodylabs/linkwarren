@@ -80,24 +80,32 @@ links.get("/", async (c) => {
   }
   if (ids.length === 0) return c.json({ items: [], next: null });
   // shortcut: one bind per usable domain; D1 caps binds at 100, switch to a join if a user can reach more domains.
-  const where = [`domain_id IN (${ids.map(() => "?").join(",")})`];
-  const binds: unknown[] = [...ids];
+  // The owner can use every domain, so without a filter no domain clause is needed.
+  const where: string[] = [], binds: unknown[] = [];
+  if (want || user.role !== "owner") {
+    where.push(`domain_id IN (${ids.map(() => "?").join(",")})`);
+    binds.push(...ids);
+  }
   const q = c.req.query("q");
+  if (q !== undefined && q.length > 200) return c.json({ error: "q_too_long" }, 400);
   if (q) {
     const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
     where.push("(slug LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')");
     binds.push(like, like);
   }
   const cursor = c.req.query("cursor");
-  if (cursor) {
-    where.push("(created_at, id) < (SELECT created_at, id FROM links WHERE id = ?)");
-    binds.push(cursor);
+  if (cursor !== undefined) {
+    const dot = cursor.indexOf(".");
+    const at = Number(cursor.slice(0, dot)), id = cursor.slice(dot + 1);
+    if (dot < 1 || !Number.isInteger(at) || !id) return c.json({ error: "bad_cursor" }, 400);
+    where.push("(created_at < ? OR (created_at = ? AND id < ?))");
+    binds.push(at, at, id);
   }
   const rows = (await c.env.DB.prepare(
-    `SELECT * FROM links WHERE ${where.join(" AND ")} ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`,
+    `SELECT * FROM links ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`,
   ).bind(...binds).all()).results.map(rowToLink);
   const items = rows.slice(0, PAGE);
-  return c.json({ items, next: rows.length > PAGE ? items[items.length - 1]!.id : null });
+  return c.json({ items, next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
 });
 
 links.post("/", async (c) => {
@@ -178,13 +186,15 @@ links.patch("/:id", async (c) => {
     updatedBy: user.id, updatedAt: Math.floor(Date.now() / 1000),
   };
   if (badWindow(next.startsAt, next.expiresAt)) return c.json({ error: "bad_window" }, 400);
-  await c.env.DB.batch([
+  const res = await c.env.DB.batch([
     c.env.DB.prepare(
       "UPDATE links SET url=?, redirect_code=?, starts_at=?, expires_at=?, pass_query=?, updated_by=?, updated_at=? WHERE id=?",
     ).bind(next.url, next.redirectCode, next.startsAt, next.expiresAt, next.passQuery ? 1 : 0, user.id, next.updatedAt, link.id),
     auditStmt(c.env, { actorId: user.id, action: "link.update", targetType: "link", targetId: link.id,
-      detail: { host: domain.host, slug: link.slug, url: next.url } }),
+      detail: { host: domain.host, slug: link.slug, url: next.url } },
+    { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] }),
   ]);
+  if (res[0]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
   await purge(c.env, link.domainId, link.slugKey);
   return c.json(next);
 });
@@ -194,13 +204,17 @@ links.delete("/:id", async (c) => {
   const found = await editable(c, c.req.param("id"));
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain } = found;
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM links WHERE id = ?").bind(link.id),
-    c.env.DB.prepare("INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) VALUES (?,?,?,?)")
-      .bind(link.domainId, link.slugKey, Math.floor(Date.now() / 1000), user.id),
+  // Lock and audit run before the DELETE and only while the link still exists, so a racing second delete writes neither.
+  const here = { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] };
+  const res = await c.env.DB.batch([
+    c.env.DB.prepare(
+      "INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM links WHERE id = ?)",
+    ).bind(link.domainId, link.slugKey, Math.floor(Date.now() / 1000), user.id, link.id),
     auditStmt(c.env, { actorId: user.id, action: "link.delete", targetType: "link", targetId: link.id,
-      detail: { host: domain.host, slug: link.slug, url: link.url } }),
+      detail: { host: domain.host, slug: link.slug, url: link.url } }, here),
+    c.env.DB.prepare("DELETE FROM links WHERE id = ?").bind(link.id),
   ]);
+  if (res[2]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
   await purge(c.env, link.domainId, link.slugKey);
   return c.body(null, 204);
 });
@@ -210,7 +224,10 @@ export const locks = new Hono<E>();
 locks.delete("/:domainId/:slugKey", async (c) => {
   const user = c.var.user;
   if (user.role !== "owner") return c.json(forbidden, 403);
-  const { domainId, slugKey: key } = c.req.param();
+  const { domainId, slugKey: raw } = c.req.param();
+  const domain = await getDomain(c.env, domainId);
+  if (!domain) return c.json({ error: "not_found" }, 404);
+  const key = slugKey(raw, domain.caseSensitive);
   if (!(await hasLock(c.env, domainId, key))) return c.json({ error: "not_found" }, 404);
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM slug_locks WHERE domain_id = ? AND slug_key = ?").bind(domainId, key),
