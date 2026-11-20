@@ -154,36 +154,40 @@ importApi.post("/", async (c) => {
 
   const now = Math.floor(Date.now() / 1000);
   const db = c.env.DB;
-  const counted = new Set<number>(); // indexes of link/lock inserts, whose meta.changes is the real created count
-  const stmts: D1PreparedStatement[] = [
-    auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "66biolinks",
-      detail: { created: planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } }),
-  ];
+  // Work statements carry their kind and host so each D1 batch can audit exactly what it touches.
+  type Work = { stmt: D1PreparedStatement; kind: "domain" | "fill" | "link" | "lock"; host: string; counted: boolean };
+  const work: Work[] = [];
   for (const d of newDoms) {
-    stmts.push(db.prepare(
+    work.push({ kind: "domain", host: d.host, counted: false, stmt: db.prepare(
       "INSERT INTO domains (id,host,type,status,owner_id,bare_redirect,notfound_redirect,case_sensitive,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-    ).bind(d.id, d.host, "private", "active", user.id, d.bare, d.nf, d.cs ? 1 : 0, now));
+    ).bind(d.id, d.host, "private", "active", user.id, d.bare, d.nf, d.cs ? 1 : 0, now) });
   }
   for (const d of doms.values()) {
     // Fill only while still null, so a concurrent edit is never clobbered.
-    if (d.fillBare) stmts.push(db.prepare("UPDATE domains SET bare_redirect = ? WHERE id = ? AND bare_redirect IS NULL").bind(d.bare, d.id));
-    if (d.fillNf) stmts.push(db.prepare("UPDATE domains SET notfound_redirect = ? WHERE id = ? AND notfound_redirect IS NULL").bind(d.nf, d.id));
+    if (d.fillBare) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare("UPDATE domains SET bare_redirect = ? WHERE id = ? AND bare_redirect IS NULL").bind(d.bare, d.id) });
+    if (d.fillNf) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare("UPDATE domains SET notfound_redirect = ? WHERE id = ? AND notfound_redirect IS NULL").bind(d.nf, d.id) });
   }
   for (const p of plans.link) {
-    counted.add(stmts.length);
-    stmts.push(db.prepare(
+    work.push({ kind: "link", host: p.dom.host, counted: true, stmt: db.prepare(
       `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
        SELECT ?,?,?,?,?,302,?,?,1,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
-    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, p.startsAt, p.expiresAt, user.id, user.id, now, now, p.dom.id, p.key));
+    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, p.startsAt, p.expiresAt, user.id, user.id, now, now, p.dom.id, p.key) });
   }
   for (const p of plans.lock) {
-    counted.add(stmts.length);
-    stmts.push(db.prepare("INSERT OR IGNORE INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES (?,?,?,?)").bind(p.dom.id, p.key, now, user.id));
+    work.push({ kind: "lock", host: p.dom.host, counted: true, stmt: db.prepare("INSERT OR IGNORE INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES (?,?,?,?)").bind(p.dom.id, p.key, now, user.id) });
   }
+  const runAudit = auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "66biolinks",
+    detail: { planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } });
   let inserted = 0; // INSERT OR IGNORE can lose a race; report what was really written
-  for (let i = 0; i < stmts.length; i += CHUNK) {
-    const res = await db.batch(stmts.slice(i, i + CHUNK));
-    res.forEach((r, k) => { if (counted.has(i + k)) inserted += r.meta.changes; });
+  const SIZE = CHUNK - 2; // room for the run row (first batch) and the chunk row
+  for (let i = 0; i === 0 || i < work.length; i += SIZE) {
+    const part = work.slice(i, i + SIZE);
+    const n = (k: Work["kind"]) => part.filter((w) => w.kind === k).length;
+    const chunkAudit = auditStmt(c.env, { actorId: user.id, action: "import.chunk", targetType: "import", targetId: "66biolinks",
+      detail: { hosts: [...new Set(part.map((w) => w.host))], domains: n("domain"), links: n("link"), locks: n("lock") } });
+    const res = await db.batch([...(i === 0 ? [runAudit] : []), chunkAudit, ...part.map((w) => w.stmt)]);
+    const off = res.length - part.length;
+    part.forEach((w, k) => { if (w.counted) inserted += res[off + k]!.meta.changes; });
   }
   report.created = inserted;
 
