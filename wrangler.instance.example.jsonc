@@ -14,8 +14,8 @@
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
     "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
-    "ACCESS_AUD": "<your-access-application-aud-tag>",
-    "OWNER_EMAIL": "owner@example.com"
+    "ACCESS_AUD": "<your-access-application-aud-tag>"
+    // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
   },
   // Add one route per short domain, plus the dashboard host.
   "routes": [

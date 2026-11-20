@@ -6,7 +6,7 @@
   "license": "AGPL-3.0-only",
   "engines": { "node": ">=23.6" },
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev -c wrangler.instance.jsonc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
     "import:66biolinks": "node scripts/import-66biolinks.ts",
