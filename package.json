@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
+    "import:66biolinks": "node scripts/import-66biolinks.ts",
+    "audit:66biolinks": "node scripts/audit-66biolinks.ts",
+    "verify:redirects": "node scripts/verify-redirects.ts"
   },
   "dependencies": {
     "hono": "^4.13.19",

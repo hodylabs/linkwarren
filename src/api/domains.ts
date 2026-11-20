@@ -27,7 +27,7 @@ const membersBody = z.strictObject({ userIds: z.array(z.string().min(1)).max(100
 const exists = (id: string) => ({ sql: "EXISTS (SELECT 1 FROM domains WHERE id = ?)", binds: [id] });
 
 /** Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars. */
-function hostError(host: string, dashboard: string): string | null {
+export function hostError(host: string, dashboard: string): string | null {
   if (host === normalizeHost(dashboard)) return "dashboard_host";
   const labels = host.split(".");
   if (host.length > 253 || labels.length < 2 || !labels.every((l) => LABEL.test(l)) || /^\d+$/.test(labels[labels.length - 1]!)) return "invalid_host";

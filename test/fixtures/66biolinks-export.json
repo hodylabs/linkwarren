@@ -1,0 +1,15 @@
+{
+  "mainHost": "hody.link",
+  "domains": [
+    { "host": "hody.link", "customIndexUrl": "https://example.org/home", "customNotFoundUrl": "https://example.org/missing" },
+    { "host": "other.example", "customIndexUrl": null, "customNotFoundUrl": null }
+  ],
+  "links": [
+    { "host": null, "slug": "Spring", "destination": "https://example.org/spring", "enabled": true, "startDate": null, "endDate": null },
+    { "host": "hody.link", "slug": "promo", "destination": "https://example.org/promo?a=1", "enabled": true, "startDate": "2026-01-01 00:00:00", "endDate": "2026-02-01 12:30:00" },
+    { "host": "hody.link", "slug": "old", "destination": "https://example.org/old", "enabled": false, "startDate": null, "endDate": null },
+    { "host": "hody.link", "slug": "app", "destination": "https://example.org/app", "enabled": true, "startDate": null, "endDate": null },
+    { "host": "other.example", "slug": "x1", "destination": "https://example.org/x1", "enabled": true, "startDate": null, "endDate": null },
+    { "host": "other.example", "slug": "x2,\"q\"", "destination": "https://example.org/x2", "enabled": false, "startDate": null, "endDate": null }
+  ]
+}
