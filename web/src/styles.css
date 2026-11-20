@@ -14,6 +14,10 @@ body{font-family:var(--sans);font-size:13.5px;line-height:1.45;color:var(--text)
 #root{height:100%}
 .app{display:grid;grid-template-columns:220px minmax(0,1fr);height:100%}
 :focus-visible{outline:2px solid var(--signal);outline-offset:2px;border-radius:4px}
+/* app: --signal is about 2.3:1 on light surfaces, under the 3:1 a focus ring needs; --signal-deep is 3.1:1 or more on every light
+   surface and on the rail, so it is the default ring. The rail keeps the brand orange (7:1 there). */
+:focus-visible{outline-color:var(--signal-deep)}
+.rail :focus-visible{outline-color:var(--signal)}
 button{font:inherit;color:inherit;cursor:pointer}
 kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:var(--panel);color:var(--muted)}
 
@@ -138,6 +142,10 @@ td:first-child,th:first-child{padding-left:20px}
 .mono{font-family:var(--mono);font-size:12.5px}
 
 .sheet{width:620px;max-width:94vw;background:var(--panel);border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.28);overflow:hidden}
+/* app: a tall sheet (shortcuts, new link) fits the viewport under the scrim's top padding; head and foot stay, the body scrolls */
+.sheet{display:flex;flex-direction:column;max-height:calc(91vh - 16px)}
+.sheet>.sh-head,.sheet>.sh-foot{flex:none}
+.sheet>.sh-body{min-height:0;overflow-y:auto}
 .sh-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
 .sh-head h2{font-family:var(--display);font-weight:500;font-size:16px;margin:0;letter-spacing:-.02em}
 .sh-head .x{margin-left:auto;color:var(--faint);font-size:12px}
