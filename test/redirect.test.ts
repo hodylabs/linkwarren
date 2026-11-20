@@ -98,6 +98,20 @@ describe("redirect", () => {
     expect((await get(a.host, "/favicon.ico")).status).toBe(204);
   });
 
+  it("a stored robots.txt or favicon.ico link redirects; the built-in reply is only the fallback", async () => {
+    const d = await seed();
+    await addLink(d, "robots.txt", { url: "https://x.com/robots" });
+    await addLink(d, "favicon.ico", { url: "https://x.com/fav" });
+    for (const [p, to] of [["/robots.txt", "https://x.com/robots"], ["/favicon.ico", "https://x.com/fav"]]) {
+      const r = await get(d.host, p!, { redirect: "manual" });
+      expect([r.status, r.headers.get("location")]).toEqual([302, to]);
+    }
+    const e = await seed({ nf: "https://nf.test/" });
+    await addLink(e, "robots.txt", { expires: now() - 10 });
+    expect(await (await get(e.host, "/robots.txt", { redirect: "manual" })).text()).toBe("User-agent: *\nDisallow: /");
+    expect((await get(e.host, "/favicon.ico", { redirect: "manual" })).status).toBe(204);
+  });
+
   it("HEAD matches GET without a body", async () => {
     const d = await seed();
     await addLink(d, "h");

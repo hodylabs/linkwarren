@@ -15,12 +15,6 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   if (!domain || domain.status === "disabled") return html(notFoundPage, 404);
   if (domain.status === "pending") return html(pendingPage, 200);
 
-  if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
-  if (url.pathname === "/robots.txt") {
-    const body = domain.noindex ? "User-agent: *\nDisallow: /" : "User-agent: *\nAllow: /";
-    return new Response(head ? null : body, { headers: { "content-type": "text/plain; charset=utf-8" } });
-  }
-
   const miss = (target: string | null) => (target ? redirect(target, 302, domain) : html(notFoundPage, 404));
   if (url.pathname === "/") return miss(domain.bareRedirect);
 
@@ -28,7 +22,15 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   // Junk slugs never reach D1 or KV. Reserved words are a creation-time rule only, so stored links stay reachable.
   const link = slug === null || !checkSlugShape(slug).ok ? null : await getLink(env, domain.id, slugKey(slug, domain.caseSensitive), ctx);
   const live = link && (link.startsAt === null || link.startsAt <= now) && (link.expiresAt === null || link.expiresAt > now);
-  if (!live) return miss(domain.notfoundRedirect);
+  if (!live) {
+    // Built-in replies only when no live link owns the path (imported links may use these slugs).
+    if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
+    if (url.pathname === "/robots.txt") {
+      const body = domain.noindex ? "User-agent: *\nDisallow: /" : "User-agent: *\nAllow: /";
+      return new Response(head ? null : body, { headers: { "content-type": "text/plain; charset=utf-8" } });
+    }
+    return miss(domain.notfoundRedirect);
+  }
 
   let dest = link.url;
   if (link.passQuery && url.search) {
