@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError, onSignedOut, type Domain, type Me, type UserItem } from "./api";
 import { errorText } from "./copy";
 
@@ -70,12 +70,19 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
   useEffect(() => onSignedOut(() => setSignedOut(true)), []);
 
   // Failures reject so callers decide; signed-out ones have already raised the banner through onSignedOut.
+  // Only the newest request of each list may store its answer, so an older one that answers last is dropped.
+  const domainsGen = useRef(0);
+  const usersGen = useRef(0);
   const reloadDomains = useCallback(async () => {
-    setDomains(await api<Domain[]>("GET", "/api/domains"));
+    const g = ++domainsGen.current;
+    const list = await api<Domain[]>("GET", "/api/domains");
+    if (g === domainsGen.current) setDomains(list);
   }, []);
   const reloadUsers = useCallback(async () => {
     if (me.role !== "owner") return;
-    setUsers((await api<{ items: UserItem[] }>("GET", "/api/users")).items);
+    const g = ++usersGen.current;
+    const { items } = await api<{ items: UserItem[] }>("GET", "/api/users");
+    if (g === usersGen.current) setUsers(items);
   }, [me.role]);
 
   const [loadError, setLoadError] = useState<string | null>(null);

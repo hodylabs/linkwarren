@@ -117,6 +117,24 @@ describe("Add a domain sheet", () => {
     expect(document.querySelector("[aria-live]")!.textContent).toBe("Added, but the list could not be refreshed");
   });
 
+  it("a submission dismissed with Esc does not close a newer sheet when it finishes", async () => {
+    let release!: () => void;
+    const { user } = boot(owner, {
+      "POST /api/domains": () => new Promise((r) => (release = () => r({ status: 201, body: { ...MAIN, id: "d9", host: "a.test" } }))),
+    });
+    await open(user);
+    await user.type(screen.getByLabelText(/Domain or subdomain/), "a.test{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await user.keyboard("{Escape}");
+    await open(user);
+    await user.type(screen.getByLabelText(/Domain or subdomain/), "b.test");
+    release();
+    await waitFor(() => expect(document.querySelector("[aria-live]")!.textContent).toBe("Added a.test"));
+    expect(screen.getByRole("dialog", { name: "Add a domain" })).toBeTruthy();
+    expect((screen.getByLabelText(/Domain or subdomain/) as HTMLInputElement).value).toBe("b.test");
+    expect(location.search).not.toContain("sel=d9");
+  });
+
   it("a member's POST body is exactly host and type private", async () => {
     const { api, user } = boot(member, { "POST /api/domains": () => ({ status: 201, body: { ...MAIN, id: "d9", host: "a.test" } }) });
     await open(user);

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Domain } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
@@ -25,6 +25,11 @@ export function AddDomainSheet() {
   const [type, setType] = useState<Type>("private");
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false); // a double Ctrl+Enter sends once
+  const open = useRef(true); // false once this sheet is dismissed: a late answer must not close or steer a newer sheet
+  useEffect(() => {
+    open.current = true;
+    return () => void (open.current = false);
+  }, []);
 
   const submit = async () => {
     if (busy.current) return;
@@ -37,8 +42,10 @@ export function AddDomainSheet() {
       const made = await api<Domain>("POST", "/api/domains", { host: h, type: isOwner ? type : "private" });
       // Reload first so the selection in the URL exists when the screen reads it.
       const refreshed = await app.reloadDomains().then(() => true, () => false);
-      app.close();
-      navigate(`/domains?sel=${encodeURIComponent(made.id)}`);
+      if (open.current) {
+        app.close();
+        navigate(`/domains?sel=${encodeURIComponent(made.id)}`);
+      }
       app.announce(refreshed ? `Added ${made.host}` : "Added, but the list could not be refreshed");
     } catch (e) {
       setError(e instanceof ApiError ? e.code : "internal"); // typed values stay in the form

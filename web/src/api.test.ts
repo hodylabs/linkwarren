@@ -37,6 +37,28 @@ describe("api", () => {
     expect(new Headers(del[1].headers).get("content-type")).toBeNull();
   });
 
+  it("a cancel while the body is being read rejects with the AbortError and raises no sign-out", async () => {
+    const ctrl = new AbortController();
+    let reading!: () => void;
+    const bodyStarted = new Promise<void>((r) => (reading = r));
+    vi.stubGlobal("fetch", async () => ({
+      status: 200,
+      ok: true,
+      json: () => {
+        reading();
+        return new Promise((_, rej) => ctrl.signal.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))));
+      },
+    }));
+    const out = vi.fn();
+    const off = onSignedOut(out);
+    const p = api("GET", "/api/links", undefined, ctrl.signal).catch((e: unknown) => e);
+    await bodyStarted; // headers are in, the body is still being read
+    ctrl.abort();
+    expect(await p).toMatchObject({ name: "AbortError" });
+    expect(out).not.toHaveBeenCalled();
+    off();
+  });
+
   it.each(["https://evil.example/api/x", "//evil.example/api/x", "/apix", "api/me"])("refuses the non-API path %s before fetching", async (p) => {
     const f = vi.fn();
     vi.stubGlobal("fetch", f);

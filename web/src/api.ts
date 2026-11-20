@@ -48,7 +48,10 @@ export async function api<T>(method: Method, path: string, body?: unknown, signa
     fail(0, "network");
   }
   if (res.status === 204) return undefined as T;
-  const data: unknown = await res.json().catch(() => undefined);
+  const data: unknown = await res.json().catch((e: unknown) => {
+    if (signal?.aborted) throw e; // cancelled while reading the body: not a sign-in problem either
+    return undefined;
+  });
   if (!res.ok) {
     const code = (data as { error?: unknown } | undefined)?.error;
     fail(res.status, typeof code === "string" ? code : `http_${res.status}`);
