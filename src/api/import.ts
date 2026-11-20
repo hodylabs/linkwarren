@@ -158,7 +158,7 @@ importApi.post("/", async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const db = c.env.DB;
   // Work statements carry their kind and host so each D1 batch can audit exactly what it touches.
-  type Work = { stmt: D1PreparedStatement; kind: "domain" | "fill" | "link" | "lock"; host: string; counted: boolean };
+  type Work = { stmt: D1PreparedStatement; kind: "domain" | "fill" | "link" | "lock"; host: string; counted: boolean; plan?: Plan };
   const work: Work[] = [];
   for (const d of newDoms) {
     work.push({ kind: "domain", host: d.host, counted: false, stmt: db.prepare(
@@ -170,18 +170,25 @@ importApi.post("/", async (c) => {
     if (d.fillBare) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare("UPDATE domains SET bare_redirect = ? WHERE id = ? AND bare_redirect IS NULL").bind(d.bare, d.id) });
     if (d.fillNf) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare("UPDATE domains SET notfound_redirect = ? WHERE id = ? AND notfound_redirect IS NULL").bind(d.nf, d.id) });
   }
+  // The slug key was computed from the case mode read at planning time; insert only while the domain still has it.
   for (const p of plans.link) {
-    work.push({ kind: "link", host: p.dom.host, counted: true, stmt: db.prepare(
+    work.push({ kind: "link", host: p.dom.host, counted: true, plan: p, stmt: db.prepare(
       `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
-       SELECT ?,?,?,?,?,302,?,?,1,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
-    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, p.startsAt, p.expiresAt, user.id, user.id, now, now, p.dom.id, p.key) });
+       SELECT ?,?,?,?,?,302,?,?,1,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
+       AND EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?)`,
+    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, p.startsAt, p.expiresAt, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0) });
   }
+  // A live link committed after planning wins its key over a planned lock.
   for (const p of plans.lock) {
-    work.push({ kind: "lock", host: p.dom.host, counted: true, stmt: db.prepare("INSERT OR IGNORE INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES (?,?,?,?)").bind(p.dom.id, p.key, now, user.id) });
+    work.push({ kind: "lock", host: p.dom.host, counted: true, plan: p, stmt: db.prepare(
+      `INSERT OR IGNORE INTO slug_locks (domain_id,slug_key,locked_at,locked_by)
+       SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM links WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
+    ).bind(p.dom.id, p.key, now, user.id, p.dom.id, p.key) });
   }
   const runAudit = auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "66biolinks",
     detail: { planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } });
   let inserted = 0; // INSERT OR IGNORE can lose a race; report what was really written
+  const lostLinks: Plan[] = [], lostLocks: Plan[] = [];
   const SIZE = CHUNK - 2; // room for the run row (first batch) and the chunk row
   for (let i = 0; i === 0 || i < work.length; i += SIZE) {
     const part = work.slice(i, i + SIZE);
@@ -190,9 +197,27 @@ importApi.post("/", async (c) => {
       detail: { hosts: [...new Set(part.map((w) => w.host))], domains: n("domain"), links: n("link"), locks: n("lock") } });
     const res = await db.batch([...(i === 0 ? [runAudit] : []), chunkAudit, ...part.map((w) => w.stmt)]);
     const off = res.length - part.length;
-    part.forEach((w, k) => { if (w.counted) inserted += res[off + k]!.meta.changes; });
+    part.forEach((w, k) => {
+      if (!w.counted) return;
+      if (res[off + k]!.meta.changes) inserted++;
+      else (w.kind === "link" ? lostLinks : lostLocks).push(w.plan!);
+    });
   }
   report.created = inserted;
+
+  // Explain the writes a guard refused: a changed case mode, or a slug that went live before its lock.
+  // Other lost races (a concurrent identical link or lock) stay uncounted, as before.
+  if (lostLinks.length || lostLocks.length) {
+    const [modes, live] = await db.batch<{ id?: string; case_sensitive?: number; i?: number }>([
+      db.prepare("SELECT id, case_sensitive FROM domains WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(lostLinks.map((p) => p.dom.id))),
+      db.prepare(`SELECT j.key AS i FROM json_each(?) j WHERE EXISTS (SELECT 1 FROM links
+        WHERE domain_id = json_extract(j.value, '$[0]') AND lower(slug_key) = lower(json_extract(j.value, '$[1]')))`)
+        .bind(JSON.stringify(lostLocks.map((p) => [p.dom.id, p.key]))),
+    ]);
+    const mode = new Map(modes!.results.map((r) => [r.id!, !!r.case_sensitive]));
+    for (const p of lostLinks) if (mode.get(p.dom.id) !== p.dom.cs) report.conflicts.push({ host: p.dom.host, slug: p.slug, reason: "mode_changed" });
+    for (const r of live!.results) { const p = lostLocks[r.i!]!; report.conflicts.push({ host: p.dom.host, slug: p.slug, reason: "exists" }); }
+  }
 
   // Clears cached misses for everything written (errors are swallowed; entries expire by TTL anyway).
   await Promise.all([...doms.values()].map((d) => purgeHost(c.env, d.host)));
