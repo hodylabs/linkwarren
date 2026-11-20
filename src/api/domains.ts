@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
-import { invalidateHost } from "../cache";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
-import { checkDestination, checkSlugShape } from "../validate";
+import { checkSlugShape } from "../validate";
+import { destination, getDomain, purgeHost as purge, purgeMany } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const domains = new Hono<E>();
@@ -24,18 +24,6 @@ const patchBody = z.strictObject({
 // 100 is D1's bind cap for the member lookup below.
 const membersBody = z.strictObject({ userIds: z.array(z.string().min(1)).max(100) });
 
-const getDomain = async (env: Env, id: string): Promise<DomainRow | null> => {
-  const r = await env.DB.prepare("SELECT * FROM domains WHERE id = ?").bind(id).first();
-  return r ? rowToDomain(r) : null;
-};
-const isMember = async (env: Env, domainId: string, userId: string) =>
-  !!(await env.DB.prepare("SELECT 1 FROM domain_members WHERE domain_id = ? AND user_id = ?").bind(domainId, userId).first());
-const allHosts = async (env: Env) =>
-  (await env.DB.prepare("SELECT host FROM domains").all<{ host: string }>()).results.map((r) => r.host);
-
-// A failed purge must not turn a committed write into a 500; entries expire by TTL anyway.
-const purge = (env: Env, host: string) =>
-  invalidateHost(env, host).catch((e) => console.warn("cache invalidate failed", String(e)));
 const exists = (id: string) => ({ sql: "EXISTS (SELECT 1 FROM domains WHERE id = ?)", binds: [id] });
 
 /** Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars. */
@@ -102,43 +90,62 @@ domains.patch("/:id", async (c) => {
   if (!d) return c.json(notFound, 404);
   if (!canManageDomain(user, d)) return c.json(forbidden, 403);
   if (b.reservedExtra?.some((s) => !checkSlugShape(s).ok)) return c.json({ error: "invalid_reserved" }, 400);
-  const hosts = await allHosts(c.env);
-  const target = (raw: string | null | undefined, cur: string | null): { v: string | null } | { err: string } => {
+  const target = async (raw: string | null | undefined, cur: string | null): Promise<{ v: string | null } | { err: string }> => {
     if (raw === undefined) return { v: cur };
     if (raw === null) return { v: null };
-    const r = checkDestination(raw, hosts);
-    return r.ok ? { v: r.url.href } : { err: r.reason };
+    const r = await destination(c.env, raw);
+    return "error" in r ? { err: r.error } : { v: r.href };
   };
-  const bare = target(b.bareRedirect, d.bareRedirect), nf = target(b.notfoundRedirect, d.notfoundRedirect);
+  const bare = await target(b.bareRedirect, d.bareRedirect), nf = await target(b.notfoundRedirect, d.notfoundRedirect);
   if ("err" in bare) return c.json({ error: bare.err }, 400);
   if ("err" in nf) return c.json({ error: nf.err }, 400);
   const next: DomainRow = {
     ...d, bareRedirect: bare.v, notfoundRedirect: nf.v, caseSensitive: b.caseSensitive ?? d.caseSensitive,
     noindex: b.noindex ?? d.noindex, reservedExtra: b.reservedExtra ?? d.reservedExtra,
   };
+  // Only the keys present are written, so concurrent edits of different settings do not clobber each other.
+  const cols: [string, unknown][] = [];
+  if (b.bareRedirect !== undefined) cols.push(["bare_redirect", next.bareRedirect]);
+  if (b.notfoundRedirect !== undefined) cols.push(["notfound_redirect", next.notfoundRedirect]);
+  if (b.caseSensitive !== undefined) cols.push(["case_sensitive", next.caseSensitive ? 1 : 0]);
+  if (b.noindex !== undefined) cols.push(["noindex", next.noindex ? 1 : 0]);
+  if (b.reservedExtra !== undefined) cols.push(["reserved_extra", JSON.stringify(next.reservedExtra)]);
+  const flip = next.caseSensitive !== d.caseSensitive;
+  // Optimistic guard: every statement below only applies while the case mode is still the one we read.
+  // Turning case-sensitivity off is also refused (same snapshot) while a lock and a live link are case twins with different keys.
+  const twin = `SELECT 1 FROM slug_locks l JOIN links k ON k.domain_id = l.domain_id AND lower(k.slug) = lower(l.slug_key) AND k.slug_key != l.slug_key WHERE l.domain_id = ?`;
+  const unchanged = {
+    sql: `EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?)${flip && !next.caseSensitive ? ` AND NOT EXISTS (${twin})` : ""}`,
+    binds: [d.id, d.caseSensitive ? 1 : 0, ...(flip && !next.caseSensitive ? [d.id] : [])],
+  };
+  if (flip && !next.caseSensitive && (await c.env.DB.prepare(twin).bind(d.id).first())) return c.json({ error: "case_conflict" }, 409);
   const stmts = [
-    c.env.DB.prepare("UPDATE domains SET bare_redirect=?, notfound_redirect=?, case_sensitive=?, noindex=?, reserved_extra=? WHERE id=?")
-      .bind(next.bareRedirect, next.notfoundRedirect, next.caseSensitive ? 1 : 0, next.noindex ? 1 : 0, JSON.stringify(next.reservedExtra), d.id),
     auditStmt(c.env, { actorId: user.id, action: "domain.update", targetType: "domain", targetId: d.id,
-      detail: { host: d.host, changed: Object.keys(b) } }, exists(d.id)),
+      detail: { host: d.host, changed: Object.keys(b) } }, unchanged),
   ];
-  if (next.caseSensitive !== d.caseSensitive) {
-    // Existing slug_keys follow the old mode. Rekeying runs in the same batch; a case twin violates UNIQUE and rolls it all back.
-    if (next.caseSensitive) stmts.push(c.env.DB.prepare("UPDATE links SET slug_key = slug WHERE domain_id = ?").bind(d.id));
-    else stmts.push(
-      c.env.DB.prepare("UPDATE links SET slug_key = lower(slug) WHERE domain_id = ?").bind(d.id),
-      c.env.DB.prepare("UPDATE OR IGNORE slug_locks SET slug_key = lower(slug_key) WHERE domain_id = ?").bind(d.id),
-      c.env.DB.prepare("DELETE FROM slug_locks WHERE domain_id = ? AND slug_key != lower(slug_key)").bind(d.id),
-    );
-  }
+  // Rekey existing slug_keys to the new mode. Locks are never rekeyed (their checks are always case-insensitive).
+  // A link case twin violates UNIQUE and rolls the whole batch back.
+  if (flip) stmts.push(c.env.DB.prepare(
+    `UPDATE links SET slug_key = ${next.caseSensitive ? "slug" : "lower(slug)"} WHERE domain_id = ? AND ${unchanged.sql}`,
+  ).bind(d.id, ...unchanged.binds));
+  stmts.push(c.env.DB.prepare(`UPDATE domains SET ${cols.map(([k]) => `${k}=?`).join(", ") || "id=id"} WHERE ${unchanged.sql}`)
+    .bind(...cols.map(([, v]) => v), ...unchanged.binds));
+  let res;
   try {
-    const res = await c.env.DB.batch(stmts);
-    if (res[0]!.meta.changes === 0) return c.json(notFound, 404);
+    res = await c.env.DB.batch(stmts);
   } catch (e) {
     if (String(e).includes("UNIQUE")) return c.json({ error: "case_conflict" }, 409);
     throw e;
   }
-  // shortcut: cached link entries under the old slug_key expire by TTL (max 300 s); KV cannot be listed by domain cheaply.
+  if (res[res.length - 1]!.meta.changes === 0) return c.json({ error: "conflict" }, 409);
+  if (flip) {
+    // Cached link entries sit under the old slug_key; drop both spellings for every link (errors swallowed).
+    const slugs = (await c.env.DB.prepare("SELECT slug FROM links WHERE domain_id = ?").bind(d.id).all<{ slug: string }>()).results;
+    const keys = [...new Set(slugs.flatMap((r) => [r.slug, r.slug.toLowerCase()]))];
+    // shortcut: one KV delete per key, so a very large domain can hit the subrequest cap; the TTL (300 s) covers the rest.
+    const job = purgeMany(c.env, d.id, keys);
+    try { c.executionCtx.waitUntil(job); } catch { await job; }
+  }
   await purge(c.env, d.host);
   return c.json(next);
 });
@@ -151,11 +158,17 @@ for (const [verb, to] of [["approve", "active"], ["disable", "disabled"]] as con
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     if (d.status !== to) {
-      await c.env.DB.batch([
-        c.env.DB.prepare("UPDATE domains SET status = ? WHERE id = ?").bind(to, d.id),
+      // Audit first, both guarded on the status we read: a racing change writes neither a phantom audit nor a stale status.
+      const at = { sql: "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = ?)", binds: [d.id, d.status] };
+      const res = await c.env.DB.batch([
         auditStmt(c.env, { actorId: user.id, action: `domain.${verb}`, targetType: "domain", targetId: d.id,
-          detail: { host: d.host, from: d.status } }, exists(d.id)),
+          detail: { host: d.host, from: d.status } }, at),
+        c.env.DB.prepare("UPDATE domains SET status = ? WHERE id = ? AND status = ?").bind(to, d.id, d.status),
       ]);
+      if (res[1]!.meta.changes === 0) {
+        const cur = await getDomain(c.env, d.id);
+        return cur ? c.json(cur) : c.json(notFound, 404);
+      }
       await purge(c.env, d.host);
     }
     return c.json({ ...d, status: to });

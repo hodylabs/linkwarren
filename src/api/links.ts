@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
-import { invalidateLink } from "../cache";
 import type { Env } from "../env";
 import { canManageDomain, canUseDomain } from "../perm";
-import { rowToDomain, rowToLink, type DomainRow, type LinkRow, type UserRow } from "../types";
-import { checkDestination, checkSlug, slugKey } from "../validate";
+import { rowToDomain, rowToLink, type LinkRow, type UserRow } from "../types";
+import { checkSlug, slugKey } from "../validate";
+import { destination, getDomain, isMember, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const links = new Hono<E>();
@@ -26,28 +26,9 @@ const patchBody = z.strictObject({
   url: z.string().optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times,
 });
 
-const getDomain = async (env: Env, id: string): Promise<DomainRow | null> => {
-  const r = await env.DB.prepare("SELECT * FROM domains WHERE id = ?").bind(id).first();
-  return r ? rowToDomain(r) : null;
-};
-const isMember = async (env: Env, domainId: string, userId: string) =>
-  !!(await env.DB.prepare("SELECT 1 FROM domain_members WHERE domain_id = ? AND user_id = ?").bind(domainId, userId).first());
 const hasLock = async (env: Env, domainId: string, key: string) =>
-  !!(await env.DB.prepare("SELECT 1 FROM slug_locks WHERE domain_id = ? AND slug_key = ?").bind(domainId, key).first());
-const allHosts = async (env: Env) =>
-  (await env.DB.prepare("SELECT host FROM domains").all<{ host: string }>()).results.map((r) => r.host);
+  !!(await env.DB.prepare("SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)").bind(domainId, key).first());
 
-// A failed purge must not turn a committed write into a 500; entries expire by TTL anyway.
-const purge = (env: Env, domainId: string, key: string) =>
-  invalidateLink(env, domainId, key).catch((e) => console.warn("cache invalidate failed", String(e)));
-
-/** Validates the destination and returns the normalized href, or an error code. */
-async function destination(env: Env, raw: string): Promise<{ href: string } | { error: string }> {
-  const r = checkDestination(raw, await allHosts(env));
-  if (!r.ok) return { error: r.reason };
-  if (r.url.href.length > 2048) return { error: "too_long" };
-  return { href: r.url.href };
-}
 const badWindow = (s: number | null, x: number | null) => s !== null && x !== null && x <= s;
 
 links.get("/check", async (c) => {
@@ -136,7 +117,7 @@ links.post("/", async (c) => {
     const res = await c.env.DB.batch([
       c.env.DB.prepare(
         `INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
-         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND slug_key = ?)`,
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
       ).bind(link.id, domain.id, link.slug, key, link.url, link.redirectCode, startsAt, expiresAt, link.passQuery ? 1 : 0,
         user.id, user.id, now, now, domain.id, key),
       auditStmt(c.env, { actorId: user.id, action: "link.create", targetType: "link", targetId: link.id,
@@ -230,7 +211,7 @@ locks.delete("/:domainId/:slugKey", async (c) => {
   const key = slugKey(raw, domain.caseSensitive);
   if (!(await hasLock(c.env, domainId, key))) return c.json({ error: "not_found" }, 404);
   await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM slug_locks WHERE domain_id = ? AND slug_key = ?").bind(domainId, key),
+    c.env.DB.prepare("DELETE FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)").bind(domainId, key),
     auditStmt(c.env, { actorId: user.id, action: "lock.release", targetType: "lock", targetId: `${domainId}/${key}`,
       detail: { domainId, slugKey: key } }),
   ]);
