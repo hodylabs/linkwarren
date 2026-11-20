@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type AuditItem, type Page, type UserItem } from "../api";
 import { errorText } from "../copy";
-import { isTypingTarget, useHotkeys } from "../keys";
+import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Kbd, Tag } from "../shell/ui";
 import { useApp } from "../state";
@@ -9,6 +9,13 @@ import { clock } from "../time";
 import { describeAudit } from "./auditText";
 
 const FILTERS = ["everyone", "invited", "disabled"] as const;
+
+/** People screen hotkeys and their text on the shortcuts sheet. */
+export const PEOPLE_KEYS = {
+  j: "Next person",
+  k: "Previous person",
+  escape: "Clear the selected person",
+} as const;
 const KINDS = [
   ["all", "All"],
   ["via", "Via agents"],
@@ -141,7 +148,7 @@ export function PeopleScreen() {
         if (isTypingTarget(e.target)) return;
         if (sel) select(null);
       },
-    },
+    } satisfies Bindings<typeof PEOPLE_KEYS>,
     overlay === null,
   );
 

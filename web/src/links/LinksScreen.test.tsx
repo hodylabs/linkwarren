@@ -277,6 +277,34 @@ describe("Link detail", () => {
     expect(api.calls.some((c) => c.method === "DELETE")).toBe(false);
   });
 
+  it("with the delete confirm open, Ctrl+K, ? and G D do nothing, and one Esc closes only the confirm", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.keyboard("{Shift>}D{/Shift}");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await user.keyboard("{Control>}k{/Control}");
+    await user.keyboard("?");
+    await user.keyboard("gd");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByRole("dialog", { name: "Delete link" })).toBeTruthy();
+    expect(location.pathname).toBe("/links");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(location.search).toContain("sel=l1");
+  });
+
+  it("Esc outside a field clears the selection; Esc in the URL field only reverts", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.click(urlInput());
+    await user.keyboard("{Escape}");
+    expect(location.search).toContain("sel=l1");
+    await user.click(rows()[0]!);
+    await user.keyboard("{Escape}");
+    expect(location.search).not.toContain("sel=");
+    expect(screen.getByText("Select a link to see it here.")).toBeTruthy();
+  });
+
   it("Shift+D then Enter deletes and removes the row", async () => {
     const { api, user } = boot({ path: "/links?sel=l1", routes: { "DELETE /api/links/l1": () => ({ status: 204 }) } });
     await ready();

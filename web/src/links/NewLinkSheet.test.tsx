@@ -268,7 +268,7 @@ describe("New link sheet", () => {
   it("a suggestion fills the slug", async () => {
     const { user } = boot();
     await open(user);
-    setVal(dest(), "https://northwind.io/campaigns/spring-2027");
+    setVal(dest(), "https://example.com/campaigns/spring-2027");
     await user.click(await screen.findByRole("button", { name: "spring27" }));
     expect(slugBox().value).toBe("spring27");
   });

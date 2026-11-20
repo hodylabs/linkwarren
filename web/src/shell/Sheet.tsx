@@ -1,13 +1,27 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 
 // Set when a sheet closes so a sheet opened in the same tick (palette -> switcher) returns focus to the original opener.
 let carried: Element | null = null;
+
+// Open sheets, bottom to top. Only the top one handles Esc and Tab; the shell reads the count to keep its hotkeys out.
+const stack: object[] = [];
+const subs = new Set<() => void>();
+const changed = () => subs.forEach((f) => f());
+const subscribe = (f: () => void) => {
+  subs.add(f);
+  return () => void subs.delete(f);
+};
+
+/** How many sheets are open right now (any kind: overlays and inline confirms). */
+export function useOpenSheets(): number {
+  return useSyncExternalStore(subscribe, () => stack.length);
+}
 
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /**
  * The one dialog primitive. Focus moves inside on open and back to the opener on close; Tab cycles inside; Esc (capture phase,
- * any focus) closes; a mousedown on the scrim itself closes, one that starts inside the panel never does (so a drag that ends outside is safe).
+ * any focus) closes the topmost sheet only; a mousedown on the scrim itself closes, one that starts inside the panel never does (so a drag that ends outside is safe).
  */
 export function Sheet({ label, onClose, children, cls = "sheet" }: { label: string; onClose: () => void; children: ReactNode; cls?: string }) {
   const panel = useRef<HTMLDivElement>(null);
@@ -23,7 +37,11 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
     const items = () => [...p.querySelectorAll<HTMLElement>(FOCUSABLE)];
     // A child that autofocused (the palette box) keeps focus.
     if (!p.contains(document.activeElement)) (items()[0] ?? p).focus();
+    const self = {};
+    stack.push(self);
+    changed();
     const onKey = (e: KeyboardEvent) => {
+      if (stack[stack.length - 1] !== self) return; // a sheet above this one owns the keyboard
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -50,6 +68,8 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
+      stack.splice(stack.indexOf(self), 1);
+      changed();
       carried = opener;
       setTimeout(() => (carried = null), 0);
       if (opener?.isConnected) opener.focus();

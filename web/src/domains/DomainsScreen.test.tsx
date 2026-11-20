@@ -55,6 +55,34 @@ describe("Domains list", () => {
   });
 });
 
+describe("Domains keyboard", () => {
+  it("Esc outside a field clears the selection", async () => {
+    const { user } = boot();
+    await ready();
+    await user.keyboard("j");
+    expect(location.search).toContain("sel=d1");
+    await user.keyboard("{Escape}");
+    expect(location.search).not.toContain("sel=");
+    expect(screen.getByText("Select a domain to see it here.")).toBeTruthy();
+  });
+
+  it("with the disable confirm open, Ctrl+K and G L do nothing, and one Esc closes only the confirm", async () => {
+    const { user } = boot({ path: "/domains?sel=d1" });
+    await ready();
+    await screen.findByRole("complementary", { name: "Selected domain" });
+    await user.click(rows()[0]!);
+    await user.keyboard("{Shift>}D{/Shift}");
+    expect(screen.getByRole("dialog", { name: "Disable domain" })).toBeTruthy();
+    await user.keyboard("{Control>}k{/Control}");
+    await user.keyboard("gl");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(location.pathname).toBe("/domains");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(location.search).toContain("sel=d1");
+  });
+});
+
 describe("Domain settings (owner)", () => {
   it("a 409 conflict on save refreshes the domain and keeps the typed values", async () => {
     let gets = 0;

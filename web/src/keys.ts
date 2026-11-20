@@ -83,3 +83,14 @@ export function useChord(onChord: (letter: string) => boolean, enabled = true): 
     return () => window.removeEventListener("keydown", onKey, true);
   }, [enabled]);
 }
+
+/** A binding map with exactly the names of a keymap (a `{ name: "what it does" }` object), so the shortcuts sheet cannot drift from what is bound. */
+export type Bindings<T> = { [K in keyof T]: (e: KeyboardEvent) => void };
+
+const LABELS: Record<string, string> = { mod: "Ctrl", alt: "Alt", shift: "Shift", escape: "Esc", enter: "Enter" };
+
+/** "mod+shift+enter" -> ["Ctrl", "Shift", "Enter"], "gl" (a palette or chord sequence) -> ["G", "L"]. */
+export function keyLabels(name: string): string[] {
+  if (name.includes("+")) return name.split("+").map((p) => LABELS[p] ?? p.toUpperCase());
+  return LABELS[name] ? [LABELS[name]!] : [...name].map((c) => c.toUpperCase());
+}

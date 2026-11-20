@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { api, ApiError, type Domain } from "../api";
 import { errorText } from "../copy";
-import { useHotkeys } from "../keys";
+import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Seg } from "../shell/ui";
@@ -9,6 +9,9 @@ import { useApp } from "../state";
 import { normalizeHost } from "../../../src/host";
 
 type Type = Domain["type"];
+
+/** Add domain sheet hotkeys and their text on the shortcuts sheet. */
+export const ADD_DOMAIN_KEYS = { "mod+enter": "Add the domain, in the Add a domain sheet" } as const;
 const TYPES: { value: Type; label: string }[] = [
   { value: "main", label: "Main" },
   { value: "shared", label: "Shared" },
@@ -44,7 +47,7 @@ export function AddDomainSheet() {
     }
   };
 
-  useHotkeys({ "mod+enter": () => void submit() });
+  useHotkeys({ "mod+enter": () => void submit() } satisfies Bindings<typeof ADD_DOMAIN_KEYS>);
 
   return (
     <Sheet label="Add a domain" onClose={app.close}>

@@ -1,11 +1,12 @@
-import { useChord, useHotkeys } from "./keys";
+import { useChord, useHotkeys, type Bindings } from "./keys";
 import { navigate, useRoute, type Screen } from "./router";
 import { ComingSoon } from "./shell/ComingSoon";
 import { Gate } from "./shell/Gate";
 import { DomainSwitcher } from "./shell/DomainSwitcher";
 import { Palette } from "./shell/Palette";
-import { Rail, SCREEN_TITLES } from "./shell/Rail";
-import { Shortcuts } from "./shell/Shortcuts";
+import { OWNER_ONLY, Rail, SCREEN_TITLES } from "./shell/Rail";
+import { useOpenSheets } from "./shell/Sheet";
+import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
 import { AddDomainSheet } from "./domains/AddDomainSheet";
@@ -13,8 +14,6 @@ import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
 import { NewLinkSheet } from "./links/NewLinkSheet";
 import { PeopleScreen } from "./people/PeopleScreen";
-
-const OWNER_ONLY = new Set<Screen>(["people", "agents", "settings"]);
 
 const SOON: Partial<Record<Screen, string>> = {
   analytics: "Clicks, countries, devices and referrers arrive in a later version.",
@@ -36,17 +35,20 @@ function ScreenView({ screen }: { screen: Screen }) {
 function Shell() {
   const { signedOut, loadError, retryLoad, overlay, open, close, me } = useApp();
   const { screen } = useRoute();
-  // Ctrl+K toggles the palette; any other sheet keeps it out so unsaved form input is never lost (R10).
+  // Any open sheet (an overlay or a screen's inline confirm) keeps the shell keys out, so a second dialog never stacks.
+  // Ctrl+K still closes a lone palette; other sheets keep it out so unsaved form input is never lost (R10).
+  const sheets = useOpenSheets();
+  const free = overlay === null && sheets === 0;
   useHotkeys({
-    "mod+k": () => (overlay === null ? open({ kind: "palette" }) : overlay.kind === "palette" ? close() : undefined),
-    "?": () => (overlay === null ? open({ kind: "shortcuts" }) : undefined),
-  });
+    "mod+k": () => (free ? open({ kind: "palette" }) : overlay?.kind === "palette" && sheets <= 1 ? close() : undefined),
+    "?": () => (free ? open({ kind: "shortcuts" }) : undefined),
+  } satisfies Bindings<typeof GLOBAL_KEYS>);
   useChord((letter) => {
-    const to = { l: "links", d: "domains", a: "analytics", p: "people", i: "agents", s: "settings" }[letter];
-    if (!to || (OWNER_ONLY.has(to as Screen) && me.role !== "owner")) return false;
+    const to = Object.hasOwn(GO_KEYS, letter) ? GO_KEYS[letter as keyof typeof GO_KEYS] : undefined;
+    if (!to || (OWNER_ONLY.has(to) && me.role !== "owner")) return false;
     navigate(`/${to}`);
     return true;
-  }, overlay === null);
+  }, free);
   return (
     <div className="app">
       <Rail />

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type Link, type Page } from "../api";
 import { errorText } from "../copy";
-import { useHotkeys } from "../keys";
+import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Chip, Kbd, PrimaryButton, Tag } from "../shell/ui";
@@ -10,6 +10,17 @@ import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { creatorLabel, linkState, linksQuery, type LinksFilter } from "./linkView";
 
 const STATUSES = ["all", "active", "scheduled", "expired"] as const;
+
+/** Links screen hotkeys and their text on the shortcuts sheet. */
+export const LINKS_KEYS = {
+  n: "New link",
+  j: "Next link",
+  k: "Previous link",
+  e: "Edit the selected link",
+  c: "Copy the short link",
+  "shift+d": "Delete the selected link",
+  escape: "Clear the selection",
+} as const;
 
 export function LinksScreen() {
   const app = useApp();
@@ -148,7 +159,10 @@ export function LinksScreen() {
         }
       },
       n: () => app.open({ kind: "newLink" }),
-    },
+      escape: (e) => {
+        if (!isTypingTarget(e.target) && sel) select(null);
+      },
+    } satisfies Bindings<typeof LINKS_KEYS>,
     overlay === null && !confirming,
   );
 

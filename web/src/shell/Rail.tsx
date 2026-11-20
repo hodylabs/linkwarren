@@ -38,6 +38,8 @@ const ICONS: Record<Screen, ReactNode> = {
   ),
 };
 
+export const OWNER_ONLY: ReadonlySet<Screen> = new Set<Screen>(["people", "agents", "settings"]);
+
 export const SCREEN_TITLES: Record<Screen, string> = {
   links: "Links",
   domains: "Domains",

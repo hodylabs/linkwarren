@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ApiError, type Domain } from "../api";
 import { errorText } from "../copy";
-import { useHotkeys } from "../keys";
+import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
 import { Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
@@ -11,6 +11,12 @@ import { MembersEditor } from "./MembersEditor";
 import { canManage, domainDiff, draftOf, ownerLabel, statusTag, type Draft } from "./domainView";
 
 type Confirm = "case" | "disable";
+
+/** Domain detail hotkeys (owner) and their text on the shortcuts sheet. */
+export const DOMAIN_DETAIL_KEYS = {
+  a: "Approve or enable the selected domain (owner)",
+  "shift+d": "Disable the selected domain (owner)",
+} as const;
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
 
 export function DomainDetail({ domain, onModal }: { domain: Domain; onModal(open: boolean): void }) {
@@ -94,7 +100,7 @@ export function DomainDetail({ domain, onModal }: { domain: Domain; onModal(open
       "shift+d": () => {
         if (isOwner && domain.status !== "disabled") setConfirm("disable");
       },
-    },
+    } satisfies Bindings<typeof DOMAIN_DETAIL_KEYS>,
     overlay === null && confirm === null,
   );
 

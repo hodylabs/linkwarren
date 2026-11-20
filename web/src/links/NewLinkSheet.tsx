@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type Domain, type Link } from "../api";
 import { errorText } from "../copy";
-import { useHotkeys } from "../keys";
+import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Seg } from "../shell/ui";
@@ -17,6 +17,15 @@ const SLUG_CODES = new Set(["taken", "locked", "reserved", "empty", "slug_too_lo
 const URL_CODES = new Set(["not_url", "scheme", "userinfo", "url_too_long", "loop", "too_long"]);
 const fieldOf = (code: string): Field => (code === "bad_window" ? "schedule" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
 const DEBOUNCE_MS = 250;
+
+/** New link sheet hotkeys and their text on the shortcuts sheet (T and S only outside text boxes). */
+export const NEW_LINK_KEYS = {
+  "mod+enter": "Create the link",
+  "mod+shift+enter": "Create and copy the short link",
+  "alt+d": "Change the domain",
+  t: "Campaign tags",
+  s: "Schedule and expiry",
+} as const;
 
 const isUrl = (s: string) => {
   try {
@@ -165,7 +174,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
     "alt+d": () => domainRef.current?.focus(),
     t: () => setTagsOpen((v) => !v),
     s: () => setSchedOpen((v) => !v),
-  }, !releasing);
+  } satisfies Bindings<typeof NEW_LINK_KEYS>, !releasing);
 
   const setTag = (k: keyof Utm, v: string) => setUrl((u) => withUtm(u, { ...readUtm(u), [k]: v }));
   const err = (f: Field) => (error?.field === f ? error.code : null);

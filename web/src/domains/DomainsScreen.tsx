@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useHotkeys } from "../keys";
+import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Kbd, PrimaryButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
@@ -14,6 +14,14 @@ const FILTERS = [
   ["pending", "Needs approval"],
 ] as const;
 const TYPE_LABEL = { main: "Main", shared: "Shared", private: "Private" } as const;
+
+/** Domains screen hotkeys and their text on the shortcuts sheet. */
+export const DOMAINS_KEYS = {
+  n: "Add a domain",
+  j: "Next domain",
+  k: "Previous domain",
+  escape: "Clear the selection",
+} as const;
 
 export function DomainsScreen() {
   const app = useApp();
@@ -54,7 +62,17 @@ export function DomainsScreen() {
     if (to) select(to.id, true);
   };
 
-  useHotkeys({ j: () => move(1), k: () => move(-1), n: () => app.open({ kind: "addDomain" }) }, overlay === null && !modal);
+  useHotkeys(
+    {
+      n: () => app.open({ kind: "addDomain" }),
+      j: () => move(1),
+      k: () => move(-1),
+      escape: (e) => {
+        if (!isTypingTarget(e.target) && sel) select(null);
+      },
+    } satisfies Bindings<typeof DOMAINS_KEYS>,
+    overlay === null && !modal,
+  );
 
   return (
     <>
