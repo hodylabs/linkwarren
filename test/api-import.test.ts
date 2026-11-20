@@ -170,6 +170,29 @@ describe("rules", () => {
     expect(run).toMatchObject({ planned: 250 });
     expect(run).not.toHaveProperty("created");
   });
+  it("reads existing links and locks of reused domains with a bounded number of queries", async () => {
+    const stmts: D1PreparedStatement[] = [];
+    const links: L[] = [];
+    for (let i = 0; i < 120; i++) {
+      stmts.push(env.DB.prepare("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,'private','active','uo',1)").bind(`r${i}`, `r${i}.test`));
+      stmts.push(env.DB.prepare("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?,?,'s','s','https://e.org/',?,?,1,1)").bind(`rl${i}`, `r${i}`, "uo", "uo"));
+      stmts.push(env.DB.prepare("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES (?,'gone',1,'uo')").bind(`r${i}`));
+      links.push({ host: `r${i}.test`, slug: "s", destination: "https://e.org/" }, { host: `r${i}.test`, slug: "gone", destination: "https://e.org/g" });
+    }
+    await env.DB.batch(stmts);
+    const prepare = env.DB.prepare;
+    let reads = 0;
+    env.DB.prepare = ((sql: string) => { if (/^SELECT .* FROM (links|slug_locks)/.test(sql)) reads++; return prepare.call(env.DB, sql); }) as typeof prepare;
+    try {
+      const r = await rep(await owner(body(links)));
+      expect(r).toMatchObject({ created: 0, skipped: 120 });
+      expect(r.conflicts).toHaveLength(120);
+      expect(new Set(r.conflicts.map((c) => c.reason))).toEqual(new Set(["locked"]));
+    } finally {
+      env.DB.prepare = prepare;
+    }
+    expect(reads).toBeLessThanOrEqual(2);
+  });
   it("duplicate rows within one export are skipped when identical", async () => {
     const l = { host: "a.test", slug: "x", destination: "https://e.org/" };
     expect(await rep(await owner(body([l, l])))).toMatchObject({ created: 1, skipped: 1 });
