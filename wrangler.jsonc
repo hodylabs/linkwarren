@@ -1,0 +1,10 @@
+{
+  "name": "linkwarren",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // No ids here: real ids and hosts live in wrangler.instance.jsonc (gitignored).
+  "d1_databases": [{ "binding": "DB", "database_name": "linkwarren", "migrations_dir": "migrations" }],
+  "kv_namespaces": [{ "binding": "CACHE" }]
+}
