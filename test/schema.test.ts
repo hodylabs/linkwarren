@@ -34,6 +34,7 @@ describe("schema", () => {
   });
 
   it("rejects redirect_code 307", async () => {
+    await run("INSERT OR IGNORE INTO users (id,email,role,status,created_at) VALUES ('u1','o@x.com','member','active',1)");
     await domain("d3", "c.test", "u1");
     expect(await msg(link("l4", "d3", "k", 307))).toContain("CHECK");
   });
