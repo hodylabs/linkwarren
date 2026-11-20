@@ -113,5 +113,21 @@ describe("Add a domain sheet", () => {
     await open(user);
     await user.type(screen.getByLabelText(/Domain or subdomain/), "a.test{Control>}{Enter}{/Control}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add a domain" })).toBeNull());
+    // The refresh failure message is not overwritten by "Added <host>".
+    expect(document.querySelector("[aria-live]")!.textContent).toBe("Added, but the list could not be refreshed");
+  });
+
+  it("a member's POST body is exactly host and type private", async () => {
+    const { api, user } = boot(member, { "POST /api/domains": () => ({ status: 201, body: { ...MAIN, id: "d9", host: "a.test" } }) });
+    await open(user);
+    await user.type(screen.getByLabelText(/Domain or subdomain/), "a.test{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(posts(api)[0]!.body).toEqual({ host: "a.test", type: "private" });
+  });
+
+  it("the Type label is a heading", async () => {
+    const { user } = boot(owner);
+    await open(user);
+    expect(screen.getByRole("heading", { name: "Type" })).toBeTruthy();
   });
 });

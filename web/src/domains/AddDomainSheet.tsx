@@ -33,10 +33,10 @@ export function AddDomainSheet() {
     try {
       const made = await api<Domain>("POST", "/api/domains", { host: h, type: isOwner ? type : "private" });
       // Reload first so the selection in the URL exists when the screen reads it.
-      await app.reloadDomains().catch(() => app.announce("Added, but the list could not be refreshed"));
+      const refreshed = await app.reloadDomains().then(() => true, () => false);
       app.close();
       navigate(`/domains?sel=${encodeURIComponent(made.id)}`);
-      app.announce(`Added ${made.host}`);
+      app.announce(refreshed ? `Added ${made.host}` : "Added, but the list could not be refreshed");
     } catch (e) {
       setError(e instanceof ApiError ? e.code : "internal"); // typed values stay in the form
     } finally {
@@ -69,7 +69,7 @@ export function AddDomainSheet() {
           )}
         </div>
         <div className="f">
-          <label>Type</label>
+          <h3 className="lbl">Type</h3>
           {isOwner ? <Seg label="Type" options={TYPES} value={type} onChange={setType} /> : <p className="hint">Private</p>}
         </div>
         <div className="callout wait">linkwarren does not connect domains to Cloudflare yet. Add this host as a custom domain of the Worker in your Cloudflare dashboard so visits reach it.</div>
