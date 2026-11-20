@@ -1,0 +1,25 @@
+// Copy to wrangler.instance.jsonc (gitignored) and fill in your own values.
+// Deploy with: wrangler deploy -c wrangler.instance.jsonc
+{
+  "name": "linkwarren",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "linkwarren", "database_id": "<your-d1-database-id>", "migrations_dir": "migrations" }
+  ],
+  "kv_namespaces": [{ "binding": "CACHE", "id": "<your-kv-namespace-id>" }],
+  "vars": {
+    "DASHBOARD_HOST": "dash.example.com",
+    "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
+    "ACCESS_AUD": "<your-access-application-aud-tag>"
+    // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
+  },
+  // Add one route per short domain, plus the dashboard host.
+  "routes": [
+    { "pattern": "dash.example.com", "custom_domain": true },
+    { "pattern": "go.example.com", "custom_domain": true }
+  ]
+}
