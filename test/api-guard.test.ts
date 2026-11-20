@@ -121,8 +121,8 @@ describe("failure modes", () => {
       expect(text).not.toContain("boom");
     } finally { e.DB = orig; }
   });
-  it("unknown dashboard paths are JSON 404, short hosts keep their page", async () => {
-    const r = await dash("/nope");
+  it("unknown dashboard API paths and non-GET methods are JSON 404, short hosts keep their page", async () => {
+    const r = await dash("/nope", { method: "POST" });
     expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
     const s = await exports.default.fetch("https://short.test/nope");
     expect(s.status).toBe(404);

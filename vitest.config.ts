@@ -16,9 +16,20 @@ export default defineConfig(async () => {
             ACCESS_AUD: "test-aud",
             OWNER_EMAIL: "owner@example.com",
           },
+          // Test-only stand-in for the Workers static-assets binding (real one is instance config).
+          serviceBindings: {
+            ASSETS: async (req: Request) => {
+              const { pathname } = new URL(req.url);
+              const hit = (body: string, type: string) =>
+                new Response(req.method === "HEAD" ? null : body, { headers: { "content-type": type, "x-fake-assets": "1" } });
+              if (pathname === "/") return hit("<!doctype html><title>lw</title>", "text/html; charset=utf-8");
+              if (pathname === "/assets/app.js") return hit("export {}", "text/javascript");
+              return new Response("not found", { status: 404, headers: { "x-fake-assets": "1" } });
+            },
+          },
         },
       }),
     ],
-    test: { setupFiles: ["./test/apply-migrations.ts"] },
+    test: { include: ["test/**/*.test.ts"], setupFiles: ["./test/apply-migrations.ts"] },
   };
 });

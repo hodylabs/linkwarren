@@ -11,6 +11,7 @@ import { domains } from "./api/domains";
 import { importApi } from "./api/import";
 import { users } from "./api/users";
 import { audit } from "./api/audit";
+import { serveDashboard } from "./assets";
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
 
@@ -59,6 +60,13 @@ app.route("/api/users", users);
 app.route("/api/audit", audit);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
+
+// Dashboard files: GET/HEAD only, never under /api (unknown API paths stay JSON 404).
+app.on(["GET", "HEAD"], ["/", "/*"], async (c) => {
+  const p = new URL(c.req.url).pathname;
+  if (p === "/api" || p.startsWith("/api/")) return c.json({ error: "not_found" }, 404);
+  return await serveDashboard(c.req.raw, c.env);
+});
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {

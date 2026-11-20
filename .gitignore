@@ -4,3 +4,4 @@ node_modules/
 wrangler.instance.jsonc
 coverage/
 .superpowers/
+web/dist/

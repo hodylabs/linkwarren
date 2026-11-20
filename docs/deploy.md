@@ -33,11 +33,21 @@ Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.ins
 
 Without the instance config `npm run dev` fails to start, and a Worker run without `DASHBOARD_HOST` answers every request with `500 {"error":"misconfigured"}`.
 
+## Dashboard assets
+
+The dashboard is a static web app served by the Worker from Workers static assets, on the dashboard host only.
+
+1. Build it first: `npm run build:web` (output in `web/dist`).
+2. Keep the `assets` block from `wrangler.instance.example.jsonc` in your instance config: `{ "directory": "./web/dist", "binding": "ASSETS", "run_worker_first": true }`.
+3. `run_worker_first` must stay `true`. The Worker decides by host: short hosts never reach the asset layer, so they can never be answered with dashboard files. With it `false`, the platform would serve `/index.html` and `/assets/*` on every short domain.
+
+Without the binding, dashboard paths answer `503 {"error":"no_assets"}`. Unknown paths without a file extension get the app shell (client-side routing); a missing file such as `/assets/x.js` stays 404.
+
 ## Steps
 
 1. Create the D1 database and the KV namespace (`npx wrangler d1 create`, `npx wrangler kv namespace create`) and put their ids in `wrangler.instance.jsonc`.
 2. Apply migrations to the remote database: `npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
-3. Deploy: `npx wrangler deploy -c wrangler.instance.jsonc`.
+3. Build the dashboard (`npm run build:web`), then deploy: `npx wrangler deploy -c wrangler.instance.jsonc`.
 4. Add one route per short domain plus the dashboard host (custom domains in the config).
 
 ## Access
