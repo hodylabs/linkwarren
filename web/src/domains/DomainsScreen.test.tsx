@@ -56,6 +56,21 @@ describe("Domains list", () => {
 });
 
 describe("Domain settings (owner)", () => {
+  it("a 409 conflict on save refreshes the domain and keeps the typed values", async () => {
+    let gets = 0;
+    const { user } = boot({
+      list: () => (gets++, [MAIN, PEND]),
+      routes: { "PATCH /api/domains/d1": () => ({ status: 409, body: { error: "conflict" } }) },
+      path: "/domains?sel=d1",
+    });
+    await screen.findByLabelText("The bare domain");
+    const before = gets;
+    await user.type(screen.getByLabelText("The bare domain"), "https://x.com/{Control>}{Enter}{/Control}");
+    expect(await screen.findByText(errorText("conflict"))).toBeTruthy();
+    await waitFor(() => expect(gets).toBeGreaterThan(before));
+    expect((screen.getByLabelText("The bare domain") as HTMLInputElement).value).toBe("https://x.com/");
+  });
+
   it("editing only the bare redirect sends only that key; clearing sends null", async () => {
     const saved = dom("d1", "go.test", { type: "main", bareRedirect: "https://x.com/" });
     let cur = MAIN;

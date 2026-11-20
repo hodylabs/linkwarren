@@ -7,6 +7,7 @@ import { Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { DEFAULT_RESERVED } from "../../../src/validate";
 import { shortDate } from "../time";
+import { MembersEditor } from "./MembersEditor";
 import { canManage, domainDiff, draftOf, ownerLabel, statusTag, type Draft } from "./domainView";
 
 type Confirm = "case" | "disable";
@@ -55,6 +56,7 @@ export function DomainDetail({ domain, onModal }: { domain: Domain; onModal(open
         await refresh();
       } catch (e) {
         setFormError(errorText(code(e))); // typed values stay in the form
+        if (code(e) === "conflict") void refresh(); // the copy says reload: do it, the typed values still stay
       }
     });
 
@@ -188,6 +190,7 @@ export function DomainDetail({ domain, onModal }: { domain: Domain; onModal(open
             )}
           </div>
         </fieldset>
+        <MembersEditor domain={domain} />
         {(formError || actionError) && (
           <p className="err" role="alert">
             {formError ?? actionError}

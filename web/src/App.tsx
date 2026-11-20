@@ -8,6 +8,7 @@ import { Rail, SCREEN_TITLES } from "./shell/Rail";
 import { Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
+import { AddDomainSheet } from "./domains/AddDomainSheet";
 import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
 import { NewLinkSheet } from "./links/NewLinkSheet";
@@ -75,6 +76,7 @@ function Shell() {
       {overlay?.kind === "palette" && <Palette />}
       {overlay?.kind === "switcher" && <DomainSwitcher />}
       {overlay?.kind === "shortcuts" && <Shortcuts />}
+      {overlay?.kind === "addDomain" && <AddDomainSheet />}
       {overlay?.kind === "newLink" && <NewLinkSheet slug={overlay.slug} />}
     </div>
   );
