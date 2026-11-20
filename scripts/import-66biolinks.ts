@@ -34,15 +34,23 @@ const summary = () => {
   for (const c of total.conflicts) console.log(`conflict ${c.reason}: ${c.host}/${c.slug}`);
 };
 for (const req of reqs!) {
-  const res = await fetch(new URL(`/api/import${dry ? "?dryRun=1" : ""}`, api), {
-    method: "POST", redirect: "manual",
-    headers: { "content-type": "application/json", "cf-access-token": token! },
-    body: JSON.stringify(req),
-  });
-  if (!res.ok) { console.log("totals of completed chunks before the failure:"); summary(); console.error(`import failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`); process.exit(1); }
-  const r = (await res.json()) as Report;
-  total.created += r.created; total.skipped += r.skipped;
-  total.conflicts.push(...r.conflicts); total.ignored.push(...r.ignored);
-  total.caseSensitiveDomains.push(...r.caseSensitiveDomains); total.domainsCreated.push(...r.domainsCreated);
+  try {
+    const res = await fetch(new URL(`/api/import${dry ? "?dryRun=1" : ""}`, api), {
+      method: "POST", redirect: "manual",
+      headers: { "content-type": "application/json", "cf-access-token": token! },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+    const r = (await res.json()) as Report;
+    total.created += r.created; total.skipped += r.skipped;
+    total.conflicts.push(...r.conflicts); total.ignored.push(...r.ignored);
+    total.caseSensitiveDomains.push(...r.caseSensitiveDomains); total.domainsCreated.push(...r.domainsCreated);
+  } catch (e) {
+    console.log("totals of completed chunks before the failure:");
+    summary();
+    console.error(`import failed: ${(e as Error).message}`);
+    console.error("the failed request may or may not have applied; re-run the import (it skips links that already exist) or check the dashboard");
+    process.exit(1);
+  }
 }
 summary();
