@@ -63,7 +63,7 @@ app.get("/healthz", (c) => c.json({ ok: true }));
 
 // Dashboard files: GET/HEAD only, never under /api (unknown API paths stay JSON 404).
 app.on(["GET", "HEAD"], ["/", "/*"], async (c) => {
-  const p = new URL(c.req.url).pathname;
+  const p = c.req.path; // decoded, what Hono routes on: /%61pi/x must not slip past the /api check
   if (p === "/api" || p.startsWith("/api/")) return c.json({ error: "not_found" }, 404);
   return await serveDashboard(c.req.raw, c.env);
 });

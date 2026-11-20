@@ -59,6 +59,12 @@ describe("dashboard host", () => {
     expect(r.status).toBe(404);
     expect(await r.json()).toEqual({ error: "not_found" });
   });
+  it.each(["/%61pi/x", "/%61pi"])("percent-encoded %s is the JSON 404, never HTML", async (p) => {
+    const r = await dash(p, { headers: { "Cf-Access-Jwt-Assertion": await tokenFor("owner@example.com") } });
+    expect(r.status).toBe(404);
+    expect(r.headers.get("x-fake-assets")).toBeNull();
+    expect(await r.json()).toEqual({ error: "not_found" });
+  });
   it("/healthz is unchanged", async () => {
     expect(await (await get("dash.test", "/healthz")).json()).toEqual({ ok: true });
   });
