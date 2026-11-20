@@ -117,4 +117,29 @@ describe("redirect", () => {
     await run("DELETE FROM links WHERE domain_id = ?", d.id);
     expect((await get(d.host, "/c", { redirect: "manual" })).status).toBe(302);
   });
+
+  it("KV put failure does not break the redirect", async () => {
+    const d = await seed();
+    await addLink(d, "k");
+    const orig = env.CACHE.put;
+    env.CACHE.put = (() => Promise.reject(new Error("429"))) as typeof env.CACHE.put;
+    try {
+      expect((await get(d.host, "/k", { redirect: "manual" })).status).toBe(302);
+    } finally {
+      env.CACHE.put = orig;
+    }
+  });
+
+  it("junk slug goes to not-found without a link cache key", async () => {
+    const d = await seed({ nf: "https://nf.test/" });
+    const r = await get(d.host, "/%3Cscript%3E", { redirect: "manual" });
+    expect(r.headers.get("location")).toBe("https://nf.test/");
+    expect((await env.CACHE.list({ prefix: `l:${d.id}:` })).keys).toEqual([]);
+  });
+
+  it("keeps the destination's existing query bytes", async () => {
+    const d = await seed();
+    await addLink(d, "q", { url: "https://x.com/a?q=a%20b" });
+    expect((await get(d.host, "/q?ref=qr", { redirect: "manual" })).headers.get("location")).toBe("https://x.com/a?q=a%20b&ref=qr");
+  });
 });
