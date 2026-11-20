@@ -3,7 +3,7 @@ import { readUtm, suggestSlugs, withUtm } from "./compose";
 
 describe("suggestSlugs", () => {
   it("builds base, joined and year-short candidates", () => {
-    expect(suggestSlugs("https://northwind.io/campaigns/spring-2027")).toEqual(["spring-2027", "spring27", "sp27"]);
+    expect(suggestSlugs("https://example.com/campaigns/spring-2027")).toEqual(["spring-2027", "spring27", "sp27"]);
   });
   it("strips the extension and lowercases", () => {
     expect(suggestSlugs("https://x.com/Menu.PDF")).toEqual(["menu"]);
