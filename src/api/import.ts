@@ -97,12 +97,15 @@ importApi.post("/", async (c) => {
 
   // Existing links and locks of reused domains.
   const live = new Map<string, Map<string, string>>(), locks = new Map<string, Set<string>>();
-  for (const d of doms.values()) {
-    live.set(d.id, new Map()); locks.set(d.id, new Set());
-    if (d.isNew) continue;
-    for (const r of (await c.env.DB.prepare("SELECT slug_key, url FROM links WHERE domain_id = ?").bind(d.id).all<{ slug_key: string; url: string }>()).results) live.get(d.id)!.set(r.slug_key, r.url);
-    for (const r of (await c.env.DB.prepare("SELECT slug_key FROM slug_locks WHERE domain_id = ?").bind(d.id).all<{ slug_key: string }>()).results) locks.get(d.id)!.add(r.slug_key.toLowerCase());
-  }
+  for (const d of doms.values()) { live.set(d.id, new Map()); locks.set(d.id, new Set()); }
+  // Two queries in total, whatever the domain count: ids go in as one JSON bind (D1 caps queries per invocation and binds per query).
+  const reused = JSON.stringify([...doms.values()].filter((d) => !d.isNew).map((d) => d.id));
+  const [liveRows, lockRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string }>([
+    c.env.DB.prepare("SELECT domain_id, slug_key, url FROM links WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
+    c.env.DB.prepare("SELECT domain_id, slug_key FROM slug_locks WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
+  ]);
+  for (const r of liveRows!.results) live.get(r.domain_id)!.set(r.slug_key, r.url!);
+  for (const r of lockRows!.results) locks.get(r.domain_id)!.add(r.slug_key.toLowerCase());
 
   type Plan = { dom: Dom; slug: string; key: string; url: string; startsAt: number | null; expiresAt: number | null };
   const out: Out[] = new Array(b.links.length);
