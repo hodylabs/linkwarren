@@ -26,6 +26,12 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+// API responses carry identity and private data: never cache them anywhere.
+app.use("/api/*", async (c, next) => {
+  await next();
+  c.header("Cache-Control", "no-store");
+});
+
 // CSRF: only the dashboard origin may send unsafe requests, and bodies must be JSON (a cross-site
 // text/plain form could otherwise reach c.req.json()). A missing Origin is allowed for non-browser clients.
 const dashboardOrigin = (host: string) => `https://${normalizeHost(host)}`;

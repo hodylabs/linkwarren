@@ -54,6 +54,13 @@ describe("requireUser", () => {
     }
   });
 
+  it("every /api response is Cache-Control: no-store, success and 401 alike", async () => {
+    await seed("a@example.com", "active");
+    expect((await asUser()).headers.get("cache-control")).toBe("no-store");
+    expect((await me()).headers.get("cache-control")).toBe("no-store");
+    expect((await exports.default.fetch("https://dash.test/api/nope", { headers: { "Cf-Access-Jwt-Assertion": await token() } })).headers.get("cache-control")).toBe("no-store");
+  });
+
   it("403 disabled", async () => {
     await seed("a@example.com", "disabled");
     const res = await asUser();
