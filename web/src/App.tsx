@@ -8,6 +8,7 @@ import { Rail, SCREEN_TITLES } from "./shell/Rail";
 import { Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
+import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
 import { NewLinkSheet } from "./links/NewLinkSheet";
 
@@ -26,7 +27,8 @@ function ScreenView({ screen }: { screen: Screen }) {
   const soon = SOON[screen];
   if (soon) return <ComingSoon title={SCREEN_TITLES[screen]} text={soon} />;
   if (screen === "links") return <LinksScreen />;
-  // Domains and People arrive in their own tasks; until then the header alone.
+  if (screen === "domains") return <DomainsScreen />;
+  // People arrives in its own task; until then the header alone.
   return (
     <header className="top">
       <h1>{SCREEN_TITLES[screen]}</h1>
