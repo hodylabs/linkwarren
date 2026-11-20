@@ -1,0 +1,60 @@
+import { useEffect, useRef } from "react";
+
+const NON_TEXT_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset"]);
+
+/** True where a keystroke is text: text-like inputs, textareas, selects and contenteditable. */
+export function isTypingTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(el.type);
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
+  const editable = el.closest("[contenteditable]");
+  return editable !== null && editable.getAttribute("contenteditable") !== "false";
+}
+
+const MODS = ["mod", "alt", "shift"] as const;
+
+/** "Shift+Mod+K" -> "mod+shift+k": fixed modifier order, lowercase. */
+function normalize(name: string): string {
+  const parts = name.toLowerCase().split("+");
+  const key = parts.pop()!;
+  return [...MODS.filter((m) => parts.includes(m)), key].join("+");
+}
+
+/** Binding names for an event, most specific first. Shift is dropped only for single characters ("Shift+N" -> "n", "?" stays "?"). */
+function names(e: KeyboardEvent): string[] {
+  // Alt changes e.key on some layouts (Alt+D is "∂" on a Mac), so use the physical letter.
+  const key = e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
+  const mods = [e.ctrlKey || e.metaKey ? "mod" : "", e.altKey ? "alt" : ""].filter(Boolean);
+  const full = [...mods, ...(e.shiftKey ? ["shift"] : []), key].join("+");
+  return e.shiftKey && key.length === 1 ? [full, [...mods, key].join("+")] : [full];
+}
+
+// Inside text fields only these act; everything else is typing.
+const WHILE_TYPING = new Set(["escape", "mod+enter", "mod+shift+enter", "mod+k"]);
+
+/**
+ * Window-level hotkeys. Names: "n", "shift+d", "mod+k", "mod+enter", "mod+shift+enter", "alt+d", "escape", "?" (mod = Ctrl or Cmd).
+ * A shift+<key> binding wins over the plain key. A handled key is preventDefault-ed; already-prevented events are skipped.
+ */
+export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>, enabled = true): void {
+  const latest = useRef(map);
+  latest.current = map;
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || e.defaultPrevented) return;
+      const bound = new Map(Object.entries(latest.current).map(([k, fn]) => [normalize(k), fn]));
+      const typing = isTypingTarget(e.target);
+      for (const name of names(e)) {
+        const fn = bound.get(name);
+        if (!fn) continue;
+        if (typing && !WHILE_TYPING.has(name) && !name.startsWith("alt+")) return;
+        e.preventDefault();
+        fn(e);
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [enabled]);
+}

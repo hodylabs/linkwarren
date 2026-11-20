@@ -4,11 +4,15 @@
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
-  "engines": { "node": ">=23.6" },
+  "engines": {
+    "node": ">=23.6"
+  },
   "scripts": {
     "dev": "wrangler dev -c wrangler.instance.jsonc",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
+    "dev:web": "vite web",
+    "build:web": "vite build web",
+    "test": "vitest run && vitest run -c web/vitest.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p web",
     "import:legacy": "node scripts/import-legacy.ts",
     "audit:legacy": "node scripts/audit-legacy.ts",
     "verify:redirects": "node scripts/verify-redirects.ts"
@@ -21,7 +25,20 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.8.5",
     "@cloudflare/workers-types": "^5.20261120.1",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/unbounded": "^5.3.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.13",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "jsdom": "^31.0.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "^7.0.2",
+    "vite": "^8.3.8",
     "vitest": "^5.1.1",
     "wrangler": "^4.165.0"
   }

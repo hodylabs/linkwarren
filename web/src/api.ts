@@ -1,0 +1,57 @@
+import type { AuditItem as ServerAuditItem, DomainRow, LinkRow, UserListItem, UserRow } from "../../src/types";
+
+export type Me = Pick<UserRow, "id" | "email" | "name" | "role">;
+export type Link = LinkRow;
+export type Domain = DomainRow & { linkCount: number; isMember: boolean };
+export type UserItem = UserListItem;
+export type AuditItem = ServerAuditItem;
+export type Page<T> = { items: T[]; next: string | null };
+export type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string) {
+    super(code);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const signedOutListeners = new Set<() => void>();
+/** Called on every API answer that means the Access session is gone (status 0 or 401). Returns an unsubscribe. */
+export function onSignedOut(fn: () => void): () => void {
+  signedOutListeners.add(fn);
+  return () => signedOutListeners.delete(fn);
+}
+
+function fail(status: number, code: string): never {
+  if (status === 0 || status === 401) signedOutListeners.forEach((fn) => fn());
+  throw new ApiError(status, code);
+}
+
+/** Same-origin JSON call. Status 0 / "network" when fetch throws, which is what an expired Access session (login redirect) looks like. */
+export async function api<T>(method: Method, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const init: RequestInit = { method, credentials: "same-origin", signal };
+  if (body !== undefined) {
+    init.headers = { "content-type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  let res: Response;
+  try {
+    res = await fetch(path, init);
+  } catch (e) {
+    if (signal?.aborted) throw e; // the caller cancelled: not a sign-in problem
+    fail(0, "network");
+  }
+  if (res.status === 204) return undefined as T;
+  const data: unknown = await res.json().catch(() => undefined);
+  if (!res.ok) {
+    const code = (data as { error?: unknown } | undefined)?.error;
+    fail(res.status, typeof code === "string" ? code : `http_${res.status}`);
+  }
+  // An OK answer that is not JSON is not the API (for example a sign-in page served in its place).
+  if (data === undefined) fail(0, "network");
+  return data as T;
+}

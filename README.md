@@ -9,3 +9,7 @@ linkwarren is open source software, licensed under the GNU Affero General Public
 Copyright (C) 2026 Hody LLC
 
 The name and logo are covered by `TRADEMARK.md`. To contribute, read `CONTRIBUTING.md`.
+
+## Development
+
+See `docs/development.md` for tests, the dashboard build and running the dashboard against a local Worker.
