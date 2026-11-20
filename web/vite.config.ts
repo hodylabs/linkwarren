@@ -19,7 +19,14 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: "http://localhost:8787",
           changeOrigin: true,
-          headers: { "cf-access-jwt-assertion": token, origin: "https://localhost" },
+          headers: { "cf-access-jwt-assertion": token },
+          configure: (proxy) => {
+            // Only the dev page itself is presented as the dashboard origin. Any other Origin (another site posting here)
+            // passes through unchanged, so the Worker's CSRF check refuses it in local dev too.
+            proxy.on("proxyReq", (proxyReq, req) => {
+              if (req.headers.origin === `http://${req.headers.host}`) proxyReq.setHeader("origin", "https://localhost");
+            });
+          },
         },
       },
     },

@@ -24,7 +24,13 @@ You need an instance config (`wrangler.instance.jsonc`, see `docs/deploy.md`) wi
    npx wrangler d1 migrations apply <your database name> --local -c wrangler.instance.jsonc
    ```
 
-2. Start the Worker with the dashboard host set to `localhost`. Set `OWNER_EMAIL` to the email you sign in to Access with, so your first call creates you as the owner:
+2. Build the dashboard once. The instance config's `assets` block points at `web/dist`, and `wrangler dev` will not start while that directory is missing (Vite serves the app you work on; the Worker only needs the folder to exist):
+
+   ```sh
+   npm run build:web
+   ```
+
+3. Start the Worker with the dashboard host set to `localhost`. Set `OWNER_EMAIL` to the email you sign in to Access with, so your first call creates you as the owner:
 
    ```sh
    npx wrangler dev -c wrangler.instance.jsonc --local-upstream localhost \
@@ -33,14 +39,14 @@ You need an instance config (`wrangler.instance.jsonc`, see `docs/deploy.md`) wi
 
    `--local-upstream localhost` matters when the instance config has `routes`: without it, `wrangler dev` presents requests as coming to the first route's host, and the Worker then treats every request as a short link.
 
-3. In another terminal, get an Access token for your dashboard and start Vite:
+4. In another terminal, get an Access token for your dashboard and start Vite:
 
    ```sh
    CF_ACCESS_TOKEN=$(cloudflared access token -app=https://<your dashboard host>) npm run dev:web
    ```
 
-   Vite proxies `/api` to `http://localhost:8787` and adds two headers: `Cf-Access-Jwt-Assertion` with the token, and `Origin: https://localhost`, which the Worker's CSRF check expects for `DASHBOARD_HOST=localhost`. The token stays in the Vite dev server; it is never a `VITE_` variable, so it is never bundled into the app.
+   Vite proxies `/api` to `http://localhost:8787` and adds `Cf-Access-Jwt-Assertion` with the token. It also rewrites `Origin` to `https://localhost`, which the Worker's CSRF check expects for `DASHBOARD_HOST=localhost`, but only when the request's `Origin` is the Vite dev page itself (`http://<the host Vite serves on>`). A request from any other site keeps its own `Origin`, so the CSRF check still refuses cross-site writes while you develop. The token stays in the Vite dev server; it is never a `VITE_` variable, so it is never bundled into the app.
 
-4. Open the URL Vite prints.
+5. Open the URL Vite prints.
 
-The token expires with your Access session. When the app shows "You are signed out", run `cloudflared access login https://<your dashboard host>` if needed, then restart step 3 to pick up a fresh token.
+The token expires with your Access session. When the app shows "You are signed out", run `cloudflared access login https://<your dashboard host>` if needed, then restart step 4 to pick up a fresh token.
