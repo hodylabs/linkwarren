@@ -200,6 +200,24 @@ describe("New link sheet", () => {
     await screen.findByText(/Available/);
   });
 
+  it("the dialog is named Release lock while the confirm shows, and a double Enter sends one DELETE", async () => {
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((r) => (finish = r));
+    const { api, user } = boot({
+      check: () => ({ body: { status: "locked" } }),
+      routes: { "DELETE /api/locks/dm/spring": async () => (await gate, { status: 204 }) },
+    });
+    await open(user);
+    await user.type(slugBox(), "spring");
+    await user.click(await screen.findByRole("button", { name: "Release lock" }));
+    expect(screen.getByRole("dialog", { name: "Release lock" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "New link" })).toBeNull();
+    await user.keyboard("{Enter}{Enter}");
+    finish!();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Release lock" })).toBeNull());
+    expect(api.calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+  });
+
   it("Esc in the Release lock confirm cancels only the confirm", async () => {
     const { api, user } = boot({ check: () => ({ body: { status: "locked" } }) });
     await open(user);

@@ -66,6 +66,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const [releasing, setReleasing] = useState(false);
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const wasReleasing = useRef(false);
+  const releaseBusy = useRef(false); // double Enter sends one DELETE
 
   const domain: Domain | undefined = usable.find((d) => d.id === domainId);
   const host = domain?.host ?? "";
@@ -137,6 +138,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   };
 
   const release = async () => {
+    if (releaseBusy.current) return;
+    releaseBusy.current = true;
     setReleaseError(null);
     try {
       await api("DELETE", `/api/locks/${encodeURIComponent(domainId)}/${encodeURIComponent(slug)}`);
@@ -144,6 +147,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       setRecheck((n) => n + 1);
     } catch (e) {
       setReleaseError(errorText(e instanceof ApiError ? e.code : "internal"));
+    } finally {
+      releaseBusy.current = false;
     }
   };
 
@@ -176,7 +181,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const finalUrl = url.replace(/^https?:\/\//, "");
 
   return (
-    <Sheet label="New link" onClose={() => (releasing ? setReleasing(false) : app.close())}>
+    <Sheet label={releasing ? "Release lock" : "New link"} onClose={() => (releasing ? setReleasing(false) : app.close())}>
       {releasing ? (
         <>
           <div className="sh-head">
