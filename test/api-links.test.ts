@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { setupAccess, tokenFor } from "./helpers/access";
+import { dash, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -8,7 +8,7 @@ const audits = async (action: string) => (await one<{ n: number }>("SELECT COUNT
 
 const EMAIL: Record<string, string> = { owner: "owner@example.com", a: "a@example.com", b: "b@example.com" };
 async function call(who: string, method: string, path: string, body?: unknown) {
-  return exports.default.fetch(`https://dash.test${path}`, {
+  return dash(path, {
     method,
     headers: { "Cf-Access-Jwt-Assertion": await tokenFor(EMAIL[who]!), ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -83,7 +83,7 @@ describe("create", () => {
     expect((await post("a", { domainId: "dm", slug: "promo", url: "https://x.com" })).status).toBe(400);
   });
 
-  for (const [slug, reason] of [["", "empty"], ["a b", "charset"], [".hid", "leading_dot"], ["x".repeat(65), "too_long"]] as const)
+  for (const [slug, reason] of [["", "empty"], ["a b", "charset"], [".hid", "leading_dot"], ["x".repeat(65), "slug_too_long"]] as const)
     it(`400 ${reason} for slug ${JSON.stringify(slug).slice(0, 12)}`, async () => {
       const r = await post("a", { domainId: "dm", slug, url: "https://x.com" });
       expect([r.status, await r.json()]).toEqual([400, { error: reason }]);
@@ -92,7 +92,7 @@ describe("create", () => {
   const hostile: [string, string][] = [
     ["javascript:alert(1)", "scheme"], ["data:text/html,hi", "scheme"], ["https://user:pw@x.com", "userinfo"],
     ["/relative/path", "not_url"], ["https://go.test/other", "loop"], ["https://GO.test:443/x", "loop"],
-    ["https://shared.test/x", "loop"], [`https://x.com/${"a".repeat(2100)}`, "too_long"],
+    ["https://shared.test/x", "loop"], [`https://x.com/${"a".repeat(2100)}`, "url_too_long"],
   ];
   for (const [url, reason] of hostile)
     it(`400 ${reason} for destination ${url.slice(0, 30)}`, async () => {
@@ -103,7 +103,7 @@ describe("create", () => {
 
   it("rejects an href that grows past 2048 after normalization", async () => {
     const r = await post("a", { domainId: "dm", slug: "g", url: `https://x.com/${"é".repeat(1100)}` });
-    expect([r.status, await r.json()]).toEqual([400, { error: "too_long" }]);
+    expect([r.status, await r.json()]).toEqual([400, { error: "url_too_long" }]);
   });
 
   it("strict body: unknown keys, bad redirectCode, bad times, expiresAt <= startsAt all 400", async () => {
@@ -114,7 +114,7 @@ describe("create", () => {
   });
 
   it("401 without a token", async () => {
-    expect((await exports.default.fetch("https://dash.test/api/links", { method: "POST" })).status).toBe(401);
+    expect((await dash("/api/links", { method: "POST" })).status).toBe(401);
   });
 });
 
@@ -132,6 +132,20 @@ describe("delete, locks and takeover", () => {
     expect((await call("owner", "DELETE", "/api/locks/dm/gone")).status).toBe(404);
     expect((await post("b", { domainId: "dm", slug: "gone", url: "https://y.com" })).status).toBe(201);
     expect([await audits("link.delete"), await audits("lock.release")]).toEqual([1, 1]);
+  });
+
+  it("lock release audits every deleted key once", async () => {
+    await run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dm','Dup',1,'uo'),('dm','dup',1,'uo')");
+    const [a, b] = await Promise.all([call("owner", "DELETE", "/api/locks/dm/dup"), call("owner", "DELETE", "/api/locks/dm/dup")]);
+    expect([a.status, b.status].sort()).toEqual([204, 404]);
+    expect(await audits("lock.release")).toBe(1);
+    const d = JSON.parse((await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'lock.release'"))!.detail);
+    expect(d.slugKeys.sort()).toEqual(["Dup", "dup"]);
+  });
+
+  it("rejects a destination on the dashboard host", async () => {
+    const r = await post("a", { domainId: "dm", slug: "dh", url: "https://dash.test/x" });
+    expect([r.status, await r.json()]).toEqual([400, { error: "loop" }]);
   });
 
   it("a second delete of the same link is 404 and writes one audit row", async () => {

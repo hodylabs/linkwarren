@@ -78,7 +78,7 @@ Each stage ships through the usual loop: branch, review, PR, merge, deploy to a 
 | S5 Link rules | Password, country/device routing, UTM builder, QR (SVG/PNG) | Each rule verified with curl and a phone scan |
 | S6 Agents + API | MCP with OAuth (read / read+write), tools, API keys, "via" audit | Connect from claude.ai and Claude Code; scopes live-tested |
 | S7 People + setup | Invites (Resend), settings screens, first-run setup wizard | Fresh instance set up from zero in the wizard |
-| S8 Migration + release | Import from 66biolinks (selected domains), verify every old URL, switch DNS per domain, docs, release | Every old URL answers the same `Location` as before |
+| S8 Migration + release | Import from 66biolinks (selected domains), verify every old URL, switch DNS per domain, docs, release | Every old URL answers the same `Location` as before. Also the one-click deploy, built last: a Deploy to Cloudflare button that forks the repo and provisions D1, KV and the Worker in the user's own account, plus an `npm run setup` terminal fallback; both end in the first-run wizard |
 
 ## 5. Out of scope (v1)
 - Bio pages, splash pages, tracking pixels (66biolinks features not needed here).

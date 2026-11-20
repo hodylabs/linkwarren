@@ -86,6 +86,7 @@ domains.patch("/:id", async (c) => {
   const body = patchBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const b = body.data;
+  if (Object.keys(b).length === 0) return c.json({ error: "no_changes" }, 400);
   const d = await getDomain(c.env, c.req.param("id"));
   if (!d) return c.json(notFound, 404);
   if (!canManageDomain(user, d)) return c.json(forbidden, 403);

@@ -41,6 +41,17 @@ describe("checkDestination", () => {
     expect(checkDestination("https://u:p@x.com", [])).toEqual({ ok: false, reason: "userinfo" });
     expect(checkDestination("https://u@x.com", [])).toEqual({ ok: false, reason: "userinfo" });
   });
+  it.each([" JAVASCRIPT:x", "java\nscript:x"])("parser-normalized scheme %j", (s) =>
+    expect(checkDestination(s, [])).toEqual({ ok: false, reason: "scheme" }));
+  it("backslash authority parses as https host evil.com", () => {
+    const r = checkDestination("https:\\\\evil.com", []);
+    expect(r.ok && [r.url.protocol, r.url.host]).toEqual(["https:", "evil.com"]);
+    expect(checkDestination("https:\\\\evil.com", ["evil.com"])).toEqual({ ok: false, reason: "loop" });
+  });
+  it("empty userinfo marker is accepted", () => {
+    const r = checkDestination("https://@x.com", []);
+    expect(r.ok && r.url.href).toBe("https://x.com/");
+  });
   it("relative", () => expect(checkDestination("/relative", [])).toEqual({ ok: false, reason: "not_url" }));
   it("too long", () =>
     expect(checkDestination("https://x.com/" + "a".repeat(2040), [])).toEqual({ ok: false, reason: "too_long" }));

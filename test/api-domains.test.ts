@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { setupAccess, tokenFor } from "./helpers/access";
+import { dash, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -8,7 +8,7 @@ const audits = async (action: string) => (await one<{ n: number }>("SELECT COUNT
 
 const EMAIL: Record<string, string> = { owner: "owner@example.com", a: "a@example.com", b: "b@example.com" };
 async function call(who: string, method: string, path: string, body?: unknown) {
-  return exports.default.fetch(`https://dash.test${path}`, {
+  return dash(path, {
     method,
     headers: { "Cf-Access-Jwt-Assertion": await tokenFor(EMAIL[who]!), ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -167,7 +167,11 @@ describe("settings", () => {
   });
   it("a redirect target whose normalized href exceeds 2048 is refused", async () => {
     const raw = `https://example.com/${"a".repeat(2000)}${"\u00e9".repeat(10)}`; // raw 2030 chars, href 2080
-    await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw }), 400, { error: "too_long" });
+    await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw }), 400, { error: "url_too_long" });
+  });
+  it("empty patch is 400 no_changes with no write and no audit", async () => {
+    await status(await call("owner", "PATCH", "/api/domains/dm", {}), 400, { error: "no_changes" });
+    expect(await audits("domain.update")).toBe(0);
   });
   it("404 unknown; strict body", async () => {
     await status(await call("owner", "PATCH", "/api/domains/nope", { noindex: true }), 404);

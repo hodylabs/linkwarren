@@ -98,7 +98,7 @@ links.post("/", async (c) => {
   if (!domain) return c.json({ error: "not_found" }, 404);
   if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))) return c.json(forbidden, 403);
   const s = checkSlug(b.slug, domain.reservedExtra);
-  if (!s.ok) return c.json({ error: s.reason }, 400);
+  if (!s.ok) return c.json({ error: s.reason === "too_long" ? "slug_too_long" : s.reason }, 400);
   const dest = await destination(c.env, b.url);
   if ("error" in dest) return c.json({ error: dest.error }, 400);
   const startsAt = b.startsAt ?? null, expiresAt = b.expiresAt ?? null;
@@ -209,12 +209,16 @@ locks.delete("/:domainId/:slugKey", async (c) => {
   const domain = await getDomain(c.env, domainId);
   if (!domain) return c.json({ error: "not_found" }, 404);
   const key = slugKey(raw, domain.caseSensitive);
-  if (!(await hasLock(c.env, domainId, key))) return c.json({ error: "not_found" }, 404);
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)").bind(domainId, key),
+  const match = "domain_id = ? AND lower(slug_key) = lower(?)";
+  const keys = (await c.env.DB.prepare(`SELECT slug_key FROM slug_locks WHERE ${match}`).bind(domainId, key).all<{ slug_key: string }>()).results.map((r) => r.slug_key);
+  if (keys.length === 0) return c.json({ error: "not_found" }, 404);
+  // Audit first, only while a lock still matches, so concurrent releases write one row.
+  const res = await c.env.DB.batch([
     auditStmt(c.env, { actorId: user.id, action: "lock.release", targetType: "lock", targetId: `${domainId}/${key}`,
-      detail: { domainId, slugKey: key } }),
+      detail: { domainId, slugKeys: keys } }, { sql: `EXISTS (SELECT 1 FROM slug_locks WHERE ${match})`, binds: [domainId, key] }),
+    c.env.DB.prepare(`DELETE FROM slug_locks WHERE ${match}`).bind(domainId, key),
   ]);
+  if (res[1]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
   await purge(c.env, domainId, key);
   return c.body(null, 204);
 });
