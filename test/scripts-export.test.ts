@@ -56,6 +56,21 @@ describe("chunkLinks twins first", () => {
   });
 });
 
+describe("chunkLinks duplicates", () => {
+  const mk = (host: string | null, slug: string) => ({ host, slug, destination: "https://e.org/", enabled: true, startDate: null, endDate: null });
+  it("collapses exact duplicate rows before chunking, so a duplicate pair never straddles a chunk boundary", () => {
+    // 499 distinct slugs sort before the identical pair, which would otherwise land at indexes 499 and 500.
+    const links = [...Array.from({ length: 499 }, (_, i) => mk("t.test", `s${String(i).padStart(3, "0")}`)), mk("t.test", "zz"), mk(null, "zz")];
+    const chunks = chunkLinks({ mainHost: "t.test", domains: [], links }, 500);
+    expect(chunks.map((c) => c.length)).toEqual([500]);
+    expect(chunks.flat().filter((l) => l.slug === "zz")).toHaveLength(1);
+  });
+  it("keeps rows that differ in any field", () => {
+    const links = [mk("t.test", "a"), { ...mk("t.test", "a"), enabled: false }, { ...mk("t.test", "a"), endDate: "2026-01-01 00:00:00" }];
+    expect(chunkLinks({ mainHost: "t.test", domains: [], links }, 500).flat()).toHaveLength(3);
+  });
+});
+
 describe("importRequests", () => {
   const mk = (host: string | null, slug: string) => ({ host, slug, destination: "https://e.org/", enabled: true, startDate: null, endDate: null });
   const D = (host: string) => ({ host, customIndexUrl: null, customNotFoundUrl: null });

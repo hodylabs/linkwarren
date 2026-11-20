@@ -69,17 +69,23 @@ export function toCsv(rows: Record<string, string | number | boolean | null>[]):
 /**
  * Splits links into request-sized chunks. The server decides a new domain's case sensitivity per request, so the first
  * chunk touching a host must hold every case-twin group of that host: those links sort first and may overflow the chunk
- * size. Throws when that forces a chunk above maxChunk (the server cap).
+ * size. Throws when that forces a chunk above maxChunk (the server cap). Exact duplicate rows are collapsed first: the
+ * server skips a repeat only within one request, so a pair split across requests would count twice in a dry run.
  */
 export function chunkLinks(e: Export, size: number, maxChunk = 1000): ExportLink[][] {
+  const seen = new Set<string>();
+  const links = e.links.filter((l) => {
+    const k = JSON.stringify([linkHost(e, l), l.slug, l.destination, l.enabled, l.startDate, l.endDate]);
+    return !seen.has(k) && !!seen.add(k);
+  });
   const groups = new Map<string, Set<string>>();
-  for (const l of e.links) {
+  for (const l of links) {
     const k = `${linkHost(e, l)}\0${l.slug.toLowerCase()}`;
     groups.set(k, (groups.get(k) ?? new Set()).add(l.slug));
   }
   const twin = (l: ExportLink) => groups.get(`${linkHost(e, l)}\0${l.slug.toLowerCase()}`)!.size > 1;
   const key = (l: ExportLink) => `${linkHost(e, l)}\0${twin(l) ? 0 : 1}\0${l.slug.toLowerCase()}`;
-  const sorted = [...e.links].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  const sorted = links.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   const chunks: ExportLink[][] = [];
   let cur: ExportLink[] = [];
   const flush = () => { if (cur.length) chunks.push(cur); cur = []; };
