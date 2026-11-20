@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import fixture from "./fixtures/legacy-export.json";
 import { chunkLinks, filterHosts, parseExport } from "../scripts/lib/export";
-import { setupAccess, tokenFor } from "./helpers/access";
+import { dash, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const all = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).all<T>().then((r) => r.results);
@@ -13,7 +13,7 @@ type L = { host: string | null; slug: string; destination: string; enabled?: boo
 const link = (l: L) => ({ enabled: true, startDate: null, endDate: null, ...l });
 const body = (links: L[], domains: unknown[] = [], mainHost = "main.example") => ({ mainHost, domains, links: links.map(link) });
 async function imp(who: string, b: unknown, q = "") {
-  return exports.default.fetch(`https://dash.test/api/import${q}`, {
+  return dash(`/api/import${q}`, {
     method: "POST",
     headers: { "Cf-Access-Jwt-Assertion": await tokenFor(who), "content-type": "application/json" },
     body: JSON.stringify(b),
@@ -156,6 +156,19 @@ describe("rules", () => {
     expect((await all<{ case_sensitive: number }>("SELECT case_sensitive FROM domains"))[0]!.case_sensitive).toBe(1);
     expect((await get("big.test", "/zz")).headers.get("location")).toBe("https://e.org/zz");
     expect((await get("big.test", "/ZZ")).headers.get("location")).toBe("https://e.org/ZZ");
+  });
+  it("writes one import.chunk audit row per D1 batch and a run row with `planned`", async () => {
+    const links = Array.from({ length: 250 }, (_, i) => ({ host: "big.test", slug: `s${i}`, destination: "https://e.org/" + i }));
+    expect((await rep(await owner(body(links)))).created).toBe(250);
+    const chunks = (await all<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'import.chunk' ORDER BY id")).map((r) => JSON.parse(r.detail));
+    expect(chunks).toEqual([
+      { hosts: ["big.test"], domains: 1, links: 97, locks: 0 },
+      { hosts: ["big.test"], domains: 0, links: 98, locks: 0 },
+      { hosts: ["big.test"], domains: 0, links: 55, locks: 0 },
+    ]);
+    const run = JSON.parse((await all<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'import.run'"))[0]!.detail);
+    expect(run).toMatchObject({ planned: 250 });
+    expect(run).not.toHaveProperty("created");
   });
   it("duplicate rows within one export are skipped when identical", async () => {
     const l = { host: "a.test", slug: "x", destination: "https://e.org/" };
