@@ -5,6 +5,7 @@ import type { UserRow } from "./types";
 import { normalizeHost } from "./host";
 import { handleRedirect } from "./redirect";
 import { links, locks } from "./api/links";
+import { domains } from "./api/domains";
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
 
@@ -19,6 +20,7 @@ app.use("*", async (c, next) => {
 app.use("/api/*", requireUser);
 app.get("/api/me", (c) => c.json({ email: c.var.user.email, role: c.var.user.role }));
 
+app.route("/api/domains", domains);
 app.route("/api/links", links);
 app.route("/api/locks", locks);
 
