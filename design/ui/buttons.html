@@ -1,0 +1,33 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>linkwarren button options</title>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root{--graphite:#15181D;--line:#E4E5E0;--muted:#646B75;--faint:#9AA0A8;--signal:#FD8D27;--signal-deep:#D9661A;--bg:#F6F6F3}
+body{margin:0;background:var(--bg);font-family:"IBM Plex Sans",sans-serif;font-size:13.5px;color:#1B1E23;padding:32px}
+h2{font-family:"Unbounded",sans-serif;font-weight:500;font-size:15px;margin:28px 0 8px}
+p{margin:0 0 10px;color:var(--muted);max-width:70ch}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;border:1px solid var(--line);border-radius:10px;background:#fff;max-width:1100px}
+.top h1{font-family:"Unbounded",sans-serif;font-weight:500;font-size:18px;margin:0}
+.top .crumb{color:var(--muted)}
+.search{margin-left:auto;display:flex;align-items:center;border:1px solid var(--line);border-radius:7px;padding:6px 10px;width:300px;color:var(--faint);background:var(--bg)}
+button{font:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:8px;border-radius:7px;padding:7px 14px;border:0}
+button:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round}
+.k{font-family:"IBM Plex Mono",monospace;font-size:11.5px}
+.a{background:var(--graphite);color:#fff;font-weight:500}.a svg{color:var(--signal)}.a .k{color:#7D8591;margin-left:4px}
+.b{background:var(--signal);color:var(--graphite);font-weight:600}.b .k{opacity:.55;margin-left:4px}
+.c{background:#fff;border:1px solid var(--signal);color:var(--signal-deep);font-weight:600}.c .k{color:var(--faint);margin-left:4px}
+.d{background:var(--signal);color:var(--graphite);padding:7px;width:32px;height:32px;justify-content:center}
+.dlabel{color:var(--faint);font-size:12.5px}
+.e{background:var(--graphite);color:#fff;font-weight:500;padding:7px 12px 7px 14px}.e .k{background:#2A2F37;color:#C9CED6;border-radius:4px;padding:1px 6px;margin-left:6px}
+</style></head><body>
+<h2>A. Graphite with an orange plus</h2><p>Dark and calm. The orange is just the plus sign, and the shortcut sits quietly in grey.</p>
+<div class="top"><h1>Links</h1><span class="crumb">on go.northwind.io</span><div class="search">Search slugs, destinations, tags</div><button class="a"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New link<span class="k">N</span></button></div>
+<h2>B. Orange, flat</h2><p>The current colour without the border or the boxed key. The shortcut is a faded letter.</p>
+<div class="top"><h1>Links</h1><span class="crumb">on go.northwind.io</span><div class="search">Search slugs, destinations, tags</div><button class="b"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New link<span class="k">N</span></button></div>
+<h2>C. Orange outline</h2><p>Lighter weight: white button, orange edge and text.</p>
+<div class="top"><h1>Links</h1><span class="crumb">on go.northwind.io</span><div class="search">Search slugs, destinations, tags</div><button class="c"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New link<span class="k">N</span></button></div>
+<h2>D. Icon only</h2><p>A small orange square with a plus. The smallest footprint; the label shows on hover.</p>
+<div class="top"><h1>Links</h1><span class="crumb">on go.northwind.io</span><div class="search">Search slugs, destinations, tags</div><span class="dlabel">New link, N</span><button class="d" aria-label="New link"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
+<h2>E. Graphite with a key chip</h2><p>Dark button, the shortcut in a small dark chip inside it.</p>
+<div class="top"><h1>Links</h1><span class="crumb">on go.northwind.io</span><div class="search">Search slugs, destinations, tags</div><button class="e">New link<span class="k">N</span></button></div>
+</body></html>

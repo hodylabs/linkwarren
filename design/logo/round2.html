@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linkwarren logo concepts, round 2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root { --graphite:#15181D; --steel:#8A93A0; --signal:#FD8D27; --paper:#F1F1EE; --frost:#E7E9EC; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#FAFAF8; color:var(--graphite); font-family:"IBM Plex Sans",system-ui,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:56px 28px 96px; }
+  h1 { font-family:"Unbounded",sans-serif; font-size:36px; font-weight:700; letter-spacing:-0.02em; margin:0 0 10px; }
+  .intro { font-size:17px; line-height:1.55; max-width:62ch; margin:0 0 44px; color:#444a52; }
+  h2 { font-family:"Unbounded",sans-serif; font-size:20px; font-weight:500; margin:0 0 6px; }
+  .concept { display:grid; grid-template-columns:1fr 1fr 200px; gap:16px; margin:0 0 52px; }
+  .concept header { grid-column:1 / -1; }
+  .concept header p { margin:0; font-size:16px; line-height:1.55; max-width:66ch; color:#444a52; }
+  .tile { border-radius:18px; aspect-ratio:1; display:grid; place-items:center; }
+  .tile svg { width:56%; height:auto; }
+  .light { background:var(--paper); --ink:var(--graphite); --hot:var(--signal); --gap:var(--paper); }
+  .dark  { background:var(--graphite); --ink:var(--frost); --hot:var(--signal); --gap:var(--graphite); }
+  .sizes { display:flex; flex-direction:column; gap:12px; }
+  .sizes div { border-radius:14px; flex:1; display:flex; align-items:center; justify-content:center; gap:18px; }
+  .s64 { width:64px; } .s32 { width:32px; } .s16 { width:16px; }
+  .lockups { display:grid; gap:16px; }
+  .lockup { border-radius:18px; padding:34px 40px; display:flex; align-items:center; gap:22px; }
+  .lockup svg { width:64px; height:64px; flex:none; }
+  .wordmark { font-family:"Unbounded",sans-serif; font-size:50px; font-weight:500; letter-spacing:-0.03em; line-height:1; }
+  .light .wordmark { color:var(--graphite); } .dark .wordmark { color:var(--frost); }
+  @media (max-width:760px) {
+    .concept { grid-template-columns:1fr 1fr; } .sizes { grid-column:1 / -1; flex-direction:row; }
+    .sizes div { padding:12px; } .wordmark { font-size:30px; } .lockup { padding:22px; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="fanout" viewBox="0 0 120 120">
+      <g fill="none" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M30 60 H52" stroke="var(--hot)"/>
+        <path d="M66 54 L86 34 H90" stroke="var(--ink)"/>
+        <path d="M68 60 H90" stroke="var(--ink)"/>
+        <path d="M66 66 L86 86 H90" stroke="var(--ink)"/>
+        <circle cx="99" cy="34" r="8" stroke="var(--ink)"/>
+        <circle cx="99" cy="60" r="8" stroke="var(--ink)"/>
+        <circle cx="99" cy="86" r="8" stroke="var(--ink)"/>
+      </g>
+      <circle cx="21" cy="60" r="10" fill="var(--hot)"/>
+      <rect x="52" y="52" width="16" height="16" rx="3" transform="rotate(45 60 60)" fill="var(--ink)"/>
+    </symbol>
+    <symbol id="chip" viewBox="0 0 120 120">
+      <rect x="22" y="22" width="76" height="76" rx="14" fill="none" stroke="var(--ink)" stroke-width="7"/>
+      <g stroke="var(--gap)" stroke-width="15">
+        <line x1="98" y1="34" x2="98" y2="46"/><line x1="98" y1="54" x2="98" y2="66"/>
+        <line x1="98" y1="74" x2="98" y2="86"/><line x1="22" y1="54" x2="22" y2="66"/>
+      </g>
+      <g fill="none" stroke="var(--hot)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 60 H58 V40 H112"/><path d="M58 60 H112"/><path d="M58 60 V80 H112"/>
+      </g>
+      <circle cx="58" cy="60" r="7" fill="var(--ink)"/>
+    </symbol>
+    <clipPath id="hex-top"><rect x="50" y="26" width="20" height="22"/></clipPath>
+    <symbol id="hexlink" viewBox="0 0 120 120">
+      <g fill="none" stroke-width="8" stroke-linejoin="round">
+        <polygon points="44,30 70,45 70,75 44,90 18,75 18,45" stroke="var(--gap)" stroke-width="16"/>
+        <polygon points="44,30 70,45 70,75 44,90 18,75 18,45" stroke="var(--ink)"/>
+        <polygon points="76,30 102,45 102,75 76,90 50,75 50,45" stroke="var(--gap)" stroke-width="16"/>
+        <polygon points="76,30 102,45 102,75 76,90 50,75 50,45" stroke="var(--hot)"/>
+        <g clip-path="url(#hex-top)">
+          <polygon points="44,30 70,45 70,75 44,90 18,75 18,45" stroke="var(--gap)" stroke-width="16"/>
+          <polygon points="44,30 70,45 70,75 44,90 18,75 18,45" stroke="var(--ink)"/>
+        </g>
+      </g>
+    </symbol>
+    <symbol id="lwtrace" viewBox="0 0 120 120">
+      <g fill="none" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 26 V86 Q22 98 34 98 H40" stroke="var(--ink)"/>
+        <path d="M48 41 L60 96 L74 56 L88 96 L100 41" stroke="var(--hot)"/>
+      </g>
+      <g fill="var(--gap)" stroke-width="6">
+        <circle cx="22" cy="19" r="7" stroke="var(--ink)"/>
+        <circle cx="48" cy="34" r="7" stroke="var(--hot)"/>
+        <circle cx="100" cy="34" r="7" stroke="var(--hot)"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+<main>
+  <h1>linkwarren, round 2</h1>
+  <p class="intro">More technical: graphs, circuit traces and network geometry, in graphite with your hodylabs orange as the signal colour. Each mark is shown on light and dark, then at 64, 32 and 16 pixels for favicon and avatar use.</p>
+  <section class="concept">
+    <header><h2>1. Fan-out</h2><p>A routing diagram. One orange input hits a router node and fans out to three endpoints, which is exactly what the app does with a short link and its domains.</p></header>
+    <div class="tile light"><svg role="img" aria-label="1. Fan-out on light"><use href="#fanout"/></svg></div>
+    <div class="tile dark"><svg role="img" aria-label="1. Fan-out on dark"><use href="#fanout"/></svg></div>
+    <div class="sizes">
+      <div class="light"><svg class="s64"><use href="#fanout"/></svg><svg class="s32"><use href="#fanout"/></svg><svg class="s16"><use href="#fanout"/></svg></div>
+      <div class="dark"><svg class="s64"><use href="#fanout"/></svg><svg class="s32"><use href="#fanout"/></svg><svg class="s16"><use href="#fanout"/></svg></div>
+    </div>
+  </section>
+  <section class="concept">
+    <header><h2>2. Edge chip</h2><p>A chip with one pin in and three pins out, the traces running through it. It nods to running at the edge and reads as infrastructure.</p></header>
+    <div class="tile light"><svg role="img" aria-label="2. Edge chip on light"><use href="#chip"/></svg></div>
+    <div class="tile dark"><svg role="img" aria-label="2. Edge chip on dark"><use href="#chip"/></svg></div>
+    <div class="sizes">
+      <div class="light"><svg class="s64"><use href="#chip"/></svg><svg class="s32"><use href="#chip"/></svg><svg class="s16"><use href="#chip"/></svg></div>
+      <div class="dark"><svg class="s64"><use href="#chip"/></svg><svg class="s32"><use href="#chip"/></svg><svg class="s16"><use href="#chip"/></svg></div>
+    </div>
+  </section>
+  <section class="concept">
+    <header><h2>3. Hex link</h2><p>Two hexagons locked together like chain links. Hexagons read as graph cells and network nodes, and the interlock says link without the usual paperclip icon.</p></header>
+    <div class="tile light"><svg role="img" aria-label="3. Hex link on light"><use href="#hexlink"/></svg></div>
+    <div class="tile dark"><svg role="img" aria-label="3. Hex link on dark"><use href="#hexlink"/></svg></div>
+    <div class="sizes">
+      <div class="light"><svg class="s64"><use href="#hexlink"/></svg><svg class="s32"><use href="#hexlink"/></svg><svg class="s16"><use href="#hexlink"/></svg></div>
+      <div class="dark"><svg class="s64"><use href="#hexlink"/></svg><svg class="s32"><use href="#hexlink"/></svg><svg class="s16"><use href="#hexlink"/></svg></div>
+    </div>
+  </section>
+  <section class="concept">
+    <header><h2>4. Trace monogram</h2><p>The letters l and w drawn as circuit traces, ending in vias. The w's low points double as tunnels in the warren.</p></header>
+    <div class="tile light"><svg role="img" aria-label="4. Trace monogram on light"><use href="#lwtrace"/></svg></div>
+    <div class="tile dark"><svg role="img" aria-label="4. Trace monogram on dark"><use href="#lwtrace"/></svg></div>
+    <div class="sizes">
+      <div class="light"><svg class="s64"><use href="#lwtrace"/></svg><svg class="s32"><use href="#lwtrace"/></svg><svg class="s16"><use href="#lwtrace"/></svg></div>
+      <div class="dark"><svg class="s64"><use href="#lwtrace"/></svg><svg class="s32"><use href="#lwtrace"/></svg><svg class="s16"><use href="#lwtrace"/></svg></div>
+    </div>
+  </section>
+  <section>
+    <h2>With the wordmark</h2>
+    <p class="intro" style="margin-bottom:20px">Unbounded, a wide geometric face, lowercase like the repo name. The wordmark stays one colour so the mark carries the orange.</p>
+    <div class="lockups">
+      <div class="lockup dark"><svg><use href="#fanout"/></svg><div class="wordmark">linkwarren</div></div>
+      <div class="lockup light"><svg><use href="#chip"/></svg><div class="wordmark">linkwarren</div></div>
+      <div class="lockup dark"><svg><use href="#hexlink"/></svg><div class="wordmark">linkwarren</div></div>
+      <div class="lockup light"><svg><use href="#lwtrace"/></svg><div class="wordmark">linkwarren</div></div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

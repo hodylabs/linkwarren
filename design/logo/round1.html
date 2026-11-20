@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linkwarren logo concepts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --loam: #2A2320;   /* dark soil */
+    --burrow: #6B5240; /* tunnel earth */
+    --clover: #3F8F5A; /* meadow green */
+    --sprout: #7CC795; /* clover on dark */
+    --fawn: #C9A27E;   /* rabbit fur */
+    --mist: #F3F5F2;   /* cool paper */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #FBFCFA;
+    color: var(--loam);
+    font-family: "Bricolage Grotesque", system-ui, sans-serif;
+    font-optical-sizing: auto;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 56px 28px 96px; }
+  h1 { font-size: 44px; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 8px; }
+  .intro { font-size: 18px; line-height: 1.5; max-width: 62ch; margin: 0 0 48px; color: #4a403a; }
+  h2 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .concept { display: grid; grid-template-columns: 1fr 1fr 200px; gap: 16px; margin: 0 0 56px; }
+  .concept header { grid-column: 1 / -1; }
+  .concept header p { margin: 0; font-size: 16px; line-height: 1.5; max-width: 66ch; color: #4a403a; }
+  .tile { border-radius: 20px; aspect-ratio: 1; display: grid; place-items: center; }
+  .tile svg { width: 58%; height: auto; }
+  .light { background: var(--mist); --ink: var(--loam); --soil: var(--burrow); --leaf: var(--clover); --gap: var(--mist); --hole: var(--loam); }
+  .dark  { background: var(--loam); --ink: var(--fawn); --soil: var(--fawn); --leaf: var(--sprout); --gap: var(--loam); --hole: #120E0C; }
+  .sizes { display: flex; flex-direction: column; gap: 12px; }
+  .sizes div { border-radius: 14px; flex: 1; display: flex; align-items: center; justify-content: center; gap: 18px; }
+  .s64 { width: 64px; } .s32 { width: 32px; } .s16 { width: 16px; }
+  .sizes .cap { font-size: 13px; color: #6d625a; flex: 0; }
+  .lockups { display: grid; gap: 16px; }
+  .lockup { border-radius: 20px; padding: 36px 40px; display: flex; align-items: center; gap: 18px; }
+  .lockup svg { width: 72px; height: 72px; flex: none; }
+  .wordmark { font-size: 64px; font-weight: 800; letter-spacing: -0.035em; line-height: 1; }
+  .light .wordmark { color: var(--loam); }
+  .dark .wordmark { color: var(--mist); }
+  .wordmark span { color: var(--leaf); }
+  @media (max-width: 760px) {
+    .concept { grid-template-columns: 1fr 1fr; }
+    .sizes { grid-column: 1 / -1; flex-direction: row; }
+    .sizes div { padding: 12px; }
+    .wordmark { font-size: 40px; }
+    .lockup { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- A: two link-loop ears poking out of a burrow -->
+    <symbol id="ears" viewBox="0 0 120 120">
+      <g fill="none" stroke-width="10" stroke-linecap="round">
+        <rect x="31" y="18" width="26" height="80" rx="13" stroke="var(--leaf)" transform="rotate(-11 44 98)"/>
+        <rect x="63" y="18" width="26" height="80" rx="13" stroke="var(--leaf)" transform="rotate(11 76 98)"/>
+      </g>
+      <path d="M14 104 A46 30 0 0 1 106 104 Z" fill="var(--hole)"/>
+      <line x1="6" y1="104" x2="114" y2="104" stroke="var(--ink)" stroke-width="7" stroke-linecap="round"/>
+    </symbol>
+
+    <!-- B: one entrance, tunnels branching to many exits -->
+    <symbol id="warren" viewBox="0 0 120 120">
+      <line x1="8" y1="22" x2="112" y2="22" stroke="var(--ink)" stroke-width="7" stroke-linecap="round"/>
+      <g fill="none" stroke="var(--soil)" stroke-width="10" stroke-linecap="round">
+        <path d="M60 22 V50"/>
+        <path d="M60 50 C60 66 28 64 26 86"/>
+        <path d="M60 50 V94"/>
+        <path d="M60 50 C60 66 92 64 94 86"/>
+      </g>
+      <g fill="var(--leaf)">
+        <circle cx="26" cy="94" r="10"/>
+        <circle cx="60" cy="102" r="10"/>
+        <circle cx="94" cy="94" r="10"/>
+      </g>
+    </symbol>
+
+    <!-- C: a rabbit head made of interlocking chain links -->
+    <clipPath id="c-left"><rect x="20" y="54" width="16" height="22"/></clipPath>
+    <clipPath id="c-right"><rect x="84" y="54" width="16" height="22"/></clipPath>
+    <symbol id="chainbun" viewBox="0 0 120 120">
+      <g fill="none" stroke-linecap="round">
+        <rect x="28" y="10" width="22" height="66" rx="11" stroke="var(--gap)" stroke-width="18"/><rect x="28" y="10" width="22" height="66" rx="11" stroke="var(--leaf)" stroke-width="10"/>
+        <rect x="70" y="10" width="22" height="66" rx="11" stroke="var(--gap)" stroke-width="18"/><rect x="70" y="10" width="22" height="66" rx="11" stroke="var(--leaf)" stroke-width="10"/>
+        <rect x="14" y="64" width="92" height="42" rx="21" stroke="var(--gap)" stroke-width="18"/>
+        <rect x="14" y="64" width="92" height="42" rx="21" stroke="var(--ink)" stroke-width="10"/>
+        <g clip-path="url(#c-left)"><rect x="28" y="10" width="22" height="66" rx="11" stroke="var(--gap)" stroke-width="18"/><rect x="28" y="10" width="22" height="66" rx="11" stroke="var(--leaf)" stroke-width="10"/></g>
+        <g clip-path="url(#c-right)"><rect x="70" y="10" width="22" height="66" rx="11" stroke="var(--gap)" stroke-width="18"/><rect x="70" y="10" width="22" height="66" rx="11" stroke="var(--leaf)" stroke-width="10"/></g>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<main>
+  <h1>linkwarren logo concepts</h1>
+  <p class="intro">Two directions for the mark, each shown on light and dark, then shrunk to 64, 32 and 16 pixels to check it still reads as a favicon and GitHub avatar. Lockups with the wordmark are at the bottom.</p>
+
+  <section class="concept">
+    <header>
+      <h2>A. Ears from the burrow</h2>
+      <p>Two link loops stand up as rabbit ears from a burrow mouth. It reads as a rabbit first and a link second, and it has the most personality of the three.</p>
+    </header>
+    <div class="tile light"><svg role="img" aria-label="Concept A on light"><use href="#ears"/></svg></div>
+    <div class="tile dark"><svg role="img" aria-label="Concept A on dark"><use href="#ears"/></svg></div>
+    <div class="sizes">
+      <div class="light"><svg class="s64"><use href="#ears"/></svg><svg class="s32"><use href="#ears"/></svg><svg class="s16"><use href="#ears"/></svg></div>
+      <div class="dark"><svg class="s64"><use href="#ears"/></svg><svg class="s32"><use href="#ears"/></svg><svg class="s16"><use href="#ears"/></svg></div>
+    </div>
+  </section>
+
+  <section class="concept">
+    <header>
+      <h2>B. The warren</h2>
+      <p>One entrance at the surface, tunnels branching underground to three exits. It is the product in one picture: a short link going in, many domains coming out.</p>
+    </header>
+    <div class="tile light"><svg role="img" aria-label="Concept B on light"><use href="#warren"/></svg></div>
+    <div class="tile dark"><svg role="img" aria-label="Concept B on dark"><use href="#warren"/></svg></div>
+    <div class="sizes">
+      <div class="light"><svg class="s64"><use href="#warren"/></svg><svg class="s32"><use href="#warren"/></svg><svg class="s16"><use href="#warren"/></svg></div>
+      <div class="dark"><svg class="s64"><use href="#warren"/></svg><svg class="s32"><use href="#warren"/></svg><svg class="s16"><use href="#warren"/></svg></div>
+    </div>
+  </section>
+
+
+  <section>
+    <h2>With the wordmark</h2>
+    <p class="intro" style="margin-bottom:20px">Bricolage Grotesque at its heaviest weight, tightly spaced, all lowercase like the repo name. The second half takes the mark's green so the name splits into its two words without a space.</p>
+    <div class="lockups">
+      <div class="lockup light"><svg><use href="#ears"/></svg><div class="wordmark">link<span>warren</span></div></div>
+      <div class="lockup dark"><svg><use href="#warren"/></svg><div class="wordmark">link<span>warren</span></div></div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

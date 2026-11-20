@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linkwarren dashboard mockup</title>
+<link rel="icon" href="../logo/linkwarren-mark.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --graphite:#15181D; --rail:#1C2026; --rail-hi:#262B33; --rail-text:#C9CED6; --rail-dim:#7D8591;
+  --bg:#F6F6F3; --panel:#FFFFFF; --line:#E4E5E0; --line-soft:#EEEFEB;
+  --text:#1B1E23; --muted:#646B75; --faint:#9AA0A8;
+  --signal:#FD8D27; --signal-deep:#D9661A; --signal-wash:#FFF3E6;
+  --ok:#2F8F57; --ok-wash:#E8F5EC; --wait:#A86F0C; --wait-wash:#FBF2DF; --bad:#C53F3F; --bad-wash:#FBEAEA;
+  --mono:"IBM Plex Mono",ui-monospace,monospace; --sans:"IBM Plex Sans",system-ui,sans-serif; --display:"Unbounded",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:var(--sans);font-size:13.5px;line-height:1.45;color:var(--text);background:var(--bg);display:grid;grid-template-columns:220px minmax(0,1fr);}
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px;border-radius:4px}
+button{font:inherit;color:inherit;cursor:pointer}
+kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:var(--panel);color:var(--muted)}
+
+/* rail */
+.rail{background:var(--rail);color:var(--rail-text);display:flex;flex-direction:column;padding:14px 10px;gap:14px;height:100vh;position:sticky;top:0}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px}
+.brand img{width:28px;height:28px}
+.brand span{font-family:var(--display);font-weight:500;font-size:17px;letter-spacing:-.03em;color:#fff}
+.switch{display:flex;align-items:center;gap:8px;width:100%;background:var(--rail-hi);border:1px solid #30363F;border-radius:8px;padding:8px 10px;color:#fff;text-align:left}
+.switch .dot{width:8px;height:8px;border-radius:50%;background:var(--signal);flex:none}
+.switch b{font-family:var(--mono);font-weight:500;font-size:12.5px;flex:1}
+.switch small{color:var(--rail-dim)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;color:var(--rail-text);text-decoration:none}
+.nav a:hover{background:var(--rail-hi)}
+.nav a[aria-current="page"]{background:var(--rail-hi);color:#fff;box-shadow:inset 2px 0 0 var(--signal)}
+.nav a .k{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--rail-dim)}
+.nav svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.nav-sep{font-size:11.5px;color:var(--rail-dim);padding:10px 10px 4px}
+.me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:8px;border-top:1px solid #2A2F37}
+.avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
+.me .avatar{background:var(--signal);color:var(--graphite)}
+.me div{line-height:1.25}.me small{color:var(--rail-dim)}
+
+/* main */
+main{min-width:0;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+.top h1{font-family:var(--display);font-weight:500;font-size:18px;letter-spacing:-.02em;margin:0}
+.top .crumb{color:var(--muted)}
+.search{margin-left:auto;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:7px;padding:6px 10px;width:300px;color:var(--faint);background:var(--bg)}
+.search span{flex:1}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:6px 12px;display:inline-flex;align-items:center;gap:8px}
+.btn.primary{background:var(--graphite);border-color:var(--graphite);color:#fff;font-weight:500;padding:7px 14px}
+.btn.primary .plus{width:14px;height:14px;stroke:var(--signal);fill:none;stroke-width:2.2;stroke-linecap:round}
+.btn.primary .k{font-family:var(--mono);font-size:11.5px;color:#7D8591;margin-left:4px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.body{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;min-height:0}
+.list{overflow:auto;min-width:0}
+.list table td.who-col{}
+.detail{border-left:1px solid var(--line);background:var(--panel);overflow:auto}
+
+.filters{display:flex;align-items:center;gap:6px;padding:10px 20px;border-bottom:1px solid var(--line-soft)}
+.chip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--panel);color:var(--muted);font-size:12.5px}
+.chip[aria-pressed="true"]{background:var(--graphite);border-color:var(--graphite);color:#fff}
+.filters .count{margin-left:auto;color:var(--faint);font-size:12.5px}
+
+table{width:100%;border-collapse:collapse}
+th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0}
+td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle;white-space:nowrap}
+tbody tr{background:var(--panel)}
+tbody tr:hover{background:#FBFBF9}
+tbody tr[aria-selected="true"]{background:var(--signal-wash);box-shadow:inset 3px 0 0 var(--signal)}
+td:first-child,th:first-child{padding-left:20px}
+.short{font-family:var(--mono);font-size:13px}
+.short .host{color:var(--faint)}
+.short .slug{font-weight:600;color:var(--text)}
+.dest{color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+.spark{width:72px;height:20px;display:block}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;padding:2px 8px;border-radius:999px}
+.tag::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.t-ok{background:var(--ok-wash);color:var(--ok)} .t-wait{background:var(--wait-wash);color:var(--wait)} .t-bad{background:var(--bad-wash);color:var(--bad)} .t-off{background:#EFF0EC;color:var(--muted)}
+.icons{display:inline-flex;gap:6px;color:var(--faint)}
+.icons svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.who{display:inline-flex;align-items:center;gap:7px}
+.who .avatar{width:20px;height:20px;font-size:9.5px}
+
+/* detail panel */
+.d-head{padding:16px 20px;border-bottom:1px solid var(--line-soft)}
+.d-head .short{font-size:16px}
+.d-head .row{display:flex;align-items:center;gap:8px;margin-top:10px}
+.sect{padding:14px 20px;border-bottom:1px solid var(--line-soft)}
+.sect h3{font-size:12.5px;font-weight:600;margin:0 0 10px;color:var(--text)}
+.field{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center;margin-bottom:8px}
+.field label{color:var(--muted)}
+.input{border:1px solid var(--line);border-radius:7px;padding:6px 9px;background:var(--panel);font-family:var(--mono);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.input.sans{font-family:var(--sans);font-size:13px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg span{padding:5px 10px;font-size:12.5px;color:var(--muted);border-right:1px solid var(--line)}
+.seg span:last-child{border-right:0}
+.seg span[aria-checked="true"]{background:var(--graphite);color:#fff}
+.toggle{display:flex;align-items:center;justify-content:space-between;padding:7px 0}
+.toggle small{display:block;color:var(--faint)}
+.sw{width:30px;height:18px;border-radius:999px;background:#D7D9D4;position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.sw.on{background:var(--signal)} .sw.on::after{left:14px}
+.route{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;word-break:break-all;font-family:var(--mono);font-size:12px;color:var(--muted);background:var(--bg);border:1px solid var(--line-soft);border-radius:8px;padding:10px}
+.route b{color:var(--text);font-weight:600}
+.route .arr{color:var(--signal);font-weight:600}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{border:1px solid var(--line-soft);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-size:18px;font-variant-numeric:tabular-nums;font-weight:600}
+.stat small{color:var(--muted)}
+.qr{display:flex;gap:12px;align-items:center}
+.qr svg{width:84px;height:84px;border:1px solid var(--line);border-radius:8px;padding:6px;background:#fff}
+.qr p{margin:0;color:var(--muted)}
+.callout{border-radius:8px;padding:10px 12px;font-size:12.5px}
+.callout.wait{background:var(--wait-wash);color:#6A4708}
+.callout.ok{background:var(--ok-wash);color:#1F5E39}
+.dns{font-family:var(--mono);font-size:12px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.dns div{display:grid;grid-template-columns:52px 1fr 36px;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line-soft);align-items:center}
+.dns div:last-child{border-bottom:0}
+.dns span:first-child{color:var(--faint)}
+.dns .copy{color:var(--faint);text-align:right}
+.actions{display:flex;gap:8px;padding:14px 20px}
+.foot{padding:10px 20px;color:var(--faint);font-size:12px;display:flex;gap:16px;border-top:1px solid var(--line);background:var(--panel)}
+
+/* audit */
+.log{list-style:none;margin:0;padding:0}
+.log li{display:grid;grid-template-columns:66px 1fr;gap:10px;padding:9px 20px;border-bottom:1px solid var(--line-soft)}
+.log time{color:var(--faint);font-variant-numeric:tabular-nums;font-size:12px;padding-top:1px}
+.log .via{color:var(--signal-deep);font-weight:500}
+.log code{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line-soft);padding:0 4px;border-radius:4px}
+.screen{display:none} .screen.on{display:contents}
+.hint{position:fixed;bottom:14px;right:16px;background:var(--graphite);color:#fff;font-size:12px;padding:8px 12px;border-radius:8px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.hint kbd{background:#2A2F37;border-color:#3A404A;color:#fff}
+@media (prefers-reduced-motion:no-preference){tbody tr{transition:background .12s}}
+
+/* overlays */
+.scrim{position:fixed;inset:0;background:rgba(21,24,29,.42);display:none;align-items:flex-start;justify-content:center;padding-top:9vh;z-index:20}
+.scrim.on{display:flex}
+.palette{width:640px;max-width:92vw;background:var(--panel);border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.28);overflow:hidden}
+.p-in{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.p-in svg{width:16px;height:16px;stroke:var(--faint);fill:none;stroke-width:2;stroke-linecap:round}
+.p-in input{flex:1;border:0;outline:0;font:inherit;font-size:15px;background:transparent;color:var(--text)}
+.p-in .buf{font-family:var(--mono);font-size:12px;color:var(--signal-deep);background:var(--signal-wash);border-radius:4px;padding:1px 6px;display:none}
+.p-list{max-height:420px;overflow:auto;padding:6px 0}
+.p-sec{font-size:11.5px;color:var(--faint);padding:8px 16px 4px}
+.p-item{display:flex;align-items:center;gap:10px;padding:7px 16px;cursor:pointer}
+.p-item[aria-selected="true"]{background:var(--signal-wash);box-shadow:inset 3px 0 0 var(--signal)}
+.p-item .ic{width:16px;height:16px;stroke:var(--muted);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.p-item .lbl{flex:1}
+.p-item .sub{color:var(--faint);font-size:12px}
+.p-item .keys{display:flex;gap:3px}
+.p-item .keys kbd.next{border-color:var(--signal);color:var(--signal-deep);background:var(--signal-wash)}
+.p-item .keys kbd.done{opacity:.45}
+.p-foot{display:flex;gap:14px;padding:9px 16px;border-top:1px solid var(--line);color:var(--faint);font-size:12px;background:var(--bg)}
+.mono{font-family:var(--mono);font-size:12.5px}
+
+.sheet{width:620px;max-width:94vw;background:var(--panel);border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.28);overflow:hidden}
+.sh-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.sh-head h2{font-family:var(--display);font-weight:500;font-size:16px;margin:0;letter-spacing:-.02em}
+.sh-head .x{margin-left:auto;color:var(--faint);font-size:12px}
+.sh-body{padding:16px 18px;display:grid;gap:14px}
+.f label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:5px}
+.f label kbd{font-size:10.5px}
+.ctl{border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;background:var(--panel)}
+.ctl:focus-within{border-color:var(--signal);box-shadow:0 0 0 3px var(--signal-wash)}
+.ctl input{flex:1;border:0;outline:0;font-family:var(--mono);font-size:13px;padding:8px 10px;background:transparent;color:var(--text);min-width:0}
+.ctl .pre{font-family:var(--mono);font-size:13px;color:var(--faint);padding-left:10px;white-space:nowrap}
+.ctl select{border:0;font-family:var(--mono);font-size:13px;padding:8px 10px;background:transparent;color:var(--text);outline:0}
+.ok{color:var(--ok);font-size:12px;padding-right:10px;white-space:nowrap}
+.sugs{display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap}
+.sugs span{color:var(--faint);font-size:12px}
+.sug{font-family:var(--mono);font-size:12px;border:1px dashed var(--line);border-radius:6px;padding:2px 8px;background:var(--bg);color:var(--text)}
+.rules{border:1px solid var(--line-soft);border-radius:10px;overflow:hidden}
+.rule{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line-soft)}
+.rule:last-child{border-bottom:0}
+.rule .ic{width:16px;height:16px;stroke:var(--muted);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.rule .lbl{flex:1}.rule small{color:var(--faint);margin-left:6px}
+.rule.open{background:var(--bg)}
+.utm{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:2px 12px 12px;background:var(--bg);border-bottom:1px solid var(--line-soft)}
+.utm .ctl input{font-size:12.5px;padding:6px 8px}
+.utm label{font-size:11.5px;color:var(--faint);margin-bottom:3px;display:block}
+.sh-foot{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--line);background:var(--bg)}
+.sh-foot .left{color:var(--faint);font-size:12px;margin-right:auto}
+.sh-foot .btn{white-space:nowrap}
+.btn.primary .k2{font-family:var(--mono);font-size:11.5px;color:#7D8591;margin-left:4px}
+
+.an{overflow:auto;padding:12px 20px 24px;display:grid;gap:14px;align-content:start}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.tile2{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile2 small{color:var(--muted)}.tile2 b{display:block;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;margin:2px 0}
+.delta{font-size:12px;color:var(--muted)}.delta.up{color:var(--ok)}
+.card2{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.card2-h{display:flex;align-items:center;gap:14px;margin-bottom:8px}.card2-h h3{margin:0;font-size:13px;font-weight:600}
+.legend{display:flex;gap:14px;color:var(--muted);font-size:12px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.chart-wrap{position:relative}.chart{width:100%;height:auto;display:block}
+.chart text{font-size:7.4px;fill:var(--faint);font-family:var(--sans)}
+.chart .bar:hover rect:not([fill=transparent]),.chart .bar:hover path{opacity:.82}
+.tip{position:absolute;pointer-events:none;background:var(--graphite);color:#fff;font-size:12px;padding:6px 9px;border-radius:6px;display:none;white-space:nowrap;transform:translate(-50%,-110%)}
+.grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.hb{display:grid;grid-template-columns:minmax(0,1.3fr) 1fr 64px;gap:10px;align-items:center;padding:5px 0}
+.hb-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hb-t{height:8px;background:var(--line-soft);border-radius:4px;overflow:hidden}.hb-t span{display:block;height:100%;background:#E07418;border-radius:0 4px 4px 0}
+.hb-v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.connect{margin:14px 20px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);display:grid;gap:10px}
+.connect h3{margin:0 0 4px;font-size:13.5px}.connect p{margin:0;color:var(--muted);max-width:72ch}
+.mcp{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px 6px 6px 12px;background:var(--bg);max-width:520px}.mcp .mono{flex:1}
+.howto{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.sub-h{font-weight:600;padding:16px 20px 8px}
+.setwrap{flex:1;display:grid;grid-template-columns:200px minmax(0,1fr);min-height:0}
+.subnav{border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:2px;background:var(--panel)}
+.subnav a{padding:7px 10px;border-radius:7px;color:var(--text);text-decoration:none}.subnav a:hover{background:var(--bg)}
+.subnav a[aria-current="page"]{background:var(--signal-wash);box-shadow:inset 2px 0 0 var(--signal)}
+.setmain{overflow:auto;padding:8px 28px 40px}
+.sblock{max-width:760px;padding:18px 0;border-bottom:1px solid var(--line)}
+.sblock .callout{white-space:normal;overflow-wrap:anywhere}
+.sblock h2{font-family:var(--display);font-weight:500;font-size:15px;margin:0 0 12px}
+.sfield{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;align-items:center;padding:8px 0}
+.sfield small{display:block;color:var(--faint);font-size:12px;margin-top:2px}.sfield b{font-weight:500}
+.logo-up{display:flex;align-items:center;gap:12px}.logo-up img{width:40px;height:40px;border:1px solid var(--line);border-radius:8px;padding:4px;background:var(--graphite)}
+.dot2{width:8px;height:8px;border-radius:50%;flex:none}
+.screen#s-analytics.on,.screen#s-settings.on{display:flex;flex-direction:column;min-height:0;flex:1}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 7h3"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 13h.01M15 13h.01"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-geo" viewBox="0 0 24 24"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v7h-4M14 21v-3"/></symbol>
+</svg>
+
+<aside class="rail" aria-label="Main">
+  <div class="brand"><img src="../logo/linkwarren-mark.svg" alt=""><span>linkwarren</span></div>
+  <button class="switch" id="swbtn" aria-label="Switch domain, current go.northwind.io"><span class="dot"></span><b>go.northwind.io</b><small>Main</small></button>
+  <nav class="nav">
+    <a href="#links" data-s="links"><svg><use href="#i-link"/></svg>Links<span class="k">G L</span></a>
+    <a href="#domains" data-s="domains"><svg><use href="#i-globe"/></svg>Domains<span class="k">G D</span></a>
+    <a href="#analytics" data-s="analytics"><svg><use href="#i-chart"/></svg>Analytics<span class="k">G A</span></a>
+    <div class="nav-sep">Owner</div>
+    <a href="#people" data-s="people"><svg><use href="#i-users"/></svg>People &amp; audit log<span class="k">G P</span></a>
+    <a href="#agents" data-s="agents"><svg><use href="#i-agent"/></svg>API &amp; agents<span class="k">G I</span></a>
+    <a href="#settings" data-s="settings"><svg><use href="#i-gear"/></svg>Settings<span class="k">G S</span></a>
+  </nav>
+  <div class="me"><span class="avatar">HM</span><div>Owner<br><small>Signed in with Cloudflare Access</small></div></div>
+</aside>
+
+<main>
+<!-- LINKS -->
+<div class="screen" id="s-links">
+  <header class="top">
+    <h1>Links</h1><span class="crumb">on go.northwind.io</span>
+    <div class="search" role="search"><span>Search slugs, destinations, tags</span><kbd>Ctrl K</kbd></div>
+    <button class="btn primary"><svg class="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New link<span class="k">N</span></button>
+  </header>
+  <div class="body">
+    <section class="list" aria-label="Links">
+      <div class="filters">
+        <button class="chip" aria-pressed="true">All</button>
+        <button class="chip" aria-pressed="false">Active</button>
+        <button class="chip" aria-pressed="false">Scheduled</button>
+        <button class="chip" aria-pressed="false">Expired</button>
+        <button class="chip" aria-pressed="false">Mine</button>
+        <span class="count">248 links</span>
+      </div>
+      <table>
+        <thead><tr><th>Short link</th><th>Goes to</th><th>Rules</th><th>Status</th><th class="num">7 days</th><th>Created by</th></tr></thead>
+        <tbody>
+          <tr aria-selected="true" tabindex="0"><td class="short"><span class="host">go.northwind.io/</span><span class="slug">spring</span></td><td class="dest">northwind.io/campaigns/spring-2027?utm_source=flyer</td><td><span class="icons"><svg><use href="#i-qr"/></svg><svg><use href="#i-clock"/></svg><svg><use href="#i-geo"/></svg></span></td><td><span class="tag t-ok">Active</span></td><td class="num"><svg class="spark" viewBox="0 0 72 20"><polyline points="0,15 10,13 20,14 30,9 40,10 50,5 60,6 72,2" fill="none" stroke="#FD8D27" stroke-width="1.8"/></svg></td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td></tr>
+          <tr tabindex="0"><td class="short"><span class="host">go.northwind.io/</span><span class="slug">menu</span></td><td class="dest">northwind.io/restaurant/menu.pdf</td><td><span class="icons"><svg><use href="#i-qr"/></svg></span></td><td><span class="tag t-ok">Active</span></td><td class="num"><svg class="spark" viewBox="0 0 72 20"><polyline points="0,8 10,9 20,7 30,10 40,8 50,9 60,7 72,8" fill="none" stroke="#FD8D27" stroke-width="1.8"/></svg></td><td><span class="who"><span class="avatar" style="background:#D6E4F5">DR</span>Dana R.</span></td></tr>
+          <tr tabindex="0"><td class="short"><span class="host">go.northwind.io/</span><span class="slug">webinar</span></td><td class="dest">events.northwind.io/2027/q1-webinar</td><td><span class="icons"><svg><use href="#i-clock"/></svg></span></td><td><span class="tag t-wait">Starts Jan 5</span></td><td class="num" style="color:var(--faint)">none yet</td><td><span class="who"><span class="avatar" style="background:#D6E4F5">DR</span>Dana R.</span></td></tr>
+          <tr tabindex="0"><td class="short"><span class="host">go.northwind.io/</span><span class="slug">board-pack</span></td><td class="dest">drive.example.com/board/2026-q4</td><td><span class="icons"><svg><use href="#i-lock"/></svg></span></td><td><span class="tag t-ok">Active</span></td><td class="num"><svg class="spark" viewBox="0 0 72 20"><polyline points="0,18 10,18 20,16 30,17 40,12 50,15 60,17 72,16" fill="none" stroke="#FD8D27" stroke-width="1.8"/></svg></td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td></tr>
+          <tr tabindex="0"><td class="short"><span class="host">go.northwind.io/</span><span class="slug">app</span></td><td class="dest">Phone: App Store or Google Play, desktop: northwind.io/app</td><td><span class="icons"><svg><use href="#i-geo"/></svg></span></td><td><span class="tag t-ok">Active</span></td><td class="num"><svg class="spark" viewBox="0 0 72 20"><polyline points="0,6 10,7 20,5 30,6 40,4 50,6 60,3 72,4" fill="none" stroke="#FD8D27" stroke-width="1.8"/></svg></td><td><span class="who"><span class="avatar" style="background:#DCEFD9">AK</span>Alex K.</span></td></tr>
+          <tr tabindex="0"><td class="short"><span class="host">go.northwind.io/</span><span class="slug">black-friday</span></td><td class="dest">northwind.io/sale/bf-2026</td><td><span class="icons"><svg><use href="#i-clock"/></svg></span></td><td><span class="tag t-off">Expired Nov 30</span></td><td class="num"><svg class="spark" viewBox="0 0 72 20"><polyline points="0,4 10,3 20,6 30,9 40,14 50,17 60,18 72,18" fill="none" stroke="#B9BEC5" stroke-width="1.8"/></svg></td><td><span class="who"><span class="avatar" style="background:#DCEFD9">AK</span>Alex K.</span></td></tr>
+          <tr tabindex="0"><td class="short"><span class="host">go.northwind.io/</span><span class="slug">careers</span></td><td class="dest">jobs.example.org/northwind</td><td></td><td><span class="tag t-ok">Active</span></td><td class="num"><svg class="spark" viewBox="0 0 72 20"><polyline points="0,14 10,12 20,13 30,11 40,12 50,10 60,11 72,9" fill="none" stroke="#FD8D27" stroke-width="1.8"/></svg></td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <aside class="detail" aria-label="Selected link">
+      <div class="d-head">
+        <div class="short"><span class="host">go.northwind.io/</span><span class="slug">spring</span></div>
+        <div class="row"><span class="tag t-ok">Active</span><button class="btn ghost">Copy <kbd>C</kbd></button><button class="btn ghost">Edit <kbd>E</kbd></button></div>
+      </div>
+      <div class="sect">
+        <div class="route"><span>go.northwind.io/<b>spring</b></span><span class="arr">302</span><span>northwind.io/campaigns/spring-2027</span></div>
+      </div>
+      <div class="sect">
+        <h3>Last 7 days</h3>
+        <div class="stats"><div class="stat"><b>1,284</b><small>clicks</small></div><div class="stat"><b>61%</b><small>from QR</small></div><div class="stat"><b>US</b><small>top country</small></div></div>
+      </div>
+      <div class="sect">
+        <h3>Destination</h3>
+        <div class="field"><label>URL</label><div class="input">https://northwind.io/campaigns/spring-2027</div></div>
+        <div class="field"><label>Campaign tags</label><div class="input">utm_source=flyer · utm_campaign=spring</div></div>
+        <div class="field"><label>Redirect</label><div class="seg" role="radiogroup"><span aria-checked="true">302 editable</span><span aria-checked="false">301 fixed</span></div></div>
+      </div>
+      <div class="sect">
+        <h3>Rules</h3>
+        <div class="toggle"><div>Schedule<small>Live Mar 1 to Apr 30, 2027</small></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+        <div class="toggle"><div>Password<small>Visitors enter a password first</small></div><span class="sw" role="switch" aria-checked="false"></span></div>
+        <div class="toggle"><div>Country and device routing<small>Canada goes to northwind.ca/spring</small></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+        <div class="toggle"><div>Pass query string through<small>Extra parameters reach the destination</small></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+      </div>
+      <div class="sect">
+        <h3>QR code</h3>
+        <div class="qr">
+          <svg viewBox="0 0 21 21" aria-label="QR code preview"><path fill="#15181D" d="M0 0h7v7H0zM1 1v5h5V1zM2 2h3v3H2zM14 0h7v7h-7zM15 1v5h5V1zM16 2h3v3h-3zM0 14h7v7H0zM1 15v5h5v-5zM2 16h3v3H2zM9 0h2v2H9zM8 3h3v1H8zM9 5h1v3H9zM11 6h2v2h-2zM8 9h2v2H8zM12 9h3v1h-3zM16 9h2v2h-2zM19 8h2v3h-2zM0 9h3v1H0zM4 10h3v1H4zM9 12h1v3H9zM11 12h2v1h-2zM14 12h1v2h-1zM16 13h3v1h-3zM12 15h2v2h-2zM9 17h2v1H9zM15 16h1v3h-1zM17 15h4v1h-4zM18 18h3v3h-3zM12 19h3v2h-3zM9 19h1v2H9z"/></svg>
+          <p>Encodes the short link, so you can change the destination after printing. Download SVG or PNG.</p>
+        </div>
+      </div>
+      <div class="foot"><span>Created by you, Nov 12</span><span>Last change: Dana R. via Claude, 2 h ago</span></div>
+    </aside>
+  </div>
+</div>
+
+<!-- DOMAINS -->
+<div class="screen" id="s-domains">
+  <header class="top">
+    <h1>Domains</h1><span class="crumb">6 domains</span>
+    <div class="search" role="search"><span>Search domains</span><kbd>Ctrl K</kbd></div>
+    <button class="btn primary"><svg class="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add domain<span class="k">N</span></button>
+  </header>
+  <div class="body">
+    <section class="list" aria-label="Domains">
+      <div class="filters">
+        <button class="chip" aria-pressed="true">All</button>
+        <button class="chip" aria-pressed="false">Main</button>
+        <button class="chip" aria-pressed="false">Shared</button>
+        <button class="chip" aria-pressed="false">Private</button>
+        <button class="chip" aria-pressed="false">Needs approval</button>
+        <span class="count">1 waiting for you</span>
+      </div>
+      <table>
+        <thead><tr><th>Domain</th><th>Type</th><th>Status</th><th>Owner</th><th>Shared with</th><th class="num">Links</th></tr></thead>
+        <tbody>
+          <tr tabindex="0"><td class="short"><span class="slug">go.northwind.io</span></td><td>Main</td><td><span class="tag t-ok">Active</span></td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td><td>Everyone</td><td class="num">248</td></tr>
+          <tr tabindex="0"><td class="short"><span class="slug">nw.link</span></td><td>Shared</td><td><span class="tag t-ok">Active</span></td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td><td>Dana R., Alex K.</td><td class="num">91</td></tr>
+          <tr aria-selected="true" tabindex="0"><td class="short"><span class="slug">go.harborcafe.com</span></td><td>Private</td><td><span class="tag t-wait">Needs your approval</span></td><td><span class="who"><span class="avatar" style="background:#DCEFD9">AK</span>Alex K.</span></td><td>Only Alex</td><td class="num">4</td></tr>
+          <tr tabindex="0"><td class="short"><span class="slug">lnk.fieldwork.studio</span></td><td>Private</td><td><span class="tag t-ok">Active</span></td><td><span class="who"><span class="avatar" style="background:#D6E4F5">DR</span>Dana R.</span></td><td>Only Dana</td><td class="num">37</td></tr>
+          <tr tabindex="0"><td class="short"><span class="slug">qr.northwind.io</span></td><td>Shared</td><td><span class="tag t-ok">Active</span></td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td><td>Dana R.</td><td class="num">412</td></tr>
+          <tr tabindex="0"><td class="short"><span class="slug">get.pinecrest.org</span></td><td>Private</td><td><span class="tag t-bad">DNS record missing</span></td><td><span class="who"><span class="avatar" style="background:#D6E4F5">DR</span>Dana R.</span></td><td>Only Dana</td><td class="num">0</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <aside class="detail" aria-label="Selected domain">
+      <div class="d-head">
+        <div class="short"><span class="slug">go.harborcafe.com</span></div>
+        <div class="row"><span class="tag t-wait">Needs your approval</span><span style="color:var(--muted)">Added by Alex K., yesterday</span></div>
+      </div>
+      <div class="sect">
+        <div class="callout wait">Alex has already created 4 links here. They show a "not active yet" page until you approve the domain.</div>
+      </div>
+      <div class="sect">
+        <h3>Ownership and certificate</h3>
+        <div class="dns">
+          <div><span>CNAME</span><span>go → edge.northwind.io</span><span class="copy">copy</span></div>
+          <div><span>Check</span><span style="color:var(--ok)">Record found, ownership verified</span><span></span></div>
+          <div><span>HTTPS</span><span style="color:var(--ok)">Certificate issued by Cloudflare</span><span></span></div>
+        </div>
+      </div>
+      <div class="sect">
+        <h3>When someone visits</h3>
+        <div class="field"><label>The bare domain</label><div class="input">https://harborcafe.com</div></div>
+        <div class="field"><label>A missing or deleted link</label><div class="input">https://harborcafe.com/?ref=short-link</div></div>
+      </div>
+      <div class="sect">
+        <h3>Domain settings</h3>
+        <div class="toggle"><div>Hide from search engines<small>Sends noindex on every redirect</small></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+        <div class="toggle"><div>Case-sensitive slugs<small>/Menu and /menu are different links</small></div><span class="sw" role="switch" aria-checked="false"></span></div>
+        <div class="field" style="margin-top:8px"><label>Reserved slugs</label><div class="input sans">admin, api, login, dash, + 14 defaults</div></div>
+      </div>
+      <div class="actions"><button class="btn primary">Approve domain<span class="k">A</span></button><button class="btn">Reject</button></div>
+    </aside>
+  </div>
+</div>
+
+<!-- PEOPLE + AUDIT -->
+<div class="screen" id="s-people">
+  <header class="top">
+    <h1>People &amp; audit log</h1><span class="crumb">Owner only</span>
+    <div class="search" role="search"><span>Search people and activity</span><kbd>Ctrl K</kbd></div>
+    <button class="btn primary"><svg class="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Invite person<span class="k">N</span></button>
+  </header>
+  <div class="body" style="grid-template-columns:minmax(0,1fr) 420px">
+    <section class="list" aria-label="People">
+      <div class="filters">
+        <button class="chip" aria-pressed="true">Everyone</button>
+        <button class="chip" aria-pressed="false">Invited</button>
+        <button class="chip" aria-pressed="false">Disabled</button>
+        <span class="count">4 people, 1 invite pending</span>
+      </div>
+      <table>
+        <thead><tr><th>Person</th><th>Role</th><th>Domains</th><th class="num">Links</th><th>Agents connected</th><th>Last active</th></tr></thead>
+        <tbody>
+          <tr tabindex="0"><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td><td>Owner</td><td>All 6</td><td class="num">311</td><td>Claude Code</td><td>now</td></tr>
+          <tr aria-selected="true" tabindex="0"><td><span class="who"><span class="avatar" style="background:#D6E4F5">DR</span>Dana R.</span></td><td>Member</td><td>nw.link, qr.northwind.io, 2 own</td><td class="num">286</td><td>Claude, ChatGPT</td><td>2 h ago</td></tr>
+          <tr tabindex="0"><td><span class="who"><span class="avatar" style="background:#DCEFD9">AK</span>Alex K.</span></td><td>Member</td><td>nw.link, 1 own (pending)</td><td class="num">95</td><td>none</td><td>yesterday</td></tr>
+          <tr tabindex="0"><td><span class="who"><span class="avatar" style="background:#EDE3F6">SL</span>Sam L.</span></td><td>Member</td><td>Main only</td><td class="num">12</td><td>Codex</td><td>Nov 14</td></tr>
+          <tr tabindex="0"><td><span class="who"><span class="avatar" style="background:#EFF0EC;color:#646B75">?</span>jordan@example.com</span></td><td>Invited</td><td>Main only</td><td class="num" style="color:var(--faint)">0</td><td>none</td><td><span class="tag t-wait">Invited Nov 19</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <aside class="detail" aria-label="Audit log">
+      <div class="d-head">
+        <div style="font-weight:600">Activity across every domain</div>
+        <div class="row"><button class="chip" aria-pressed="true">All</button><button class="chip" aria-pressed="false">Via agents</button><button class="chip" aria-pressed="false">Domains</button><button class="chip" aria-pressed="false">People</button><button class="btn ghost" style="margin-left:auto">Export CSV</button></div>
+      </div>
+      <ul class="log">
+        <li><time>10:42</time><div><b>Dana R.</b> <span class="via">via Claude</span> changed the destination of <code>go.northwind.io/spring</code></div></li>
+        <li><time>10:15</time><div><b>You</b> approved <code>lnk.fieldwork.studio</code> after the CNAME check passed</div></li>
+        <li><time>09:58</time><div><b>Alex K.</b> created <code>go.harborcafe.com/menu</code>, inactive until the domain is approved</div></li>
+        <li><time>09:31</time><div><b>Sam L.</b> <span class="via">via Codex</span> created 3 links on <code>go.northwind.io</code></div></li>
+        <li><time>Yesterday</time><div><b>Alex K.</b> added the domain <code>go.harborcafe.com</code> and asked for approval</div></li>
+        <li><time>Yesterday</time><div><b>You</b> deleted <code>go.northwind.io/promo</code>. The slug is locked, visits go to the domain's not-found page</div></li>
+        <li><time>Nov 19</time><div><b>You</b> invited <b>jordan@example.com</b> with access to the main domain</div></li>
+        <li><time>Nov 18</time><div><b>Dana R.</b> connected <b>ChatGPT</b> with read and write access</div></li>
+      </ul>
+      <div class="foot"><span>Kept for 3 years</span><span>Every change, by every person and agent</span></div>
+    </aside>
+  </div>
+</div>
+
+<div class="screen" id="s-analytics">
+  <header class="top">
+    <h1>Analytics</h1><span class="crumb">all domains you can see</span>
+    <div class="search" role="search"><span>Search links to compare</span><kbd>Ctrl K</kbd></div>
+    <button class="btn">Export CSV<span class="k" style="font-family:var(--mono);font-size:11.5px;color:var(--faint)">X</span></button>
+  </header>
+  <div class="an">
+    <div class="filters" style="padding-left:0;border:0">
+      <button class="chip" aria-pressed="false">24 hours</button><button class="chip" aria-pressed="false">7 days</button><button class="chip" aria-pressed="true">30 days</button><button class="chip" aria-pressed="false">90 days</button><button class="chip" aria-pressed="false">Custom</button>
+      <span style="width:12px"></span><button class="chip" aria-pressed="false">All domains</button><button class="chip" aria-pressed="false">All links</button>
+      <span class="count">Bots and link previews are left out</span>
+    </div>
+    <div class="tiles">
+      <div class="tile2"><small>Clicks</small><b>10,556</b><span class="delta up">+18% on the 30 days before</span></div>
+      <div class="tile2"><small>Unique visitors</small><b>7,494</b><span class="delta up">+11%</span></div>
+      <div class="tile2"><small>From QR codes</small><b>61%</b><span class="delta">6,483 scans</span></div>
+      <div class="tile2"><small>Left out as bots</small><b>2,914</b><span class="delta">crawlers and chat-app previews</span></div>
+    </div>
+    <section class="card2">
+      <div class="card2-h"><h3>Clicks per day</h3><div class="legend"><span><i style="background:#E07418"></i>From QR codes</span><span><i style="background:#3F6FB5"></i>Typed or clicked</span></div><button class="btn ghost" style="margin-left:auto">Table view <span class="k" style="font-family:var(--mono);font-size:11.5px">V</span></button></div>
+      <div class="chart-wrap"><svg class="chart" viewBox="0 0 760 220" role="img" aria-label="Daily clicks for 30 days, split into QR scans and typed or clicked visits"><line x1="40" x2="754" y1="194.0" y2="194.0" stroke="#EEEFEB"/><text x="32" y="198.0" text-anchor="end">0</text><line x1="40" x2="754" y1="132.7" y2="132.7" stroke="#EEEFEB"/><text x="32" y="136.7" text-anchor="end">200</text><line x1="40" x2="754" y1="71.3" y2="71.3" stroke="#EEEFEB"/><text x="32" y="75.3" text-anchor="end">400</text><line x1="40" x2="754" y1="10.0" y2="10.0" stroke="#EEEFEB"/><text x="32" y="14.0" text-anchor="end">600</text><g class="bar" data-tip="Oct 22: 339 clicks, 170 from QR, 169 typed or clicked"><rect x="41.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="42.0" y="141.9" width="19.7" height="52.1" fill="#E07418"/><path d="M42.0 139.9 V93.0 q0 -3 3 -3 h13.7 q3 0 3 3 V139.9 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 23: 426 clicks, 232 from QR, 194 typed or clicked"><rect x="64.66666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="65.7" y="122.9" width="19.7" height="71.1" fill="#E07418"/><path d="M65.7 120.9 V66.4 q0 -3 3 -3 h13.7 q3 0 3 3 V120.9 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 24: 393 clicks, 202 from QR, 191 typed or clicked"><rect x="88.33333333333334" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="89.3" y="132.1" width="19.7" height="61.9" fill="#E07418"/><path d="M89.3 130.1 V76.5 q0 -3 3 -3 h13.7 q3 0 3 3 V130.1 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 25: 421 clicks, 236 from QR, 185 typed or clicked"><rect x="112.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="113.0" y="121.6" width="19.7" height="72.4" fill="#E07418"/><path d="M113.0 119.6 V67.9 q0 -3 3 -3 h13.7 q3 0 3 3 V119.6 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 26: 411 clicks, 266 from QR, 145 typed or clicked"><rect x="135.66666666666669" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="136.7" y="112.4" width="19.7" height="81.6" fill="#E07418"/><path d="M136.7 110.4 V71.0 q0 -3 3 -3 h13.7 q3 0 3 3 V110.4 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 27: 410 clicks, 238 from QR, 172 typed or clicked"><rect x="159.33333333333334" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="160.3" y="121.0" width="19.7" height="73.0" fill="#E07418"/><path d="M160.3 119.0 V71.3 q0 -3 3 -3 h13.7 q3 0 3 3 V119.0 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 28: 409 clicks, 243 from QR, 166 typed or clicked"><rect x="183.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="184.0" y="119.5" width="19.7" height="74.5" fill="#E07418"/><path d="M184.0 117.5 V71.6 q0 -3 3 -3 h13.7 q3 0 3 3 V117.5 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 29: 436 clicks, 290 from QR, 146 typed or clicked"><rect x="206.66666666666669" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="207.7" y="105.1" width="19.7" height="88.9" fill="#E07418"/><path d="M207.7 103.1 V63.3 q0 -3 3 -3 h13.7 q3 0 3 3 V103.1 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 30: 381 clicks, 265 from QR, 116 typed or clicked"><rect x="230.33333333333334" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="231.3" y="112.7" width="19.7" height="81.3" fill="#E07418"/><path d="M231.3 110.7 V80.2 q0 -3 3 -3 h13.7 q3 0 3 3 V110.7 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Oct 31: 345 clicks, 226 from QR, 119 typed or clicked"><rect x="254.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="255.0" y="124.7" width="19.7" height="69.3" fill="#E07418"/><path d="M255.0 122.7 V91.2 q0 -3 3 -3 h13.7 q3 0 3 3 V122.7 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 1: 326 clicks, 226 from QR, 100 typed or clicked"><rect x="277.6666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="278.7" y="124.7" width="19.7" height="69.3" fill="#E07418"/><path d="M278.7 122.7 V97.0 q0 -3 3 -3 h13.7 q3 0 3 3 V122.7 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 2: 347 clicks, 221 from QR, 126 typed or clicked"><rect x="301.33333333333337" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="302.3" y="126.2" width="19.7" height="67.8" fill="#E07418"/><path d="M302.3 124.2 V90.6 q0 -3 3 -3 h13.7 q3 0 3 3 V124.2 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 3: 258 clicks, 165 from QR, 93 typed or clicked"><rect x="325.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="326.0" y="143.4" width="19.7" height="50.6" fill="#E07418"/><path d="M326.0 141.4 V117.9 q0 -3 3 -3 h13.7 q3 0 3 3 V141.4 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 4: 296 clicks, 198 from QR, 98 typed or clicked"><rect x="348.6666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="349.7" y="133.3" width="19.7" height="60.7" fill="#E07418"/><path d="M349.7 131.3 V106.2 q0 -3 3 -3 h13.7 q3 0 3 3 V131.3 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 5: 253 clicks, 150 from QR, 103 typed or clicked"><rect x="372.33333333333337" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="373.3" y="148.0" width="19.7" height="46.0" fill="#E07418"/><path d="M373.3 146.0 V119.4 q0 -3 3 -3 h13.7 q3 0 3 3 V146.0 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 6: 195 clicks, 111 from QR, 84 typed or clicked"><rect x="396.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="397.0" y="160.0" width="19.7" height="34.0" fill="#E07418"/><path d="M397.0 158.0 V137.2 q0 -3 3 -3 h13.7 q3 0 3 3 V158.0 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 7: 192 clicks, 83 from QR, 109 typed or clicked"><rect x="419.6666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="420.7" y="168.5" width="19.7" height="25.5" fill="#E07418"/><path d="M420.7 166.5 V138.1 q0 -3 3 -3 h13.7 q3 0 3 3 V166.5 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 8: 157 clicks, 74 from QR, 83 typed or clicked"><rect x="443.33333333333337" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="444.3" y="171.3" width="19.7" height="22.7" fill="#E07418"/><path d="M444.3 169.3 V148.9 q0 -3 3 -3 h13.7 q3 0 3 3 V169.3 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 9: 204 clicks, 89 from QR, 115 typed or clicked"><rect x="467.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="468.0" y="166.7" width="19.7" height="27.3" fill="#E07418"/><path d="M468.0 164.7 V134.4 q0 -3 3 -3 h13.7 q3 0 3 3 V164.7 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 10: 188 clicks, 86 from QR, 102 typed or clicked"><rect x="490.6666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="491.7" y="167.6" width="19.7" height="26.4" fill="#E07418"/><path d="M491.7 165.6 V139.3 q0 -3 3 -3 h13.7 q3 0 3 3 V165.6 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 11: 190 clicks, 67 from QR, 123 typed or clicked"><rect x="514.3333333333334" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="515.3" y="173.5" width="19.7" height="20.5" fill="#E07418"/><path d="M515.3 171.5 V138.7 q0 -3 3 -3 h13.7 q3 0 3 3 V171.5 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 12: 345 clicks, 207 from QR, 138 typed or clicked"><rect x="538.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="539.0" y="130.5" width="19.7" height="63.5" fill="#E07418"/><path d="M539.0 128.5 V91.2 q0 -3 3 -3 h13.7 q3 0 3 3 V128.5 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 13: 324 clicks, 211 from QR, 113 typed or clicked"><rect x="561.6666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="562.7" y="129.3" width="19.7" height="64.7" fill="#E07418"/><path d="M562.7 127.3 V97.6 q0 -3 3 -3 h13.7 q3 0 3 3 V127.3 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 14: 375 clicks, 259 from QR, 116 typed or clicked"><rect x="585.3333333333334" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="586.3" y="114.6" width="19.7" height="79.4" fill="#E07418"/><path d="M586.3 112.6 V82.0 q0 -3 3 -3 h13.7 q3 0 3 3 V112.6 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 15: 426 clicks, 271 from QR, 155 typed or clicked"><rect x="609.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="610.0" y="110.9" width="19.7" height="83.1" fill="#E07418"/><path d="M610.0 108.9 V66.4 q0 -3 3 -3 h13.7 q3 0 3 3 V108.9 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 16: 432 clicks, 270 from QR, 162 typed or clicked"><rect x="632.6666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="633.7" y="111.2" width="19.7" height="82.8" fill="#E07418"/><path d="M633.7 109.2 V64.5 q0 -3 3 -3 h13.7 q3 0 3 3 V109.2 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 17: 514 clicks, 341 from QR, 173 typed or clicked"><rect x="656.3333333333334" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="657.3" y="89.4" width="19.7" height="104.6" fill="#E07418"/><path d="M657.3 87.4 V39.4 q0 -3 3 -3 h13.7 q3 0 3 3 V87.4 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 18: 498 clicks, 346 from QR, 152 typed or clicked"><rect x="680.0" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="681.0" y="87.9" width="19.7" height="106.1" fill="#E07418"/><path d="M681.0 85.9 V44.3 q0 -3 3 -3 h13.7 q3 0 3 3 V85.9 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 19: 505 clicks, 336 from QR, 169 typed or clicked"><rect x="703.6666666666667" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="704.7" y="91.0" width="19.7" height="103.0" fill="#E07418"/><path d="M704.7 89.0 V42.1 q0 -3 3 -3 h13.7 q3 0 3 3 V89.0 Z" fill="#3F6FB5"/></g><g class="bar" data-tip="Nov 20: 560 clicks, 404 from QR, 156 typed or clicked"><rect x="727.3333333333334" y="10" width="21.666666666666668" height="184" fill="transparent"/><rect x="728.3" y="70.1" width="19.7" height="123.9" fill="#E07418"/><path d="M728.3 68.1 V25.3 q0 -3 3 -3 h13.7 q3 0 3 3 V68.1 Z" fill="#3F6FB5"/></g><text x="51.8" y="214" text-anchor="middle">Oct 22</text><text x="264.8" y="214" text-anchor="middle">Oct 31</text><text x="501.5" y="214" text-anchor="middle">Nov 10</text><text x="738.2" y="214" text-anchor="middle">Nov 20</text></svg><div class="tip" id="tip" role="status"></div></div>
+    </section>
+    <div class="grid4">
+      <section class="card2"><div class="card2-h"><h3>Top links</h3></div><div class="hb"><span class="hb-l">go.northwind.io/spring</span><span class="hb-t"><span style="width:100%"></span></span><span class="hb-v">4,120</span></div><div class="hb"><span class="hb-l">qr.northwind.io/table-7</span><span class="hb-t"><span style="width:72%"></span></span><span class="hb-v">2,980</span></div><div class="hb"><span class="hb-l">nw.link/app</span><span class="hb-t"><span style="width:54%"></span></span><span class="hb-v">2,210</span></div><div class="hb"><span class="hb-l">go.northwind.io/menu</span><span class="hb-t"><span style="width:45%"></span></span><span class="hb-v">1,870</span></div><div class="hb"><span class="hb-l">lnk.fieldwork.studio/reel</span><span class="hb-t"><span style="width:23%"></span></span><span class="hb-v">960</span></div></section>
+      <section class="card2"><div class="card2-h"><h3>Countries</h3></div><div class="hb"><span class="hb-l">United States</span><span class="hb-t"><span style="width:100%"></span></span><span class="hb-v">8,210</span></div><div class="hb"><span class="hb-l">Canada</span><span class="hb-t"><span style="width:26%"></span></span><span class="hb-v">2,140</span></div><div class="hb"><span class="hb-l">United Kingdom</span><span class="hb-t"><span style="width:12%"></span></span><span class="hb-v">990</span></div><div class="hb"><span class="hb-l">Germany</span><span class="hb-t"><span style="width:7%"></span></span><span class="hb-v">610</span></div><div class="hb"><span class="hb-l">Other</span><span class="hb-t"><span style="width:16%"></span></span><span class="hb-v">1,320</span></div></section>
+      <section class="card2"><div class="card2-h"><h3>Devices</h3></div><div class="hb"><span class="hb-l">Phone</span><span class="hb-t"><span style="width:100%"></span></span><span class="hb-v">9,430</span></div><div class="hb"><span class="hb-l">Desktop</span><span class="hb-t"><span style="width:32%"></span></span><span class="hb-v">3,020</span></div><div class="hb"><span class="hb-l">Tablet</span><span class="hb-t"><span style="width:9%"></span></span><span class="hb-v">820</span></div></section>
+      <section class="card2"><div class="card2-h"><h3>Where clicks came from</h3></div><div class="hb"><span class="hb-l">QR code (no referrer)</span><span class="hb-t"><span style="width:100%"></span></span><span class="hb-v">6,483</span></div><div class="hb"><span class="hb-l">Email</span><span class="hb-t"><span style="width:22%"></span></span><span class="hb-v">1,420</span></div><div class="hb"><span class="hb-l">Instagram</span><span class="hb-t"><span style="width:17%"></span></span><span class="hb-v">1,100</span></div><div class="hb"><span class="hb-l">LinkedIn</span><span class="hb-t"><span style="width:10%"></span></span><span class="hb-v">640</span></div><div class="hb"><span class="hb-l">Other sites</span><span class="hb-t"><span style="width:8%"></span></span><span class="hb-v">520</span></div></section>
+    </div>
+  </div>
+</div>
+<div class="screen" id="s-agents">
+  <header class="top">
+    <h1>API &amp; agents</h1><span class="crumb">connect Claude, ChatGPT, Codex or your own scripts</span>
+    <div class="search" role="search"><span>Search connections and keys</span><kbd>Ctrl K</kbd></div>
+    <button class="btn primary"><svg class="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New API key<span class="k">K</span></button>
+  </header>
+  <div class="body" style="grid-template-columns:minmax(0,1fr) 400px">
+    <section class="list">
+      <div class="connect">
+        <div><h3>Connect an agent</h3><p>Add this address as a connector in Claude, ChatGPT or Codex. You sign in, choose read only or read and write, and the agent acts as you: it can never see or change more than you can.</p></div>
+        <div class="mcp"><span class="mono">https://dash.northwind.io/mcp</span><button class="btn ghost">Copy <span class="k" style="font-family:var(--mono);font-size:11.5px">C</span></button></div>
+        <div class="howto"><button class="chip" aria-pressed="true">Claude</button><button class="chip" aria-pressed="false">ChatGPT</button><button class="chip" aria-pressed="false">Claude Code</button><button class="chip" aria-pressed="false">Codex</button><span class="mono" style="margin-left:8px;color:var(--muted)">Settings, Connectors, Add custom connector, paste the address</span></div>
+      </div>
+      <div class="sub-h">Connected agents</div>
+      <table>
+        <thead><tr><th>Agent</th><th>For</th><th>Access</th><th>Connected</th><th>Last used</th><th class="num">Calls, 7 days</th></tr></thead>
+        <tbody>
+          <tr aria-selected="true" tabindex="0"><td>Claude</td><td><span class="who"><span class="avatar" style="background:#D6E4F5">DR</span>Dana R.</span></td><td><span class="tag t-wait">Read and write</span></td><td>Nov 3</td><td>10:42</td><td class="num">214</td></tr>
+          <tr tabindex="0"><td>ChatGPT</td><td><span class="who"><span class="avatar" style="background:#D6E4F5">DR</span>Dana R.</span></td><td><span class="tag t-wait">Read and write</span></td><td>Nov 18</td><td>yesterday</td><td class="num">37</td></tr>
+          <tr tabindex="0"><td>Claude Code</td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td><td><span class="tag t-ok">Read only</span></td><td>Oct 29</td><td>now</td><td class="num">1,092</td></tr>
+          <tr tabindex="0"><td>Codex</td><td><span class="who"><span class="avatar" style="background:#EDE3F6">SL</span>Sam L.</span></td><td><span class="tag t-wait">Read and write</span></td><td>Nov 14</td><td>09:31</td><td class="num">12</td></tr>
+        </tbody>
+      </table>
+      <div class="sub-h">API keys</div>
+      <table>
+        <thead><tr><th>Name</th><th>For</th><th>Can</th><th>Created</th><th>Last used</th><th>Expires</th></tr></thead>
+        <tbody>
+          <tr tabindex="0"><td class="mono">print-shop-import</td><td><span class="who"><span class="avatar" style="background:#F4D9BE">HM</span>You</span></td><td>Create links on qr.northwind.io</td><td>Sep 2</td><td>Nov 19</td><td>Mar 2, 2027</td></tr>
+          <tr tabindex="0"><td class="mono">zapier</td><td><span class="who"><span class="avatar" style="background:#DCEFD9">AK</span>Alex K.</span></td><td>Read links and clicks</td><td>Oct 8</td><td>never</td><td><span class="tag t-bad">Unused 6 weeks</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <aside class="detail">
+      <div class="d-head"><div style="font-weight:600">Claude, for Dana R.</div><div class="row"><span class="tag t-wait">Read and write</span><span style="color:var(--muted)">Connected Nov 3</span></div></div>
+      <div class="sect"><h3>What it can do</h3>
+        <div class="toggle"><div>Read links, domains and clicks<small>On the domains Dana can use</small></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+        <div class="toggle"><div>Create and edit links<small>Shown in the audit log as Dana R. via Claude</small></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+        <div class="toggle"><div>Delete links<small>Off by default for agents</small></div><span class="sw" role="switch" aria-checked="false"></span></div>
+      </div>
+      <div class="sect"><h3>Recent calls</h3>
+        <ul class="log" style="margin:0 -20px">
+          <li><time>10:42</time><div><code>update_link</code> on go.northwind.io/spring</div></li>
+          <li><time>10:41</time><div><code>get_link</code> go.northwind.io/spring</div></li>
+          <li><time>10:40</time><div><code>search_links</code> 3 results</div></li>
+          <li><time>Nov 19</time><div><code>link_stats</code> qr.northwind.io, 30 days</div></li>
+        </ul>
+      </div>
+      <div class="actions"><button class="btn">Change access</button><button class="btn" style="color:var(--bad)">Disconnect <span style="font-family:var(--mono);font-size:11.5px;color:var(--faint)">Shift D</span></button></div>
+    </aside>
+  </div>
+</div>
+<div class="screen" id="s-settings">
+  <header class="top"><h1>Settings</h1><span class="crumb">Owner only</span><div class="search" role="search"><span>Search settings</span><kbd>Ctrl K</kbd></div></header>
+  <div class="setwrap">
+    <nav class="subnav" aria-label="Settings sections">
+      <a aria-current="page" href="#settings">This instance</a><a href="#settings">Sign-in</a><a href="#settings">Cloudflare</a><a href="#settings">Email</a><a href="#settings">Link defaults</a><a href="#settings">Data and retention</a><a href="#settings">Backups and export</a>
+    </nav>
+    <div class="setmain">
+      <section class="sblock"><h2>This instance</h2>
+        <div class="sfield"><div><b>Name</b><small>Shown in the sidebar, emails and the sign-in page</small></div><div class="input sans">Northwind Links</div></div>
+        <div class="sfield"><div><b>Logo</b><small>Square SVG or PNG. Falls back to the linkwarren rabbit</small></div><div class="logo-up"><img src="../logo/linkwarren-mark.svg" alt=""><button class="btn">Replace</button></div></div>
+        <div class="sfield"><div><b>Dashboard address</b><small>Where you and your team sign in. Short links never use it</small></div><div class="input">dash.northwind.io</div></div>
+        <div class="sfield"><div><b>Main domain</b><small>Every person can create links here</small></div><div class="input">go.northwind.io</div></div>
+      </section>
+      <section class="sblock"><h2>Cloudflare</h2>
+        <div class="callout ok" style="margin-bottom:12px">Connected to the account <b>Northwind</b>. 3 domains in this account are attached directly; outside domains use a CNAME through Cloudflare for SaaS (2 of 100 free hostnames used).</div>
+        <div class="sfield"><div><b>API token</b><small>Stored as a Worker secret, never shown again</small></div><div class="input sans">Zone read, DNS edit, Workers routes, Custom hostnames</div></div>
+        <div class="toggle sfield"><div><b>Cloudflare controls in domain settings</b><small>Security level and rate limits for domains in this account</small></div><span class="sw on" role="switch" aria-checked="true"></span></div>
+      </section>
+      <section class="sblock"><h2>Sign-in</h2>
+        <div class="sfield"><div><b>Cloudflare Access team</b><small>Proves who people are. Who gets in is decided by People in this app</small></div><div class="input">northwind.cloudflareaccess.com</div></div>
+        <div class="sfield"><div><b>Sign-in methods</b><small>Change in Cloudflare Zero Trust</small></div><div class="input sans">Google, one-time email code</div></div>
+      </section>
+      <section class="sblock"><h2>Data and retention</h2>
+        <div class="sfield"><div><b>Audit log</b><small>Every change by every person and agent</small></div><div class="input sans">Keep 3 years</div></div>
+        <div class="sfield"><div><b>Click details</b><small>Totals are kept as long as the link exists</small></div><div class="input sans">Keep 90 days, then daily totals</div></div>
+        <div class="sfield"><div><b>Deleted slugs</b><small>Stops a printed QR code being taken over</small></div><div class="input sans">Locked until the owner releases them</div></div>
+      </section>
+    </div>
+  </div>
+</div></main>
+<div class="scrim" id="dsw" role="dialog" aria-modal="true" aria-label="Switch domain">
+  <div class="palette" style="width:460px">
+    <div class="p-in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="dq" placeholder="Switch domain" autocomplete="off" aria-label="Find a domain"></div>
+    <div class="p-list">
+      <div class="p-sec">Main</div>
+      <div class="p-item" aria-selected="true"><span class="dot2" style="background:var(--ok)"></span><span class="lbl mono">go.northwind.io</span><span class="sub">248 links</span><span class="keys"><kbd>1</kbd></span></div>
+      <div class="p-sec">Shared with you</div>
+      <div class="p-item"><span class="dot2" style="background:var(--ok)"></span><span class="lbl mono">nw.link</span><span class="sub">91 links</span><span class="keys"><kbd>2</kbd></span></div>
+      <div class="p-item"><span class="dot2" style="background:var(--ok)"></span><span class="lbl mono">qr.northwind.io</span><span class="sub">412 links</span><span class="keys"><kbd>3</kbd></span></div>
+      <div class="p-sec">Private</div>
+      <div class="p-item"><span class="dot2" style="background:var(--wait)"></span><span class="lbl mono">go.harborcafe.com</span><span class="sub">waiting for approval</span><span class="keys"><kbd>4</kbd></span></div>
+      <div class="p-item"><span class="dot2" style="background:var(--ok)"></span><span class="lbl mono">lnk.fieldwork.studio</span><span class="sub">37 links</span><span class="keys"><kbd>5</kbd></span></div>
+      <div class="p-item"><span class="dot2" style="background:var(--bad)"></span><span class="lbl mono">get.pinecrest.org</span><span class="sub">DNS record missing</span><span class="keys"><kbd>6</kbd></span></div>
+      <div class="p-sec">All domains</div>
+      <div class="p-item"><span class="dot2" style="background:var(--faint)"></span><span class="lbl">Every domain you can see</span><span class="keys"><kbd>0</kbd></span></div>
+    </div>
+    <div class="p-foot"><span><kbd>1</kbd>–<kbd>9</kbd> jump</span><span><kbd>Enter</kbd> switch</span><span>also <kbd>Ctrl K</kbd> <kbd>G</kbd> <kbd>1</kbd>–<kbd>9</kbd></span><span style="margin-left:auto"><kbd>Esc</kbd> close</span></div>
+  </div>
+</div>
+<div class="scrim" id="adddom" role="dialog" aria-modal="true" aria-labelledby="ad-t">
+  <form class="sheet" onsubmit="return false">
+    <div class="sh-head"><h2 id="ad-t">Add a domain</h2><span class="x"><kbd>Esc</kbd> cancel</span></div>
+    <div class="sh-body">
+      <div class="f"><label for="ad-d">Domain or subdomain <span>for example go.yourbrand.com</span></label><div class="ctl"><input id="ad-d" value="go.harborcafe.com"></div></div>
+      <div class="f"><label>Type</label><div class="seg" role="radiogroup"><span aria-checked="false">Main</span><span aria-checked="false">Shared</span><span aria-checked="true">Private</span></div></div>
+      <div class="callout wait">harborcafe.com isn't in your Cloudflare account, so it connects with one DNS record at its DNS provider. Cloudflare then checks ownership and issues the certificate.</div>
+      <div class="dns"><div><span>Type</span><span>CNAME</span><span></span></div><div><span>Name</span><span>go</span><span class="copy">copy</span></div><div><span>Target</span><span>edge.northwind.io</span><span class="copy">copy</span></div></div>
+      <p style="margin:0;color:var(--muted);font-size:12.5px">You can create links on it straight away. They start working once the record is found and the owner approves the domain.</p>
+    </div>
+    <div class="sh-foot"><span class="left">Members' domains need the owner's approval</span><button type="button" class="btn primary">Add domain<span class="k2">Ctrl Enter</span></button></div>
+  </form>
+</div>
+<div class="scrim" id="invite" role="dialog" aria-modal="true" aria-labelledby="iv-t">
+  <form class="sheet" onsubmit="return false" style="width:520px">
+    <div class="sh-head"><h2 id="iv-t">Invite a person</h2><span class="x"><kbd>Esc</kbd> cancel</span></div>
+    <div class="sh-body">
+      <div class="f"><label for="iv-e">Email</label><div class="ctl"><input id="iv-e" value="jordan@example.com"></div></div>
+      <div class="f"><label>Role</label><div class="seg" role="radiogroup"><span aria-checked="true">Member</span><span aria-checked="false">Owner</span></div></div>
+      <div class="f"><label>Domains they can use</label>
+        <div class="rules">
+          <div class="rule"><span class="lbl mono">go.northwind.io</span><small>Main, always included</small><span class="sw on" role="switch" aria-checked="true" style="opacity:.5"></span></div>
+          <div class="rule"><span class="lbl mono">nw.link</span><small>Shared</small><span class="sw on" role="switch" aria-checked="true"></span></div>
+          <div class="rule"><span class="lbl mono">qr.northwind.io</span><small>Shared</small><span class="sw" role="switch" aria-checked="false"></span></div>
+        </div></div>
+      <p style="margin:0;color:var(--muted);font-size:12.5px">They get an email with a sign-in link. They sign in with Google or a one-time code sent to this address, and can add their own private domains.</p>
+    </div>
+    <div class="sh-foot"><span class="left">Sent from links@northwind.email</span><button type="button" class="btn primary">Send invite<span class="k2">Ctrl Enter</span></button></div>
+  </form>
+</div>
+<div class="scrim" id="pal" role="dialog" aria-modal="true" aria-label="Search and go">
+  <div class="palette">
+    <div class="p-in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="buf" id="pbuf"></span><input id="pq" placeholder="Search, or press a letter: g go to, c create" autocomplete="off" aria-label="Search or shortcut"></div>
+    <div class="p-list" id="plist" role="listbox"></div>
+    <div class="p-foot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>Backspace</kbd> back a letter</span><span><kbd>?</kbd> all shortcuts</span><span style="margin-left:auto"><kbd>Esc</kbd> close</span></div>
+  </div>
+</div>
+
+<div class="scrim" id="newlink" role="dialog" aria-modal="true" aria-labelledby="nl-title">
+  <form class="sheet" onsubmit="return false">
+    <div class="sh-head"><h2 id="nl-title">New link</h2><span class="x"><kbd>Esc</kbd> cancel</span></div>
+    <div class="sh-body">
+      <div class="f"><label for="nl-dest">Goes to <span>paste a URL</span></label>
+        <div class="ctl"><input id="nl-dest" value="https://northwind.io/campaigns/spring-2027"></div></div>
+      <div class="f"><label for="nl-slug">Short link <span><kbd>Alt</kbd> <kbd>D</kbd> change domain</span></label>
+        <div class="ctl"><select aria-label="Domain"><option>go.northwind.io</option><option>nw.link</option><option>qr.northwind.io</option><option>lnk.fieldwork.studio</option></select><span class="pre">/</span><input id="nl-slug" value="spring" style="padding-left:2px"><span class="ok">● Available</span></div>
+        <div class="sugs"><span>Suggestions</span><button type="button" class="sug">spring-2027</button><button type="button" class="sug">spring27</button><button type="button" class="sug">sp27</button><span><kbd>Tab</kbd> to pick</span></div></div>
+      <div class="rules" aria-label="Rules">
+        <div class="rule open"><svg class="ic"><use href="#i-chart"/></svg><span class="lbl">Campaign tags<small>utm_source=flyer, utm_campaign=spring</small></span><kbd>T</kbd></div>
+        <div class="utm"><div><label>Source</label><div class="ctl"><input value="flyer"></div></div><div><label>Medium</label><div class="ctl"><input value="print"></div></div><div><label>Campaign</label><div class="ctl"><input value="spring"></div></div></div>
+        <div class="rule"><svg class="ic"><use href="#i-clock"/></svg><span class="lbl">Schedule and expiry<small>Live from Mar 1, ends Apr 30</small></span><kbd>S</kbd></div>
+        <div class="rule"><svg class="ic"><use href="#i-lock"/></svg><span class="lbl">Password<small>Off</small></span><kbd>P</kbd></div>
+        <div class="rule"><svg class="ic"><use href="#i-geo"/></svg><span class="lbl">Country and device routing<small>Off</small></span><kbd>R</kbd></div>
+        <div class="rule"><svg class="ic"><use href="#i-qr"/></svg><span class="lbl">QR code<small>Make one after creating</small></span><kbd>Q</kbd></div>
+      </div>
+      <div class="route"><span>go.northwind.io/<b>spring</b></span><span class="arr">302</span><span>northwind.io/campaigns/spring-2027?utm_source=flyer&amp;utm_medium=print&amp;utm_campaign=spring</span></div>
+    </div>
+    <div class="sh-foot"><span class="left">Rule keys T S P R Q work outside text boxes</span><button type="button" class="btn">Create and copy <span class="k2" style="color:var(--faint)">Ctrl ⇧ Enter</span></button><button type="button" class="btn primary">Create link<span class="k2">Ctrl Enter</span></button></div>
+  </form>
+</div>
+
+
+<div class="hint" aria-hidden="true"><kbd>Ctrl</kbd><kbd>K</kbd> search and go <kbd>N</kbd> new link <kbd>J</kbd><kbd>K</kbd> move</div>
+
+<script>
+const screens=["links","domains","people","analytics","agents","settings"];
+function show(name){
+  if(!screens.includes(name)) name="links";
+  screens.forEach(s=>document.getElementById("s-"+s).classList.toggle("on",s===name));
+  document.querySelectorAll(".nav a[data-s]").forEach(a=>a.toggleAttribute("aria-current",a.dataset.s===name));
+  document.querySelectorAll(".nav a[data-s]").forEach(a=>{ if(a.dataset.s===name) a.setAttribute("aria-current","page"); });
+}
+window.addEventListener("hashchange",()=>show(location.hash.slice(1)));
+show(location.hash.slice(1));
+document.addEventListener("keydown",e=>{
+  if(e.target.closest("input,textarea")) return;
+  if(e.key>="1"&&e.key<="3"){ location.hash=screens[+e.key-1]; return; }
+  if(e.key==="j"||e.key==="k"){
+    const rows=[...document.querySelectorAll(".screen.on tbody tr")]; if(!rows.length) return;
+    let i=rows.findIndex(r=>r.getAttribute("aria-selected")==="true");
+    i=Math.max(0,Math.min(rows.length-1,i+(e.key==="j"?1:-1)));
+    rows.forEach(r=>r.removeAttribute("aria-selected")); rows[i].setAttribute("aria-selected","true"); rows[i].focus();
+  }
+});
+document.querySelectorAll("tbody tr").forEach(r=>r.addEventListener("click",()=>{
+  r.parentElement.querySelectorAll("tr").forEach(x=>x.removeAttribute("aria-selected")); r.setAttribute("aria-selected","true");
+}));
+
+const CMDS=[
+ {k:"gl",sec:"Go to",lbl:"Links",ic:"link",run:()=>go("links")},
+ {k:"gd",sec:"Go to",lbl:"Domains",ic:"globe",run:()=>go("domains")},
+ {k:"ga",sec:"Go to",lbl:"Analytics",ic:"chart",run:()=>go("analytics")},
+ {k:"gp",sec:"Go to",lbl:"People & audit log",ic:"users",run:()=>go("people")},
+ {k:"gi",sec:"Go to",lbl:"API & agents",ic:"agent",run:()=>go("agents")},
+ {k:"gs",sec:"Go to",lbl:"Settings",ic:"gear",run:()=>go("settings")},
+ {k:"cl",sec:"Create",lbl:"New link",ic:"link",run:()=>openNew()},
+ {k:"cd",sec:"Create",lbl:"Add a domain",ic:"globe",run:()=>openSheet("adddom")},
+ {k:"cp",sec:"Create",lbl:"Invite a person",ic:"users",run:()=>openSheet("invite")},
+ {k:"ck",sec:"Create",lbl:"New API key",ic:"agent",run:()=>go("agents")},
+ {k:"sd",sec:"Switch",lbl:"Switch domain",ic:"globe",run:()=>openSheet("dsw")},{k:"?",sec:"Help",lbl:"All keyboard shortcuts",ic:"log",run:()=>{}},
+];
+const ITEMS=[
+ ...["spring","menu","webinar","board-pack","app","black-friday","careers"].map(x=>({sec:"Links",lbl:"go.northwind.io/"+x,mono:1,ic:"link",run:()=>go("links")})),
+ ...["go.northwind.io","nw.link","go.harborcafe.com","lnk.fieldwork.studio","qr.northwind.io","get.pinecrest.org"].map(x=>({sec:"Domains",lbl:x,mono:1,ic:"globe",run:()=>go("domains")})),
+ ...["Dana R.","Alex K.","Sam L.","jordan@example.com"].map(x=>({sec:"People",lbl:x,ic:"users",run:()=>go("people")})),
+];
+const pal=document.getElementById("pal"),pq=document.getElementById("pq"),plist=document.getElementById("plist"),pbuf=document.getElementById("pbuf");
+let buf="",sel=0,shown=[];
+function go(n){location.hash=n}
+let openPal=function(){pal.classList.add("on");buf="";pq.value="";render();pq.focus()}
+function closePal(){pal.classList.remove("on")}
+let openNew=function(){closePal();document.getElementById("newlink").classList.add("on");setTimeout(()=>document.getElementById("nl-dest").focus(),0)}
+function closeNew(){document.getElementById("newlink").classList.remove("on")}
+function keysHtml(c){return '<span class="keys">'+[...c.k].map((ch,i)=>`<kbd class="${i<buf.length?'done':(i===buf.length&&buf?'next':'')}">${ch.toUpperCase()}</kbd>`).join("")+'</span>'}
+function render(){
+  const q=pq.value.trim().toLowerCase();
+  pbuf.style.display=buf?"inline":"none";pbuf.textContent=buf.toUpperCase().split("").join(" ")+" …";
+  let rows=[];
+  if(buf){rows=CMDS.filter(c=>c.k.startsWith(buf))}
+  else if(q){rows=[...CMDS.filter(c=>c.lbl.toLowerCase().includes(q)),...ITEMS.filter(i=>i.lbl.toLowerCase().includes(q))]}
+  else{rows=[...CMDS.filter(c=>c.sec!=="Help"),...ITEMS.filter(i=>i.sec==="Links").slice(0,3).map(i=>({...i,sec:"Recent links"}))]}
+  shown=rows;sel=Math.min(sel,Math.max(0,rows.length-1));
+  let html="",last="";
+  rows.forEach((r,i)=>{ if(r.sec!==last){html+=`<div class="p-sec">${r.sec}</div>`;last=r.sec}
+    html+=`<div class="p-item" role="option" aria-selected="${i===sel}" data-i="${i}"><svg class="ic"><use href="#i-${r.ic}"/></svg><span class="lbl ${r.mono?'mono':''}">${r.lbl}</span>${r.k?keysHtml(r):''}</div>`});
+  if(!rows.length) html=`<div class="p-sec">Nothing matches "${pq.value}". Press Enter to create a link with that slug.</div>`;
+  plist.innerHTML=html;
+  plist.querySelectorAll(".p-item").forEach(el=>el.onclick=()=>{shown[+el.dataset.i].run();closePal()});
+}
+pq.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){closePal();return}
+  if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();sel=(sel+(e.key==="ArrowDown"?1:-1)+shown.length)%shown.length;render();return}
+  if(e.key==="Enter"){e.preventDefault();if(shown[sel]){const r=shown[sel];closePal();r.run()}else{openNew()}return}
+  if(e.key==="Backspace"&&buf&&!pq.value){e.preventDefault();buf=buf.slice(0,-1);render();return}
+  if(!pq.value&&e.key.length===1&&!e.ctrlKey&&!e.metaKey){
+    const nb=buf+e.key.toLowerCase();
+    if(CMDS.some(c=>c.k.startsWith(nb))){e.preventDefault();buf=nb;sel=0;
+      const hit=CMDS.find(c=>c.k===nb); if(hit){closePal();hit.run();return}
+      render();return}
+    if(buf){e.preventDefault();pq.value=buf+e.key;buf="";sel=0;render();return}
+  }
+});
+pq.addEventListener("input",()=>{sel=0;render()});
+document.addEventListener("keydown",e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();pal.classList.contains("on")?closePal():openPal();return}
+  const nl=document.getElementById("newlink");
+  if(nl.classList.contains("on")){
+    if(e.key==="Escape"){closeNew();return}
+    if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){closeNew();return}
+    return;
+  }
+  if(pal.classList.contains("on")) return;
+  if(e.target.closest("input,textarea,select")) return;
+  if(e.key==="n"||e.key==="N"){e.preventDefault();openNew()}
+},true);
+
+// Esc closes whatever overlay is open, wherever focus is; clicking the dimmed area outside closes it too.
+let lastFocus=null;
+const _openPal=openPal, _openNew=openNew;
+openPal=function(){lastFocus=document.activeElement;_openPal()};
+openNew=function(){if(!pal.classList.contains("on"))lastFocus=document.activeElement;_openNew()};
+function closeAll(){closePal();closeNew();if(lastFocus&&lastFocus.focus)lastFocus.focus()}
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&(pal.classList.contains("on")||document.getElementById("newlink").classList.contains("on"))){e.preventDefault();e.stopPropagation();closeAll()}
+},true);
+document.querySelectorAll(".scrim").forEach(sc=>sc.addEventListener("mousedown",e=>{if(e.target===sc)closeAll()}));
+if(location.search.includes("palette")) openPal();
+if(location.search.includes("new")) openNew();
+
+// sheets: switcher, add domain, invite
+function openSheet(id){closePal();lastFocus=lastFocus||document.activeElement;const el=document.getElementById(id);el.classList.add("on");const f=el.querySelector("input");if(f)setTimeout(()=>f.focus(),0)}
+const _closeAll=closeAll;
+closeAll=function(){["dsw","adddom","invite"].forEach(i=>document.getElementById(i).classList.remove("on"));_closeAll()}
+document.getElementById("swbtn").addEventListener("click",()=>openSheet("dsw"));
+document.querySelectorAll(".btn.primary").forEach(b=>{const t=b.textContent;if(t.includes("Add domain")&&!b.closest(".sheet"))b.onclick=()=>openSheet("adddom");if(t.includes("Invite person"))b.onclick=()=>openSheet("invite");if(t.includes("New link")&&!b.closest(".sheet"))b.onclick=()=>openNew()});
+const anyOpen=()=>[...document.querySelectorAll(".scrim")].some(x=>x.classList.contains("on"));
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&anyOpen()){e.preventDefault();e.stopImmediatePropagation();closeAll();return}
+  if(document.getElementById("dsw").classList.contains("on")&&/^[0-9]$/.test(e.key)){e.preventDefault();closeAll();return}
+  if((e.ctrlKey||e.metaKey)&&e.key==="Enter"&&anyOpen()){closeAll();return}
+},true);
+// chart tooltip
+const tip=document.getElementById("tip");
+document.querySelectorAll(".chart .bar").forEach(g=>{
+  g.addEventListener("mousemove",e=>{const r=g.closest(".chart-wrap").getBoundingClientRect();tip.textContent=g.dataset.tip;tip.style.display="block";tip.style.left=(e.clientX-r.left)+"px";tip.style.top=(e.clientY-r.top)+"px"});
+  g.addEventListener("mouseleave",()=>tip.style.display="none");
+});
+if(location.search.includes("switch")) openSheet("dsw");
+if(location.search.includes("adddom")) openSheet("adddom");
+if(location.search.includes("invite")) openSheet("invite");
+</script>
+</body>
+</html>
