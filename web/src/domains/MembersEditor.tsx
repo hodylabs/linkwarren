@@ -16,7 +16,18 @@ export function MembersEditor({ domain }: { domain: Domain }) {
   const [picked, setPicked] = useState(() => new Set(saved));
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
-  useEffect(() => setPicked(new Set(savedKey ? savedKey.split(",") : [])), [savedKey, domain.id]);
+  const sent = useRef<{ domainId: string; ids: Set<string> } | null>(null); // the set a pending or finished save sent
+  useEffect(() => {
+    const next = new Set(savedKey ? savedKey.split(",") : []);
+    const s = sent.current;
+    sent.current = null;
+    // Switches flipped after the save was sent keep their new position; the rest follow the saved set.
+    setPicked((cur) => {
+      if (s?.domainId !== domain.id) return next;
+      for (const id of new Set([...cur, ...s.ids])) if (cur.has(id) !== s.ids.has(id)) (cur.has(id) ? next.add(id) : next.delete(id));
+      return next;
+    });
+  }, [savedKey, domain.id]);
   useEffect(() => setError(null), [domain.id]);
 
   if (me.role !== "owner") return null;
@@ -37,11 +48,14 @@ export function MembersEditor({ domain }: { domain: Domain }) {
     });
 
   const save = async () => {
-    if (busy.current) return;
+    // Saving replaces the whole set: without the loaded list it would send an empty or partial one and remove members.
+    if (busy.current || users === null) return;
     busy.current = true;
     setError(null);
+    const ids = new Set(people.filter((u) => picked.has(u.id)).map((u) => u.id));
     try {
-      await api("PUT", `/api/domains/${encodeURIComponent(domain.id)}/members`, { userIds: people.filter((u) => picked.has(u.id)).map((u) => u.id) });
+      await api("PUT", `/api/domains/${encodeURIComponent(domain.id)}/members`, { userIds: [...ids] });
+      sent.current = { domainId: domain.id, ids };
       app.announce("Members saved");
       await app.reloadUsers().catch(() => app.announce("Saved, but the list could not be refreshed"));
     } catch (e) {
@@ -86,7 +100,7 @@ export function MembersEditor({ domain }: { domain: Domain }) {
         </p>
       )}
       <div className="actions">
-        <button type="button" className="btn primary" onClick={() => void save()} aria-keyshortcuts="Control+Enter">
+        <button type="button" className="btn primary" onClick={() => void save()} disabled={users === null} aria-keyshortcuts="Control+Enter">
           Save members <span className="k">Ctrl Enter</span>
         </button>
       </div>

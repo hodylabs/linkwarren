@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -66,6 +66,40 @@ describe("Members editor", () => {
     await u.keyboard(" {Control>}{Enter}{/Control}");
     expect(await screen.findByText(errorText("unknown_user"))).toBeTruthy();
     expect(a.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it.each([
+    ["still loading", () => new Promise<never>(() => {})],
+    ["failed", () => ({ status: 500, body: { error: "internal" } })],
+  ] as const)("no PUT while the user list is %s: Save is disabled and Ctrl+Enter does nothing", async (_, users) => {
+    const { api, u } = boot("/domains?sel=d2", owner, { "GET /api/users": users, "PUT /api/domains/d2/members": () => ({ body: {} }) });
+    const btn = await screen.findByRole("button", { name: /Save members/ });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    await u.click(btn);
+    fireEvent.keyDown(screen.getByText("Who can use it"), { key: "Enter", ctrlKey: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(puts(api)).toHaveLength(0);
+  });
+
+  it("a switch changed while the save is pending survives the refresh", async () => {
+    let release!: () => void;
+    let saved = false;
+    const { u } = boot("/domains?sel=d2", owner, {
+      "GET /api/users": () => ({ body: { items: [OWNER_U, saved ? { ...UA, domains: [{ id: "d2", host: "nw.test", via: "member" as const }] } : UA, UB] } }),
+      "PUT /api/domains/d2/members": () => new Promise((r) => (release = () => { saved = true; r({ body: {} }); })),
+    });
+    const a = await screen.findByRole("switch", { name: "Ann" });
+    const b = screen.getByRole("switch", { name: /b@example.com/ });
+    a.focus();
+    await u.keyboard(" {Control>}{Enter}{/Control}");
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    b.focus();
+    await u.keyboard(" "); // turn B off after the request was sent
+    release();
+    expect(await screen.findByText("Members saved")).toBeTruthy();
+    await waitFor(() => expect(a.getAttribute("aria-checked")).toBe("true"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.getAttribute("aria-checked")).toBe("false");
   });
 
   it("the main domain says Everyone and has no switches", async () => {
