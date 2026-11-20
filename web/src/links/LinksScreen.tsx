@@ -48,7 +48,10 @@ export function LinksScreen() {
     loading.current = false;
     // The cursor belongs to the old scope: drop it now, and the rows too when the scope itself changed.
     setNext(null);
-    if (lastScope.current !== scope) setItems([]);
+    if (lastScope.current !== scope) {
+      setItems([]);
+      setLoaded(false); // no "No links here yet." flash while the new scope loads
+    }
     lastScope.current = scope;
     setLoadError(null);
     fetchPage(null).then(

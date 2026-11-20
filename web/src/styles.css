@@ -198,3 +198,19 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .d-head .short{display:block;word-break:break-all}
 .actions .btn[disabled]{opacity:.6}
 .sh-body p{margin:0 0 12px;line-height:1.5}
+
+/* app: New link sheet pieces the mockup draws as divs */
+.ctl.bad{border-color:var(--bad)}
+.ctl .bad-t{color:var(--bad);font-size:12px;padding-right:10px;white-space:nowrap}
+.ctl input.slug{padding-left:2px}
+.f .err{margin:6px 0 0}
+.f .link{background:none;border:0;padding:0;color:var(--signal-deep);text-decoration:underline}
+.rules button.rule{width:100%;background:transparent;border:0;border-bottom:1px solid var(--line-soft);font:inherit;text-align:left;color:inherit;border-radius:0}
+.rules button.rule.open{background:var(--bg)}
+.sched{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:2px 12px 12px;background:var(--bg);border-bottom:1px solid var(--line-soft)}
+.sched label,.utm-note{font-size:11.5px;color:var(--faint);margin-bottom:3px;display:block}
+.sched input{border:0;outline:0;background:transparent;font-family:var(--mono);font-size:12.5px;padding:6px 8px;flex:1;min-width:0}
+.sh-body .route{margin:0}
+.redir{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.sh-foot .btn .k2{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-left:4px}
+.sh-foot .btn.primary .k2{color:#7D8591}

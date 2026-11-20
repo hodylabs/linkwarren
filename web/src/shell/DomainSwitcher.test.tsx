@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -93,7 +93,7 @@ describe("DomainSwitcher", () => {
     await user.keyboard("2");
     view.unmount();
     await boot();
-    expect(railHost()).toContain("team.example.com");
+    await waitFor(() => expect(railHost()).toContain("team.example.com"));
   });
 
   it("survives localStorage throwing", async () => {

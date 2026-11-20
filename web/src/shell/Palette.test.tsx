@@ -192,7 +192,8 @@ describe("Ctrl+K palette", () => {
     await user.keyboard("{Control>}k{/Control}qzx");
     expect(await screen.findByText(/Nothing matches "qzx"\. Press Enter to create a link with that slug\./)).toBeTruthy();
     await user.keyboard("{Enter}");
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByRole("dialog", { name: "New link" })).toBeTruthy();
+    expect((screen.getByLabelText(/^Short link/) as HTMLInputElement).value).toBe("qzx");
   });
 
   it("Enter on Nothing matches sets the overlay to newLink with the slug", async () => {

@@ -9,6 +9,7 @@ import { Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
 import { LinksScreen } from "./links/LinksScreen";
+import { NewLinkSheet } from "./links/NewLinkSheet";
 
 const OWNER_ONLY = new Set<Screen>(["people", "agents", "settings"]);
 
@@ -72,6 +73,7 @@ function Shell() {
       {overlay?.kind === "palette" && <Palette />}
       {overlay?.kind === "switcher" && <DomainSwitcher />}
       {overlay?.kind === "shortcuts" && <Shortcuts />}
+      {overlay?.kind === "newLink" && <NewLinkSheet slug={overlay.slug} />}
     </div>
   );
 }

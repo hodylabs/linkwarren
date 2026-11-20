@@ -52,6 +52,15 @@ describe("Links screen list", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
+  it("a scope change shows no false empty state while the new list loads", async () => {
+    let n = 0;
+    const { user } = boot({ page: () => (++n === 1 ? { body: { items: [L1], next: null } } : new Promise<FakeRes>(() => undefined)) });
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Active" }));
+    await waitFor(() => expect(screen.queryAllByRole("row")).toHaveLength(1));
+    expect(screen.queryByText("No links here yet.")).toBeNull();
+  });
+
   it("sends cursor only on the second request", async () => {
     const { api, user } = boot({ page: () => ({ body: { items: [L1], next: "100.l1" } }) });
     await ready();
@@ -174,8 +183,8 @@ describe("Link detail", () => {
     const bodies: unknown[] = [];
     const { user } = boot({ path: "/links?sel=l1", routes: patchOk(bodies) });
     await ready();
-    await user.clear(urlInput());
-    await user.type(urlInput(), "https://example.com/new");
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
+    await user.click(urlInput());
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
   });
