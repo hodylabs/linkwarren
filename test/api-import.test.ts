@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import fixture from "./fixtures/legacy-export.json";
 import { chunkLinks, filterHosts, parseExport } from "../scripts/lib/export";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { beforeBatch } from "./helpers/race";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const all = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).all<T>().then((r) => r.results);
@@ -204,6 +205,26 @@ describe("rules", () => {
     ], [D("y.test")])));
     expect(r2.conflicts.map((c) => c.reason)).toEqual(["case_twin", "case_twin"]);
     expect(await all("SELECT host, case_sensitive FROM domains ORDER BY host")).toEqual([{ host: "x.test", case_sensitive: 1 }, { host: "y.test", case_sensitive: 0 }]);
+  });
+
+  it("a domain whose case mode changed after planning gets no links; they are reported as mode_changed", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dx','x.test','private','active','uo',1)");
+    // Batch 1 is the planning read; batch 2 is the first write.
+    const restore = beforeBatch(2, () => run("UPDATE domains SET case_sensitive = 1 WHERE id = 'dx'"));
+    let r;
+    try { r = await rep(await owner(body([{ host: "x.test", slug: "Abc", destination: "https://e.org/" }]))); } finally { restore(); }
+    expect(r).toMatchObject({ created: 0, conflicts: [{ host: "x.test", slug: "Abc", reason: "mode_changed" }] });
+    expect(await count("links")).toBe(0);
+  });
+
+  it("a lock planned for a slug that went live after planning is not written; it is reported as exists", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dx','x.test','private','active','uo',1)");
+    const restore = beforeBatch(2, () => run(
+      "INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('l1','dx','Old','old','https://e.org/','uo','uo',1,1)"));
+    let r;
+    try { r = await rep(await owner(body([{ host: "x.test", slug: "old", destination: "https://e.org/", enabled: false }]))); } finally { restore(); }
+    expect(r).toMatchObject({ created: 0, conflicts: [{ host: "x.test", slug: "old", reason: "exists" }] });
+    expect(await count("slug_locks")).toBe(0);
   });
 
   it("duplicate rows within one export are skipped when identical", async () => {
