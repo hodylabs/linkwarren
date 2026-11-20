@@ -1,0 +1,222 @@
+import { Hono } from "hono";
+import { z } from "zod";
+import { auditStmt } from "../audit";
+import { invalidateLink } from "../cache";
+import type { Env } from "../env";
+import { canManageDomain, canUseDomain } from "../perm";
+import { rowToDomain, rowToLink, type DomainRow, type LinkRow, type UserRow } from "../types";
+import { checkDestination, checkSlug, slugKey } from "../validate";
+
+type E = { Bindings: Env; Variables: { user: UserRow } };
+export const links = new Hono<E>();
+
+const PAGE = 50;
+const forbidden = { error: "forbidden" } as const;
+
+const times = {
+  startsAt: z.number().int().nonnegative().nullable().optional(),
+  expiresAt: z.number().int().nonnegative().nullable().optional(),
+};
+const code = z.union([z.literal(301), z.literal(302)]);
+const createBody = z.strictObject({
+  domainId: z.string().min(1), slug: z.string(), url: z.string(),
+  redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times,
+});
+const patchBody = z.strictObject({
+  url: z.string().optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times,
+});
+
+const getDomain = async (env: Env, id: string): Promise<DomainRow | null> => {
+  const r = await env.DB.prepare("SELECT * FROM domains WHERE id = ?").bind(id).first();
+  return r ? rowToDomain(r) : null;
+};
+const isMember = async (env: Env, domainId: string, userId: string) =>
+  !!(await env.DB.prepare("SELECT 1 FROM domain_members WHERE domain_id = ? AND user_id = ?").bind(domainId, userId).first());
+const hasLock = async (env: Env, domainId: string, key: string) =>
+  !!(await env.DB.prepare("SELECT 1 FROM slug_locks WHERE domain_id = ? AND slug_key = ?").bind(domainId, key).first());
+const allHosts = async (env: Env) =>
+  (await env.DB.prepare("SELECT host FROM domains").all<{ host: string }>()).results.map((r) => r.host);
+
+// A failed purge must not turn a committed write into a 500; entries expire by TTL anyway.
+const purge = (env: Env, domainId: string, key: string) =>
+  invalidateLink(env, domainId, key).catch((e) => console.warn("cache invalidate failed", String(e)));
+
+/** Validates the destination and returns the normalized href, or an error code. */
+async function destination(env: Env, raw: string): Promise<{ href: string } | { error: string }> {
+  const r = checkDestination(raw, await allHosts(env));
+  if (!r.ok) return { error: r.reason };
+  if (r.url.href.length > 2048) return { error: "too_long" };
+  return { href: r.url.href };
+}
+const badWindow = (s: number | null, x: number | null) => s !== null && x !== null && x <= s;
+
+links.get("/check", async (c) => {
+  const user = c.var.user;
+  const domain = await getDomain(c.env, c.req.query("domain") ?? "");
+  if (!domain) return c.json({ error: "not_found" }, 404);
+  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))) return c.json(forbidden, 403);
+  const slug = c.req.query("slug") ?? "";
+  const s = checkSlug(slug, domain.reservedExtra);
+  if (!s.ok) return c.json(s.reason === "reserved" ? { status: "reserved" } : { status: "invalid", reason: s.reason });
+  const key = slugKey(slug, domain.caseSensitive);
+  if (await hasLock(c.env, domain.id, key)) return c.json({ status: "locked" });
+  const taken = await c.env.DB.prepare("SELECT 1 FROM links WHERE domain_id = ? AND slug_key = ?").bind(domain.id, key).first();
+  return c.json({ status: taken ? "taken" : "available" });
+});
+
+links.get("/", async (c) => {
+  const user = c.var.user;
+  const members = new Set(
+    (await c.env.DB.prepare("SELECT domain_id FROM domain_members WHERE user_id = ?").bind(user.id).all<{ domain_id: string }>())
+      .results.map((r) => r.domain_id),
+  );
+  const domains = (await c.env.DB.prepare("SELECT * FROM domains").all()).results.map(rowToDomain);
+  let ids = domains.filter((d) => canUseDomain(user, d, members.has(d.id))).map((d) => d.id);
+  const want = c.req.query("domain");
+  if (want) {
+    if (!domains.some((d) => d.id === want)) return c.json({ error: "not_found" }, 404);
+    if (!ids.includes(want)) return c.json(forbidden, 403);
+    ids = [want];
+  }
+  if (ids.length === 0) return c.json({ items: [], next: null });
+  // shortcut: one bind per usable domain; D1 caps binds at 100, switch to a join if a user can reach more domains.
+  const where = [`domain_id IN (${ids.map(() => "?").join(",")})`];
+  const binds: unknown[] = [...ids];
+  const q = c.req.query("q");
+  if (q) {
+    const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+    where.push("(slug LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')");
+    binds.push(like, like);
+  }
+  const cursor = c.req.query("cursor");
+  if (cursor) {
+    where.push("(created_at, id) < (SELECT created_at, id FROM links WHERE id = ?)");
+    binds.push(cursor);
+  }
+  const rows = (await c.env.DB.prepare(
+    `SELECT * FROM links WHERE ${where.join(" AND ")} ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`,
+  ).bind(...binds).all()).results.map(rowToLink);
+  const items = rows.slice(0, PAGE);
+  return c.json({ items, next: rows.length > PAGE ? items[items.length - 1]!.id : null });
+});
+
+links.post("/", async (c) => {
+  const user = c.var.user;
+  const body = createBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  const b = body.data;
+  const domain = await getDomain(c.env, b.domainId);
+  if (!domain) return c.json({ error: "not_found" }, 404);
+  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))) return c.json(forbidden, 403);
+  const s = checkSlug(b.slug, domain.reservedExtra);
+  if (!s.ok) return c.json({ error: s.reason }, 400);
+  const dest = await destination(c.env, b.url);
+  if ("error" in dest) return c.json({ error: dest.error }, 400);
+  const startsAt = b.startsAt ?? null, expiresAt = b.expiresAt ?? null;
+  if (badWindow(startsAt, expiresAt)) return c.json({ error: "bad_window" }, 400);
+
+  const key = slugKey(b.slug, domain.caseSensitive);
+  if (await hasLock(c.env, domain.id, key)) return c.json({ error: "locked" }, 409);
+  const now = Math.floor(Date.now() / 1000);
+  const link: LinkRow = {
+    id: crypto.randomUUID(), domainId: domain.id, slug: b.slug, slugKey: key, url: dest.href,
+    redirectCode: b.redirectCode ?? 302, startsAt, expiresAt, passQuery: b.passQuery ?? true,
+    createdBy: user.id, updatedBy: user.id, createdAt: now, updatedAt: now,
+  };
+  try {
+    // The lock check is repeated inside the insert so a delete racing this request cannot be bypassed.
+    const res = await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND slug_key = ?)`,
+      ).bind(link.id, domain.id, link.slug, key, link.url, link.redirectCode, startsAt, expiresAt, link.passQuery ? 1 : 0,
+        user.id, user.id, now, now, domain.id, key),
+      auditStmt(c.env, { actorId: user.id, action: "link.create", targetType: "link", targetId: link.id,
+        detail: { host: domain.host, slug: link.slug, url: link.url } },
+      { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] }),
+    ]);
+    if (res[0]!.meta.changes === 0) return c.json({ error: "locked" }, 409);
+  } catch (e) {
+    if (String(e).includes("UNIQUE")) return c.json({ error: "taken" }, 409);
+    throw e;
+  }
+  await purge(c.env, domain.id, key);
+  return c.json(link, 201);
+});
+
+/** Loads a link and enforces edit rights: domain use, and (creator or domain manager). */
+async function editable(c: { env: Env; var: { user: UserRow } }, id: string) {
+  const user = c.var.user;
+  const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(id).first();
+  if (!row) return { status: 404 as const };
+  const link = rowToLink(row);
+  const domain = await getDomain(c.env, link.domainId);
+  if (!domain) return { status: 404 as const };
+  const ok = canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))
+    && (link.createdBy === user.id || canManageDomain(user, domain));
+  return ok ? { link, domain } : { status: 403 as const };
+}
+
+links.patch("/:id", async (c) => {
+  const user = c.var.user;
+  const body = patchBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  const b = body.data;
+  const found = await editable(c, c.req.param("id"));
+  if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
+  const { link, domain } = found;
+  let url = link.url;
+  if (b.url !== undefined) {
+    const dest = await destination(c.env, b.url);
+    if ("error" in dest) return c.json({ error: dest.error }, 400);
+    url = dest.href;
+  }
+  const next: LinkRow = {
+    ...link, url, redirectCode: b.redirectCode ?? link.redirectCode, passQuery: b.passQuery ?? link.passQuery,
+    startsAt: b.startsAt === undefined ? link.startsAt : b.startsAt,
+    expiresAt: b.expiresAt === undefined ? link.expiresAt : b.expiresAt,
+    updatedBy: user.id, updatedAt: Math.floor(Date.now() / 1000),
+  };
+  if (badWindow(next.startsAt, next.expiresAt)) return c.json({ error: "bad_window" }, 400);
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "UPDATE links SET url=?, redirect_code=?, starts_at=?, expires_at=?, pass_query=?, updated_by=?, updated_at=? WHERE id=?",
+    ).bind(next.url, next.redirectCode, next.startsAt, next.expiresAt, next.passQuery ? 1 : 0, user.id, next.updatedAt, link.id),
+    auditStmt(c.env, { actorId: user.id, action: "link.update", targetType: "link", targetId: link.id,
+      detail: { host: domain.host, slug: link.slug, url: next.url } }),
+  ]);
+  await purge(c.env, link.domainId, link.slugKey);
+  return c.json(next);
+});
+
+links.delete("/:id", async (c) => {
+  const user = c.var.user;
+  const found = await editable(c, c.req.param("id"));
+  if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
+  const { link, domain } = found;
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM links WHERE id = ?").bind(link.id),
+    c.env.DB.prepare("INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) VALUES (?,?,?,?)")
+      .bind(link.domainId, link.slugKey, Math.floor(Date.now() / 1000), user.id),
+    auditStmt(c.env, { actorId: user.id, action: "link.delete", targetType: "link", targetId: link.id,
+      detail: { host: domain.host, slug: link.slug, url: link.url } }),
+  ]);
+  await purge(c.env, link.domainId, link.slugKey);
+  return c.body(null, 204);
+});
+
+export const locks = new Hono<E>();
+
+locks.delete("/:domainId/:slugKey", async (c) => {
+  const user = c.var.user;
+  if (user.role !== "owner") return c.json(forbidden, 403);
+  const { domainId, slugKey: key } = c.req.param();
+  if (!(await hasLock(c.env, domainId, key))) return c.json({ error: "not_found" }, 404);
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM slug_locks WHERE domain_id = ? AND slug_key = ?").bind(domainId, key),
+    auditStmt(c.env, { actorId: user.id, action: "lock.release", targetType: "lock", targetId: `${domainId}/${key}`,
+      detail: { domainId, slugKey: key } }),
+  ]);
+  await purge(c.env, domainId, key);
+  return c.body(null, 204);
+});
