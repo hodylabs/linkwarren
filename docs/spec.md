@@ -2,20 +2,20 @@
 title: linkwarren - Design Spec
 project: linkwarren
 type: design-spec
-status: approved
+status: in-development
 tags: [linkwarren, link-shortener, cloudflare-workers, d1, mcp, open-source]
 created: 2026-11-20
 ---
 
 > [!abstract] What this is
-> **linkwarren** is a self-hosted, multi-domain link shortener that runs entirely in your own Cloudflare account (Workers, D1, KV, Analytics Engine). One owner, many users, many domains, each domain with its own set of slugs. It replaces Hody's legacy install (used only as a shortener). Public repo `hodylabs/linkwarren`, open source under AGPL-3.0.
-> Status: requirements, name, logo and UI approved in conversation 2026-11-20. No code or repo yet.
+> **linkwarren** is a self-hosted, multi-domain link shortener that runs entirely in your own Cloudflare account (Workers, D1, KV, Analytics Engine). One owner, many users, many domains, each domain with its own set of slugs. Open source under AGPL-3.0.
+> Status: in development.
 
 ## 1. Why build it
 
 Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.com/promo` and `b.com/promo` cannot point to different places: Sink (`slug` primary key), WR.DO (Postgres, `url @unique`, redirect ignores the host), Rushomon (`idx_links_shortcode_active` global), shrtnr (`slug UNIQUE`). The one with the right `(domain, slug)` model, `botnick/shortlink`, has no license (asked in botnick/shortlink#21). linkwarren is written from scratch: ideas only, no code copied.
 
-## 2. Requirements (decided by Hody)
+## 2. Requirements (decided)
 
 **Domains**
 - Three types: **main** (every user can create links), **shared** (only users the owner grants), **private** (its owner plus people they invite).
@@ -46,14 +46,14 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - Personal API keys with scopes and expiry for scripts.
 
 **Dashboard**
-- Approved mockups: `~/.dev/Projects/linkwarren/design/ui/index.html` and `setup.html`. Keyboard-first like termynl: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
+- Approved mockups: `design/ui/index.html` and `design/ui/setup.html`. Keyboard-first: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
 - Brand: logo `design/logo/linkwarren-mark.svg` (faceted orange rabbit), graphite `#15181D` + orange `#FD8D27`, Unbounded (titles, wordmark), IBM Plex Sans (UI), IBM Plex Mono (links and domains). Primary buttons graphite with an orange plus.
 - First-run setup: name, sign-in, Cloudflare token (permissions checked one by one), main domain, email, bring your links.
 
 **Instance and release**
-- Each instance chooses its own dashboard host; it is never a short-link domain and never appears in the repo. Hody's dev instance: Cloudflare account `hody`, dashboard **dev.hody.link**.
+- Each instance chooses its own dashboard host; it is never a short-link domain and never appears in the repo. Example: dashboard `dash.example.com`.
 - Email from the instance via Resend.
-- License: **AGPL-3.0** (open source; decided 2026-11-20 over AGPL + Commons Clause, which would have made it source-available). Anyone may host and modify it; anyone who changes it, including to run it as a service, must publish their changes; closed products cannot embed it. Plus `TRADEMARK.md` (forks and hosted services may not use the name or logo) and a contributor agreement so Hody can sell commercial license exceptions.
+- License: **AGPL-3.0** (open source; decided 2026-11-20 over AGPL + Commons Clause, which would have made it source-available). Anyone may host and modify it; anyone who changes it, including to run it as a service, must publish their changes; closed products cannot embed it. Plus `TRADEMARK.md` (forks and hosted services may not use the name or logo) and a contributor agreement so the maintainers can grant commercial license exceptions.
 
 ## 3. Architecture
 
@@ -63,11 +63,11 @@ One Worker serves everything. The request **host** decides the path:
 
 Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.
 
-Runtime dependencies kept to: `hono` (routing), `jose` (Access JWT), `zod` (input validation), and later `@cloudflare/workers-oauth-provider` + `agents` (MCP stage), all already used in Hody's Workers.
+Runtime dependencies kept to: `hono` (routing), `jose` (Access JWT), `zod` (input validation), and later `@cloudflare/workers-oauth-provider` + `agents` (MCP stage).
 
 ## 4. Stages
 
-Each stage ships through the usual loop: branch, Claude review, CodeRabbit, PR, merge, deploy to the dev instance, live check, vault update.
+Each stage ships through the usual loop: branch, review, PR, merge, deploy to a dev instance, live check.
 
 | Stage | Delivers | Live check |
 |---|---|---|
@@ -78,9 +78,9 @@ Each stage ships through the usual loop: branch, Claude review, CodeRabbit, PR, 
 | S5 Link rules | Password, country/device routing, UTM builder, QR (SVG/PNG) | Each rule verified with curl and a phone scan |
 | S6 Agents + API | MCP with OAuth (read / read+write), tools, API keys, "via" audit | Connect from claude.ai and Claude Code; scopes live-tested |
 | S7 People + setup | Invites (Resend), settings screens, first-run setup wizard | Fresh instance set up from zero in the wizard |
-| S8 Migration + release | Import only Hody's `hody.link` links from legacy (other domains exported to an audit CSV for Hody to keep or drop first), verify every old URL, switch DNS per domain, README/docs, make repo public | Every old URL answers the same `Location` as before |
+| S8 Migration + release | Import from legacy (selected domains), verify every old URL, switch DNS per domain, docs, release | Every old URL answers the same `Location` as before |
 
 ## 5. Out of scope (v1)
-- Bio pages, splash pages, tracking pixels (legacy features Hody does not use).
+- Bio pages, splash pages, tracking pixels (legacy features not needed here).
 - Billing, plans or quotas: this is self-hosted software, not a SaaS.
 - Bring-your-own database; non-Cloudflare hosting.
