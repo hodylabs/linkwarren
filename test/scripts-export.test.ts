@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/66biolinks-export.json";
-import { chunkLinks, excludedRows, filterHosts, parseExport, toCsv } from "../scripts/lib/export";
+import { chunkLinks, excludedRows, filterHosts, importRequests, parseExport, toCsv } from "../scripts/lib/export";
 import { compareProbe, probeTargets } from "../scripts/lib/verify";
 
 const exp = parseExport(fixture);
@@ -53,6 +53,30 @@ describe("chunkLinks twins first", () => {
   it("throws when twins exceed the server cap", () => {
     const links = Array.from({ length: 6 }, (_, i) => mk("t.test", i % 2 ? `a${i >> 1}` : `A${i >> 1}`));
     expect(() => chunkLinks({ mainHost: "t.test", domains: [], links }, 2, 4)).toThrow(/case-twin/);
+  });
+});
+
+describe("importRequests", () => {
+  const mk = (host: string | null, slug: string) => ({ host, slug, destination: "https://e.org/", enabled: true, startDate: null, endDate: null });
+  const D = (host: string) => ({ host, customIndexUrl: null, customNotFoundUrl: null });
+  it("each request carries only its links' domains; link-less domains go in one final domains-only request", () => {
+    const e = { mainHost: "m.test", domains: [D("m.test"), D("a.test"), D("b.test"), D("empty.test"), D("none.test")],
+      links: [mk(null, "x"), mk("a.test", "a1"), mk("a.test", "a2"), mk("b.test", "Zz"), mk("b.test", "zz"), mk("b.test", "b1")] };
+    const reqs = importRequests(e, 2);
+    expect(reqs.every((r) => r.mainHost === "m.test")).toBe(true);
+    for (const r of reqs.slice(0, -1)) {
+      const hosts = new Set(r.links.map((l) => l.host ?? "m.test"));
+      expect(r.domains.map((d) => d.host).sort()).toEqual([...hosts].sort());
+    }
+    expect(reqs.at(-1)).toEqual({ mainHost: "m.test", domains: [D("empty.test"), D("none.test")], links: [] });
+    expect(reqs.flatMap((r) => r.links)).toHaveLength(6);
+    // b.test's domain arrives with its twins, so the server creates it case-sensitive.
+    const firstB = reqs.find((r) => r.domains.some((d) => d.host === "b.test"))!;
+    expect(firstB.links.map((l) => l.slug)).toEqual(expect.arrayContaining(["Zz", "zz"]));
+  });
+  it("no domains-only request when every domain has links", () => {
+    const reqs = importRequests({ mainHost: "m.test", domains: [D("m.test")], links: [mk(null, "x")] }, 10);
+    expect(reqs).toEqual([{ mainHost: "m.test", domains: [D("m.test")], links: [mk(null, "x")] }]);
   });
 });
 

@@ -71,7 +71,7 @@ npm run import:66biolinks -- export.json --api https://<dashboard-host> --hosts 
 npm run import:66biolinks -- export.json --api https://<dashboard-host> --hosts host-one.example
 ```
 
-The script sends the links in requests of 500 (the server accepts at most 1000), keeping slugs that differ only by case in the same request. The report lists:
+The script sends the links in requests of 500 (the server accepts at most 1000), keeping slugs that differ only by case in the same request. Each request carries only the domains of its own links, so a domain is created together with its case twins; domains that have no links at all follow in one final request. The report lists:
 
 - `created`, `skipped` (already present with the same destination), and `conflicts` with a reason per link: `exists` (same slug, different destination), `locked` (the slug is reserved by a deleted or disabled link), `invalid_slug`, `invalid_destination`, `bad_date`, `case_twin`, `dashboard_host`, `invalid_host`.
 - Domains created. Missing domains are created private and active, owned by the importing owner, with the legacy index and not-found redirects when those are valid URLs (invalid ones are ignored and listed). Existing domains are reused: their type and status are never changed and redirects are only filled when empty.

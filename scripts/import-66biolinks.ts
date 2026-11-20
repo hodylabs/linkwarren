@@ -1,7 +1,7 @@
 // Usage: node scripts/import-66biolinks.ts <export.json> --api https://<dashboard> --hosts <host,...> [--dry-run]
 // Needs env CF_ACCESS_TOKEN (cloudflared access login https://<dashboard>), sent as header cf-access-token.
 import { readFileSync } from "node:fs";
-import { chunkLinks, filterHosts, normHost, parseExport } from "./lib/export.ts";
+import { filterHosts, importRequests, normHost, parseExport } from "./lib/export.ts";
 
 const CHUNK = 500;
 const usage = "usage: import-66biolinks.ts <export.json> --api https://<dashboard> --hosts <host,...> [--dry-run]";
@@ -23,8 +23,8 @@ console.log(`${dry ? "DRY RUN: " : ""}importing ${exp.links.length} links, ${exp
 
 type Report = { created: number; skipped: number; conflicts: { host: string; slug: string; reason: string }[]; caseSensitiveDomains: string[]; domainsCreated: string[]; ignored: { host: string; field: string }[] };
 const total: Report = { created: 0, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: [], ignored: [] };
-let chunks;
-try { chunks = chunkLinks(exp, CHUNK); } catch (e) { die((e as Error).message); }
+let reqs;
+try { reqs = importRequests(exp, CHUNK); } catch (e) { die((e as Error).message); }
 const uniq = (a: string[]) => [...new Set(a)];
 const summary = () => {
   console.log(`created ${total.created}, skipped ${total.skipped}, conflicts ${total.conflicts.length}`);
@@ -33,11 +33,11 @@ const summary = () => {
   for (const i of total.ignored) console.log(`ignored invalid ${i.field} on ${i.host}`);
   for (const c of total.conflicts) console.log(`conflict ${c.reason}: ${c.host}/${c.slug}`);
 };
-for (const links of chunks!) {
+for (const req of reqs!) {
   const res = await fetch(new URL(`/api/import${dry ? "?dryRun=1" : ""}`, api), {
     method: "POST", redirect: "manual",
     headers: { "content-type": "application/json", "cf-access-token": token! },
-    body: JSON.stringify({ mainHost: exp.mainHost, domains: exp.domains, links }),
+    body: JSON.stringify(req),
   });
   if (!res.ok) { console.log("totals of completed chunks before the failure:"); summary(); console.error(`import failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`); process.exit(1); }
   const r = (await res.json()) as Report;

@@ -102,3 +102,19 @@ export function chunkLinks(e: Export, size: number, maxChunk = 1000): ExportLink
   flush();
   return chunks;
 }
+
+/**
+ * Request bodies for an import. The server creates a request's domains with the case mode of that request's twins,
+ * so each request carries only the domains of its own links (chunkLinks keeps a host's twins in its first chunk,
+ * where the domain is then created). Domains without any link follow in one domains-only request.
+ */
+export function importRequests(e: Export, size: number, maxChunk = 1000): Export[] {
+  const reqs = chunkLinks(e, size, maxChunk).map((links): Export => {
+    const hosts = new Set(links.map((l) => linkHost(e, l)));
+    return { mainHost: e.mainHost, domains: e.domains.filter((d) => hosts.has(d.host)), links };
+  });
+  const linked = new Set(e.links.map((l) => linkHost(e, l)));
+  const bare = e.domains.filter((d) => !linked.has(d.host));
+  if (bare.length) reqs.push({ mainHost: e.mainHost, domains: bare, links: [] });
+  return reqs;
+}
