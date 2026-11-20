@@ -24,10 +24,12 @@ const GROUPS: { title: string; rows: [string[], string][] }[] = [
       [["N"], "New link"],
       [["J"], "Next link"],
       [["K"], "Previous link"],
+      [["Enter"], "Open the focused link"],
       [["E"], "Edit the selected link"],
       [["C"], "Copy the short link"],
       [["Shift", "D"], "Delete the selected link"],
       [["Ctrl", "Enter"], "Save"],
+      [["Esc"], "Revert unsaved edits"],
     ],
   },
   {

@@ -1,0 +1,225 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import App from "../App";
+import type { Domain, Link, Me } from "../api";
+import { errorText } from "../copy";
+import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const domain: Domain = {
+  id: "d1", host: "go.test", type: "main", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
+  caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 3, isMember: false,
+};
+const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
+  id, domainId: "d1", slug, slugKey: slug, url: `https://example.com/${slug}`, redirectCode: 302, startsAt: null, expiresAt: null,
+  passQuery: true, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
+});
+const L1 = mk("l1", "spring"), L2 = mk("l2", "menu"), L3 = mk("l3", "app", { createdBy: "u9" });
+
+function boot(opts: { me?: Me; routes?: FakeRoutes; page?: () => FakeRes; path?: string } = {}) {
+  history.replaceState(null, "", opts.path ?? "/links");
+  const api = fakeApi({
+    "GET /api/me": () => ({ body: opts.me ?? owner }),
+    "GET /api/domains": () => ({ body: [domain] }),
+    "GET /api/users": () => ({ body: { items: [] } }),
+    "GET /api/links": opts.page ?? (() => ({ body: { items: [L1, L2, L3], next: null } })),
+    ...opts.routes,
+  });
+  const user = userEvent.setup();
+  render(<App />);
+  return { api, user };
+}
+const rows = () => screen.getAllByRole("row").slice(1);
+const urlInput = () => screen.getByLabelText("URL") as HTMLInputElement;
+const ready = () => waitFor(() => expect(rows().length).toBeGreaterThan(0));
+const detail = () => screen.getByRole("complementary", { name: "Selected link" });
+afterEach(() => vi.unstubAllGlobals());
+
+describe("Links screen list", () => {
+  it("first load has no cursor, Load more sends it and appends", async () => {
+    const seen: string[] = [];
+    const { user } = boot({
+      page: () => {
+        const n = seen.push("x");
+        return { body: n === 1 ? { items: [L1, L2], next: "100.l2" } : { items: [L3], next: null } };
+      },
+    });
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("sends cursor only on the second request", async () => {
+    const { api, user } = boot({ page: () => ({ body: { items: [L1], next: "100.l1" } }) });
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(api.calls.filter((c) => c.path.startsWith("/api/links")).length).toBe(2));
+    const paths = api.calls.filter((c) => c.path.startsWith("/api/links")).map((c) => c.path);
+    expect(paths[0]).not.toContain("cursor");
+    expect(paths[1]).toContain("cursor=100.l1");
+  });
+
+  it("J and K move selection and focus", async () => {
+    const { user } = boot();
+    await ready();
+    await user.keyboard("j");
+    expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("j");
+    expect(rows()[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(rows()[1]);
+    await user.keyboard("k");
+    expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(rows()[0]);
+  });
+
+  it("J on the last row loads the next page", async () => {
+    let n = 0;
+    const { user } = boot({ page: () => ({ body: ++n === 1 ? { items: [L1], next: "100.l1" } : { items: [L2], next: null } }) });
+    await ready();
+    await user.keyboard("j");
+    await user.keyboard("j");
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    await waitFor(() => expect(rows()[1]!.getAttribute("aria-selected")).toBe("true"));
+  });
+
+  it("?sel selects that row and filters send status and mine", async () => {
+    const { api, user } = boot({ path: "/links?sel=l2" });
+    await ready();
+    await waitFor(() => expect(rows()[1]!.getAttribute("aria-selected")).toBe("true"));
+    await user.click(screen.getByRole("button", { name: "Expired" }));
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+    await waitFor(() => expect(api.calls.at(-1)!.path).toContain("status=expired&mine=1"));
+  });
+
+  it("count shows the scope total with no filter", async () => {
+    boot();
+    expect(await screen.findByText("3 links")).toBeTruthy();
+  });
+});
+
+describe("Link detail", () => {
+  const patchOk = (calls: unknown[]) => ({
+    "PATCH /api/links/l1": ({ body }: { body: unknown }) => {
+      calls.push(body);
+      return { body: { ...L1, ...(body as object), updatedAt: 101 } };
+    },
+  });
+
+  it("J typed in the URL input types j and moves nothing", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.click(urlInput());
+    await user.keyboard("j");
+    expect(urlInput().value.endsWith("j")).toBe(true);
+    expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("C copies the short link", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { user } = boot({ path: "/links?sel=l1" });
+    vi.stubGlobal("navigator", { clipboard: { writeText } }); // after userEvent.setup, which installs its own stub
+    await ready();
+    await user.keyboard("c");
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://go.test/spring"));
+  });
+
+  it("E focuses the URL field", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.keyboard("e");
+    expect(document.activeElement).toBe(urlInput());
+  });
+
+  it("editing only the URL then Ctrl+Enter sends exactly { url }", async () => {
+    const bodies: unknown[] = [];
+    const { user } = boot({ path: "/links?sel=l1", routes: patchOk(bodies) });
+    await ready();
+    await user.clear(urlInput());
+    await user.type(urlInput(), "https://example.com/new");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
+  });
+
+  it("nothing changed sends no request", async () => {
+    const bodies: unknown[] = [];
+    const { user } = boot({ path: "/links?sel=l1", routes: patchOk(bodies) });
+    await ready();
+    await user.click(urlInput());
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(bodies).toEqual([]);
+  });
+
+  it("Esc in the form restores the saved URL with no request", async () => {
+    const bodies: unknown[] = [];
+    const { api, user } = boot({ path: "/links?sel=l1", routes: patchOk(bodies) });
+    await ready();
+    await user.type(urlInput(), "zzz");
+    await user.keyboard("{Escape}");
+    expect(urlInput().value).toBe("https://example.com/spring");
+    expect(api.calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("PATCH 400 loop shows its text next to the URL", async () => {
+    const { user } = boot({ path: "/links?sel=l1", routes: { "PATCH /api/links/l1": () => ({ status: 400, body: { error: "loop" } }) } });
+    await ready();
+    await user.type(urlInput(), "x");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(await within(detail()).findByText(errorText("loop"))).toBeTruthy();
+    expect(urlInput().value).toBe("https://example.com/springx");
+  });
+
+  it("409 conflict says to reload", async () => {
+    const { user } = boot({ path: "/links?sel=l1", routes: { "PATCH /api/links/l1": () => ({ status: 409, body: { error: "conflict" } }) } });
+    await ready();
+    await user.type(urlInput(), "x");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(await within(detail()).findByText(errorText("conflict"))).toBeTruthy();
+    expect(within(detail()).getByRole("button", { name: "Reload" })).toBeTruthy();
+  });
+
+  it("a network failure shows the signed-out banner and keeps the typed URL", async () => {
+    const { user } = boot({
+      path: "/links?sel=l1",
+      routes: { "PATCH /api/links/l1": () => { throw new Error("redirect"); } },
+    });
+    await ready();
+    await user.type(urlInput(), "x");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(screen.getAllByText(errorText("network")).length).toBeGreaterThan(0));
+    expect(urlInput().value).toBe("https://example.com/springx");
+  });
+
+  it("Shift+D opens the confirm, Esc cancels without DELETE", async () => {
+    const { api, user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.keyboard("{Shift>}D{/Shift}");
+    const dlg = screen.getByRole("dialog");
+    expect(dlg.textContent).toContain("go.test/spring");
+    expect(dlg.textContent).toContain("the slug stays locked");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("Shift+D then Enter deletes and removes the row", async () => {
+    const { api, user } = boot({ path: "/links?sel=l1", routes: { "DELETE /api/links/l1": () => ({ status: 204 }) } });
+    await ready();
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.calls.some((c) => c.method === "DELETE" && c.path === "/api/links/l1")).toBe(true));
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(screen.queryByText("spring")).toBeNull();
+  });
+
+  it("a member viewing a teammate's link is read-only with no Save or Delete", async () => {
+    boot({ me: member, path: "/links?sel=l1" });
+    await ready();
+    expect(urlInput().readOnly).toBe(true);
+    expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
+    expect(within(detail()).getByText(/Created by Teammate/)).toBeTruthy();
+  });
+});

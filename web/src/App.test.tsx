@@ -18,6 +18,7 @@ function boot(me: Me, extra: FakeRoutes = {}, path = "/links") {
     "GET /api/me": () => ({ body: me }),
     "GET /api/domains": () => ({ body: domains }),
     "GET /api/users": () => ({ body: { items: [] } }),
+    "GET /api/links": () => ({ body: { items: [], next: null } }),
     ...extra,
   });
   render(<App />);
