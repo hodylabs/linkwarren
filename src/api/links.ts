@@ -216,12 +216,13 @@ locks.delete("/:domainId/:slugKey", async (c) => {
   if (!domain) return c.json({ error: "not_found" }, 404);
   const key = slugKey(raw, domain.caseSensitive);
   const match = "domain_id = ? AND lower(slug_key) = lower(?)";
-  const keys = (await c.env.DB.prepare(`SELECT slug_key FROM slug_locks WHERE ${match}`).bind(domainId, key).all<{ slug_key: string }>()).results.map((r) => r.slug_key);
-  if (keys.length === 0) return c.json({ error: "not_found" }, 404);
-  // Audit first, only while a lock still matches, so concurrent releases write one row.
+  // Audit first, in the same batch, from the rows the DELETE removes; HAVING skips it when no lock matches (lost race).
   const res = await c.env.DB.batch([
-    auditStmt(c.env, { actorId: user.id, action: "lock.release", targetType: "lock", targetId: `${domainId}/${key}`,
-      detail: { domainId, slugKeys: keys } }, { sql: `EXISTS (SELECT 1 FROM slug_locks WHERE ${match})`, binds: [domainId, key] }),
+    c.env.DB.prepare(
+      `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
+       SELECT ?, ?, NULL, 'lock.release', 'lock', ?, json_object('domainId', ?, 'slugKeys', json_group_array(slug_key))
+       FROM slug_locks WHERE ${match} HAVING COUNT(*) > 0`,
+    ).bind(Math.floor(Date.now() / 1000), user.id, `${domainId}/${key}`, domainId, domainId, key),
     c.env.DB.prepare(`DELETE FROM slug_locks WHERE ${match}`).bind(domainId, key),
   ]);
   if (res[1]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);

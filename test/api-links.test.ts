@@ -144,6 +144,15 @@ describe("delete, locks and takeover", () => {
     expect(d.slugKeys.sort()).toEqual(["Dup", "dup"]);
   });
 
+  it("lock release audits the keys it really deleted, including one added after the handler read them", async () => {
+    await run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dm','dup',1,'uo')");
+    const restore = beforeBatch(1, () => run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dm','DUP',1,'uo')"));
+    try { expect((await call("owner", "DELETE", "/api/locks/dm/dup")).status).toBe(204); } finally { restore(); }
+    expect(await one("SELECT 1 FROM slug_locks")).toBeNull();
+    const d = JSON.parse((await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'lock.release'"))!.detail);
+    expect([d.domainId, d.slugKeys.sort()]).toEqual(["dm", ["DUP", "dup"]]);
+  });
+
   it("rejects a destination on the dashboard host", async () => {
     const r = await post("a", { domainId: "dm", slug: "dh", url: "https://dash.test/x" });
     expect([r.status, await r.json()]).toEqual([400, { error: "loop" }]);
