@@ -42,6 +42,18 @@ describe("requireUser", () => {
     expect(await audits("user.activate")).toBe(1);
   });
 
+  it("uses the stored status after activation: a status changed in the same instant is rejected", async () => {
+    await seed("a@example.com", "invited");
+    // Simulates a concurrent disable landing right after the invited -> active write.
+    await env.DB.prepare("CREATE TRIGGER t_disable AFTER UPDATE OF status ON users WHEN NEW.status = 'active' BEGIN UPDATE users SET status = 'disabled' WHERE id = NEW.id; END").run();
+    try {
+      const res = await asUser();
+      expect([res.status, await res.json()]).toEqual([403, { error: "disabled" }]);
+    } finally {
+      await env.DB.prepare("DROP TRIGGER t_disable").run();
+    }
+  });
+
   it("403 disabled", async () => {
     await seed("a@example.com", "disabled");
     const res = await asUser();

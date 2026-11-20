@@ -79,7 +79,9 @@ export const requireUser = createMiddleware<{ Bindings: Env; Variables: { user: 
         { sql: "EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'invited')", binds: [user.id] }),
       c.env.DB.prepare("UPDATE users SET status = 'active' WHERE id = ? AND status = 'invited'").bind(user.id),
     ]);
-    user = { ...user, status: "active" };
+    // Re-read: a concurrent disable may have landed, so trust the stored status, not the one we wrote.
+    user = await findUser(c.env, who.email);
+    if (!user || user.status !== "active") return c.json({ error: user ? "disabled" : "not_invited" }, 403);
   }
   c.set("user", user);
   await next();
