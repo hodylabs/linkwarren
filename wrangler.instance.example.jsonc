@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
   "observability": { "enabled": true },
   "d1_databases": [
     { "binding": "DB", "database_name": "linkwarren", "database_id": "<your-d1-database-id>", "migrations_dir": "migrations" }
