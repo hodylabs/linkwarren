@@ -28,6 +28,11 @@ describe("withUtm / readUtm", () => {
     expect(withUtm(u, { source: "", medium: "", campaign: "spring" })).toBe("https://x.com/a?b=1&utm_campaign=spring");
     expect(readUtm(u)).toEqual({ source: "flyer", medium: "", campaign: "spring" });
   });
+  it("rewrites a repeated tag to one and removes every copy when cleared", () => {
+    const u = "https://x.com/a?utm_source=a&b=1&utm_source=c";
+    expect(withUtm(u, { source: "z", medium: "", campaign: "" })).toBe("https://x.com/a?utm_source=z&b=1");
+    expect(withUtm(u, { source: "", medium: "", campaign: "" })).toBe("https://x.com/a?b=1");
+  });
   it("leaves an invalid URL and an untouched URL as they were", () => {
     expect(withUtm("nope", { source: "a", medium: "", campaign: "" })).toBe("nope");
     expect(withUtm("https://x.com", { source: "", medium: "", campaign: "" })).toBe("https://x.com");

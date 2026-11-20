@@ -118,6 +118,7 @@ describe("New link sheet", () => {
     expect(slugBox().getAttribute("aria-invalid")).toBe("true");
     expect(dest().value).toBe("https://x.com/a");
     expect(slugBox().value).toBe("spring");
+    expect(screen.getByText("Taken on this domain")).toBeTruthy();
   });
 
   it("is blocked client side while the check says taken", async () => {
@@ -184,15 +185,39 @@ describe("New link sheet", () => {
     expect("startsAt" in body).toBe(false);
   });
 
-  it("owner sees Release lock on a locked slug, member does not", async () => {
-    const deleted: string[] = [];
-    const locked = { check: () => ({ body: { status: "locked" } }), routes: { "DELETE /api/locks/dm/spring": () => (deleted.push("x"), { status: 204 }) } };
-    vi.stubGlobal("confirm", () => true);
-    const { user } = boot(locked);
+  it("owner confirms Release lock in the sheet: Enter deletes, then the re-check shows available", async () => {
+    let released = false;
+    const { api, user } = boot({
+      check: () => ({ body: { status: released ? "available" : "locked" } }),
+      routes: { "DELETE /api/locks/dm/spring": () => ((released = true), { status: 204 }) },
+    });
     await open(user);
     await user.type(slugBox(), "spring");
     await user.click(await screen.findByRole("button", { name: "Release lock" }));
-    await waitFor(() => expect(deleted).toHaveLength(1));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Release lock/ }));
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "DELETE")).toHaveLength(1));
+    await screen.findByText(/Available/);
+  });
+
+  it("Esc in the Release lock confirm cancels only the confirm", async () => {
+    const { api, user } = boot({ check: () => ({ body: { status: "locked" } }) });
+    await open(user);
+    await user.type(slugBox(), "spring");
+    await user.click(await screen.findByRole("button", { name: "Release lock" }));
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "New link" })).toBeTruthy();
+    expect(slugBox().value).toBe("spring");
+    expect(api.calls.filter((c) => c.method === "DELETE")).toEqual([]);
+  });
+
+  it("a failed release shows its error inside the confirm", async () => {
+    const { user } = boot({ check: () => ({ body: { status: "locked" } }), routes: { "DELETE /api/locks/dm/spring": () => ({ status: 403, body: { error: "forbidden" } }) } });
+    await open(user);
+    await user.type(slugBox(), "spring");
+    await user.click(await screen.findByRole("button", { name: "Release lock" }));
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText(errorText("forbidden"))).toBeTruthy();
   });
 
   it("a member gets no Release lock", async () => {
@@ -203,7 +228,16 @@ describe("New link sheet", () => {
     expect(screen.queryByRole("button", { name: "Release lock" })).toBeNull();
   });
 
-  it("suggestions fill the slug and the palette prefill is used", async () => {
+  it("with no usable domain submit is disabled and nothing is sent", async () => {
+    const { api, user } = boot({ routes: { "GET /api/domains": () => ({ body: [dd] }) } });
+    await open(user);
+    expect(screen.getByText(/No domain is available to you/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Create link/ }) as HTMLButtonElement).disabled).toBe(true);
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(posts(api)).toEqual([]);
+  });
+
+  it("a suggestion fills the slug", async () => {
     const { user } = boot();
     await open(user);
     setVal(dest(), "https://northwind.io/campaigns/spring-2027");

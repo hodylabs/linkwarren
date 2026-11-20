@@ -60,12 +60,15 @@ export function withUtm(dest: string, utm: Utm): string {
   let changed = false;
   for (const k of KEYS) {
     const key = `utm_${k}`;
-    const at = parts.findIndex((p) => name(p) === key);
     const next = utm[k] ? `${key}=${encodeURIComponent(utm[k])}` : null;
-    if (at >= 0 && next === null) parts.splice(at, 1);
-    else if (at >= 0) parts[at] = next!;
-    else if (next !== null) parts.push(next);
-    else continue;
+    const hits = parts.map((p, i) => (name(p) === key ? i : -1)).filter((i) => i >= 0);
+    if (hits.length === 0 && next === null) continue;
+    // A repeated key collapses to one: the first position keeps the value, the rest go.
+    if (next !== null) {
+      if (hits.length) parts[hits[0]!] = next;
+      else parts.push(next);
+    }
+    for (const i of hits.slice(next === null ? 0 : 1).reverse()) parts.splice(i, 1);
     changed = true;
   }
   if (!changed) return dest;

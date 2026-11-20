@@ -63,6 +63,9 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const slugRef = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
   const [recheck, setRecheck] = useState(0);
+  const [releasing, setReleasing] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+  const wasReleasing = useRef(false);
 
   const domain: Domain | undefined = usable.find((d) => d.id === domainId);
   const host = domain?.host ?? "";
@@ -104,7 +107,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   };
 
   const submit = async (copy: boolean) => {
-    if (busy) return;
+    if (busy || releasing || !domainId) return;
     const stop = blocked();
     if (stop) {
       setError(stop);
@@ -127,20 +130,28 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
     } catch (e) {
       const c = e instanceof ApiError ? e.code : "internal";
       setError({ field: fieldOf(c), code: c }); // typed values stay in the form
+      if (c === "taken" || c === "locked" || c === "reserved") setCheck({ status: c }); // the availability line agrees with the error
     } finally {
       setBusy(false);
     }
   };
 
   const release = async () => {
-    if (!window.confirm(`Release the lock on ${host}/${slug}? Anyone can then take this slug.`)) return;
+    setReleaseError(null);
     try {
       await api("DELETE", `/api/locks/${encodeURIComponent(domainId)}/${encodeURIComponent(slug)}`);
+      setReleasing(false);
       setRecheck((n) => n + 1);
     } catch (e) {
-      setError({ field: "slug", code: e instanceof ApiError ? e.code : "internal" });
+      setReleaseError(errorText(e instanceof ApiError ? e.code : "internal"));
     }
   };
+
+  // Back from the confirm: focus returns to the slug (the form was unmounted while confirming).
+  useEffect(() => {
+    if (wasReleasing.current && !releasing) slugRef.current?.focus();
+    wasReleasing.current = releasing;
+  }, [releasing]);
 
   useHotkeys({
     "mod+enter": () => void submit(false),
@@ -148,7 +159,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
     "alt+d": () => domainRef.current?.focus(),
     t: () => setTagsOpen((v) => !v),
     s: () => setSchedOpen((v) => !v),
-  });
+  }, !releasing);
 
   const setTag = (k: keyof Utm, v: string) => setUrl((u) => withUtm(u, { ...readUtm(u), [k]: v }));
   const err = (f: Field) => (error?.field === f ? error.code : null);
@@ -165,7 +176,33 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const finalUrl = url.replace(/^https?:\/\//, "");
 
   return (
-    <Sheet label="New link" onClose={app.close}>
+    <Sheet label="New link" onClose={() => (releasing ? setReleasing(false) : app.close())}>
+      {releasing ? (
+        <>
+          <div className="sh-head">
+            <h2>Release lock</h2>
+          </div>
+          <div className="sh-body">
+            <p>
+              Release the lock on {host}/{slug}? Anyone who can use this domain can then take this slug. Old printed links to it would reach their new destination.
+            </p>
+            {releaseError && (
+              <p className="err" role="alert">
+                {releaseError}
+              </p>
+            )}
+            <div className="actions">
+              <button type="button" className="btn primary" autoFocus onClick={() => void release()}>
+                Release lock <span className="k">Enter</span>
+              </button>
+              <button type="button" className="btn" onClick={() => setReleasing(false)}>
+                Cancel <kbd>Esc</kbd>
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
       <div className="sh-head">
         <h2>New link</h2>
         <span className="x">
@@ -212,7 +249,10 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           )}
           {check?.status === "locked" && me.role === "owner" && (
             <p className="err">
-              <button type="button" className="btn" onClick={() => void release()}>
+              <button type="button" className="btn" onClick={() => {
+                  setReleaseError(null);
+                  setReleasing(true);
+                }}>
                 Release lock
               </button>
             </p>
@@ -307,16 +347,23 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             {errorText(err("form")!)}
           </p>
         )}
+        {usable.length === 0 && (
+          <p className="err" role="alert">
+            No domain is available to you yet. Ask the owner to give you access to one.
+          </p>
+        )}
       </div>
       <div className="sh-foot">
         <span className="left">Rule keys T S work outside text boxes</span>
-        <button type="button" className="btn" disabled={busy} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
+        <button type="button" className="btn" disabled={busy || !domainId} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
           Create and copy <span className="k2">Ctrl ⇧ Enter</span>
         </button>
-        <button type="button" className="btn primary" disabled={busy} aria-keyshortcuts="Control+Enter" onClick={() => void submit(false)}>
+        <button type="button" className="btn primary" disabled={busy || !domainId} aria-keyshortcuts="Control+Enter" onClick={() => void submit(false)}>
           Create link<span className="k2">Ctrl Enter</span>
         </button>
       </div>
+        </>
+      )}
     </Sheet>
   );
 }
