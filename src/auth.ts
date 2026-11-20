@@ -7,8 +7,16 @@ import { rowToUser, type UserRow } from "./types";
 // shortcut: remote JWKS cached per team URL for the isolate lifetime; jose refetches on unknown kid.
 const remoteKeys = new Map<string, JWTVerifyGetKey>();
 
+let warnedLocalKeys = false;
+
 function defaultKeys(env: Env): JWTVerifyGetKey {
-  if (env.ACCESS_JWKS_JSON) return createLocalJWKSet(JSON.parse(env.ACCESS_JWKS_JSON));
+  if (env.ACCESS_JWKS_JSON) {
+    if (!warnedLocalKeys) {
+      warnedLocalKeys = true;
+      console.warn("ACCESS_JWKS_JSON is set: using local test keys");
+    }
+    return createLocalJWKSet(JSON.parse(env.ACCESS_JWKS_JSON));
+  }
   const url = `https://${env.ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`;
   let k = remoteKeys.get(url);
   if (!k) remoteKeys.set(url, (k = createRemoteJWKSet(new URL(url))));
@@ -17,11 +25,14 @@ function defaultKeys(env: Env): JWTVerifyGetKey {
 
 /** Verifies a Cloudflare Access JWT; any failure (signature, alg, iss, aud, exp, shape) yields null. */
 export async function verifyAccess(token: string, env: Env, keys?: JWTVerifyGetKey): Promise<{ email: string } | null> {
+  // jose skips the aud check when audience is undefined, so refuse to verify without both settings.
+  if (!env.ACCESS_AUD?.trim() || !env.ACCESS_TEAM_DOMAIN?.trim()) return null;
   try {
     const { payload } = await jwtVerify(token, keys ?? defaultKeys(env), {
       issuer: `https://${env.ACCESS_TEAM_DOMAIN}`,
       audience: env.ACCESS_AUD,
       algorithms: ["RS256"],
+      requiredClaims: ["exp"],
     });
     const email = payload.email;
     return typeof email === "string" && email.trim() ? { email: email.trim() } : null;
