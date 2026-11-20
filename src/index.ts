@@ -9,6 +9,8 @@ import { handleRedirect } from "./redirect";
 import { links, locks } from "./api/links";
 import { domains } from "./api/domains";
 import { importApi } from "./api/import";
+import { users } from "./api/users";
+import { audit } from "./api/audit";
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
 
@@ -53,6 +55,8 @@ app.route("/api/domains", domains);
 app.route("/api/links", links);
 app.route("/api/locks", locks);
 app.route("/api/import", importApi);
+app.route("/api/users", users);
+app.route("/api/audit", audit);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 
