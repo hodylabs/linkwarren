@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import type { Env } from "./env";
+import { normalizeHost } from "./host";
 
 const app = new Hono<{ Bindings: Env }>();
 
 // Short hosts never serve app routes; only the dashboard host gets past this point.
-// Task 3 replaces the lowercase compare with normalizeHost.
 app.use("*", async (c, next) => {
-  if (new URL(c.req.url).hostname.toLowerCase() !== c.env.DASHBOARD_HOST.toLowerCase()) {
+  if (normalizeHost(c.req.header("host") ?? new URL(c.req.url).host) !== normalizeHost(c.env.DASHBOARD_HOST)) {
     return c.text("Not found", 404); // placeholder until the redirect handler lands
   }
   await next();
