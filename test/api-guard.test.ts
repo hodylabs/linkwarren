@@ -51,6 +51,30 @@ describe("csrf and json-only bodies", () => {
     const r = await dash("/api/domains/x/approve", { method: "POST", headers: { ...(await authed()), origin: "https://evil.example" } });
     expect(r.status).toBe(403);
   });
+  describe("empty bodies (browsers send content-length: 0 on bodyless DELETE/POST)", () => {
+    const seed = async () => {
+      await run("INSERT INTO domains (id,host,type,status,owner_id,case_sensitive,created_at) VALUES ('dp','p.example.com','main','pending','uo',0,1)");
+      await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('l1','dp','p','p','https://x.com/','uo','uo',1,1)");
+    };
+    it("bodyless DELETE with content-length 0 passes the guard", async () => {
+      await seed();
+      const r = await dash("/api/links/l1", { method: "DELETE", headers: { ...(await authed()), "content-length": "0" } });
+      expect(r.status).toBe(204);
+    });
+    it("bodyless POST approve with content-length 0 passes the guard", async () => {
+      await seed();
+      const r = await dash("/api/domains/dp/approve", { method: "POST", headers: { ...(await authed()), "content-length": "0" } });
+      expect(r.status).toBe(200);
+    });
+    it("a foreign Origin bodyless DELETE is still 403", async () => {
+      await seed();
+      const r = await dash("/api/links/l1", { method: "DELETE", headers: { ...(await authed()), "content-length": "0", origin: "https://evil.example" } });
+      expect(r.status).toBe(403);
+    });
+    it("a text/plain body with bytes is still 415", async () => {
+      expect((await post({ "content-type": "text/plain", "content-length": String(good.length) }, good)).status).toBe(415);
+    });
+  });
 });
 
 describe("every /api route requires a token", () => {

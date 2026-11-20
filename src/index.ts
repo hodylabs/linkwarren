@@ -34,7 +34,9 @@ app.use("/api/*", async (c, next) => {
   if (/^(GET|HEAD|OPTIONS)$/.test(c.req.method)) return next();
   const origin = c.req.header("origin");
   if (origin !== undefined && origin !== dashboardOrigin(c.env.DASHBOARD_HOST)) return c.json({ error: "forbidden_origin" }, 403);
-  if (c.req.raw.body !== null && !/^application\/json\s*(;|$)/i.test(c.req.header("content-type") ?? ""))
+  // Decide "has a body" from headers: browsers send content-length: 0 on bodyless DELETE/POST, and Workers then expose a non-null empty stream.
+  const hasBody = Number(c.req.header("content-length") ?? 0) > 0 || c.req.header("transfer-encoding") !== undefined;
+  if (hasBody && !/^application\/json\s*(;|$)/i.test(c.req.header("content-type") ?? ""))
     return c.json({ error: "unsupported_media_type" }, 415);
   await next();
 });
