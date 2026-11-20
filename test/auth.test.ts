@@ -79,9 +79,17 @@ describe("requireUser", () => {
     expect(await count()).toBe(1);
   });
 
-  it("fails closed when ACCESS_TEAM_DOMAIN is unset", async () => {
+  it.each(["", "   "])("fails closed when ACCESS_AUD is %j", async (aud) => {
     await seed("a@example.com", "active");
-    const t = await token();
+    const t = await token({ aud: "other-app" });
+    e.ACCESS_AUD = aud;
+    expect((await me({ "Cf-Access-Jwt-Assertion": t })).status).toBe(401);
+    expect(await count()).toBe(1);
+  });
+
+  it("fails closed when ACCESS_TEAM_DOMAIN is unset, even for a token whose iss would match", async () => {
+    await seed("a@example.com", "active");
+    const t = await token({ iss: "https://undefined" });
     delete e.ACCESS_TEAM_DOMAIN;
     expect((await me({ "Cf-Access-Jwt-Assertion": t })).status).toBe(401);
     expect(await count()).toBe(1);

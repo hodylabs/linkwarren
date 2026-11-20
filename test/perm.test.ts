@@ -30,6 +30,13 @@ describe("canUseDomain truth table", () => {
   it("member cannot use a shared domain without a grant", () => {
     expect(canUseDomain(user("member"), dom("shared", "active", false), false)).toBe(false);
   });
+  it("member on someone else's private domain without membership is denied", () => {
+    expect(canUseDomain(user("member"), dom("private", "active", false), false)).toBe(false);
+  });
+  it("member with membership on a disabled domain is denied", () => {
+    expect(canUseDomain(user("member"), dom("shared", "disabled", false), true)).toBe(false);
+    expect(canUseDomain(user("member"), dom("private", "disabled", false), true)).toBe(false);
+  });
   it("member can use their own pending private domain", () => {
     expect(canUseDomain(user("member"), dom("private", "pending", true), false)).toBe(true);
   });

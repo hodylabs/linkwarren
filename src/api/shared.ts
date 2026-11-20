@@ -21,8 +21,8 @@ export const purgeMany = (env: Env, domainId: string, keys: string[]) =>
 
 /** Validates the destination and returns the normalized href, or an error code. */
 export async function destination(env: Env, raw: string): Promise<{ href: string } | { error: string }> {
-  const r = checkDestination(raw, await allHosts(env));
-  if (!r.ok) return { error: r.reason };
-  if (r.url.href.length > 2048) return { error: "too_long" };
+  const r = checkDestination(raw, [...(await allHosts(env)), env.DASHBOARD_HOST]);
+  if (!r.ok) return { error: r.reason === "too_long" ? "url_too_long" : r.reason };
+  if (r.url.href.length > 2048) return { error: "url_too_long" };
   return { href: r.url.href };
 }
