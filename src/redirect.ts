@@ -3,7 +3,7 @@ import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, pendingPage } from "./pages";
 import type { DomainRow } from "./types";
-import { checkSlug, slugKey } from "./validate";
+import { checkSlugShape, slugKey } from "./validate";
 
 export async function handleRedirect(req: Request, env: Env, now: number, ctx?: Ctx): Promise<Response> {
   const url = new URL(req.url);
@@ -25,8 +25,8 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   if (url.pathname === "/") return miss(domain.bareRedirect);
 
   const slug = slugFromPath(url.pathname);
-  // Junk slugs never reach D1 or KV. Domain extras are skipped: they only block creation.
-  const link = slug === null || !checkSlug(slug, []).ok ? null : await getLink(env, domain.id, slugKey(slug, domain.caseSensitive), ctx);
+  // Junk slugs never reach D1 or KV. Reserved words are a creation-time rule only, so stored links stay reachable.
+  const link = slug === null || !checkSlugShape(slug).ok ? null : await getLink(env, domain.id, slugKey(slug, domain.caseSensitive), ctx);
   const live = link && (link.startsAt === null || link.startsAt <= now) && (link.expiresAt === null || link.expiresAt > now);
   if (!live) return miss(domain.notfoundRedirect);
 
