@@ -4,7 +4,7 @@ import { errorText } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Sheet } from "../shell/Sheet";
-import { Chip, Empty, Kbd, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
+import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { creatorLabel, linkState, linksQuery, type LinksFilter } from "./linkView";
