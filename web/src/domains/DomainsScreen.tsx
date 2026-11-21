@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
-import { Chip, Kbd, PrimaryButton, Tag } from "../shell/ui";
+import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { DomainDetail } from "./DomainDetail";
 import { ownerLabel, sharedWith, statusTag } from "./domainView";
@@ -76,25 +76,24 @@ export function DomainsScreen() {
 
   return (
     <>
-      <header className="top">
-        <h1>Domains</h1>
-        <span className="crumb">{domains.length} domains</span>
-        <button type="button" className="search" onClick={() => app.open({ kind: "palette" })} aria-keyshortcuts="Control+K">
-          <span>{q || "Search domains"}</span>
-          <Kbd>Ctrl K</Kbd>
-        </button>
+      <ScreenHeader
+        title="Domains"
+        count={`${domains.length} domains`}
+        text="The hosts your short links live on. Main is for everyone, shared is for its members, private is yours alone."
+      >
+        <SearchButton q={q} placeholder="Search domains" onOpen={() => app.open({ kind: "palette" })} />
+        <div className="chips" role="group" aria-label="Filter domains">
+          {FILTERS.map(([v, label]) => (
+            <Chip key={v} pressed={filter === v} onClick={() => setFilter(v)}>
+              {label}
+            </Chip>
+          ))}
+        </div>
+        {isOwner && waiting > 0 && <span className="note">{waiting} waiting for you</span>}
         <PrimaryButton label="Add domain" shortcut="N" onClick={() => app.open({ kind: "addDomain" })} />
-      </header>
+      </ScreenHeader>
       <div className="body">
         <section className="list" aria-label="Domains">
-          <div className="filters">
-            {FILTERS.map(([v, label]) => (
-              <Chip key={v} pressed={filter === v} onClick={() => setFilter(v)}>
-                {label}
-              </Chip>
-            ))}
-            {isOwner && waiting > 0 && <span className="count">{waiting} waiting for you</span>}
-          </div>
           <table>
             <thead>
               <tr>

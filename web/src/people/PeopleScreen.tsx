@@ -3,7 +3,7 @@ import { api, ApiError, type AuditItem, type Page, type UserItem } from "../api"
 import { errorText } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
-import { Chip, Kbd, Tag } from "../shell/ui";
+import { Chip, Empty, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock } from "../time";
 import { describeAudit } from "./auditText";
@@ -157,26 +157,22 @@ export function PeopleScreen() {
 
   return (
     <>
-      <header className="top">
-        <h1>People &amp; audit log</h1>
-        <span className="crumb">Owner only</span>
-        <button type="button" className="search" onClick={() => app.open({ kind: "palette" })} aria-keyshortcuts="Control+K">
-          <span>{q || "Search people and activity"}</span>
-          <Kbd>Ctrl K</Kbd>
-        </button>
-      </header>
+      <ScreenHeader
+        title="People & audit log"
+        count={`${all.length - pending} people, ${pending} ${pending === 1 ? "invite" : "invites"} pending`}
+        text="Who can sign in, what they can reach, and every change made by a person or an agent."
+      >
+        <SearchButton q={q} placeholder="Search people and activity" onOpen={() => app.open({ kind: "palette" })} />
+        <div className="chips" role="group" aria-label="Filter people">
+          {FILTERS.map((f) => (
+            <Chip key={f} pressed={filter === f} onClick={() => setFilter(f)}>
+              {f[0]!.toUpperCase() + f.slice(1)}
+            </Chip>
+          ))}
+        </div>
+      </ScreenHeader>
       <div className="body people">
         <section className="list" aria-label="People">
-          <div className="filters">
-            {FILTERS.map((f) => (
-              <Chip key={f} pressed={filter === f} onClick={() => setFilter(f)}>
-                {f[0]!.toUpperCase() + f.slice(1)}
-              </Chip>
-            ))}
-            <span className="count">
-              {all.length - pending} people, {pending} {pending === 1 ? "invite" : "invites"} pending
-            </span>
-          </div>
           <table>
             <thead>
               <tr>

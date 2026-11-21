@@ -4,7 +4,7 @@ import { errorText } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Sheet } from "../shell/Sheet";
-import { Chip, Kbd, PrimaryButton, Tag } from "../shell/ui";
+import { Chip, Empty, Kbd, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { creatorLabel, linkState, linksQuery, type LinksFilter } from "./linkView";
@@ -172,33 +172,31 @@ export function LinksScreen() {
 
   return (
     <>
-      <header className="top">
-        <h1>Links</h1>
-        <span className="crumb">{host ? `on ${host}` : "on every domain you can see"}</span>
-        <button type="button" className="search" onClick={() => app.open({ kind: "palette" })} aria-keyshortcuts="Control+K">
-          <span>{q || "Search slugs and destinations"}</span>
-          <Kbd>Ctrl K</Kbd>
-        </button>
+      <ScreenHeader
+        title="Links"
+        count={unfiltered ? `${total} links` : `${items.length} shown`}
+        text={`Short links ${host ? `on ${host}` : "on every domain you can see"}. Pick one to edit its destination, schedule and rules.`}
+      >
+        <SearchButton q={q} placeholder="Search slugs and destinations" onOpen={() => app.open({ kind: "palette" })} />
+        <div className="chips" role="group" aria-label="Filter links">
+          {STATUSES.map((s) => (
+            <Chip key={s} pressed={status === s} onClick={() => setStatus(s)}>
+              {s[0]!.toUpperCase() + s.slice(1)}
+            </Chip>
+          ))}
+          <Chip pressed={mine} onClick={() => setMine(!mine)}>
+            Mine
+          </Chip>
+        </div>
+        {q && (
+          <button type="button" className="btn ghost" onClick={() => navigate("/links")}>
+            Clear search
+          </button>
+        )}
         <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />
-      </header>
+      </ScreenHeader>
       <div className="body">
         <section className="list" aria-label="Links">
-          <div className="filters">
-            {STATUSES.map((s) => (
-              <Chip key={s} pressed={status === s} onClick={() => setStatus(s)}>
-                {s[0]!.toUpperCase() + s.slice(1)}
-              </Chip>
-            ))}
-            <Chip pressed={mine} onClick={() => setMine(!mine)}>
-              Mine
-            </Chip>
-            {q && (
-              <button type="button" className="btn ghost" onClick={() => navigate("/links")}>
-                Clear search
-              </button>
-            )}
-            <span className="count">{unfiltered ? `${total} links` : `${items.length} shown`}</span>
-          </div>
           {loadError && (
             <p className="err pad" role="alert">
               {loadError}

@@ -2,12 +2,13 @@ import { useRef, type KeyboardEvent, type ReactNode } from "react";
 
 export const Kbd = ({ children }: { children: ReactNode }) => <kbd>{children}</kbd>;
 
-/** Graphite button, orange plus, grey shortcut letter. */
+/** A screen's page action: orange button, graphite circled plus and text (7.5:1 on the orange), shortcut letter. */
 export function PrimaryButton({ label, shortcut, onClick }: { label: string; shortcut?: string; onClick: () => void }) {
   return (
-    <button type="button" className="btn primary" onClick={onClick} aria-keyshortcuts={shortcut}>
+    <button type="button" className="btn primary act" onClick={onClick} aria-keyshortcuts={shortcut}>
       <svg className="plus" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 5v14M5 12h14" />
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v8M8 12h8" />
       </svg>
       {label}
       {shortcut && <span className="k">{shortcut}</span>}
@@ -53,6 +54,50 @@ export function Seg<V extends string | number>({ options, value, onChange, label
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Page header: title with its count, one muted line, then the toolbar (search, filters, page action). */
+export function ScreenHeader({ title, count, text, children }: { title: string; count?: ReactNode; text?: ReactNode; children?: ReactNode }) {
+  return (
+    <header className="top">
+      <div className="t-row">
+        <h1>{title}</h1>
+        {count && <span className="t-count">{count}</span>}
+      </div>
+      {text && <p className="desc">{text}</p>}
+      {children && <div className="toolbar">{children}</div>}
+    </header>
+  );
+}
+
+const SearchIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </svg>
+);
+
+/** Opens the command palette; shows the current search, or the placeholder. */
+export const SearchButton = ({ q, placeholder, onOpen }: { q: string; placeholder: string; onOpen: () => void }) => (
+  <button type="button" className="search" onClick={onOpen} aria-keyshortcuts="Control+K">
+    <SearchIcon />
+    <span>{q || placeholder}</span>
+    <Kbd>Ctrl K</Kbd>
+  </button>
+);
+
+/** Empty list: icon tile, title, one line, optional action. */
+export function Empty({ title, text, children }: { title: string; text: string; children?: ReactNode }) {
+  return (
+    <div className="empty-state">
+      <span className="tile">
+        <SearchIcon />
+      </span>
+      <p className="et">{title}</p>
+      <p className="ed">{text}</p>
+      {children}
     </div>
   );
 }

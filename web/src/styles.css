@@ -46,24 +46,42 @@ kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(
 
 /* main */
 main{min-width:0;display:flex;flex-direction:column;height:100vh;overflow:hidden}
-.top{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
-.top h1{font-family:var(--display);font-weight:500;font-size:18px;letter-spacing:-.02em;margin:0}
-.top .crumb{color:var(--muted)}
-.search{margin-left:auto;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:7px;padding:6px 10px;width:300px;color:var(--faint);background:var(--bg)}
-.search span{flex:1}
-.btn{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:6px 12px;display:inline-flex;align-items:center;gap:8px}
-.btn.primary{background:var(--graphite);border-color:var(--graphite);color:#fff;font-weight:500;padding:7px 14px}
+/* app: page header in the content area (title + count, one muted line, toolbar), after NetBird's calmer hierarchy */
+.top{display:grid;gap:4px;padding:20px 24px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.t-row{display:flex;align-items:baseline;gap:12px}
+.top h1{font-family:var(--display);font-weight:500;font-size:21px;letter-spacing:-.02em;margin:0}
+.t-count{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.desc{margin:0;color:var(--muted);max-width:80ch}
+.toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}
+.toolbar .act{margin-left:auto}
+.toolbar .btn{height:38px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.note{color:var(--wait);font-size:12.5px;font-weight:500}
+.search{display:flex;align-items:center;gap:8px;height:38px;border:1px solid var(--line);border-radius:6px;padding:0 8px 0 10px;width:320px;max-width:100%;color:var(--muted);background:var(--bg)}
+.search svg{width:16px;height:16px;flex:none;stroke:var(--faint);fill:none;stroke-width:2;stroke-linecap:round}
+.search span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.search:hover{border-color:#D3D5CF}
+/* app: one control shape everywhere: 6px radius, 34px buttons (38px in the toolbar) */
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:6px;min-height:34px;padding:0 12px;display:inline-flex;align-items:center;gap:8px;font-weight:500}
+.btn:hover{border-color:#D3D5CF;background:#FBFBF9}
+.btn.primary{background:var(--graphite);border-color:var(--graphite);color:#fff;font-weight:500;padding:0 14px}
+.btn.primary:hover{background:#2A2F37}
+/* app: the page action is filled brand orange; graphite text on #FD8D27 is 7.5:1 */
+.btn.primary.act{background:var(--signal);border-color:var(--signal);color:var(--graphite)}
+.btn.primary.act:hover{background:#FE9A3F}
+.btn.primary.act .plus{width:16px;height:16px;stroke:var(--graphite);stroke-width:1.9}
+.btn.primary.act .k{color:var(--graphite);font-weight:400}
 .btn.primary .plus{width:14px;height:14px;stroke:var(--signal);fill:none;stroke-width:2.2;stroke-linecap:round}
 .btn.primary .k{font-family:var(--mono);font-size:11.5px;color:#7D8591;margin-left:4px}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--line-soft)}
 .body{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;min-height:0}
 .list{overflow:auto;min-width:0}
 .detail{border-left:1px solid var(--line);background:var(--panel);overflow:auto}
 
-.filters{display:flex;align-items:center;gap:6px;padding:10px 20px;border-bottom:1px solid var(--line-soft)}
-.chip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--panel);color:var(--muted);font-size:12.5px}
+.chip{border:1px solid var(--line);border-radius:6px;min-height:30px;padding:0 10px;background:var(--panel);color:var(--muted);font-size:12.5px;font-weight:500}
+.chip:hover{border-color:#D3D5CF}
 .chip[aria-pressed="true"]{background:var(--graphite);border-color:var(--graphite);color:#fff}
-.filters .count{margin-left:auto;color:var(--faint);font-size:12.5px}
 
 table{width:100%;border-collapse:collapse}
 th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0}
@@ -93,9 +111,9 @@ td:first-child,th:first-child{padding-left:20px}
 .sect h3{font-size:12.5px;font-weight:600;margin:0 0 10px;color:var(--text)}
 .field{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center;margin-bottom:8px}
 .field label{color:var(--muted)}
-.input{border:1px solid var(--line);border-radius:7px;padding:6px 9px;background:var(--panel);font-family:var(--mono);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.input{border:1px solid var(--line);border-radius:6px;padding:6px 9px;background:var(--panel);font-family:var(--mono);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .input.sans{font-family:var(--sans);font-size:13px}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
 /* app: .seg items and .sw are real buttons, not spans */
 .seg button{border:0;background:transparent;padding:5px 10px;font-size:12.5px;color:var(--muted);border-right:1px solid var(--line)}
 .seg button:last-child{border-right:0}
@@ -155,7 +173,7 @@ td:first-child,th:first-child{padding-left:20px}
 .f label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:5px}
 .f .lbl{margin:0 0 5px;font-size:12.5px;font-weight:400;color:var(--muted)}
 .f label kbd{font-size:10.5px}
-.ctl{border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;background:var(--panel)}
+.ctl{border:1px solid var(--line);border-radius:6px;display:flex;align-items:center;background:var(--panel)}
 .ctl:focus-within{border-color:var(--signal);box-shadow:0 0 0 3px var(--signal-wash)}
 .ctl input{flex:1;border:0;outline:0;font-family:var(--mono);font-size:13px;padding:8px 10px;background:transparent;color:var(--text);min-width:0}
 .ctl .pre{font-family:var(--mono);font-size:13px;color:var(--faint);padding-left:10px;white-space:nowrap}
@@ -233,4 +251,5 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .d-head .row{flex-wrap:wrap}
 .log div b{font-weight:600}
 .avatar.plain{background:var(--line-soft);color:var(--muted)}
+.chip.only .btn{min-height:0;padding:0 4px}
 .chip.only{display:inline-flex;align-items:center;gap:6px;background:var(--signal-wash);border-color:var(--signal);color:var(--graphite)}
