@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type Link, type Page } from "../api";
-import { errorText } from "../copy";
+import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Sheet } from "../shell/Sheet";
@@ -174,7 +174,7 @@ export function LinksScreen() {
     <>
       <ScreenHeader
         title="Links"
-        count={unfiltered ? `${total} links` : `${items.length} shown`}
+        count={unfiltered ? plural(total, "link") : `${items.length} shown`}
         text={`Short links ${host ? `on ${host}` : "on every domain you can see"}. Pick one to edit its destination, schedule and rules.`}
       >
         <SearchButton q={q} placeholder="Search slugs and destinations" onOpen={() => app.open({ kind: "palette" })} />

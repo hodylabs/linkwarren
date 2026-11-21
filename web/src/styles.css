@@ -38,11 +38,11 @@ kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(
 .nav a .k{margin-left:auto;font-family:var(--mono);font-size:11px;color:#8A929E}
 .nav svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .nav-sep{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#8A929E;padding:14px 10px 6px}
-.me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:8px;border-top:1px solid #2A2F37}
+.rail .me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:8px;border-top:1px solid #2A2F37}
 .avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
 .ver{border:1px solid #30363F;border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:11px;color:#8A929E}
-.me .avatar{background:var(--signal);color:var(--graphite)}
-.me div{line-height:1.25}.me small{color:var(--rail-dim)}
+.rail .me .avatar{background:var(--signal);color:var(--graphite)}
+.rail .me div{line-height:1.25}.rail .me small{color:var(--rail-dim)}
 
 /* main */
 main{min-width:0;display:flex;flex-direction:column;height:100vh;overflow:hidden}
@@ -212,8 +212,8 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 .btn.primary .k2{font-family:var(--mono);font-size:11.5px;color:#7D8591;margin-left:4px}
 
 /* app: shell pieces the mockup does not have */
-.me a{color:var(--rail-dim);font-size:12px}
-.me a:hover{color:#fff}
+.rail .me a{color:var(--rail-dim);font-size:12px}
+.rail .me a:hover{color:#fff}
 .soon{padding:28px 20px;color:var(--muted);max-width:72ch}
 .soon p{margin:0}
 .gate{min-height:100%;display:grid;place-content:center;justify-items:center;gap:14px;padding:24px;text-align:center;color:var(--text)}

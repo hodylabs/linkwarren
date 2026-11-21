@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type AuditItem, type Page, type UserItem } from "../api";
-import { errorText } from "../copy";
+import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Empty, ScreenHeader, SearchButton, Tag } from "../shell/ui";
@@ -159,7 +159,7 @@ export function PeopleScreen() {
     <>
       <ScreenHeader
         title="People & audit log"
-        count={`${all.length - pending} people, ${pending} ${pending === 1 ? "invite" : "invites"} pending`}
+        count={`${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending`}
         text="Who can sign in, what they can reach, and every change made by a person or an agent."
       >
         <SearchButton q={q} placeholder="Search people and activity" onOpen={() => app.open({ kind: "palette" })} />

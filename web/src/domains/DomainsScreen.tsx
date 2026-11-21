@@ -1,3 +1,4 @@
+import { plural } from "../copy";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
@@ -78,7 +79,7 @@ export function DomainsScreen() {
     <>
       <ScreenHeader
         title="Domains"
-        count={`${domains.length} domains`}
+        count={plural(domains.length, "domain")}
         text="The hosts your short links live on. Main is for everyone, shared is for its members, private is yours alone."
       >
         <SearchButton q={q} placeholder="Search domains" onOpen={() => app.open({ kind: "palette" })} />

@@ -38,4 +38,7 @@ const ERRORS: Record<string, string> = {
 };
 
 /** Plain-language text for an API error code. */
+/** "1 link", "2 links"; pass `many` for irregular plurals. */
+export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
 export const errorText = (code: string): string => (Object.hasOwn(ERRORS, code) ? ERRORS[code]! : `Something went wrong (${code})`);

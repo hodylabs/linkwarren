@@ -1,3 +1,4 @@
+import { plural } from "../copy";
 import { useState, type KeyboardEvent } from "react";
 import type { Domain } from "../api";
 import { useApp } from "../state";
@@ -8,7 +9,7 @@ import { Sheet } from "./Sheet";
 const DOT = { active: "ok", pending: "wait", disabled: "bad" } as const;
 
 function sub(d: Domain): string {
-  return d.status === "pending" ? "waiting for approval" : d.status === "disabled" ? "disabled" : `${d.linkCount} links`;
+  return d.status === "pending" ? "waiting for approval" : d.status === "disabled" ? "disabled" : plural(d.linkCount, "link");
 }
 
 export function DomainSwitcher() {
