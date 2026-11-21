@@ -70,19 +70,22 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
   useEffect(() => onSignedOut(() => setSignedOut(true)), []);
 
   // Failures reject so callers decide; signed-out ones have already raised the banner through onSignedOut.
-  // Only the newest request of each list may store its answer, so an older one that answers last is dropped.
-  const domainsGen = useRef(0);
-  const usersGen = useRef(0);
+  // An answer is stored unless a newer request already stored one, so a stale answer never overwrites a
+  // fresh one, and a newer request that fails does not throw away an older answer that succeeded.
+  const domainsGen = useRef({ sent: 0, stored: 0 });
+  const usersGen = useRef({ sent: 0, stored: 0 });
   const reloadDomains = useCallback(async () => {
-    const g = ++domainsGen.current;
+    const gen = domainsGen.current;
+    const g = ++gen.sent;
     const list = await api<Domain[]>("GET", "/api/domains");
-    if (g === domainsGen.current) setDomains(list);
+    if (g > gen.stored) { gen.stored = g; setDomains(list); }
   }, []);
   const reloadUsers = useCallback(async () => {
     if (me.role !== "owner") return;
-    const g = ++usersGen.current;
+    const gen = usersGen.current;
+    const g = ++gen.sent;
     const { items } = await api<{ items: UserItem[] }>("GET", "/api/users");
-    if (g === usersGen.current) setUsers(items);
+    if (g > gen.stored) { gen.stored = g; setUsers(items); }
   }, [me.role]);
 
   const [loadError, setLoadError] = useState<string | null>(null);

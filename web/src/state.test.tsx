@@ -61,6 +61,31 @@ describe("AppProvider", () => {
     expect(screen.getByTestId("ids").textContent).toBe("new");
   });
 
+  it("a newer reload that fails does not throw away an older one that succeeds", async () => {
+    const answers: ((r: Response) => void)[] = [];
+    vi.stubGlobal("fetch", async (input: string) =>
+      input === "/api/domains"
+        ? new Promise((r) => answers.push(r))
+        : new Response(JSON.stringify({ items: [] }), { status: 200 }),
+    );
+    function Ids() {
+      const { domains, reloadDomains } = useApp();
+      return (
+        <>
+          <output data-testid="ids">{domains.map((d) => d.id).join(",")}</output>
+          <button type="button" onClick={() => void reloadDomains().catch(() => {})}>again</button>
+        </>
+      );
+    }
+    render(<AppProvider me={owner}><Ids /></AppProvider>);
+    await vi.waitFor(() => expect(answers).toHaveLength(1));
+    screen.getByRole("button", { name: "again" }).click();
+    await vi.waitFor(() => expect(answers).toHaveLength(2));
+    answers[1]!(new Response(JSON.stringify({ error: "internal" }), { status: 500 }));
+    answers[0]!(new Response(JSON.stringify([{ id: "first" }]), { status: 200 }));
+    await vi.waitFor(() => expect(screen.getByTestId("ids").textContent).toBe("first"));
+  });
+
   it("a signed-out failure does not set loadError", async () => {
     fakeApi({ "GET /api/domains": () => ({ status: 401, body: { error: "unauthenticated" } }), "GET /api/users": () => ({ body: { items: [] } }) });
     render(<AppProvider me={owner}><Probe /></AppProvider>);
