@@ -9,8 +9,9 @@ export const getDomain = async (env: Env, id: string): Promise<DomainRow | null>
 };
 export const isMember = async (env: Env, domainId: string, userId: string) =>
   !!(await env.DB.prepare("SELECT 1 FROM domain_members WHERE domain_id = ? AND user_id = ?").bind(domainId, userId).first());
+// Active only: a pending or disabled domain does not serve, so a link to it is not a loop (yet).
 export const allHosts = async (env: Env) =>
-  (await env.DB.prepare("SELECT host FROM domains").all<{ host: string }>()).results.map((r) => r.host);
+  (await env.DB.prepare("SELECT host FROM domains WHERE status = 'active'").all<{ host: string }>()).results.map((r) => r.host);
 
 // A failed purge must not turn a committed write into a 500; entries expire by TTL anyway.
 const swallow = (p: Promise<unknown>) => p.catch((e) => console.warn("cache invalidate failed", String(e)));
@@ -21,8 +22,15 @@ export const purgeMany = (env: Env, domainId: string, keys: string[]) =>
 
 /** Validates the destination and returns the normalized href, or an error code. */
 export async function destination(env: Env, raw: string): Promise<{ href: string } | { error: string }> {
-  const r = checkDestination(raw, [...(await allHosts(env)), env.DASHBOARD_HOST]);
+  const r = checkDestination(raw, [...(await allHosts(env)), env.DASHBOARD_HOST, ...(env.CF_CNAME_TARGET ? [env.CF_CNAME_TARGET] : [])]);
   if (!r.ok) return { error: r.reason === "too_long" ? "url_too_long" : r.reason };
   if (r.url.href.length > 2048) return { error: "url_too_long" };
   return { href: r.url.href };
+}
+
+/** Links (any domain) whose destination points at `host` on any scheme or port; they would loop once it is active. Hosts hold only [a-z0-9.-], so LIKE needs no escaping. */
+export async function loopLinks(env: Env, host: string): Promise<number> {
+  const p = ["http", "https"].flatMap((s) => [`${s}://${host}/%`, `${s}://${host}:%`]);
+  const r = await env.DB.prepare("SELECT COUNT(*) n FROM links WHERE url LIKE ? OR url LIKE ? OR url LIKE ? OR url LIKE ?").bind(...p).first<{ n: number }>();
+  return r?.n ?? 0;
 }

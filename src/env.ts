@@ -9,4 +9,10 @@ export type Env = {
   ASSETS?: Fetcher;
   /** Test-only: a JWKS JSON string used instead of the remote Access certs. Never set in production. */
   ACCESS_JWKS_JSON?: string;
+  /** Cloudflare onboarding (all optional; features stay off when unset). CF_API_TOKEN is a secret. */
+  CF_API_TOKEN?: string;
+  CF_ACCOUNT_ID?: string;
+  CF_WORKER_NAME?: string;
+  CF_SAAS_ZONE_ID?: string;
+  CF_CNAME_TARGET?: string;
 };

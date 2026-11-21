@@ -39,3 +39,18 @@ export const rowToLink = (r: R): LinkRow => ({
   createdBy: r.created_by as string, updatedBy: r.updated_by as string,
   createdAt: r.created_at as number, updatedAt: r.updated_at as number,
 });
+
+export type CfRow = {
+  kind: "outside" | "account" | "manual"; zoneId: string | null; dnsRecordId: string | null; routeId: string | null;
+  hostnameId: string | null; dns: "unknown" | "found" | "missing" | "wrong_target";
+  ownership: "unknown" | "pending" | "verified" | "failed";
+  certificate: "unknown" | "pending" | "issued" | "failed" | "not_covered";
+  errors: string[]; lastError: string | null; checkedAt: number | null; securityLevel: string | null; rateLimit: number | null;
+};
+export const rowToCf = (r: R): CfRow => ({
+  kind: r.kind as CfRow["kind"], zoneId: r.zone_id as string | null, dnsRecordId: r.dns_record_id as string | null,
+  routeId: r.route_id as string | null, hostnameId: r.hostname_id as string | null, dns: r.dns as CfRow["dns"],
+  ownership: r.ownership as CfRow["ownership"], certificate: r.certificate as CfRow["certificate"],
+  errors: JSON.parse((r.errors as string) || "[]"), lastError: r.last_error as string | null,
+  checkedAt: r.checked_at as number | null, securityLevel: r.security_level as string | null, rateLimit: r.rate_limit as number | null,
+});

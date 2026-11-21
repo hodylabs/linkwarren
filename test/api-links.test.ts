@@ -158,6 +158,20 @@ describe("delete, locks and takeover", () => {
     expect([r.status, await r.json()]).toEqual([400, { error: "loop" }]);
   });
 
+  it("a pending or disabled domain host is not a loop; once active it is", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dd','off.test','shared','disabled','uo',1)");
+    expect((await post("a", { domainId: "dm", slug: "p1", url: "https://priv.test/x" })).status).toBe(201);
+    expect((await post("a", { domainId: "dm", slug: "p2", url: "https://off.test/x" })).status).toBe(201);
+    await run("UPDATE domains SET status = 'active' WHERE id = 'dp'");
+    const r = await post("a", { domainId: "dm", slug: "p3", url: "https://priv.test/x" });
+    expect([r.status, await r.json()]).toEqual([400, { error: "loop" }]);
+  });
+
+  it("the CNAME target is a loop", async () => {
+    const r = await post("a", { domainId: "dm", slug: "e1", url: "https://edge.test/x" });
+    expect([r.status, await r.json()]).toEqual([400, { error: "loop" }]);
+  });
+
   it("a second delete of the same link is 404 and writes one audit row", async () => {
     const l = await mk("a", "twice");
     expect((await call("a", "DELETE", `/api/links/${l.id}`)).status).toBe(204);

@@ -6,13 +6,14 @@ import { normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
-import { destination, getDomain, purgeHost as purge, purgeMany } from "./shared";
+import { destination, getDomain, loopLinks, purgeHost as purge, purgeMany } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const domains = new Hono<E>();
 
 const forbidden = { error: "forbidden" } as const;
 const notFound = { error: "not_found" } as const;
+export const MAX_PENDING_PER_MEMBER = 3;
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const createBody = z.strictObject({ host: z.string(), type: z.enum(["main", "shared", "private"]) });
@@ -27,8 +28,9 @@ const membersBody = z.strictObject({ userIds: z.array(z.string().min(1)).max(100
 const exists = (id: string) => ({ sql: "EXISTS (SELECT 1 FROM domains WHERE id = ?)", binds: [id] });
 
 /** Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars. */
-export function hostError(host: string, dashboard: string): string | null {
+export function hostError(host: string, dashboard: string, cnameTarget?: string): string | null {
   if (host === normalizeHost(dashboard)) return "dashboard_host";
+  if (cnameTarget && host === normalizeHost(cnameTarget)) return "reserved_host";
   const labels = host.split(".");
   if (host.length > 253 || labels.length < 2 || !labels.every((l) => LABEL.test(l)) || /^\d+$/.test(labels[labels.length - 1]!)) return "invalid_host";
   return null;
@@ -59,17 +61,23 @@ domains.post("/", async (c) => {
   const isOwner = user.role === "owner";
   if (!isOwner && type !== "private") return c.json(forbidden, 403);
   const host = normalizeHost(body.data.host.trim());
-  const bad = hostError(host, c.env.DASHBOARD_HOST);
+  const bad = hostError(host, c.env.DASHBOARD_HOST, c.env.CF_CNAME_TARGET);
   if (bad) return c.json({ error: bad }, 400);
   const d: DomainRow = {
     id: crypto.randomUUID(), host, type, status: isOwner ? "active" : "pending", ownerId: user.id,
     bareRedirect: null, notfoundRedirect: null, caseSensitive: false, noindex: true, reservedExtra: [],
     createdAt: Math.floor(Date.now() / 1000),
   };
+  let res;
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,?,?,?,?)")
-        .bind(d.id, host, type, d.status, user.id, d.createdAt),
+    // The cap is inside the INSERT so concurrent creates cannot both slip past it; the follow-ups key on this row's id.
+    res = await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO domains (id,host,type,status,owner_id,created_at) SELECT ?,?,?,?,?,?
+         WHERE ? = 'owner' OR (SELECT COUNT(*) FROM domains WHERE owner_id = ? AND status = 'pending') < ${MAX_PENDING_PER_MEMBER}`,
+      ).bind(d.id, host, type, d.status, user.id, d.createdAt, user.role, user.id),
+      c.env.DB.prepare("INSERT INTO domain_cf (domain_id, kind, updated_at) SELECT ?, 'manual', ? WHERE EXISTS (SELECT 1 FROM domains WHERE id = ?)")
+        .bind(d.id, d.createdAt, d.id),
       auditStmt(c.env, { actorId: user.id, action: "domain.create", targetType: "domain", targetId: d.id,
         detail: { host, type, status: d.status } }, exists(d.id)),
     ]);
@@ -77,8 +85,9 @@ domains.post("/", async (c) => {
     if (String(e).includes("UNIQUE")) return c.json({ error: "host_taken" }, 409);
     throw e;
   }
+  if (res[0]!.meta.changes === 0) return c.json({ error: "pending_limit" }, 409);
   await purge(c.env, host); // clears a 60 s cached miss for this host
-  return c.json(d, 201);
+  return c.json(isOwner ? { ...d, loopLinks: await loopLinks(c.env, host) } : d, 201);
 });
 
 domains.patch("/:id", async (c) => {
@@ -111,6 +120,7 @@ domains.patch("/:id", async (c) => {
   if (b.caseSensitive !== undefined) cols.push(["case_sensitive", next.caseSensitive ? 1 : 0]);
   if (b.noindex !== undefined) cols.push(["noindex", next.noindex ? 1 : 0]);
   if (b.reservedExtra !== undefined) cols.push(["reserved_extra", JSON.stringify(next.reservedExtra)]);
+  // Turning case-sensitivity on changes which public URLs match: /Spring no longer reaches the link "spring".
   const flip = next.caseSensitive !== d.caseSensitive;
   // Optimistic guard: every statement below only applies while the case mode is still the one we read.
   // Turning case-sensitivity off is also refused (same snapshot) while a lock and a live link are case twins with different keys.
@@ -173,7 +183,7 @@ for (const [verb, to] of [["approve", "active"], ["disable", "disabled"]] as con
       }
       await purge(c.env, d.host);
     }
-    return c.json({ ...d, status: to });
+    return c.json(verb === "approve" ? { ...d, status: to, loopLinks: await loopLinks(c.env, d.host) } : { ...d, status: to });
   });
 }
 

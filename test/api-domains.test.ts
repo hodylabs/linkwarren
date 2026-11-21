@@ -215,3 +215,52 @@ describe("list", () => {
     expect(b.map((d) => d.id).sort()).toEqual(["dc", "dm"]);
   });
 });
+
+describe("onboarding rules", () => {
+  const link = (id: string, url: string) =>
+    run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?, 'dm', ?, ?, ?, 'uo','uo',1,1)", id, id, id, url);
+  const pendingOf = async (u: string) => (await one<{ n: number }>("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'", u))!.n;
+
+  it("a member's pending cap is 3: the 4th is 409 with no row and no audit", async () => {
+    await status(await create("a", "p2.example.com", "private"), 201);
+    await status(await create("a", "p3.example.com", "private"), 201); // dp is already pending
+    const before = await audits("domain.create");
+    await status(await create("a", "p4.example.com", "private"), 409, { error: "pending_limit" });
+    expect(await one("SELECT 1 FROM domains WHERE host = 'p4.example.com'")).toBeNull();
+    expect(await audits("domain.create")).toBe(before);
+    expect(await one("SELECT 1 FROM domain_cf c LEFT JOIN domains d ON d.id = c.domain_id WHERE d.id IS NULL")).toBeNull();
+  });
+  it("approving one frees a slot; the owner is not capped", async () => {
+    await create("a", "p2.example.com", "private"); await create("a", "p3.example.com", "private");
+    await status(await call("owner", "POST", "/api/domains/dp/approve"), 200);
+    await status(await create("a", "p4.example.com", "private"), 201);
+    for (const h of ["o1", "o2", "o3", "o4"]) await status(await create("owner", `${h}.example.com`, "shared"), 201);
+  });
+  it("two concurrent 4th creates leave exactly 3 pending", async () => {
+    await create("a", "p2.example.com", "private");
+    const rs = await Promise.all([create("a", "r1.example.com", "private"), create("a", "r2.example.com", "private")]);
+    expect(rs.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(await pendingOf("ua")).toBe(3);
+  });
+  it("create writes a manual domain_cf row", async () => {
+    const d = (await (await create("owner", "cf.example.com", "shared")).json()) as { id: string };
+    expect(await one("SELECT kind, dns FROM domain_cf WHERE domain_id = ?", d.id)).toEqual({ kind: "manual", dns: "unknown" });
+  });
+  it("the CNAME target host is reserved", async () => {
+    await status(await create("owner", "edge.test", "shared"), 400, { error: "reserved_host" });
+    await status(await create("a", "Edge.Test.", "private"), 400, { error: "reserved_host" });
+  });
+  it("owner create reports loopLinks (any scheme/port); a member's response has no such key", async () => {
+    await link("la", "https://promo.example.com/a"); await link("lb", "http://promo.example.com:8080/b");
+    await link("lc", "https://other.example.com/a"); await link("ld", "https://x.com/?u=https://promo.example.com/z");
+    const o = (await (await create("owner", "promo.example.com", "shared")).json()) as Record<string, unknown>;
+    expect(o.loopLinks).toBe(2);
+    const m = (await (await create("a", "promo2.example.com", "private")).json()) as Record<string, unknown>;
+    expect("loopLinks" in m).toBe(false);
+  });
+  it("approve as owner returns loopLinks", async () => {
+    await link("la", "https://priv.test/a");
+    const j = (await (await call("owner", "POST", "/api/domains/dp/approve")).json()) as { status: string; loopLinks: number };
+    expect([j.status, j.loopLinks]).toEqual(["active", 1]);
+  });
+});

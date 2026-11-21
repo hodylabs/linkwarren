@@ -38,4 +38,23 @@ describe("schema", () => {
     await domain("d3", "c.test", "u1");
     expect(await msg(link("l4", "d3", "k", 307))).toContain("CHECK");
   });
+
+  it("domain_cf: rejects a bogus kind and cascades with its domain", async () => {
+    await run("INSERT OR IGNORE INTO users (id,email,role,status,created_at) VALUES ('u1','o@x.com','member','active',1)");
+    await domain("d4", "e.test", "u1");
+    const cf = (kind: string) => run("INSERT INTO domain_cf (domain_id,kind,updated_at) VALUES ('d4',?,1)", kind);
+    expect(await msg(cf("bogus"))).toContain("CHECK");
+    await cf("account");
+    await run("DELETE FROM domains WHERE id = 'd4'");
+    expect(await db.prepare("SELECT 1 FROM domain_cf WHERE domain_id = 'd4'").first()).toBeNull();
+  });
+
+  it("the 0002 backfill gives every pre-existing domain a manual row", async () => {
+    await run("INSERT OR IGNORE INTO users (id,email,role,status,created_at) VALUES ('u1','o@x.com','member','active',1)");
+    await domain("d5", "f.test", "u1");
+    await db.exec("DROP INDEX domains_owner_status; DROP TABLE domain_cf; DROP TABLE settings;");
+    const m = env.TEST_MIGRATIONS.find((x) => x.name.startsWith("0002"))!;
+    for (const q of m.queries) await db.prepare(q).run();
+    expect(await db.prepare("SELECT kind FROM domain_cf WHERE domain_id = 'd5'").first()).toEqual({ kind: "manual" });
+  });
 });
