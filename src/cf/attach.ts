@@ -1,0 +1,135 @@
+import type { Env } from "../env";
+import { rowToCf, type CfRow, type DomainRow } from "../types";
+import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findRoute, findZone, listDns, type CfConfig } from "./api";
+import { dnsPointsAt } from "./dns";
+
+export class AttachError extends Error {
+  constructor(public code: "dns_record_exists" | "dns_not_proxied" | "route_in_use") {
+    super(code);
+    this.name = "AttachError";
+  }
+}
+
+/** CfError 0 with code -1: the API maps it to `outside_not_configured`. */
+const notConfigured = () => new CfError(0, [-1]);
+
+export async function classify(cfg: CfConfig, host: string): Promise<{ kind: "account"; zoneId: string } | { kind: "outside" }> {
+  const z = await findZone(cfg, host);
+  if (z) return { kind: "account", zoneId: z.id };
+  if (!cfg.saasZoneId || !cfg.cnameTarget) throw notConfigured();
+  return { kind: "outside" };
+}
+
+type IdCol = "zone_id" | "dns_record_id" | "route_id" | "hostname_id";
+type Made = Partial<Record<IdCol, string>>;
+type Snap = Pick<CfRow, "dns" | "ownership" | "certificate" | "errors">;
+
+const ownershipOf = (s: string): CfRow["ownership"] =>
+  s === "active" ? "verified" : s === "pending" ? "pending" : ["blocked", "moved", "deleted"].includes(s) ? "failed" : "unknown";
+const certificateOf = (s: string | null): CfRow["certificate"] =>
+  s === null ? "unknown"
+  : s === "active" ? "issued"
+  : /(timed_out|deleted|expired)$/.test(s) ? "failed"
+  : s === "initializing" || s.startsWith("pending_") ? "pending"
+  : "unknown";
+
+// Only these types serve traffic at the host; TXT, MX and friends never conflict with the placeholder.
+const ADDRESS = new Set(["A", "AAAA", "CNAME"]);
+
+/**
+ * Reads come first and every refusal is thrown before the first write. Ids are recorded the moment
+ * linkwarren creates something, so a failure later in the flow still leaves them stored for detach.
+ */
+export async function syncDomain(env: Env, cfg: CfConfig, d: DomainRow, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }): Promise<CfRow> {
+  if (cf.kind === "manual") return cf;
+  const made: Made = {};
+  try {
+    const snap = cf.kind === "outside" ? await syncOutside(cfg, d.host, made) : await syncAccount(cfg, d.host, cf, opts, made);
+    return await save(env, d.id, cf, made, { ...snap, errors: JSON.stringify(snap.errors), last_error: null, checked_at: Math.floor(Date.now() / 1000) });
+  } catch (e) {
+    // checked_at stays as it was so the next poll retries at once.
+    if (e instanceof CfError || e instanceof AttachError) await save(env, d.id, cf, made, { last_error: e instanceof AttachError ? e.code : e.message });
+    throw e;
+  }
+}
+
+async function syncOutside(cfg: CfConfig, host: string, made: Made): Promise<Snap> {
+  if (!cfg.saasZoneId || !cfg.cnameTarget) throw notConfigured();
+  const pattern = `${host}/*`;
+  let h = await findHostname(cfg, host);
+  const route = await findRoute(cfg, cfg.saasZoneId, pattern);
+  if (route && route.script !== cfg.workerName) throw new AttachError("route_in_use");
+  if (!h) made.hostname_id = (h = await createHostname(cfg, host)).id;
+  if (!route) made.route_id = (await createRoute(cfg, cfg.saasZoneId, pattern)).id;
+  return { dns: await dnsPointsAt(host, cfg.cnameTarget), ownership: ownershipOf(h.status), certificate: certificateOf(h.sslStatus), errors: h.errors };
+}
+
+async function syncAccount(cfg: CfConfig, host: string, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }, made: Made): Promise<Snap> {
+  const z = await findZone(cfg, host);
+  if (!z) throw new CfError(404); // the zone left the account
+  const zoneId = cf.zoneId ?? z.id;
+  if (!cf.zoneId) made.zone_id = zoneId;
+  const pattern = `${host}/*`;
+  const records = (await listDns(cfg, zoneId, host)).filter((r) => ADDRESS.has(r.type));
+  const route = await findRoute(cfg, zoneId, pattern);
+  // A stored route means an attach already succeeded (and any takeover was confirmed then): keep it repaired.
+  const attached = cf.routeId !== null;
+  const attach = opts.attach || attached;
+  if (attach) {
+    if (records.some((r) => !r.proxied)) throw new AttachError("dns_not_proxied");
+    const onlyOurs = records.length === 1 && records[0]!.id === cf.dnsRecordId;
+    if (records.length > 0 && !onlyOurs && !opts.confirmTakeover && !attached) throw new AttachError("dns_record_exists");
+    if (route && route.script !== cfg.workerName) throw new AttachError("route_in_use");
+    if (records.length === 0) {
+      const rec = await createDns(cfg, zoneId, host);
+      made.dns_record_id = rec.id;
+      records.push(rec);
+    }
+    if (!route) made.route_id = (await createRoute(cfg, zoneId, pattern)).id;
+  }
+  return {
+    dns: records.some((r) => r.proxied) ? "found" : records.length ? "wrong_target" : "missing",
+    // A route to this worker that someone else made also serves the host, so it reads as verified (never adopted).
+    ownership: attach || route?.script === cfg.workerName ? "verified" : "pending",
+    // Universal SSL covers the apex and one label below it.
+    certificate: host.split(".").length - z.name.split(".").length <= 1 ? "issued" : "not_covered",
+    errors: [],
+  };
+}
+
+/** One UPDATE. Each id is compare-and-set against the value this sync read, so a concurrent writer's id is never overwritten. */
+async function save(env: Env, id: string, cf: CfRow, made: Made, fields: Record<string, string | number | null>): Promise<CfRow> {
+  const read: Record<IdCol, string | null> = { zone_id: cf.zoneId, dns_record_id: cf.dnsRecordId, route_id: cf.routeId, hostname_id: cf.hostnameId };
+  const set = Object.keys(fields).map((k) => `${k} = ?`);
+  const binds: (string | number | null)[] = Object.values(fields);
+  for (const [k, v] of Object.entries(made) as [IdCol, string][]) {
+    set.push(`${k} = CASE WHEN ${k} IS ? THEN ? ELSE ${k} END`);
+    binds.push(read[k], v);
+  }
+  const row = await env.DB.prepare(`UPDATE domain_cf SET ${set.join(", ")}, updated_at = ? WHERE domain_id = ? RETURNING *`)
+    .bind(...binds, Math.floor(Date.now() / 1000), id).first();
+  return row ? rowToCf(row) : cf;
+}
+
+/** Deletes only ids linkwarren stored; 404 counts as already gone (Task 3 client). Any other failure rejects before later steps. */
+export async function detachDomain(_env: Env, cfg: CfConfig, _d: DomainRow, cf: CfRow): Promise<void> {
+  if (cf.kind === "manual") return;
+  // Task 8 hook: our ruleset rules are deleted here first.
+  const routeZone = cf.kind === "outside" ? cfg.saasZoneId : cf.zoneId;
+  if (cf.routeId) {
+    if (!routeZone) throw new CfError(0);
+    await deleteRoute(cfg, routeZone, cf.routeId);
+  }
+  if (cf.hostnameId) await deleteHostname(cfg, cf.hostnameId);
+  if (cf.dnsRecordId) {
+    if (!cf.zoneId) throw new CfError(0);
+    await deleteDns(cfg, cf.zoneId, cf.dnsRecordId);
+  }
+}
+
+/** R5: outside needs all three green; account needs a successful attach; manual keeps S1 behaviour. */
+export function isVerified(cf: CfRow): boolean {
+  if (cf.kind === "manual") return true;
+  if (cf.lastError || cf.dns !== "found" || cf.ownership !== "verified") return false;
+  return cf.kind === "account" || cf.certificate === "issued";
+}
