@@ -27,9 +27,9 @@ export class CfError extends Error {
 // Real errors can lack `code` (POST workers/routes 403), so it is optional.
 const envelope = z.looseObject({
   success: z.boolean().optional(),
-  errors: z.array(z.looseObject({ code: z.number().optional() })).optional(),
+  errors: z.array(z.looseObject({ code: z.number().optional() })).nullish(),
   result: z.unknown().optional(),
-  result_info: z.looseObject({ total_count: z.number().optional() }).optional(),
+  result_info: z.looseObject({ total_count: z.number().optional() }).nullish(),
 });
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -63,7 +63,13 @@ async function del(cfg: CfConfig, path: string): Promise<void> {
 }
 
 const q = encodeURIComponent;
-const parseList = <S extends z.ZodType>(s: S, v: unknown) => z.array(s).parse(v);
+// A 2xx body that does not match the expected shape is still a Cloudflare failure, never a raw ZodError.
+function parse<S extends z.ZodType>(s: S, v: unknown): z.infer<S> {
+  const r = s.safeParse(v);
+  if (!r.success) throw new CfError(200);
+  return r.data;
+}
+const parseList = <S extends z.ZodType>(s: S, v: unknown) => parse(z.array(s), v);
 
 const zoneS = z.object({ id: z.string(), name: z.string(), account: z.object({ name: z.string().nullish() }).nullish() });
 export async function findZone(cfg: CfConfig, host: string): Promise<{ id: string; name: string; accountName: string | null } | null> {
@@ -81,7 +87,7 @@ export type DnsRecord = z.infer<typeof dnsS>;
 export const listDns = async (cfg: CfConfig, zoneId: string, name: string): Promise<DnsRecord[]> =>
   parseList(dnsS, (await cf(cfg, "GET", `/zones/${q(zoneId)}/dns_records?name=${q(name)}`)).result);
 export const createDns = async (cfg: CfConfig, zoneId: string, host: string): Promise<DnsRecord> =>
-  dnsS.parse((await cf(cfg, "POST", `/zones/${q(zoneId)}/dns_records`, { type: "AAAA", name: host, content: "100::", proxied: true, comment: "linkwarren" })).result);
+  parse(dnsS, (await cf(cfg, "POST", `/zones/${q(zoneId)}/dns_records`, { type: "AAAA", name: host, content: "100::", proxied: true, comment: "linkwarren" })).result);
 export const deleteDns = (cfg: CfConfig, zoneId: string, id: string) => del(cfg, `/zones/${q(zoneId)}/dns_records/${q(id)}`);
 
 const routeS = z.object({ id: z.string(), pattern: z.string(), script: z.string().nullish() });
@@ -90,7 +96,7 @@ export async function findRoute(cfg: CfConfig, zoneId: string, pattern: string):
   return r ? { id: r.id, script: r.script ?? null } : null;
 }
 export const createRoute = async (cfg: CfConfig, zoneId: string, pattern: string): Promise<{ id: string }> =>
-  z.object({ id: z.string() }).parse((await cf(cfg, "POST", `/zones/${q(zoneId)}/workers/routes`, { pattern, script: cfg.workerName })).result);
+  parse(z.object({ id: z.string() }), (await cf(cfg, "POST", `/zones/${q(zoneId)}/workers/routes`, { pattern, script: cfg.workerName })).result);
 export const deleteRoute = (cfg: CfConfig, zoneId: string, id: string) => del(cfg, `/zones/${q(zoneId)}/workers/routes/${q(id)}`);
 
 export type HostnameStatus = { status: string; sslStatus: string | null; errors: string[] };
@@ -118,14 +124,14 @@ export async function findHostname(cfg: CfConfig, host: string): Promise<(Hostna
   return h ? toHostname(h) : null;
 }
 export const createHostname = async (cfg: CfConfig, host: string) =>
-  toHostname(hostS.parse((await cf(cfg, "POST", saas(cfg), { hostname: host, ssl: { method: "http", type: "dv" } })).result));
-export const deleteHostname = (cfg: CfConfig, id: string) => del(cfg, `${saas(cfg)}/${q(id)}`);
+  toHostname(parse(hostS, (await cf(cfg, "POST", saas(cfg), { hostname: host, ssl: { method: "http", type: "dv" } })).result));
+export const deleteHostname = async (cfg: CfConfig, id: string) => del(cfg, `${saas(cfg)}/${q(id)}`);
 export const hostnameCount = async (cfg: CfConfig): Promise<number> => (await cf(cfg, "GET", `${saas(cfg)}?per_page=1`)).info.total_count ?? 0;
 
 const originS = z.object({ origin: z.string().nullish() });
 export async function getFallbackOrigin(cfg: CfConfig): Promise<string | null> {
   try {
-    return originS.parse((await cf(cfg, "GET", `${saas(cfg)}/fallback_origin`)).result).origin ?? null;
+    return parse(originS, (await cf(cfg, "GET", `${saas(cfg)}/fallback_origin`)).result).origin ?? null;
   } catch (e) {
     if (e instanceof CfError && e.status === 404) return null; // unset answers 404 code 1551
     throw e;

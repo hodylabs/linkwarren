@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 
 type Json = Record<string, unknown>;
 export type FakeZone = { id: string; name: string; accountName?: string };
@@ -22,6 +22,8 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
     /** DoH answers keyed `TYPE:name`, e.g. "CNAME:go.example.com" -> ["edge.test"]. */
     doh: { ...(opts.doh ?? {}) } as Record<string, string[]>,
   };
+  /** Every fetch the fake did not recognise (it also throws). Assert empty with assertNoUnexpected(). */
+  const unexpected: string[] = [];
   const calls: { method: string; path: string; body: unknown }[] = [];
   const failures: { re: RegExp; status: number; body?: unknown }[] = [];
 
@@ -38,7 +40,10 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       const answers = state.doh[`${type}:${name}`] ?? [];
       return json(200, { Status: 0, ...(answers.length ? { Answer: answers.map((data) => ({ name, type: num, TTL: 60, data })) } : {}) });
     }
-    if (url.origin !== "https://api.cloudflare.com" || !url.pathname.startsWith("/client/v4/")) throw new Error(`fakeCloudflare: unexpected fetch ${req.method} ${req.url}`);
+    if (url.origin !== "https://api.cloudflare.com" || !url.pathname.startsWith("/client/v4/")) {
+      unexpected.push(`${req.method} ${req.url}`);
+      throw new Error(`fakeCloudflare: unexpected fetch ${req.method} ${req.url}`);
+    }
     const path = url.pathname.slice("/client/v4".length);
     const text = await req.text();
     const body: unknown = text ? JSON.parse(text) : undefined;
@@ -108,6 +113,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       if (m === "GET") return key in state.rulesets ? ok(state.rulesets[key]) : err(404, 10003);
       if (m === "PUT") return ok((state.rulesets[key] = { id: nid("rs"), ...b }));
     }
+    unexpected.push(`${m} ${path}`);
     throw new Error(`fakeCloudflare: unhandled ${m} ${path}`);
   }
 
@@ -118,11 +124,20 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
     return ok({ id: "deleted" });
   }
 
-  return { handle, state, calls, failNext: (re: RegExp, status: number, body?: unknown) => void failures.push({ re, status, body }) };
+  return { handle, state, calls, unexpected, assertNoUnexpected: () => expect(unexpected).toEqual([]), failNext: (re: RegExp, status: number, body?: unknown) => void failures.push({ re, status, body }) };
+}
+
+let installed: ReturnType<typeof fakeCloudflare> | null = null;
+/** Call from afterEach: fails the test if the installed fake saw an unknown URL, even one the code under test swallowed. */
+export function assertNoUnexpectedCloudflareCalls() {
+  const f = installed;
+  installed = null;
+  f?.assertNoUnexpected();
 }
 
 export function installFakeCloudflare(opts?: Parameters<typeof fakeCloudflare>[0]) {
   const fake = fakeCloudflare(opts);
+  installed = fake;
   vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => fake.handle(new Request(input as RequestInfo, init)));
   return fake;
 }

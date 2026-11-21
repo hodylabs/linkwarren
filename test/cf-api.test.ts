@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cf, cfConfig, CfError, createDns, createHostname, deleteRoute, findHostname, findZone, getFallbackOrigin, setFallbackOrigin, type CfConfig } from "../src/cf/api";
+import { cf, cfConfig, CfError, createDns, createHostname, deleteHostname, deleteRoute, findHostname, findZone, listDns, getFallbackOrigin, setFallbackOrigin, type CfConfig } from "../src/cf/api";
 import { dnsPointsAt } from "../src/cf/dns";
-import { installFakeCloudflare } from "./helpers/cf";
+import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare } from "./helpers/cf";
 import type { Env } from "../src/env";
 
 const cfg: CfConfig = { token: "tok-SECRET-123", accountId: "acc1", workerName: "lw", saasZoneId: "saas1", cnameTarget: "edge.test" };
 const base = { DB: {}, CACHE: {} } as unknown as Env;
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  assertNoUnexpectedCloudflareCalls();
+});
 
 describe("cfConfig", () => {
   const full = { ...base, CF_API_TOKEN: " t ", CF_ACCOUNT_ID: "a", CF_WORKER_NAME: "w", CF_CNAME_TARGET: "Edge.Test." } as Env;
@@ -22,8 +25,10 @@ describe("cfConfig", () => {
 
 describe("fetch seam", () => {
   it("unknown URLs throw in the fake", async () => {
-    installFakeCloudflare();
+    const fake = installFakeCloudflare();
     await expect(fetch("https://example.org/")).rejects.toThrow(/unexpected fetch/);
+    expect(fake.unexpected).toEqual(["GET https://example.org/"]);
+    fake.unexpected.length = 0; // expected here; keep afterEach clean
   });
 });
 
@@ -45,7 +50,24 @@ describe("findZone", () => {
   });
 });
 
+describe("findZone encoding", () => {
+  it("URL-encodes a crafted host in the query", async () => {
+    const fake = installFakeCloudflare();
+    await findZone(cfg, "a.example.com&account.id=x");
+    expect(fake.calls[0]!.path).toBe("/zones?name=a.example.com%26account.id%3Dx&account.id=acc1");
+  });
+});
+
 describe("cf errors", () => {
+  it("a 2xx body of the wrong shape is a CfError, not a ZodError", async () => {
+    const fake = installFakeCloudflare();
+    fake.failNext(/dns_records/, 200, { success: true, errors: null, result: [{ nope: 1 }] });
+    await expect(listDns(cfg, "z1", "x.example.com")).rejects.toBeInstanceOf(CfError);
+  });
+  it("deleteHostname rejects (never throws synchronously) without a saas zone", async () => {
+    const p = deleteHostname({ ...cfg, saasZoneId: null }, "x");
+    await expect(p).rejects.toBeInstanceOf(CfError);
+  });
   it("success:false with a code yields CfError with codes", async () => {
     const fake = installFakeCloudflare();
     fake.failNext(/zones/, 200, { success: false, errors: [{ code: 1004, message: "x" }], result: null });
@@ -132,6 +154,23 @@ describe("dnsPointsAt", () => {
   it("another CNAME is wrong_target", async () => {
     installFakeCloudflare({ doh: { "CNAME:go.example.com": ["other.test."] } });
     expect(await dnsPointsAt("go.example.com", T)).toBe("wrong_target");
+  });
+  it("a 503 from DoH is unknown, not missing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("down", { status: 503 }));
+    expect(await dnsPointsAt("go.example.com", T)).toBe("unknown");
+  });
+  it("a thrown fetch is unknown", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network"));
+    expect(await dnsPointsAt("go.example.com", T)).toBe("unknown");
+  });
+  it("SERVFAIL and bad JSON are unknown; NXDOMAIN is missing", async () => {
+    const f = vi.spyOn(globalThis, "fetch");
+    f.mockImplementation(async () => new Response(JSON.stringify({ Status: 2 })));
+    expect(await dnsPointsAt("go.example.com", T)).toBe("unknown");
+    f.mockImplementation(async () => new Response("<html>"));
+    expect(await dnsPointsAt("go.example.com", T)).toBe("unknown");
+    f.mockImplementation(async () => new Response(JSON.stringify({ Status: 3 })));
+    expect(await dnsPointsAt("go.example.com", T)).toBe("missing");
   });
   it("DoH requests carry the dns-json accept header", async () => {
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ Status: 0 })));
