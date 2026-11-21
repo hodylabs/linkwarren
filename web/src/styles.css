@@ -23,7 +23,7 @@ kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(
 
 /* rail */
 .rail{background:var(--rail);color:var(--rail-text);display:flex;flex-direction:column;padding:14px 10px;gap:14px;height:100vh;position:sticky;top:0}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 8px}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px;text-decoration:none;border-radius:8px;align-self:flex-start}
 .brand img{width:28px;height:28px}
 .brand span{font-family:var(--display);font-weight:500;font-size:17px;letter-spacing:-.03em;color:#fff}
 .switch{display:flex;align-items:center;gap:8px;width:100%;background:var(--rail-hi);border:1px solid #30363F;border-radius:8px;padding:8px 10px;color:#fff;text-align:left}
@@ -31,14 +31,16 @@ kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(
 .switch b{font-family:var(--mono);font-weight:500;font-size:12.5px;flex:1}
 .switch small{color:var(--rail-dim)}
 .nav{display:flex;flex-direction:column;gap:2px}
-.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;color:var(--rail-text);text-decoration:none}
+.nav a{display:flex;align-items:center;gap:10px;min-height:35px;padding:0 10px;border-radius:8px;color:var(--rail-text);text-decoration:none;font-size:14px}
 .nav a:hover{background:var(--rail-hi)}
-.nav a[aria-current="page"]{background:var(--rail-hi);color:#fff;box-shadow:inset 2px 0 0 var(--signal)}
-.nav a .k{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--rail-dim)}
+/* app: the active item is a filled highlight, no accent bar (NetBird-style refinement) */
+.nav a[aria-current="page"]{background:#2E343D;color:#fff;font-weight:500}
+.nav a .k{margin-left:auto;font-family:var(--mono);font-size:11px;color:#8A929E}
 .nav svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.nav-sep{font-size:11.5px;color:var(--rail-dim);padding:10px 10px 4px}
+.nav-sep{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#8A929E;padding:14px 10px 6px}
 .me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:8px;border-top:1px solid #2A2F37}
 .avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
+.ver{border:1px solid #30363F;border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:11px;color:#8A929E}
 .me .avatar{background:var(--signal);color:var(--graphite)}
 .me div{line-height:1.25}.me small{color:var(--rail-dim)}
 

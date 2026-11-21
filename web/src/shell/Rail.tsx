@@ -78,10 +78,10 @@ export function Rail() {
   const isOwner = me.role === "owner";
   return (
     <aside className="rail" aria-label="Main">
-      <div className="brand">
+      <NavLink to="/links" className="brand" aria-label="linkwarren home">
         <img src="/linkwarren-mark.svg" alt="" />
-        <span>linkwarren</span>
-      </div>
+        <span aria-hidden="true">linkwarren</span>
+      </NavLink>
       <button type="button" className="switch" aria-label={`Switch domain, current ${current?.host ?? "All domains"}`} onClick={() => open({ kind: "switcher" })}>
         <span className="dot" />
         <b>{current?.host ?? "All domains"}</b>
@@ -112,6 +112,7 @@ export function Rail() {
           <a href="/cdn-cgi/access/logout">Sign out</a>
         </div>
       </div>
+      <div className="ver">Dashboard v{__APP_VERSION__}</div>
     </aside>
   );
 }

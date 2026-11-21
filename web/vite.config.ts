@@ -1,5 +1,9 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+
+// The app version shown at the bottom of the rail, from the root package.json.
+export const APP_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
 
 // Run as `vite web` / `vite build web`, so the root is web/ and the output is web/dist.
 export default defineConfig(({ mode }) => {
@@ -7,6 +11,7 @@ export default defineConfig(({ mode }) => {
   const token = loadEnv(mode, process.cwd(), "CF_ACCESS_").CF_ACCESS_TOKEN ?? "";
   return {
     plugins: [react()],
+    define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
     // No data: URIs: the CSP is font-src/img-src self, so an inlined font would be blocked.
     build: { outDir: "dist", emptyOutDir: true, assetsInlineLimit: 0 },
     server: {

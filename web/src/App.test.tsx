@@ -85,6 +85,16 @@ describe("App shell", () => {
     expect(await screen.findByRole("heading", { name: "Domains" })).toBeTruthy();
   });
 
+  it("the logo is a home link to Links and the rail shows the app version", async () => {
+    boot(owner, {}, "/domains");
+    const home = await screen.findByRole("link", { name: "linkwarren home" });
+    expect(home.getAttribute("href")).toBe("/links");
+    home.click();
+    expect(location.pathname).toBe("/links");
+    expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
+    expect(screen.getByText(/^Dashboard v\d+\.\d+\.\d+/)).toBeTruthy();
+  });
+
   it.each([
     [403, "not_invited", "This email is not invited to this linkwarren. Ask the owner to invite you."],
     [403, "disabled", "Your access has been turned off. Ask the owner."],
