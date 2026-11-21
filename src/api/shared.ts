@@ -28,9 +28,14 @@ export async function destination(env: Env, raw: string): Promise<{ href: string
   return { href: r.url.href };
 }
 
-/** Links (any domain) whose destination points at `host` on any scheme or port; they would loop once it is active. Hosts hold only [a-z0-9.-], so LIKE needs no escaping. */
+/** Links (any domain) whose destination points at `host` on any scheme or port; they would loop once it is active. substr compare, not LIKE: D1 rejects LIKE patterns over 50 bytes and hosts reach 253. */
 export async function loopLinks(env: Env, host: string): Promise<number> {
-  const p = ["http", "https"].flatMap((s) => [`${s}://${host}/%`, `${s}://${host}:%`]);
-  const r = await env.DB.prepare("SELECT COUNT(*) n FROM links WHERE url LIKE ? OR url LIKE ? OR url LIKE ? OR url LIKE ?").bind(...p).first<{ n: number }>();
+  const p = ["http", "https"].flatMap((s) => [`${s}://${host}/`, `${s}://${host}:`]);
+  const r = await env.DB.prepare(`SELECT COUNT(*) n FROM links WHERE ${p.map(() => "substr(url, 1, ?) = ?").join(" OR ")}`)
+    .bind(...p.flatMap((x) => [x.length, x])).first<{ n: number }>();
   return r?.n ?? 0;
 }
+
+/** For responses after a committed write: a failed count omits the field instead of turning the write into a 500. */
+export const loopField = (env: Env, host: string) =>
+  loopLinks(env, host).then((loopLinks) => ({ loopLinks }), (e) => { console.warn("loopLinks failed", String(e)); return {}; });

@@ -258,6 +258,12 @@ describe("onboarding rules", () => {
     const m = (await (await create("a", "promo2.example.com", "private")).json()) as Record<string, unknown>;
     expect("loopLinks" in m).toBe(false);
   });
+  it("loopLinks works for a 60-char host (no LIKE pattern limit)", async () => {
+    const host = `${"a".repeat(50)}.example.com`;
+    await link("lh", `https://${host}/a`); await link("li", `http://${host}:81/b`);
+    const o = (await (await create("owner", host, "shared")).json()) as Record<string, unknown>;
+    expect(o.loopLinks).toBe(2);
+  });
   it("approve as owner returns loopLinks", async () => {
     await link("la", "https://priv.test/a");
     const j = (await (await call("owner", "POST", "/api/domains/dp/approve")).json()) as { status: string; loopLinks: number };

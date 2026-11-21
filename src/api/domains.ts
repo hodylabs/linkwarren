@@ -6,7 +6,7 @@ import { normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
-import { destination, getDomain, loopLinks, purgeHost as purge, purgeMany } from "./shared";
+import { destination, getDomain, loopField, purgeHost as purge, purgeMany } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const domains = new Hono<E>();
@@ -87,7 +87,7 @@ domains.post("/", async (c) => {
   }
   if (res[0]!.meta.changes === 0) return c.json({ error: "pending_limit" }, 409);
   await purge(c.env, host); // clears a 60 s cached miss for this host
-  return c.json(isOwner ? { ...d, loopLinks: await loopLinks(c.env, host) } : d, 201);
+  return c.json(isOwner ? { ...d, ...(await loopField(c.env, host)) } : d, 201);
 });
 
 domains.patch("/:id", async (c) => {
@@ -179,11 +179,12 @@ for (const [verb, to] of [["approve", "active"], ["disable", "disabled"]] as con
       ]);
       if (res[1]!.meta.changes === 0) {
         const cur = await getDomain(c.env, d.id);
-        return cur ? c.json(cur) : c.json(notFound, 404);
+        if (!cur) return c.json(notFound, 404);
+        return c.json(verb === "approve" && cur.status === "active" ? { ...cur, ...(await loopField(c.env, cur.host)) } : cur);
       }
       await purge(c.env, d.host);
     }
-    return c.json(verb === "approve" ? { ...d, status: to, loopLinks: await loopLinks(c.env, d.host) } : { ...d, status: to });
+    return c.json(verb === "approve" ? { ...d, status: to, ...(await loopField(c.env, d.host)) } : { ...d, status: to });
   });
 }
 
