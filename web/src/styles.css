@@ -111,6 +111,7 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 .who{display:inline-flex;align-items:center;gap:7px}
 .who{gap:10px}
 .who .avatar{width:28px;height:28px;font-size:10.5px}
+.who .avatar:not(.plain){background:var(--signal);color:var(--graphite)}
 
 /* detail panel */
 .d-head{padding:16px 20px;border-bottom:1px solid var(--line-soft)}
