@@ -58,7 +58,7 @@ describe("Links screen list", () => {
     await ready();
     await user.click(screen.getByRole("button", { name: "Active" }));
     await waitFor(() => expect(screen.queryAllByRole("row")).toHaveLength(1));
-    expect(screen.queryByText("No links here yet.")).toBeNull();
+    expect(screen.queryByText(/^No links/)).toBeNull();
   });
 
   it("sends cursor only on the second request", async () => {

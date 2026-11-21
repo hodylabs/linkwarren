@@ -226,8 +226,11 @@ export function LinksScreen() {
                     onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && select(l.id)}
                   >
                     <td className="short">
-                      <span className="host">{domainOf(l.domainId)?.host}/</span>
-                      <span className="slug">{l.slug}</span>
+                      <span className={`dot2 ${st.tone}`} aria-hidden="true" />
+                      <span className="mchip">
+                        <span className="host">{domainOf(l.domainId)?.host}/</span>
+                        <span className="slug">{l.slug}</span>
+                      </span>
                     </td>
                     <td className="dest">{l.url}</td>
                     <td>
@@ -249,7 +252,16 @@ export function LinksScreen() {
               })}
             </tbody>
           </table>
-          {loaded && items.length === 0 && !loadError && <p className="empty pad">No links here yet.</p>}
+          {loaded && items.length === 0 && !loadError &&
+            (unfiltered ? (
+              <Empty title="No links here yet." text="Short links you make show up here, newest first.">
+                <button type="button" className="btn primary" onClick={() => app.open({ kind: "newLink" })}>
+                  Create a link
+                </button>
+              </Empty>
+            ) : (
+              <Empty title="No links match." text="Try another filter, or clear the search." />
+            ))}
           {next && (
             <div className="pad">
               <button type="button" className="btn" onClick={() => void loadMore()}>

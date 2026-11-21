@@ -95,6 +95,13 @@ describe("App shell", () => {
     expect(screen.getByText(/^Dashboard v\d+\.\d+\.\d+/)).toBeTruthy();
   });
 
+  it("an empty links list offers to create the first link", async () => {
+    boot(owner);
+    expect(await screen.findByText("No links here yet.")).toBeTruthy();
+    screen.getByRole("button", { name: "Create a link" }).click();
+    expect(await screen.findByRole("dialog", { name: "New link" })).toBeTruthy();
+  });
+
   it.each([
     [403, "not_invited", "This email is not invited to this linkwarren. Ask the owner to invite you."],
     [403, "disabled", "Your access has been turned off. Ask the owner."],

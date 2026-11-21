@@ -197,7 +197,10 @@ export function PeopleScreen() {
                       <span className={u.status === "invited" ? "avatar plain" : "avatar"} aria-hidden="true">
                         {initials(u)}
                       </span>
-                      {u.id === me.id ? "You" : label(u)}
+                      <span className="two">
+                        <b>{u.id === me.id ? "You" : label(u)}</b>
+                        {(u.id === me.id || u.name) && <small>{u.email}</small>}
+                      </span>
                     </span>
                   </td>
                   <td>
@@ -211,7 +214,7 @@ export function PeopleScreen() {
               ))}
             </tbody>
           </table>
-          {users !== null && list.length === 0 && <p className="empty pad">No people match.</p>}
+          {users !== null && list.length === 0 && <Empty title="No people match." text="Try another filter or search." />}
         </section>
         <aside className="detail" aria-label="Audit log">
           <div className="d-head">

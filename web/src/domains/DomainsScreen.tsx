@@ -118,7 +118,10 @@ export function DomainsScreen() {
                     onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && select(d.id)}
                   >
                     <td className="short">
-                      <span className="slug">{d.host}</span>
+                      <span className={`dot2 ${tag.tone}`} aria-hidden="true" />
+                      <span className="mchip">
+                        <span className="slug">{d.host}</span>
+                      </span>
                     </td>
                     <td>{TYPE_LABEL[d.type]}</td>
                     <td>
@@ -132,7 +135,13 @@ export function DomainsScreen() {
               })}
             </tbody>
           </table>
-          {items.length === 0 && <p className="empty pad">No domains match.</p>}
+          {items.length === 0 && (
+            <Empty title="No domains match." text="Try another filter or search, or add a domain.">
+              <button type="button" className="btn primary" onClick={() => app.open({ kind: "addDomain" })}>
+                Add a domain
+              </button>
+            </Empty>
+          )}
         </section>
         {selected ? (
           <DomainDetail key={selected.id} domain={selected} onModal={setModal} />
