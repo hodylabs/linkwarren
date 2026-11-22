@@ -7,6 +7,9 @@ import { switcherDomains } from "../shell/palette";
 import { useOpenSheets } from "../shell/Sheet";
 import { Kbd, ScreenHeader, Seg } from "../shell/ui";
 import { useApp } from "../state";
+import { Breakdowns } from "./Breakdowns";
+import { ClicksChart } from "./ClicksChart";
+import { downloadCsv } from "./csv";
 import { DomainPicker } from "./DomainPicker";
 import { filtersQuery, readFilters, utcToday, type Filters, type Range } from "./filters";
 import { tiles } from "./view";
@@ -45,7 +48,7 @@ export function AnalyticsScreen() {
 
   const [qInput, setQInput] = useState(f.q);
   const [picker, setPicker] = useState(false);
-  const [table, setTable] = useState(false); // Task 9: the chart card reads it
+  const [table, setTable] = useState(false);
   const [report, setReport] = useState<AnalyticsReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
@@ -178,8 +181,8 @@ export function AnalyticsScreen() {
           />
           <Kbd>L</Kbd>
         </label>
-        {/* Task 9 wires the export (toCsv); until then the button is present but disabled. */}
-        <button type="button" className="btn act" ref={exportRef} disabled aria-keyshortcuts="X">
+        {/* Disabled until a report has loaded: the CSV is built from the loaded report (R10). */}
+        <button type="button" className="btn act" ref={exportRef} disabled={!report} aria-keyshortcuts="X" onClick={() => report && downloadCsv(report)}>
           Export CSV<span className="k2">X</span>
         </button>
       </ScreenHeader>
@@ -263,6 +266,8 @@ export function AnalyticsScreen() {
                 </div>
               ))}
             </div>
+            <ClicksChart series={report.series} unit={report.unit} table={table} onToggle={() => setTable((t) => !t)} />
+            <Breakdowns report={report} />
           </>
         )}
       </div>

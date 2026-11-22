@@ -195,4 +195,52 @@ describe("Analytics screen", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(chip()).toBeTruthy();
   });
+
+  it("V switches the chart card to the table and back", async () => {
+    const series = [{ bucket: "2026-11-19", qr: 1, typed: 2 }, { bucket: "2026-11-20", qr: 3, typed: 4 }];
+    const { user } = boot("/analytics", () => ({ body: report(10, { series }) }));
+    await ready();
+    expect(screen.getByRole("img", { name: /Clicks over time/ })).toBeTruthy();
+    await user.keyboard("v");
+    const t = screen.getByRole("table");
+    expect(within(t).getAllByRole("columnheader")).toHaveLength(4);
+    expect(within(t).getAllByRole("row").slice(1).map((r) => r.lastElementChild!.textContent)).toEqual(["3", "7"]);
+    expect(screen.getByRole("button", { name: /Chart view/ })).toBeTruthy();
+    await user.keyboard("v");
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("X exports the loaded report as a CSV through a Blob URL that is revoked", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const blobs: Blob[] = [];
+    const create = vi.fn((b: Blob) => (blobs.push(b), "blob:test"));
+    const revoke = vi.fn();
+    const saved = { c: URL.createObjectURL, r: URL.revokeObjectURL };
+    URL.createObjectURL = create;
+    URL.revokeObjectURL = revoke;
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    const { user } = boot("/analytics", () => ({ body: report(10, { referrers: [{ value: "", clicks: 2 }] }) }));
+    await ready();
+    expect(screen.getByRole("button", { name: /Export CSV/ }).hasAttribute("disabled")).toBe(false);
+    await user.keyboard("x");
+    expect(names).toEqual(["linkwarren-analytics-2026-10-22-to-2026-11-20.csv"]);
+    expect(await blobs[0]!.text()).toContain("referrer,clicks\ndirect,2");
+    expect(document.querySelector("a[download]")).toBeNull();
+    vi.advanceTimersByTime(1000);
+    expect(revoke).toHaveBeenCalledWith("blob:test");
+    click.mockRestore();
+    URL.createObjectURL = saved.c;
+    URL.revokeObjectURL = saved.r;
+    vi.useRealTimers();
+  });
+
+  it("shows the breakdown cards under the chart", async () => {
+    boot();
+    await ready();
+    for (const t of ["Top links", "Domains", "Countries", "Where clicks came from"]) expect(screen.getByRole("heading", { name: t })).toBeTruthy();
+  });
 });
+
