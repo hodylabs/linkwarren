@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare } from "./helpers/cf";
 import { beforeBatch } from "./helpers/race";
+import { withDomainLock } from "../src/api/shared";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -286,6 +287,19 @@ describe("approve racing reject", () => {
     await run("UPDATE locks SET until = 0 WHERE key = ?", `domain:${id}`);
     expect((await approve(id)).status).toBe(200);
     expect(await count("SELECT COUNT(*) n FROM locks WHERE key = ?", `domain:${id}`)).toBe(0); // released after use
+  });
+});
+
+describe("lease time left", () => {
+  it("held() is false once too little of the lease is left for another Cloudflare call, true while plenty is", async () => {
+    const seen: boolean[] = [];
+    await withDomainLock(env, "dz", async (lease) => {
+      seen.push(await lease.held());
+      await run("UPDATE locks SET until = ? WHERE key = 'domain:dz'", Math.floor(Date.now() / 1000) + 5);
+      seen.push(await lease.held());
+      return new Response(null);
+    });
+    expect(seen).toEqual([true, false]);
   });
 });
 

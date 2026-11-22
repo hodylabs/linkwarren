@@ -59,9 +59,12 @@ export async function loopLinks(env: Env, host: string): Promise<number> {
 
 // Longer than the slowest Cloudflare-then-D1 flow (each call times out at 10 s); a crashed request blocks the domain at most this long.
 const LEASE_S = 120;
+// shortcut: a step (one sync or one rule change) is assumed to finish in this long; a slower one could still outlive the lease.
+const STEP_S = 60;
 /**
  * The fencing token of a held lease. `sql`/`binds` guard a D1 statement on it, so a holder whose lease expired and was
- * reclaimed writes nothing; `held` checks it before a Cloudflare write.
+ * reclaimed writes nothing; `held` checks it before a Cloudflare write, and is false once less than STEP_S of the lease is
+ * left, so no remote write starts that another request could overtake after reclaiming the lease.
  */
 export type Lease = { sql: string; binds: unknown[]; held: () => Promise<boolean> };
 /**
@@ -76,7 +79,8 @@ export async function withDomainLock(env: Env, domainId: string, fn: (lease: Lea
   ).bind(key, token, now + LEASE_S, now).run();
   if (!got.meta.changes) return null;
   const sql = "EXISTS (SELECT 1 FROM locks WHERE key = ? AND token = ?)";
-  const held = async () => !!(await env.DB.prepare(`SELECT ${sql} AS ok`).bind(key, token).first<{ ok: number }>())?.ok;
+  const held = async () => !!(await env.DB.prepare("SELECT EXISTS (SELECT 1 FROM locks WHERE key = ? AND token = ? AND until > ?) AS ok")
+    .bind(key, token, Math.floor(Date.now() / 1000) + STEP_S).first<{ ok: number }>())?.ok;
   try {
     return await fn({ sql, binds: [key, token], held });
   } finally {
