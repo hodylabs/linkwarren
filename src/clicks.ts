@@ -7,7 +7,7 @@ export type Kind = "human" | "bot" | "preview";
 export type Source = "qr" | "typed";
 
 const PREVIEW_RE =
-  /Slackbot-LinkExpanding|Slack-ImgProxy|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|WhatsApp|TelegramBot|Discordbot|SkypeUriPreview|Iframely|Embedly|redditbot|Pinterestbot|vkShare|Viber|Snapchat|Mastodon|Bluesky|Cardyb|MicrosoftPreview|Google-PageRenderer|Line/i;
+  /Slackbot-LinkExpanding|Slack-ImgProxy|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|WhatsApp|TelegramBot|Discordbot|SkypeUriPreview|Iframely|Embedly|redditbot|Pinterestbot|vkShare|Viber|Snapchat|Mastodon|Bluesky|Cardyb|MicrosoftPreview|Google-PageRenderer|\bLine\//i;
 const BOT_RE =
   /bot|crawl|spider|slurp|curl\/|wget\/|python-requests|python-urllib|httpx|aiohttp|go-http-client|okhttp|java\/|libwww|headlesschrome|phantomjs|puppeteer|playwright|lighthouse|pingdom|uptimerobot|statuscake|GPTBot|ClaudeBot|anthropic-ai|PerplexityBot|Bytespider|Amazonbot|CCBot|ahrefs|semrush|MJ12bot|DotBot/i;
 

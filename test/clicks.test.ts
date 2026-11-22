@@ -8,6 +8,11 @@ const ANDROID_TABLET = "Mozilla/5.0 (Linux; Android 14; SM-X700) AppleWebKit/537
 const WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
 describe("classifyAgent", () => {
+  it("LINE's in-app preview matches only the Line/<version> token, never words containing 'line'", () => {
+    expect(classifyAgent("Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Mobile/15E148 Safari Line/13.20.0").kind).toBe("preview");
+    expect(classifyAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36 Online-Reader/1.0").kind).toBe("human");
+    expect(classifyAgent("Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/120.0 Pipeline-Viewer Safari/537.36").kind).toBe("human");
+  });
   it("classifies devices for humans", () => {
     expect(classifyAgent(IPHONE)).toEqual({ kind: "human", device: "mobile" });
     expect(classifyAgent(IPAD)).toEqual({ kind: "human", device: "tablet" });
