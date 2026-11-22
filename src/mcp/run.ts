@@ -67,8 +67,9 @@ async function limited(env: Env, p: Principal): Promise<{ msg: string; log: bool
   const over = keys.filter((k, i) => counts[i]! >= k[1].n);
   if (over.length) {
     const first = keys.filter((k, i) => counts[i] === k[1].n);
-    await Promise.all(first.map(([k, l]) => hitCount(env, k, l)));
-    return { ...msg(over), log: first.length > 0 };
+    const now = await Promise.all(first.map(([k, l]) => hitCount(env, k, l)));
+    // Calls racing at the threshold all read n: only the one whose atomic increment returned n + 1 logs.
+    return { ...msg(over), log: first.some((k, i) => now[i] === k[1].n + 1) };
   }
   const after = await Promise.all(keys.map(([k, l]) => hitCount(env, k, l)));
   const crossed = keys.filter((k, i) => after[i]! > k[1].n); // a concurrent call took the last slot
@@ -77,7 +78,7 @@ async function limited(env: Env, p: Principal): Promise<{ msg: string; log: bool
 
 /**
  * Every tool runs through here: principal, limits, the call, one tool_calls row (never arguments or results).
- * No row for a refused principal or a call refused read-only by a limit.
+ * No row for a refused principal, a call refused read-only by a limit, or a limiter failure.
  * `fn` returning `{ refused: true }` is a deliberate refusal (delete_link without confirm), logged as `refused`.
  */
 export async function runTool(name: string, env: Env, ctx: ExecutionContext, fn: (p: Principal) => Promise<Record<string, unknown>>): Promise<ToolResult> {
@@ -87,8 +88,13 @@ export async function runTool(name: string, env: Env, ctx: ExecutionContext, fn:
     const r = await resolve(env);
     if ("refused" in r) out = text(r.refused);
     else {
+      const over = await limited(env, r.p).catch((e: unknown) => {
+        console.error("mcp limiter failed", e instanceof Error ? e.name : "unknown");
+        return "down" as const;
+      });
+      // Fail closed, and no tool_calls row: a retry loop against a broken limiter must not write one per call.
+      if (over === "down") return json({ error: "unavailable", status: 503 }, true);
       log = { userId: r.p.user.id, connId: r.connId, via: r.p.grant.via ?? "" };
-      const over = await limited(env, r.p);
       if (over) {
         status = "rate_limited";
         if (!over.log) log = undefined;

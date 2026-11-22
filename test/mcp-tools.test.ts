@@ -307,18 +307,29 @@ describe("rate limits", () => {
       .toEqual([["api:c:" + t.connId, 1], ["api:day", 1], ["api:u:ua", 1], ["api:ud:ua", 1]].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
   });
 
-  it("a limiter failure fails closed: internal error, the tool does not run", async () => {
+  it("a limiter failure fails closed: unavailable, the tool does not run, no tool_calls row", async () => {
     const t = await connectAgent(A, { write: true });
     vi.spyOn(console, "error").mockImplementation(() => {});
     await run("ALTER TABLE auth_limits RENAME TO auth_limits_off");
     try {
-      const r = await tool(t.accessToken, "create_link", { domain: "go.test", slug: "nolimit", url: "https://y.com" });
-      expect(errOf(r)).toEqual({ error: "internal", status: 500 });
+      for (let i = 0; i < 3; i++) {
+        const r = await tool(t.accessToken, "create_link", { domain: "go.test", slug: "nolimit", url: "https://y.com" });
+        unlogged(); // a retry loop against a broken limiter must not write a row per call
+        expect(errOf(r)).toEqual({ error: "unavailable", status: 503 });
+      }
     } finally {
       await run("ALTER TABLE auth_limits_off RENAME TO auth_limits");
     }
     expect(await one("SELECT 1 FROM links WHERE slug = 'nolimit'")).toBeNull();
-    expect(await lastCall()).toMatchObject({ tool: "create_link", status: "error" });
+  });
+
+  it("concurrent calls at the threshold log one rate_limited row between them", async () => {
+    const t = await connectAgent(A);
+    await seed(`api:c:${t.connId}`, 60);
+    const rs = await Promise.all(Array.from({ length: 6 }, () => tool(t.accessToken, "server_info")));
+    unlogged(5);
+    for (const r of rs) expect(r.content[0]!.text).toBe("Rate limited, try again in a minute.");
+    expect((await calls(1)).map((x) => x.status)).toEqual(["rate_limited"]);
   });
 });
 
