@@ -13,10 +13,7 @@
     "build:web": "vite build web && npm run check:web",
     "check:web": "test -f web/dist/index.html && ! grep -rl 'data:font' web/dist",
     "test": "vitest run && vitest run -c web/vitest.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p web",
-    "import:legacy": "node scripts/import-legacy.ts",
-    "audit:legacy": "node scripts/audit-legacy.ts",
-    "verify:redirects": "node scripts/verify-redirects.ts"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",

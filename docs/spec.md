@@ -47,7 +47,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - Personal API keys with scopes, domain limits and expiry for scripts, on `/api/v1` only. Connect guide: `docs/agents.md`.
 
 **Dashboard**
-- Approved mockups: `design/ui/index.html` and `design/ui/setup.html`. Keyboard-first: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
+- Keyboard-first: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
 - Brand: logo `design/logo/linkwarren-mark.svg` (faceted orange rabbit), graphite `#15181D` + orange `#FD8D27`, Unbounded (titles, wordmark), IBM Plex Sans (UI), IBM Plex Mono (links and domains). Primary buttons graphite with an orange plus.
 - First-run setup: name, sign-in, Cloudflare token (permissions checked one by one), main domain, email, bring your links.
 
@@ -72,7 +72,7 @@ Each stage ships through the usual loop: branch, review, PR, merge, deploy to a 
 
 | Stage | Delivers | Live check |
 |---|---|---|
-| **S1 Core** | Repo, license, schema, redirect hot path, Access sign-in, links + domains API with authz, slug locks, audit log, legacy import + verify scripts, dev deploy | A test short domain redirects; dashboard API answers only through Access |
+| **S1 Core** | Repo, license, schema, redirect hot path, Access sign-in, links + domains API with authz, slug locks, audit log, import API, dev deploy | A test short domain redirects; dashboard API answers only through Access |
 | S2 Dashboard | React SPA from the mockups: links, domains, people + audit, Ctrl+K palette, switcher, new-link form, keyboard model | Every mockup screen works against the dev API, keyboard-only |
 | S3 Domain onboarding | Cloudflare API: attach same-account domains, Cloudflare for SaaS custom hostnames, status checks, approval flow, Cloudflare controls | Add an outside test domain by CNAME end to end |
 | S4 Analytics | Analytics Engine writes, bot filtering, SQL API queries, daily rollups, analytics screen with filters, audit retention purge | Clicks on the test domain show up with correct splits |
@@ -80,9 +80,9 @@ Each stage ships through the usual loop: branch, review, PR, merge, deploy to a 
 | S6 Agents + API | MCP with OAuth (read / read+write), tools, API keys, "via" audit | Connect from claude.ai and Claude Code; scopes live-tested |
 | **S6b Bulk edit** | Select and bulk-change links, move between domains with forwarders, bulk API and MCP tool, owner switch for agents (migration 0008) | A move with forwarding: the old address answers one `302` to the new link, one click recorded; delete of the moved link answers the not-found page on both; the switch turns `/mcp` off and on |
 | S7 People + setup | Invites (Resend), settings screens, first-run setup wizard | Fresh instance set up from zero in the wizard |
-| S8 Migration + release | Import from legacy (selected domains), verify every old URL, switch DNS per domain, docs, release | Every old URL answers the same `Location` as before. Also the one-click deploy, built last: a Deploy to Cloudflare button that forks the repo and provisions D1, KV and the Worker in the user's own account, plus an `npm run setup` terminal fallback; both end in the first-run wizard |
+| S8 Release | Docs, release, and the one-click deploy, built last: a Deploy to Cloudflare button that forks the repo and provisions D1, KV and the Worker in the user's own account, plus an `npm run setup` terminal fallback | Both deploy paths end in the first-run wizard |
 
 ## 5. Out of scope (v1)
-- Bio pages, splash pages, tracking pixels (legacy features not needed here).
+- Bio pages, splash pages, tracking pixels.
 - Billing, plans or quotas: this is self-hosted software, not a SaaS.
 - Bring-your-own database; non-Cloudflare hosting.

@@ -229,7 +229,7 @@ describe("setup wizard steps", () => {
     await user.upload(screen.getByLabelText("Links file"), big);
     expect(await screen.findByText(/larger than 10 MB/)).toBeTruthy();
     await user.upload(screen.getByLabelText("Links file"), new File(['{"a":1}'], "e.json", { type: "application/json" }));
-    expect(await screen.findByText(/This JSON is not a linkwarren or legacy export/)).toBeTruthy();
+    expect(await screen.findByText(/This JSON is not a linkwarren import file/)).toBeTruthy();
     expect(writes(api)).toEqual([]);
   });
 
@@ -427,8 +427,19 @@ describe("load states", () => {
     }
   });
 
-  it("an owner whose /api/instance fails gets the shell", async () => {
-    boot({ routes: { "GET /api/instance": () => ({ status: 500, body: { error: "internal_error" } }) } });
+  it("an owner whose /api/instance fails gets a retryable error, neither the shell nor the wizard", async () => {
+    let fail = true;
+    const ok = { name: "Links", logoVersion: null, configured: true, dashboardHost: "links.example.com", mainDomainId: null, linkDefaults: { redirectCode: 302, passQuery: true } };
+    const { user } = boot({ routes: { "GET /api/instance": () => (fail ? ((fail = false), { status: 500, body: { error: "internal_error" } }) : { body: ok }) } });
+    expect(await screen.findByText("Could not load this instance.")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Links" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Name it" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
+  });
+
+  it("a member whose /api/instance fails still gets the shell", async () => {
+    boot({ me: member, routes: { "GET /api/instance": () => ({ status: 500, body: { error: "internal_error" } }) } });
     expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
   });
 
@@ -457,7 +468,7 @@ describe("N2: a file that does not say which links had a password", () => {
     await heading("Bring your links");
     const json = { mainHost: "old.test", domains: [], links: [{ host: null, slug: "s", destination: "https://x.test", enabled: true }] };
     await user.upload(screen.getByLabelText("Links file"), new File([JSON.stringify(json)], "export.json", { type: "application/json" }));
-    expect(await screen.findByText("This file does not say which links had a password. Confirm none did, or re-export with the protected column.")).toBeTruthy();
+    expect(await screen.findByText("This file does not say which links had a password. Confirm none did, or give every link a protected field.")).toBeTruthy();
     const imp = screen.getByRole("button", { name: "Import" }) as HTMLButtonElement;
     expect(imp.disabled).toBe(true);
     await user.click(imp);

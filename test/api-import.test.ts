@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import fixture from "./fixtures/legacy-export.json";
-import { chunkLinks, filterHosts, parseExport } from "../scripts/lib/export";
+import fixture from "./fixtures/sample-export.json";
+import { chunkLinks, filterHosts, parseExport } from "../src/importFormat";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { beforeBatch } from "./helpers/race";
 

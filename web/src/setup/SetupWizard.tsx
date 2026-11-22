@@ -15,7 +15,7 @@ import { addPasskey, passkeysSupported } from "../signin/passkey";
 import { useApp } from "../state";
 import { chunkImport, errorsCsv, resultsCsv, runImport, type ImportRun } from "./importRun";
 import { parseLinksFile, type ImportBody, type LineError } from "./parseLinks";
-import { PASSWORDS_UNKNOWN, passwordsUnknown } from "../../../scripts/lib/export";
+import { PASSWORDS_UNKNOWN, passwordsUnknown } from "../../../src/importFormat";
 
 /** Wizard hotkeys (the navrow shows them; the shell's shortcuts sheet is not on screen here). */
 export const WIZARD_KEYS = { "mod+enter": "Continue", "alt+arrowleft": "Back", escape: "Back (or dismiss the record warning)" } as const;
@@ -456,7 +456,7 @@ export function SetupWizard() {
     );
   } else {
     title = "Bring your links";
-    lead = "Import short links from a CSV file or the legacy JSON export (see docs/import-legacy.md). Existing slugs are never overwritten. Links the export marks protected (they had a password) come in locked, never live.";
+    lead = "Import short links from a CSV file or a linkwarren import JSON file (see docs/import.md). Existing slugs are never overwritten. Links the file marks protected (they had a password) come in locked, never live.";
     skip = result ? null : "Skip";
     const r = result ?? preview;
     const rows = r ? r.report.conflicts.length + r.report.protected.length + r.report.ignored.length : 0;

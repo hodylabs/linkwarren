@@ -1,13 +1,13 @@
-import { normHost, parseExport, type Export, type ExportLink } from "../../../scripts/lib/export";
+import { normHost, parseExport, type Export, type ExportLink } from "../../../src/importFormat";
 
-/** The POST /api/import body: the CLI importer's export shape (scripts/lib/export.ts), so both paths send the same thing. */
+/** The POST /api/import body (src/importFormat.ts), shared with the server and any external importer. */
 export type ImportLink = ExportLink;
 export type ImportBody = Export;
 /** `line` counts the header as 1; 0 is the whole file. */
 export type LineError = { line: number; reason: string };
 export type Parsed = { body: ImportBody | null; errors: LineError[] };
 
-export const NOT_AN_EXPORT = "This JSON is not a linkwarren or legacy export";
+export const NOT_AN_EXPORT = "This JSON is not a linkwarren import file";
 
 /** RFC 4180: quoted fields may hold commas, line breaks and "" for a quote. CRLF or LF; a leading BOM is dropped; blank lines are skipped. */
 export const parseCsv = (text: string): string[][] => parseCsvLines(text).rows;
@@ -88,7 +88,7 @@ export function linksFromCsv(rows: string[][], mainHost: string, lines?: number[
   return { body, errors };
 }
 
-/** A chosen file to an import body. JSON keeps its own mainHost (the legacy main host); CSV uses this instance's. */
+/** A chosen file to an import body. JSON keeps its own mainHost (the source's main host); CSV uses this instance's. */
 export function parseLinksFile(name: string, text: string, mainHost: string): Parsed {
   const ext = name.toLowerCase().split(".").pop();
   if (ext === "csv") {
@@ -96,7 +96,7 @@ export function parseLinksFile(name: string, text: string, mainHost: string): Pa
     return linksFromCsv(rows, mainHost, lines);
   }
   if (ext !== "json") return { body: null, errors: [{ line: 0, reason: "Choose a .csv or .json file" }] };
-  // The CLI's own parser: the same checks, hosts normalized, only known fields kept (protected included).
+  // The shared format parser: the same checks, hosts normalized, only known fields kept (protected included).
   try {
     return { body: parseExport(JSON.parse(text.replace(/^\uFEFF/, ""))), errors: [] };
   } catch {

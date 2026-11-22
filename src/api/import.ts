@@ -113,7 +113,7 @@ importApi.post("/", async (c) => {
     c.env.DB.prepare("SELECT domain_id, slug_key FROM slug_locks WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
     settingsQ(c.env),
   ]);
-  // The legacy export carries no redirect code or query rule, so imported links take the instance defaults.
+  // The import format carries no redirect code or query rule, so imported links take the instance defaults.
   const defaults = parseSettings(setRows!.results as unknown as { key: string; value: string }[]);
   for (const r of liveRows!.results) live.get(r.domain_id)!.set(r.slug_key, r.url!);
   for (const r of lockRows!.results) locks.get(r.domain_id)!.add(r.slug_key.toLowerCase());
@@ -199,7 +199,7 @@ importApi.post("/", async (c) => {
        SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM links WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
     ).bind(p.dom.id, p.key, now, user.id, p.dom.id, p.key) });
   }
-  const runAudit = auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "legacy",
+  const runAudit = auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "file",
     detail: { planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } });
   let inserted = 0; // INSERT OR IGNORE can lose a race; report what was really written
   const lostLinks: Plan[] = [], lostLocks: Plan[] = [];
@@ -207,7 +207,7 @@ importApi.post("/", async (c) => {
   for (let i = 0; i === 0 || i < work.length; i += SIZE) {
     const part = work.slice(i, i + SIZE);
     const n = (k: Work["kind"]) => part.filter((w) => w.kind === k).length;
-    const chunkAudit = auditStmt(c.env, { actorId: user.id, action: "import.chunk", targetType: "import", targetId: "legacy",
+    const chunkAudit = auditStmt(c.env, { actorId: user.id, action: "import.chunk", targetType: "import", targetId: "file",
       detail: { hosts: [...new Set(part.map((w) => w.host))], domains: n("domain"), links: n("link"), locks: n("lock") } });
     const res = await db.batch([...(i === 0 ? [runAudit] : []), chunkAudit, ...part.map((w) => w.stmt)]);
     const off = res.length - part.length;

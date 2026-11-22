@@ -12,7 +12,7 @@ The name and logo are covered by `TRADEMARK.md`. To contribute, read `CONTRIBUTI
 
 ## Features
 
-Multi-domain slugs, link rules (schedule, password, routing), analytics, bulk edit on the Links page, moving links between domains with forwarding of the old address, an owner switch for agent access, people and invites, a first-run setup wizard (with import), and a full JSON export (`docs/backup.md`). See `docs/spec.md`.
+Multi-domain slugs, link rules (schedule, password, routing), analytics, bulk edit on the Links page, moving links between domains with forwarding of the old address, an owner switch for agent access, people and invites, a first-run setup wizard (with import, `docs/import.md`), and a full JSON export (`docs/backup.md`). See `docs/spec.md`.
 
 ## Privacy
 

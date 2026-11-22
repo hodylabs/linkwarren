@@ -59,7 +59,7 @@ describe("parseLinksFile", () => {
   it("refuses other JSON with the export copy", () => {
     for (const t of ["[]", '{"links":[]}', "{not json", JSON.stringify({ ...exp, links: [{ slug: 1 }] })])
       expect(parseLinksFile("e.json", t, "go.test")).toEqual({ body: null, errors: [{ line: 0, reason: NOT_AN_EXPORT }] });
-    expect(NOT_AN_EXPORT).toBe("This JSON is not a linkwarren or legacy export");
+    expect(NOT_AN_EXPORT).toBe("This JSON is not a linkwarren import file");
   });
   it("uses the instance main host for CSV and refuses other extensions", () => {
     expect(parseLinksFile("l.csv", "slug,destination,host\nab,https://x.test,Other.Test", "go.test").body).toMatchObject({ mainHost: "go.test", links: [{ host: "other.test" }] });

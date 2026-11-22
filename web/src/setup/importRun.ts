@@ -1,6 +1,6 @@
 import { api, ApiError } from "../api";
 import { csvCell } from "../analytics/csv";
-import { importRequests } from "../../../scripts/lib/export";
+import { importRequests } from "../../../src/importFormat";
 import type { ImportBody } from "./parseLinks";
 
 /** POST /api/import's report (src/api/import.ts). `protected`: password links imported locked, to recreate with a new password. */
@@ -16,7 +16,7 @@ export type ImportReport = {
 export type ImportRun = { report: ImportReport; failedAt: number | null; error?: string };
 
 /**
- * Request bodies of at most `size` links, the CLI importer's split (scripts/lib/export.ts): sorted by host and lowercased slug, so
+ * Request bodies of at most `size` links, the split of src/importFormat.ts: sorted by host and lowercased slug, so
  * slugs that differ only by case share a request; each request carries only its own links' domains (a new domain takes the case
  * mode of that request's twins), and domains without links follow in one last request. Exact duplicate rows are sent once.
  * Throws when one host has more case twins than one request takes.
