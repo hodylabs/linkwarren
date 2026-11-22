@@ -1,17 +1,37 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
-import { api, ApiError, type Domain, type Link, type LinkStats } from "../api";
+import { api, ApiError, type Domain, type Link, type LinkStats, type Route } from "../api";
 import { errorText } from "../copy";
 import { rebase } from "../draft";
 import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
 import { QrPanel } from "./QrPanel";
+import { readUtm } from "./compose";
 import { creatorLabel, linkState, shortUrl, type StatsLive } from "./linkView";
+import { RoutesEditor } from "./RoutesEditor";
+import { parseCountries, passwordProblem, routeSummary } from "./rules";
 
 export type DetailHandle = { focusUrl(): void; copy(): void; focusQr(): void };
 
-type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean };
-const draftOf = (l: Link): Draft => ({ url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery });
+type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[] };
+const draftOf = (l: Link): Draft => ({
+  url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery,
+  password: "", passwordOn: l.hasPassword, routes: l.routes,
+});
+const blank = (r: Route) => !r.countries.length && !r.devices.length && !r.url.trim();
+
+/** The routes to send: blank rows dropped, countries upper-cased. `errors` is keyed by editor row. */
+function routesOf(d: Draft): { routes: Route[]; errors: Record<number, string> } {
+  const errors: Record<number, string> = {};
+  const routes: Route[] = [];
+  d.routes.forEach((r, i) => {
+    if (blank(r)) return;
+    const c = parseCountries(r.countries.join(" "));
+    if (!c.ok) errors[i] = errorText("route_country");
+    routes.push({ ...r, countries: c.ok ? c.list : [] });
+  });
+  return { routes, errors };
+}
 
 /** Only the fields that differ from the loaded link. */
 function diff(l: Link, d: Draft): Record<string, unknown> {
@@ -22,6 +42,10 @@ function diff(l: Link, d: Draft): Record<string, unknown> {
   if (d.pass !== base.pass) out.passQuery = d.pass;
   if (d.starts !== base.starts) out.startsAt = fromLocalInput(d.starts);
   if (d.ends !== base.ends) out.expiresAt = fromLocalInput(d.ends);
+  if (d.passwordOn && d.password) out.password = d.password;
+  else if (!d.passwordOn && l.hasPassword) out.password = null;
+  const { routes } = routesOf(d);
+  if (JSON.stringify(routes) !== JSON.stringify(l.routes)) out.routes = routes;
   return out;
 }
 
@@ -33,6 +57,8 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     const [draft, setDraft] = useState(() => draftOf(link));
     const [error, setError] = useState<{ code: string } | null>(null);
     const [busy, setBusy] = useState(false);
+    const [routeErrors, setRouteErrors] = useState<Record<number, string>>({});
+    const [changePw, setChangePw] = useState(false); // the new-password input of a link that already has one
     const urlRef = useRef<HTMLInputElement>(null);
     const qrRef = useRef<HTMLButtonElement>(null);
     const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
@@ -50,6 +76,8 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
       sent.current = null;
       setDraft((now) => (s?.id === link.id ? rebase(draftOf(link), s.draft, now) : draftOf(link)));
       setError(null);
+      setRouteErrors({});
+      setChangePw(false);
     }, [link.id, link.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const copy = () => {
@@ -65,6 +93,11 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
       if (!canEdit || busy) return;
       const body = diff(link, draft);
       if (Object.keys(body).length === 0) return;
+      const re = routesOf(draft).errors;
+      setRouteErrors(re);
+      const pwSet = draft.passwordOn && (draft.password !== "" || link.hasPassword);
+      const bad = (typeof body.password === "string" && passwordProblem(body.password)) || (pwSet && draft.code === 301 && "password_301");
+      if (bad || Object.keys(re).length) return setError(bad ? { code: bad } : null);
       setBusy(true);
       setError(null);
       try {
@@ -73,7 +106,11 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         onSaved(saved);
         app.announce("Saved");
       } catch (e) {
-        setError({ code: e instanceof ApiError ? e.code : "internal" }); // typed values stay in the form
+        const code = e instanceof ApiError ? e.code : "internal";
+        const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
+        const row = code === "bad_route" && typeof d?.index === "number" ? draft.routes.filter((r) => !blank(r))[d.index] : undefined;
+        if (row) setRouteErrors({ [draft.routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
+        else setError({ code }); // typed values stay in the form
       } finally {
         setBusy(false);
       }
@@ -88,12 +125,16 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         e.stopPropagation();
         setDraft(draftOf(link));
         setError(null);
+        setRouteErrors({});
+        setChangePw(false);
       }
     };
 
     const state = linkState(link, domain, Math.floor(Date.now() / 1000));
     const who = (id: string) => creatorLabel(id, app.me, app.users);
     const created = who(link.createdBy);
+    const utm = readUtm(draft.url);
+    const tags = (["source", "medium", "campaign"] as const).filter((k) => utm[k]).map((k) => `utm_${k}=${utm[k]}`).join(" · ");
     const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
 
     return (
@@ -145,6 +186,11 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               <label htmlFor="ld-url">URL</label>
               <input id="ld-url" className="input" ref={urlRef} value={draft.url} readOnly={!canEdit} spellCheck={false} onChange={(e) => set({ url: e.target.value })} />
             </div>
+            {tags && (
+              <p className="hint" data-testid="campaign-tags">
+                Campaign tags: {tags}
+              </p>
+            )}
             {error && (
               <p className="err" role="alert">
                 {errorText(error.code)}
@@ -175,6 +221,62 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               <label htmlFor="ld-ends">Ends</label>
               <input id="ld-ends" className="input" type="datetime-local" value={draft.ends} readOnly={!canEdit} onChange={(e) => set({ ends: e.target.value })} />
             </div>
+            <div className="toggle">
+              <div>
+                Password<small>Visitors enter a password first</small>
+              </div>
+              <Switch
+                checked={draft.passwordOn}
+                onChange={(on) => {
+                  set({ passwordOn: on, password: "" });
+                  setChangePw(false);
+                }}
+                label="Password"
+              />
+            </div>
+            {draft.passwordOn && (
+              <div className="pw">
+                <p className="utm-note">{link.hasPassword ? "Password set" : "No password"}</p>
+                {link.hasPassword && !changePw && draft.password === "" ? (
+                  <button type="button" className="btn" onClick={() => setChangePw(true)}>
+                    Change password
+                  </button>
+                ) : (
+                  <>
+                    <label htmlFor="ld-pw">New password</label>
+                    <input
+                      id="ld-pw" className="input" type="password" value={draft.password} autoComplete="new-password" spellCheck={false} autoCapitalize="off"
+                      onChange={(e) => set({ password: e.target.value })}
+                    />
+                  </>
+                )}
+                <p className="utm-note">Applies everywhere within a few minutes.</p>
+                {draft.code === 301 && <p className="utm-note">{errorText("password_301")}</p>}
+              </div>
+            )}
+            <div className="toggle">
+              <div>
+                Country and device routing<small>{routeSummary(draft.routes.filter((r) => !blank(r)), draft.url)}</small>
+              </div>
+              <Switch
+                checked={draft.routes.length > 0}
+                onChange={(on) => {
+                  set({ routes: on ? [{ countries: [], devices: [], url: "" }] : [] });
+                  setRouteErrors({});
+                }}
+                label="Country and device routing"
+              />
+            </div>
+            {draft.routes.length > 0 && (
+              <RoutesEditor
+                value={draft.routes}
+                errors={routeErrors}
+                onChange={(routes) => {
+                  set({ routes });
+                  setRouteErrors({});
+                }}
+              />
+            )}
             <div className="toggle">
               <div>
                 Pass query string through<small>Extra parameters reach the destination</small>

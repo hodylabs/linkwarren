@@ -527,3 +527,139 @@ describe("Links screen stats", () => {
     expect(document.querySelectorAll("svg.spark")).toHaveLength(0);
   });
 });
+
+const routeSummaryText = () => "Canada on Mobile goes to example.com/ca";
+
+describe("Link detail rules", () => {
+  const protectedLink = mk("l1", "spring", { hasPassword: true, routes: [{ countries: ["CA"], devices: ["mobile"], url: "https://example.com/ca" }] });
+  const save = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(urlInput());
+    await user.keyboard("{Control>}{Enter}{/Control}");
+  };
+  const patch = (calls: unknown[]) => ({
+    "PATCH /api/links/l1": ({ body }: { body: unknown }) => {
+      calls.push(body);
+      return { body: { ...protectedLink, updatedAt: 101 } };
+    },
+  });
+  const bootP = (bodies: unknown[], me?: Me) => boot({ me, path: "/links?sel=l1", page: () => ({ body: { items: [protectedLink], next: null } }), routes: patch(bodies) });
+
+  it("editing only the URL on a protected link sends exactly { url }", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
+    await save(user);
+    await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
+  });
+
+  it("switching Password off sends { password: null }", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    expect(within(detail()).getByText("Password set")).toBeTruthy();
+    await user.click(within(detail()).getByRole("switch", { name: "Password" }));
+    await save(user);
+    await waitFor(() => expect(bodies).toEqual([{ password: null }]));
+  });
+
+  it("a new password is sent and a short one is not", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    await user.click(within(detail()).getByRole("button", { name: "Change password" }));
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "short" } });
+    await save(user);
+    expect(await screen.findByText(errorText("password_short"))).toBeTruthy();
+    expect(bodies).toEqual([]);
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "longenough1" } });
+    await save(user);
+    await waitFor(() => expect(bodies).toEqual([{ password: "longenough1" }]));
+    await waitFor(() => expect((screen.queryByLabelText("New password") as HTMLInputElement | null)?.value ?? "").toBe(""));
+  });
+
+  it("301 with a password is explained and not sent", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    await user.click(within(detail()).getByRole("radio", { name: /301/ }));
+    expect(within(detail()).getByText(errorText("password_301"))).toBeTruthy();
+    await save(user);
+    expect(bodies).toEqual([]);
+  });
+
+  it("adding a route sends { routes }", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    await user.click(within(detail()).getByRole("button", { name: "Add rule" }));
+    fireEvent.change(screen.getByLabelText("Rule 2 countries"), { target: { value: "us" } });
+    fireEvent.change(screen.getByLabelText("Rule 2 goes to"), { target: { value: "https://example.com/us" } });
+    await save(user);
+    await waitFor(() =>
+      expect(bodies).toEqual([{ routes: [protectedLink.routes[0], { countries: ["US"], devices: [], url: "https://example.com/us" }] }]),
+    );
+  });
+
+  it("a bad country shows under its row and sends nothing", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    fireEvent.change(screen.getByLabelText("Rule 1 countries"), { target: { value: "ZZZ" } });
+    await save(user);
+    expect(await screen.findByText(errorText("route_country"))).toBeTruthy();
+    expect(bodies).toEqual([]);
+  });
+
+  it("switching routing off sends routes: []", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    await user.click(within(detail()).getByRole("switch", { name: "Country and device routing" }));
+    await save(user);
+    await waitFor(() => expect(bodies).toEqual([{ routes: [] }]));
+  });
+
+  it("Esc after toggling routing restores the saved summary with no request", async () => {
+    const bodies: unknown[] = [];
+    const { user } = bootP(bodies);
+    await ready();
+    const summary = routeSummaryText();
+    await user.click(within(detail()).getByRole("switch", { name: "Country and device routing" }));
+    expect(screen.queryByLabelText("Rule 1 countries")).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.getByLabelText("Rule 1 countries")).toBeTruthy();
+    expect(within(detail()).getByText(summary)).toBeTruthy();
+    expect(bodies).toEqual([]);
+  });
+
+  it("the Campaign tags line shows non-empty utm keys and is absent without them", async () => {
+    const tagged = mk("l1", "spring", { url: "https://example.com/p?utm_source=flyer&utm_campaign=spring" });
+    boot({ path: "/links?sel=l1", page: () => ({ body: { items: [tagged], next: null } }) });
+    await ready();
+    expect(within(detail()).getByTestId("campaign-tags").textContent).toBe("Campaign tags: utm_source=flyer \u00b7 utm_campaign=spring");
+  });
+
+  it("no Campaign tags line without utm params", async () => {
+    boot({ path: "/links?sel=l1" });
+    await ready();
+    expect(within(detail()).queryByTestId("campaign-tags")).toBeNull();
+  });
+
+  it("table row shows the lock and geo icons; a plain row has an empty rules cell", async () => {
+    boot({ page: () => ({ body: { items: [protectedLink, L2], next: null } }) });
+    await ready();
+    expect(within(rows()[0]!).getByLabelText("Password")).toBeTruthy();
+    expect(within(rows()[0]!).getByLabelText("Country and device routing")).toBeTruthy();
+    expect(within(rows()[1]!).queryByLabelText("Password")).toBeNull();
+    expect(rows()[1]!.querySelectorAll("td:empty").length).toBeGreaterThan(0);
+  });
+
+  it("a member viewing a teammate's link sees the rules read-only", async () => {
+    bootP([], member);
+    await ready();
+    const sw = within(detail()).getByRole("switch", { name: "Password" }) as HTMLButtonElement;
+    expect(sw.matches(":disabled")).toBe(true);
+    expect((within(detail()).getByRole("switch", { name: "Country and device routing" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
+  });
+});

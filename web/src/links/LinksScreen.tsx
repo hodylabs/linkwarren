@@ -275,12 +275,24 @@ export function LinksScreen() {
                     </td>
                     <td className="dest">{l.url}</td>
                     <td>
-                      {(l.startsAt !== null || l.expiresAt !== null) && (
-                        <span className="icons" role="img" aria-label="Has a schedule">
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <circle cx="12" cy="12" r="9" />
-                            <path d="M12 7v5l3 2" />
-                          </svg>
+                      {(l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
+                        <span className="icons">
+                          {(l.startsAt !== null || l.expiresAt !== null) && (
+                            <svg role="img" aria-label="Has a schedule" viewBox="0 0 24 24">
+                              <circle cx="12" cy="12" r="9" />
+                              <path d="M12 7v5l3 2" />
+                            </svg>
+                          )}
+                          {l.hasPassword && (
+                            <svg role="img" aria-label="Password" viewBox="0 0 24 24">
+                              <path d="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z" />
+                            </svg>
+                          )}
+                          {l.routes.length > 0 && (
+                            <svg role="img" aria-label="Country and device routing" viewBox="0 0 24 24">
+                              <path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12zM12 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z" />
+                            </svg>
+                          )}
                         </span>
                       )}
                     </td>
