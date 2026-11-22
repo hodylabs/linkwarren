@@ -151,13 +151,13 @@ describe("redirect", () => {
 });
 
 describe("password", () => {
-  it("null on 100 links: 100 ok, none pending, protection cleared only where one was set", async () => {
-    for (let i = 0; i < 95; i++) await seed(`n${i}`, "uo");
-    const ids = ["o1", "o2", "o3", "pw", "p301", ...Array.from({ length: 95 }, (_, i) => `n${i}`)];
+  it("null on 50 links: 50 ok, none pending, protection cleared only where one was set", async () => {
+    for (let i = 0; i < 45; i++) await seed(`n${i}`, "uo");
+    const ids = ["o1", "o2", "o3", "pw", "p301", ...Array.from({ length: 45 }, (_, i) => `n${i}`)];
     const r = await answer(await bulk("owner", { action: "password", ids, password: null }));
-    expect(r.results.filter((x) => x.ok)).toHaveLength(100);
+    expect(r.results.filter((x) => x.ok)).toHaveLength(50);
     expect(r.pending).toEqual([]);
-    expect(await count("audit_log WHERE action = 'link.update'")).toBe(100);
+    expect(await count("audit_log WHERE action = 'link.update'")).toBe(50);
     const cleared = await all<{ target_id: string }>("SELECT target_id FROM audit_log WHERE json_extract(detail,'$.protection') = 'cleared'");
     expect(cleared.map((x) => x.target_id)).toEqual(["pw"]);
     expect(await count("links WHERE password_hash IS NOT NULL")).toBe(0);
@@ -211,13 +211,13 @@ describe("password", () => {
 });
 
 describe("ids", () => {
-  it("101 distinct ids: too_many; 150 ids that dedupe to 100: accepted, deduped in request order", async () => {
-    const many = Array.from({ length: 101 }, (_, i) => `x${i}`);
+  it("51 distinct ids: too_many; 75 ids that dedupe to 50: accepted, deduped in request order", async () => {
+    const many = Array.from({ length: 51 }, (_, i) => `x${i}`);
     const r = await bulk("owner", { action: "delete", ids: many });
     expect([r.status, await r.json()]).toEqual([400, { error: "too_many" }]);
-    const ids = [...many.slice(0, 100), ...many.slice(0, 50)];
+    const ids = [...many.slice(0, 50), ...many.slice(0, 25)];
     const ok = await answer(await bulk("owner", { action: "delete", ids }));
-    expect(ok.results.map((x) => x.id)).toEqual(many.slice(0, 100));
+    expect(ok.results.map((x) => x.id)).toEqual(many.slice(0, 50));
     expect(ok.results.every((x) => x.error === "not_found")).toBe(true);
   });
 });
@@ -283,22 +283,22 @@ describe("budget and guards", () => {
     expect(await count("links WHERE id = 'o1'")).toBe(1);
   });
 
-  it("rows read stay under 10 x N + 200 for a 100-link schedule and a 100-link delete (1000 links, 1000 locks)", async () => {
+  it("rows read stay under 10 x N + 200 for a 50-link schedule and a 50-link delete (1000 links, 1000 locks)", async () => {
     const seq = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 999)";
     await run(`${seq} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
       SELECT 'm' || i, 'dm', 'm' || i, 'm' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
     await run(`${seq} INSERT INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT 'dm', 'k' || i, 1, 'uo' FROM n`);
     for (const [action, extra, from] of [["schedule", { endNow: true }, 0], ["delete", {}, 500]] as const) {
-      const ids = Array.from({ length: 100 }, (_, i) => `m${from + i}`);
+      const ids = Array.from({ length: 50 }, (_, i) => `m${from + i}`);
       const m = meter();
       let r;
       try { r = await answer(await bulk("owner", { action, ids, ...extra })); } finally { m.restore(); }
       expect(r.results.every((x) => x.ok)).toBe(true);
-      console.log(`bulk ${action} x100: rows_read ${m.rows}`);
+      console.log(`bulk ${action} x50: rows_read ${m.rows}`);
       expect(m.rows).toBeGreaterThan(0);
       // Delete measures 1205 with only the budget table's forms (link read 200, domains and membership 3, lock insert 200,
       // audit 202, DELETE 600: json_each rows count as read), so it gets 50 rows of headroom over 10 x N + 200.
-      expect(m.rows).toBeLessThan(10 * 100 + 200 + (action === "delete" ? 50 : 0));
+      expect(m.rows).toBeLessThan(10 * 50 + 200 + (action === "delete" ? 50 : 0));
     }
   });
 });

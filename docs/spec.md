@@ -28,7 +28,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 
 **Links**
 - Destination `http` or `https` only. Redirect **302 by default** (301 is opt-in per link), so a printed QR code can change destination.
-- **Bulk edit:** select rows on the Links page (keyboard, mouse or long-press) and delete, schedule, move, set the redirect type and options, set or remove a password, copy short URLs or export CSV; at most 100 links per request. Moving to another domain needs a choice: **forward** (the old address becomes a forwarder, one hop to the new short link) or **copy**. Deleting a link also deletes its forwarders and locks their slugs. Same rules as single edits; same actions from the API (`POST /api/v1/links/bulk`) and MCP (`bulk_links`).
+- **Bulk edit:** select rows on the Links page (keyboard, mouse or long-press) and delete, schedule, move, set the redirect type and options, set or remove a password, copy short URLs or export CSV; at most 50 links per request. Moving to another domain needs a choice: **forward** (the old address becomes a forwarder, one hop to the new short link) or **copy**. Deleting a link also deletes its forwarders and locks their slugs. Same rules as single edits; same actions from the API (`POST /api/v1/links/bulk`) and MCP (`bulk_links`).
 - Rules: schedule (starts at), expiry, password, country and device routing (form factor, phone OS iOS/Android, computer OS Windows/macOS/Linux/ChromeOS; an iPad in desktop mode counts as macOS and desktop), campaign (UTM) builder, pass query string through.
 - QR codes always encode the short link, never the destination.
 

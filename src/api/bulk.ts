@@ -17,7 +17,7 @@ type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 const hostOf = (u: string) => { try { return normalizeHost(new URL(u).host); } catch { return null; } };
 
 /** Distinct link ids per request (R2). */
-export const BULK_MAX = 100;
+export const BULK_MAX = 50;
 /** Links whose password is set per request: one PBKDF2 run already fills the Free plan's 10 ms CPU (R6). */
 export const PASSWORD_PER_REQUEST = 1;
 
@@ -26,7 +26,7 @@ export type BulkResult = { id: string; ok: true; link?: ApiLink } | { id: string
 // Built on first use: links.ts imports this module, so its schemas are not initialized yet while this one loads.
 let schema: ReturnType<typeof makeSchema> | undefined;
 function makeSchema() {
-  const ids = z.array(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).min(1).max(200);
+  const ids = z.array(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).min(1).max(BULK_MAX * 2);
   return z.discriminatedUnion("action", [
     z.strictObject({ action: z.literal("delete"), ids }),
     z.strictObject({ action: z.literal("schedule"), ids, ...times, endNow: z.literal(true).optional() }),

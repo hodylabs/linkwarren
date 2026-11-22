@@ -315,7 +315,7 @@ describe("the list after a run", () => {
 });
 
 describe("bulk results", () => {
-  it("a 429 on chunk 2 of 250 shows its text once, and Retry failed resends the 150 ids", async () => {
+  it("a 429 on chunk 2 of 250 shows its text once, and Retry failed resends the 200 ids", async () => {
     const many = Array.from({ length: 250 }, (_, i) => mk(`m${i}`, `s${i}`));
     let n = 0;
     const { api, user } = boot({ items: many, bulk: (req) => (++n === 2 ? { status: 429, body: { error: "rate_limited" } } : okAll(req)) });
@@ -323,13 +323,13 @@ describe("bulk results", () => {
     await user.keyboard("{Shift>}D{/Shift}");
     await user.keyboard("{Enter}");
     const sheet = await screen.findByRole("dialog", { name: "Delete links" });
-    await waitFor(() => expect(within(sheet).getByText("100 changed, 150 not changed")).toBeTruthy());
+    await waitFor(() => expect(within(sheet).getByText("50 changed, 200 not changed")).toBeTruthy());
     expect(within(sheet).getAllByText(errorText("rate_limited"))).toHaveLength(1);
     expect(within(sheet).queryByRole("listitem")).toBeNull();
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(posts(api)).toHaveLength(4));
-    expect((posts(api)[2] as { ids: string[] }).ids[0]).toBe("m100");
-    expect(posts(api).slice(2).flatMap((b) => (b as { ids: string[] }).ids)).toHaveLength(150);
+    await waitFor(() => expect(posts(api)).toHaveLength(6));
+    expect((posts(api)[2] as { ids: string[] }).ids[0]).toBe("m50");
+    expect(posts(api).slice(2).flatMap((b) => (b as { ids: string[] }).ids)).toHaveLength(200);
   });
 
   it("a dropped connection says to reload and check, not signed out", async () => {
@@ -345,7 +345,7 @@ describe("bulk results", () => {
     expect(document.activeElement?.textContent).toMatch(/^Done/);
   });
 
-  it("a dropped connection on chunk 2 of 250: that chunk is unknown, Retry failed resends only the 50 never sent", async () => {
+  it("a dropped connection on chunk 2 of 250: that chunk is unknown, Retry failed resends only the 150 never sent", async () => {
     const many = Array.from({ length: 250 }, (_, i) => mk(`m${i}`, `s${i}`));
     let n = 0;
     const { api, user } = boot({ items: many, bulk: (req) => { if (++n === 2) throw new TypeError("Failed to fetch"); return okAll(req); } });
@@ -353,10 +353,10 @@ describe("bulk results", () => {
     await user.keyboard("{Shift>}D{/Shift}");
     await user.keyboard("{Enter}");
     const sheet = await screen.findByRole("dialog", { name: "Delete links" });
-    await waitFor(() => expect(within(sheet).getByText("100 changed, 50 not changed, 100 unknown")).toBeTruthy());
+    await waitFor(() => expect(within(sheet).getByText("50 changed, 150 not changed, 50 unknown")).toBeTruthy());
     await user.click(within(sheet).getByRole("button", { name: /^Retry failed/ }));
-    await waitFor(() => expect(posts(api)).toHaveLength(3));
-    expect((posts(api)[2] as { ids: string[] }).ids).toEqual(many.slice(200).map((l) => l.id));
+    await waitFor(() => expect(posts(api)).toHaveLength(5));
+    expect((posts(api)[2] as { ids: string[] }).ids).toEqual(many.slice(100, 150).map((l) => l.id));
   });
 
   it("lost links are listed only under Outcome unknown, never as not changed", async () => {
@@ -367,11 +367,11 @@ describe("bulk results", () => {
     await user.keyboard("{Shift>}D{/Shift}");
     await user.keyboard("{Enter}");
     const sheet = await screen.findByRole("dialog", { name: "Delete links" });
-    await waitFor(() => expect(within(sheet).getByText("100 changed, 50 not changed, 100 unknown")).toBeTruthy());
-    expect(within(sheet).getByText("100 outcome unknown:")).toBeTruthy();
+    await waitFor(() => expect(within(sheet).getByText("50 changed, 150 not changed, 50 unknown")).toBeTruthy());
+    expect(within(sheet).getByText("50 outcome unknown:")).toBeTruthy();
     expect(within(sheet).getByText(errorText("lost_connection"))).toBeTruthy();
-    expect(within(sheet).queryByText("100 not changed:")).toBeNull();
-    expect(within(sheet).getByText("50 not changed:")).toBeTruthy();
+    expect(within(sheet).queryByText("50 not changed:")).toBeNull();
+    expect(within(sheet).getByText("150 not changed:")).toBeTruthy();
   });
 
   it("Esc while running focuses nothing new, cancels after the request in flight and lists the rest once as not run", async () => {
@@ -387,12 +387,12 @@ describe("bulk results", () => {
     expect(document.activeElement?.textContent).toMatch(/^Cancel/);
     await user.keyboard("{Escape}");
     release!();
-    await waitFor(() => expect(within(sheet).getByText("100 changed, 50 not changed")).toBeTruthy());
+    await waitFor(() => expect(within(sheet).getByText("50 changed, 100 not changed")).toBeTruthy());
     expect(posts(api)).toHaveLength(1);
     expect(within(sheet).getAllByText(errorText("not_run"))).toHaveLength(1);
   });
 
-  it("500 selected links run as 5 sequential requests with progress, and the failed ones stay selected", async () => {
+  it("500 selected links run as 10 sequential requests with progress, and the failed ones stay selected", async () => {
     const many = Array.from({ length: 500 }, (_, i) => mk(`m${i}`, `s${i}`));
     let inFlight = 0, maxInFlight = 0, calls = 0;
     // The first response is held until the progress text has been seen, so the check never races the run.
@@ -416,12 +416,12 @@ describe("bulk results", () => {
     const sheet = await screen.findByRole("dialog", { name: "Redirect type" });
     await waitFor(() => expect(within(sheet).getByText("Working, 0 of 500")).toBeTruthy());
     release();
-    await waitFor(() => expect(within(sheet).getByText("495 changed, 5 not changed")).toBeTruthy(), { timeout: 5000 });
-    expect(posts(api).map((b) => (b as { ids: string[] }).ids.length)).toEqual([100, 100, 100, 100, 100]);
+    await waitFor(() => expect(within(sheet).getByText("490 changed, 10 not changed")).toBeTruthy(), { timeout: 5000 });
+    expect(posts(api).map((b) => (b as { ids: string[] }).ids.length)).toEqual([50, 50, 50, 50, 50, 50, 50, 50, 50, 50]);
     expect(maxInFlight).toBe(1);
-    expect(within(sheet).getAllByRole("listitem")).toHaveLength(5);
+    expect(within(sheet).getAllByRole("listitem")).toHaveLength(10);
     await user.click(within(sheet).getByRole("button", { name: /^Done/ }));
-    expect(within(bar()!).getByText("5 selected")).toBeTruthy();
+    expect(within(bar()!).getByText("10 selected")).toBeTruthy();
   });
 
   const many = Array.from({ length: 60 }, (_, i) => mk(`m${i}`, `s${i}`));
@@ -432,8 +432,8 @@ describe("bulk results", () => {
       bulk: (req) => {
         const ids = (req.body as { ids: string[] }).ids;
         n++;
-        // first run: the first 3 change, the rest are taken; the retry changes one more
-        return { body: { results: ids.map((id, i) => (n === 1 ? i < 3 : i === 0) ? { id, ok: true } : { id, ok: false, error: "taken" }), pending: [] } };
+        // first run (two requests): the first 3 of each change, the rest are taken; the retry (two requests) changes one more in each
+        return { body: { results: ids.map((id, i) => (n <= 2 ? i < 3 : i === 0) ? { id, ok: true } : { id, ok: false, error: "taken" }), pending: [] } };
       },
     });
     await selectAll(user);
@@ -441,19 +441,19 @@ describe("bulk results", () => {
     await user.click(screen.getByRole("radio", { name: "301" }));
     await user.keyboard("{Control>}{Enter}{/Control}");
     const sheet = await screen.findByRole("dialog", { name: "Redirect type" });
-    await waitFor(() => expect(within(sheet).getByText("3 changed, 57 not changed")).toBeTruthy());
+    await waitFor(() => expect(within(sheet).getByText("6 changed, 54 not changed")).toBeTruthy());
     const list = within(sheet).getByRole("list", { name: "Not changed" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(50);
     expect(within(list).getAllByText(errorText("taken"))).toHaveLength(50);
-    expect(within(sheet).getByText("and 7 more")).toBeTruthy();
+    expect(within(sheet).getByText("and 4 more")).toBeTruthy();
     expect(document.activeElement?.textContent).toMatch(/^Retry failed/);
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(within(sheet).getByText("1 changed, 56 not changed")).toBeTruthy());
-    const second = posts(api)[1] as { ids: string[] };
-    expect(second.ids).toHaveLength(57);
+    await waitFor(() => expect(within(sheet).getByText("2 changed, 52 not changed")).toBeTruthy());
+    const second = posts(api)[2] as { ids: string[] };
+    expect(posts(api).map((b) => (b as { ids: string[] }).ids.length)).toEqual([50, 10, 50, 4]);
     expect(second.ids).not.toContain("m0");
     expect(second).toMatchObject({ action: "redirect", redirectCode: 301 });
     await user.click(within(sheet).getByRole("button", { name: /^Done/ }));
-    expect(within(bar()!).getByText("56 selected")).toBeTruthy();
+    expect(within(bar()!).getByText("52 selected")).toBeTruthy();
   });
 });

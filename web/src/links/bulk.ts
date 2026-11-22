@@ -2,7 +2,7 @@ import { api, ApiError, type BulkOp, type BulkResponse, type Link } from "../api
 import { shortUrl } from "./linkView";
 
 /** Ids per request: the server's cap (BULK_MAX). */
-export const CHUNK = 100;
+export const CHUNK = 50;
 
 /**
  * `whole`: failed ids that carry a whole-request code (an error answer for the request, or `not_run`) rather than their own

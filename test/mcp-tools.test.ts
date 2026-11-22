@@ -222,7 +222,7 @@ describe("bulk_links", () => {
   const ids = (r: Result) => r.structuredContent.results.map((x: { id: string; ok: boolean; error?: string }) => [x.id, x.ok ? "ok" : x.error]);
 
   it("INSTRUCTIONS carry the bulk sentence before the locked-slugs one", () => {
-    expect(INSTRUCTIONS).toContain("bulk_links changes up to 100 links in one call with the same rules as one at a time; it refuses without confirm: true to delete, move, take links offline (endNow, a past expiry or a future start) or remove a password. A move needs oldAddress: forward (the old address keeps working and forwards to the new one) or copy (an independent copy on the new domain, the original stays); ask the person which, never choose for them. It sets a password on one link per call, returning the rest as pending to send again. Deleted slugs stay locked;");
+    expect(INSTRUCTIONS).toContain("bulk_links changes up to 50 links in one call with the same rules as one at a time; it refuses without confirm: true to delete, move, take links offline (endNow, a past expiry or a future start) or remove a password. A move needs oldAddress: forward (the old address keeps working and forwards to the new one) or copy (an independent copy on the new domain, the original stays); ask the person which, never choose for them. It sets a password on one link per call, returning the rest as pending to send again. Deleted slugs stay locked;");
   });
 
   it("read-only connection gets read_only and changes nothing", async () => {
@@ -325,10 +325,10 @@ describe("bulk_links", () => {
     expect(await one<Row>("SELECT expires_at FROM links WHERE id = 'lgo'")).toEqual({ expires_at: null });
   });
 
-  it("bounded input: over 100 ids, a bad id, a bad oldAddress or an oversize password never runs", async () => {
+  it("bounded input: over 50 ids, a bad id, a bad oldAddress or an oversize password never runs", async () => {
     const t = await connectAgent(A, { write: true, del: true });
     for (const args of [
-      { action: "schedule", ids: Array.from({ length: 101 }, (_, i) => `l${i}`), endNow: true },
+      { action: "schedule", ids: Array.from({ length: 51 }, (_, i) => `l${i}`), endNow: true },
       { action: "schedule", ids: [], endNow: true },
       { action: "delete", ids: ["../keys"], confirm: true },
       { action: "move", ids: ["lgo"], domain: "a.test", oldAddress: "lock", confirm: true },

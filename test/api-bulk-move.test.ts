@@ -321,23 +321,23 @@ describe("grant scopes inside the handler (defense in depth)", () => {
 });
 
 describe("budget", () => {
-  it("rows read stay under 10 x N + 200 for a 100-link forward move (1000 links, 1000 locks per domain)", async () => {
+  it("rows read stay under 10 x N + 200 for a 50-link forward move (1000 links, 1000 locks per domain)", async () => {
     const seq = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 999)";
     for (const d of ["dm", "da"]) {
       await run(`${seq} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
         SELECT '${d}' || i, '${d}', 'z${d}' || i, 'z${d}' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
       await run(`${seq} INSERT INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT '${d}', 'k' || i, 1, 'uo' FROM n`);
     }
-    const ids = Array.from({ length: 100 }, (_, i) => `dm${i}`);
+    const ids = Array.from({ length: 50 }, (_, i) => `dm${i}`);
     const m = meter();
     let r;
     try { r = await answer(await move("owner", ids, "da", "forward")); } finally { m.restore(); }
     expect(r.results.every((x) => x.ok)).toBe(true);
-    console.log(`bulk move forward x100: rows_read ${m.rows}`);
+    console.log(`bulk move forward x50: rows_read ${m.rows}`);
     expect(m.rows).toBeGreaterThan(0);
     // Measures 1408 with only the budget table's forms (link read 200, domains and membership 6, target checks 200, move
     // UPDATE-FROM 500, forwarder insert 300, audit 202): the forms alone exceed 10 x N + 200, so 250 rows of headroom (as delete's 50).
-    expect(m.rows).toBeLessThan(10 * 100 + 200 + 250);
+    expect(m.rows).toBeLessThan(10 * 50 + 200 + 250);
   });
 });
 
@@ -398,21 +398,21 @@ describe("delete removes forwarders (QR codes never land on a new link)", () => 
     expect(await count("slug_locks")).toBe(0);
   });
 
-  it("rows read for a 100-link delete where every link has one forwarder", async () => {
-    const s100 = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 99)";
+  it("rows read for a 50-link delete where every link has one forwarder", async () => {
+    const s100 = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 49)";
     await run(`${s100} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
       SELECT 'r' || i, 'da', 'r' || i, 'r' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
     await run(`${s100} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,forward_to,created_by,updated_by,created_at,updated_at)
       SELECT 'f' || i, 'dm', 'r' || i, 'r' || i, 'https://a.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
     const m = meter();
     let r;
-    try { r = await answer(await bulk("owner", { action: "delete", ids: Array.from({ length: 100 }, (_, i) => `r${i}`) })); } finally { m.restore(); }
+    try { r = await answer(await bulk("owner", { action: "delete", ids: Array.from({ length: 50 }, (_, i) => `r${i}`) })); } finally { m.restore(); }
     expect(r.results.every((x) => x.ok)).toBe(true);
     expect(await count("links")).toBe(0);
-    expect(await count("slug_locks")).toBe(200);
-    console.log(`bulk delete x100 with one forwarder each: rows_read ${m.rows}`);
+    expect(await count("slug_locks")).toBe(100);
+    console.log(`bulk delete x50 with one forwarder each: rows_read ${m.rows}`);
     // Measures 3002 (each forwarder adds a count probe, a lock, an audit row with its domain and a delete); bound about 35 x N.
-    expect(m.rows).toBeLessThan(35 * 100);
+    expect(m.rows).toBeLessThan(35 * 50);
   });
 
   it("releasing the lock on the moved address and reusing it does not reopen the old addresses", async () => {
@@ -507,9 +507,9 @@ describe("fix round 1", () => {
     expect(await count("audit_log")).toBe(audits);
   });
 
-  it("M2: rows read for a 100-link forward move where every link reclaims one forwarder and repoints another", async () => {
+  it("M2: rows read for a 50-link forward move where every link reclaims one forwarder and repoints another", async () => {
     const seq = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 999)";
-    const s100 = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 99)";
+    const s100 = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 49)";
     const ins = (sel: string) => run(`INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,forward_to,created_by,updated_by,created_at,updated_at) ${sel}`);
     for (const d of ["dm", "da"]) {
       await run(`${seq} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
@@ -521,18 +521,18 @@ describe("fix round 1", () => {
       SELECT 'r' || i, 'db', 'r' || i, 'r' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
     await ins(`${s100} SELECT 'm2fa' || i, 'da', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
     await ins(`${s100} SELECT 'm2fm' || i, 'dm', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
-    const ids = Array.from({ length: 100 }, (_, i) => `r${i}`);
+    const ids = Array.from({ length: 50 }, (_, i) => `r${i}`);
     const m = meter();
     let r;
     try { r = await answer(await move("owner", ids, "da", "forward")); } finally { m.restore(); }
     expect(r.results.every((x) => x.ok)).toBe(true);
     expect(await count("links WHERE id LIKE 'm2fa%'")).toBe(0);
-    expect(await count("links WHERE id LIKE 'm2fm%' AND url LIKE 'https://a.test/r%'")).toBe(100);
-    expect(await count("links WHERE domain_id = 'db' AND forward_to IS NOT NULL")).toBe(100);
-    console.log(`bulk move forward x100 with reclaim and repoint: rows_read ${m.rows}`);
+    expect(await count("links WHERE id LIKE 'm2fm%' AND url LIKE 'https://a.test/r%'")).toBe(50);
+    expect(await count("links WHERE domain_id = 'db' AND forward_to IS NOT NULL")).toBe(50);
+    console.log(`bulk move forward x50 with reclaim and repoint: rows_read ${m.rows}`);
     // Measures 3306: link read 200, domains 6, target checks 599 (two forwarders counted per link), reclaim DELETE 700,
     // move 500, forwarder insert 300, repoint UPDATE-FROM 799, audit 201. Each total is a small multiple of the 100 selected
     // links, well under the 2000 other links and 2000 locks seeded, so no form scans a table; bound about 35 x N.
-    expect(m.rows).toBeLessThan(35 * 100);
+    expect(m.rows).toBeLessThan(35 * 50);
   });
 });

@@ -151,14 +151,14 @@ export const TOOLS: Record<string, ToolDef> = {
     run: async (api, a) => (await api("GET", `/analytics/links?${qs({ ids: a.id })}`)) as Record<string, unknown>,
   },
   bulk_links: {
-    description: "Change up to 100 links in one call with the same rules as one at a time: delete, schedule, move to another domain, "
+    description: "Change up to 50 links in one call with the same rules as one at a time: delete, schedule, move to another domain, "
       + "redirect type or password. It refuses without confirm: true to delete, move, take links offline (endNow, a past expiry or a "
       + "future start) or remove a password; show the person the summary and ask first. "
       + "move also needs oldAddress (forward or copy): ask the person, never choose for them. Results are per link, with a reason "
       + "when refused; a password is set on one link per call and the rest come back in `pending` to send again." + DATA,
     input: z.strictObject({
       action: z.enum(["delete", "schedule", "move", "redirect", "password"]),
-      ids: z.array(id).min(1).max(100),
+      ids: z.array(id).min(1).max(50),
       confirm: z.boolean().optional(),
       domain: hostOrId.optional().describe("Move only: the target domain"),
       startsAt: time,

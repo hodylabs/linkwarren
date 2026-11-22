@@ -13,14 +13,14 @@ const sent = (api: { calls: { body: unknown }[] }) => api.calls.map((c) => (c.bo
 afterEach(() => vi.unstubAllGlobals());
 
 describe("runBulk", () => {
-  it("250 ids go as 100, 100, 50 in order with progress", async () => {
+  it("250 ids go as five chunks of 50 in order with progress", async () => {
     const api = fakeApi({ "POST /api/links/bulk": okAll });
     const progress: [number, number][] = [];
     const r = await runBulk({ action: "delete" }, ids(250), { onProgress: (d, t) => progress.push([d, t]), signal: new AbortController().signal });
-    expect(CHUNK).toBe(100);
-    expect(sent(api).map((x) => x.length)).toEqual([100, 100, 50]);
+    expect(CHUNK).toBe(50);
+    expect(sent(api).map((x) => x.length)).toEqual([50, 50, 50, 50, 50]);
     expect(sent(api).flat()).toEqual(ids(250));
-    expect(progress).toEqual([[100, 250], [200, 250], [250, 250]]);
+    expect(progress).toEqual([[50, 250], [100, 250], [150, 250], [200, 250], [250, 250]]);
     expect(r.ok.size).toBe(250);
     expect(r.failed.size).toBe(0);
   });
@@ -48,7 +48,7 @@ describe("runBulk", () => {
     const api = fakeApi({ "POST /api/links/bulk": (req) => (ctl.abort(), okAll(req)) });
     const r = await runBulk({ action: "delete" }, ids(150), { onProgress: () => undefined, signal: ctl.signal });
     expect(api.calls).toHaveLength(1);
-    expect(r.ok.size).toBe(100);
+    expect(r.ok.size).toBe(50);
     expect(r.failed.get("l120")).toBe("not_run");
     expect(r.stop).toBe("not_run");
     expect(r.whole.has("l120")).toBe(true);
@@ -59,13 +59,13 @@ describe("runBulk", () => {
     const api = fakeApi({ "POST /api/links/bulk": (req) => (++n === 2 ? { status: 429, body: { error: "rate_limited" } } : okAll(req)) });
     const r = await runBulk({ action: "delete" }, ids(250), { onProgress: () => undefined, signal: new AbortController().signal });
     expect(api.calls).toHaveLength(2);
-    expect(r.ok.size).toBe(100);
-    expect(r.failed.get("l150")).toBe("rate_limited");
-    expect([...r.failed.values()].filter((c) => c === "rate_limited")).toHaveLength(100);
+    expect(r.ok.size).toBe(50);
+    expect(r.failed.get("l70")).toBe("rate_limited");
+    expect([...r.failed.values()].filter((c) => c === "rate_limited")).toHaveLength(50);
     expect(r.failed.get("l220")).toBe("not_run");
     expect(r.stop).toBe("rate_limited");
-    expect(r.whole.size).toBe(150);
-    expect(r.whole.has("l50")).toBe(false);
+    expect(r.whole.size).toBe(200);
+    expect(r.whole.has("l0")).toBe(false);
   });
 
   it("per-link refusals are not whole-request failures", async () => {
@@ -94,10 +94,10 @@ describe("runBulk", () => {
   it("a 409 conflict marks its chunk and carries on with the next", async () => {
     let n = 0;
     const api = fakeApi({ "POST /api/links/bulk": (req) => (++n === 1 ? { status: 409, body: { error: "conflict" } } : okAll(req)) });
-    const r = await runBulk({ action: "delete" }, ids(150), { onProgress: () => undefined, signal: new AbortController().signal });
+    const r = await runBulk({ action: "delete" }, ids(100), { onProgress: () => undefined, signal: new AbortController().signal });
     expect(api.calls).toHaveLength(2);
     expect(r.failed.get("l0")).toBe("conflict");
-    expect(r.ok.has("l120")).toBe(true);
+    expect(r.ok.has("l70")).toBe(true);
   });
 
   it("per-link refusals come back with their reasons", async () => {

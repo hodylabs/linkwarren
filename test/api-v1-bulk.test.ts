@@ -108,30 +108,30 @@ describe("scope", () => {
 });
 
 describe("daily units (R3): one per link processed", () => {
-  it("api:ud at 950, 60 links: 429 rate_limited; only the middleware's one unit is spent, nothing else by the route", async () => {
-    const ids = await many(60);
+  it("api:ud at 960, 50 links: 429 rate_limited; only the middleware's one unit is spent, nothing else by the route", async () => {
+    const ids = await many(50);
     const s = await key("ua", { write: true });
-    await setLimit("api:ud:ua", 950);
+    await setLimit("api:ud:ua", 960);
     const r = await bulk(s, { action: "redirect", ids, passQuery: false });
     expect([r.status, await r.json()]).toEqual([429, { error: "rate_limited" }]);
     const l = await limits();
-    expect(l["api:ud:ua"]).toBe(951);
+    expect(l["api:ud:ua"]).toBe(961);
     expect(l["api:day"]).toBe(1);
     expect(l["bulk:kv"]).toBeUndefined();
     expect(await count("links WHERE pass_query = 0")).toBe(0);
     expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
   });
 
-  it("api:ud at 900, 60 links: 200 and the count is 960 (1 middleware, 59 route)", async () => {
-    const ids = await many(60);
+  it("api:ud at 900, 50 links: 200 and the count is 950 (1 middleware, 49 route)", async () => {
+    const ids = await many(50);
     const s = await key("ua", { write: true });
     await setLimit("api:ud:ua", 900);
     const r = await bulk(s, { action: "redirect", ids, passQuery: false });
     expect(r.status).toBe(200);
     const l = await limits();
-    expect(l["api:ud:ua"]).toBe(960);
-    expect(l["api:day"]).toBe(60);
-    expect(await count("links WHERE pass_query = 0")).toBe(60);
+    expect(l["api:ud:ua"]).toBe(950);
+    expect(l["api:day"]).toBe(50);
+    expect(await count("links WHERE pass_query = 0")).toBe(50);
   });
 
   it("a 3-link password set charges 1 unit in total (2 pending)", async () => {
@@ -143,13 +143,13 @@ describe("daily units (R3): one per link processed", () => {
   });
 
   it("api:day enforced the same way", async () => {
-    const ids = await many(60);
+    const ids = await many(50);
     const s = await key("ua", { write: true });
-    await setLimit("api:day", 2950);
+    await setLimit("api:day", 2960);
     const r = await bulk(s, { action: "redirect", ids, passQuery: false });
     expect([r.status, await r.json()]).toEqual([429, { error: "rate_limited" }]);
     const l = await limits();
-    expect([l["api:day"], l["api:ud:ua"], l["bulk:kv"]]).toEqual([2951, 1, undefined]);
+    expect([l["api:day"], l["api:ud:ua"], l["bulk:kv"]]).toEqual([2961, 1, undefined]);
     expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
   });
 

@@ -52,9 +52,9 @@ Select the connection and press `Shift+D` (or Disconnect), then confirm. The age
 | `create_link` | write | Create a short link |
 | `update_link` | write | Change a link |
 | `delete_link` | delete | Delete a link, remove its forwarders and lock their slugs (needs `confirm: true`) |
-| `bulk_links` | write (delete also needs delete) | Change up to 100 links in one call: `delete`, `schedule`, `move`, `redirect` or `password` |
+| `bulk_links` | write (delete also needs delete) | Change up to 50 links in one call: `delete`, `schedule`, `move`, `redirect` or `password` |
 
-`bulk_links` takes `action`, `ids` (1 to 100), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
+`bulk_links` takes `action`, `ids` (1 to 50), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
 ### Routing
 
 `create_link` and `update_link` (and `POST`/`PATCH /links`) take `routes`: up to 10 rules, each `{ countries, devices, url }`, tried top to bottom; the first match wins and everyone else goes to the main `url`. A rule needs at least one country or device. `devices` lists any of:
@@ -113,7 +113,7 @@ curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<l
 
 ### Bulk changes
 
-`POST /api/v1/links/bulk` changes up to 100 distinct links in one request (a list of up to 200 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The body has an `action` and the `ids`, plus the fields of that action:
+`POST /api/v1/links/bulk` changes up to 50 distinct links in one request (a list of up to 100 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The body has an `action` and the `ids`, plus the fields of that action:
 
 | `action` | Other fields |
 | --- | --- |
@@ -159,7 +159,7 @@ Agents and keys share per-minute limits per person, per connection and per key, 
 | 403 | `delete_not_allowed` | The key cannot delete links |
 | 403 | `forbidden` | Not a domain or link you (or this key) may use |
 | 404 | `not_found` | No such link or domain, or a path that is not part of `/api/v1` |
-| 400 | `too_many` | More than 100 distinct ids in a bulk request |
+| 400 | `too_many` | More than 50 distinct ids in a bulk request |
 | 400 | `target_not_active` | A move to a domain that is not active yet |
 | 409 | `conflict` | The link changed since it was read; read it again and retry. For a bulk request: the whole request was rolled back (a double submit) |
 | 429 | `kv_budget` | The instance's daily budget for bulk edits is used up; try after 00:00 UTC |
