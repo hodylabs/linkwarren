@@ -104,28 +104,32 @@ Disabled domains are skipped. Each call repairs at most 3 domains (in domain id 
 
 linkwarren records one Workers Analytics Engine data point per redirect to a live link (GET only), after the redirect is sent, so analytics never slow or break a redirect. What is stored, and what never is, is in [privacy.md](privacy.md).
 
-- Binding: `"analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }]` in `wrangler.instance.jsonc`. There is no create step: the dataset appears on the first write. Without the binding nothing is recorded.
+- Enable Workers Analytics Engine once on the account before adding the binding (dashboard: Workers & Pages, Analytics Engine; free). Until then a deploy with the binding fails with code 10089 ("You need to enable Analytics Engine"), so leave the binding commented out to deploy without analytics.
+- Binding: `"analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }]` in `wrangler.instance.jsonc`. There is no create step: the dataset appears after the first data point is written (the first redirect after the deploy). Without the binding nothing is recorded, and reports and the Links sparkline say live clicks are off even when the read token is set.
 - Var `AE_DATASET`: the dataset name the reports read (default `linkwarren_clicks`, letters, digits and `_` only, at most 64). Reports also use `CF_ACCOUNT_ID` (the account that owns the dataset).
 - Secret `VISITOR_SALT`: 32 random bytes as hex, for the daily visitor code. Create it with `openssl rand -hex 32` and set it with `npx wrangler secret put VISITOR_SALT -c wrangler.instance.jsonc`. Without it the visitor code is left empty and unique visitors are not counted.
-- Secret `AE_READ_TOKEN`: an API token that reads the dataset. Create a custom token (My Profile or Manage Account, API Tokens, Create Custom Token) with only **Account, Account Analytics, Read**, limited to the one account, and set it with `npx wrangler secret put AE_READ_TOKEN -c wrangler.instance.jsonc`. Without it reports show daily totals from D1 only.
+- Secret `AE_READ_TOKEN`: an API token that reads the dataset. Create a custom token (My Profile or Manage Account, API Tokens, Create Custom Token) with only **Account, Account Analytics, Read**, limited to the one account, and set it with `npx wrangler secret put AE_READ_TOKEN -c wrangler.instance.jsonc`. linkwarren uses it with the Analytics SQL API (`POST https://api.cloudflare.com/client/v4/analytics/sql`), not the classic `/accounts/<id>/analytics_engine/sql` endpoint, which refuses an account-owned token. Without it reports show daily totals from D1 only.
 
 Never put `VISITOR_SALT` or `AE_READ_TOKEN` in `vars`. Neither is ever logged, returned by the API or put in an error message. Workers Analytics Engine is available on the Workers Free plan.
 
-### Daily job
+### Scheduled job
 
-A Cron Trigger runs once a day: `"triggers": { "crons": ["15 0 * * *"] }` (00:15 UTC) in `wrangler.instance.jsonc`. Cron Triggers are free on the Workers Free plan. Each run does two independent things; one failing never stops the other.
+A Cron Trigger runs every hour at :15: `"triggers": { "crons": ["15 * * * *"] }` in `wrangler.instance.jsonc`. Cron Triggers are free on the Workers Free plan. Each run does two independent things; one failing never stops the other.
 
-- **Rollup.** Analytics Engine keeps raw clicks for 90 days, so the job copies each UTC day once it is at least 2 full days old (through today-2, so late Analytics Engine points for yesterday are not lost; reports read the days after the mark live from Analytics Engine) into the D1 tables `clicks_daily` and `clicks_daily_dim` and records the last day written in `analytics_state` (`rolled_through`). Reports read days up to that mark from D1 and later days live from Analytics Engine, so no day is lost or counted twice. A run writes at most 31 days, oldest first, starting no earlier than 89 days ago, with 5 Analytics Engine queries in total, so it stays inside the Free plan limits; a backlog catches up over a few runs. Re-running a day replaces it, never adds to it. Without `CF_ACCOUNT_ID` and `AE_READ_TOKEN` the rollup is skipped.
-- **Audit purge.** Audit rows older than 3 years (1096 days) are deleted, at most 5000 per run, oldest first (the next run continues), and the deletion itself is written to the audit log as `audit.purge` by the actor `system`.
+- **Rollup (every run).** Analytics Engine keeps raw clicks for about 3 months, so the job copies each UTC day once it is at least 2 full days old (through today-2, so late Analytics Engine points for yesterday are not lost; reports read the days after the mark live from Analytics Engine) into the D1 tables `clicks_daily` and `clicks_daily_dim` and records the last day written in `analytics_state` (`rolled_through`). Reports read days up to that mark from D1 and later days live from Analytics Engine, so no day is lost or counted twice. Re-running a day replaces it, never adds to it. Without `CF_ACCOUNT_ID`, `AE_READ_TOKEN` or the `CLICKS` binding the rollup is skipped.
+  - Limits, to stay inside the Free plan (10 ms CPU per run, 100,000 D1 rows written per day for the whole account): a run writes at most 3 days, oldest first, starting no earlier than 88 days ago, with 5 Analytics Engine queries per day, each summed by Analytics Engine to exactly the rows D1 stores. A normal day is one small run; a 90-day backlog clears in about 30 hours.
+  - Write budget: a run writes at most 10,000 D1 rows and the rollup at most 40,000 per UTC day (kept in `analytics_state` as `rollup_writes`). A day costs 3 writes per row it inserts (the row and its two indexes), 3 per row it replaces, and 4 for the state rows, counted before it is sent. The run stops before a day that would go over and logs `analytics rollup paused day=<day> writes=<n>`; the next hour continues.
+  - A day is written whole or not at all. If an Analytics Engine answer would be over 2,000 rows (`ae_truncated`) or the day alone needs more than 10,000 writes (about 3,300 rollup rows: one per link clicked that day, plus one per link and country, device or referrer), the rollup stops at that day and logs it every hour; reports still read that day live while Analytics Engine has it. Such an instance needs a bigger plan than this job assumes.
+- **Audit purge (00:15 UTC run only).** Audit rows older than 3 years (1096 days) are deleted, at most 5000 per run, oldest first (the next day continues), and the deletion itself is written to the audit log as `audit.purge` by the actor `system`.
 
 Logs show `analytics rollup: <days>` and `audit purge: <count>`; errors are logged by name (a failed rollup also logs the failing day and the safe `ae_<code>`, never the token or a response body). To run the job locally:
 
 ```sh
 npx wrangler dev --test-scheduled -c wrangler.instance.jsonc
-curl "http://localhost:8787/__scheduled?cron=15+0+*+*+*"
+curl "http://localhost:8787/__scheduled?cron=15+*+*+*+*"
 ```
 
-To re-roll days (for example after a fix), set the mark back, e.g. `UPDATE analytics_state SET v = '2026-11-17' WHERE k = 'rolled_through'`; the next run rewrites the days after it that Analytics Engine still holds.
+To re-roll days (for example after a fix), set the mark back, e.g. `UPDATE analytics_state SET v = '2026-11-17' WHERE k = 'rolled_through'`; the next runs rewrite the days after it that Analytics Engine still holds, 3 per hour. A re-roll costs D1 writes on the Free plan: about 6 per rollup row of each day (3 to delete the old row, 3 to insert the new one), inside the same write budgets, so moving the mark far back takes several hours or days to catch up.
 
 ## Sign-in
 
