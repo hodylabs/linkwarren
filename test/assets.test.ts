@@ -34,6 +34,14 @@ describe("dashboard host", () => {
     expect(await r.text()).toBe(HTML);
     expectHeaders(r);
   });
+  it("serves /sign-in with Referrer-Policy no-referrer and the rest of the headers", async () => {
+    const r = await get("dash.test", "/sign-in");
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe(HTML);
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(r.headers.get("content-security-policy")).toBe(CSP);
+    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+  });
   it("serves a real asset with the headers", async () => {
     const r = await get("dash.test", "/assets/app.js");
     expect(r.status).toBe(200);

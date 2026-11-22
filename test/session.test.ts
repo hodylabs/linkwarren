@@ -192,6 +192,7 @@ describe("safeNext", () => {
     ["/links?q=a", "/links?q=a"], ["/", "/"], ["/a/b#c", "/a/b#c"],
     ["//evil.example", "/"], ["/\\evil.example", "/"], ["https://evil.example", "/"], ["javascript:alert(1)", "/"],
     [" /x", "/"], ["/a\tb", "/"], ["/a\nb", "/"], ["/a\u007fb", "/"], ["/" + "a".repeat(2048), "/"], [42, "/"], [null, "/"], ["", "/"],
+    ["/.//evil.example", "/"], ["/..//evil.example", "/"], ["/./\\evil.example", "/"],
   ])("%j -> %j", (raw, want) => {
     expect(safeNext(raw, O)).toBe(want);
   });

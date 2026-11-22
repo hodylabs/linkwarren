@@ -53,3 +53,5 @@ CREATE TABLE auth_limits (
   window_start INTEGER NOT NULL,
   count INTEGER NOT NULL
 );
+-- The opportunistic prune in POST /auth/email deletes by window_start.
+CREATE INDEX auth_limits_window ON auth_limits(window_start);

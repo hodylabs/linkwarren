@@ -13,6 +13,7 @@ import { users } from "./api/users";
 import { audit } from "./api/audit";
 import { settings } from "./api/settings";
 import { serveDashboard } from "./assets";
+import { signin } from "./api/signin";
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } }>();
 
@@ -40,6 +41,7 @@ const appModeOnly: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 };
 app.use("/auth/*", appModeOnly);
 app.use("/api/account/*", appModeOnly);
+app.route("/auth", signin);
 
 // API responses carry identity and private data: never cache them anywhere.
 app.use("/api/*", async (c, next) => {

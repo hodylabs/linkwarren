@@ -17,6 +17,8 @@ export default defineConfig(async () => {
             ACCESS_TEAM_DOMAIN: "team.example.cloudflareaccess.com",
             ACCESS_AUD: "test-aud",
             OWNER_EMAIL: "owner@example.com",
+            EMAIL_FROM: "links@example.com",
+            RESEND_API_KEY: "re_test",
             CF_CNAME_TARGET: "edge.test",
           },
           // Test-only stand-in for the Workers static-assets binding (real one is instance config).

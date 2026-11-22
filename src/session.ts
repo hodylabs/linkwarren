@@ -20,7 +20,12 @@ export async function sha256Hex(s: string): Promise<string> {
   return [...d].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The session cookie value when it has the exact secret shape; anything else (or a missing cookie) is null. */
+/**
+ * The session cookie value when it has the exact secret shape; anything else (or a missing cookie) is null.
+ * A duplicated name takes the first one (browsers send the longest path first), and a malformed first one fails closed.
+ * `__Host-` stops sibling hosts from setting this name in current browsers; refusing duplicates outright would only trade
+ * that leftover login-CSRF risk (old browsers) for a cookie-tossing lockout, so the first one wins.
+ */
 export function readCookie(req: Request): string | null {
   for (const part of (req.headers.get("cookie") ?? "").split(";")) {
     const i = part.indexOf("=");
@@ -126,7 +131,9 @@ export function safeNext(raw: unknown, origin: string): string {
   if (typeof raw !== "string" || raw.length > 2048 || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/";
   if (/[\u0000-\u001f\u007f]/.test(raw)) return "/";
   try {
-    return new URL(raw, origin).origin === new URL(origin).origin ? raw : "/";
+    const u = new URL(raw, origin);
+    // A dot segment can still resolve to a "//x" pathname (same origin, but protocol-relative if anything re-resolves it).
+    return u.origin === new URL(origin).origin && !u.pathname.startsWith("//") ? raw : "/";
   } catch {
     return "/";
   }

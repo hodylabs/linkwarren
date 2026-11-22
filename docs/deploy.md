@@ -104,9 +104,23 @@ Each call repairs at most 3 domains (in domain id order) so it stays within the 
 
 linkwarren signs people in itself, with an email link or a passkey. No Access application is needed.
 
-- Set the var `EMAIL_FROM` (e.g. `links@example.com`) and the secret `RESEND_API_KEY`. The sending domain must be verified in Resend.
+- Set the var `EMAIL_FROM` (e.g. `links@example.com`) and the secret `RESEND_API_KEY`. Without both, `POST /auth/email` answers `503 {"error":"email_not_configured"}`.
 - `/healthz` is public on the dashboard host; no bypass is needed.
 - `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are not used.
+
+#### Email sign-in links (Resend)
+
+Sign-in links are sent through [Resend](https://resend.com) only.
+
+1. Add and verify your sending domain in Resend (the domain of `EMAIL_FROM`).
+2. In the domain's settings, turn **click tracking and open tracking off**. Click tracking would route the sign-in link through a third-party redirect, and open tracking adds an image.
+3. Create an API key with **sending access only**, restricted to that domain.
+4. Store it as a secret: `npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`. Never put it in `vars`.
+5. Set the var `EMAIL_FROM`, e.g. `links@example.com`.
+
+How the link works: a person enters their email, and if it can sign in here (an active or invited person, or `OWNER_EMAIL` while there are no users yet) they get a link to `https://<dashboard host>/sign-in#token=...`. The token is in the URL fragment, so it never reaches server logs or a `Referer`. It works once and expires after 15 minutes. The answer is always the same `202`, whether or not a mail goes out, so the form never tells which addresses have accounts.
+
+Limits (all in D1, no paid features): 5 requests per address and 20 per IP range (/24 or /48) every 15 minutes, 20 failed link checks per IP range every 15 minutes, and at most 50 sign-in emails per hour for the whole instance. The Resend free tier sends 100 emails a day; the hourly cap keeps a flood of requests for known addresses from spending it. At the cap the request still gets the normal answer, no mail is sent, and the Worker logs `email_cap`. Resend errors are logged as `resend_rejected <status>` or `resend_network`, never with the message.
 
 ### Access mode
 

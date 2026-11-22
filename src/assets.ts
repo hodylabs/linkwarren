@@ -17,5 +17,7 @@ export async function serveDashboard(req: Request, env: Env): Promise<Response> 
     res = await env.ASSETS.fetch(new Request(new URL("/", req.url), { method: req.method, headers: req.headers }));
   const out = new Response(res.body, res);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
+  // R4: the sign-in link token sits in this page's fragment; no Referer may leave it.
+  if (url.pathname === "/sign-in") out.headers.set("Referrer-Policy", "no-referrer");
   return out;
 }
