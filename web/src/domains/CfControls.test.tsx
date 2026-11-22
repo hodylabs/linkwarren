@@ -13,10 +13,13 @@ const dom = (kind: string, securityLevel: string | null = null, rateLimit: numbe
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: true, cloudflare: cf(kind, securityLevel, rateLimit) as Domain["cloudflare"],
 });
 
+let rerender: (domain: Domain) => void;
 function boot(domain: Domain, controlsEnabled: boolean, routes: FakeRoutes = {}) {
   const api = fakeApi({ "GET /api/domains": () => ({ body: [] }), "GET /api/users": () => ({ body: { items: [] } }), ...routes });
   const user = userEvent.setup();
-  render(<AppProvider me={owner}><CfControls domain={domain} controlsEnabled={controlsEnabled} /></AppProvider>);
+  const ui = (d: Domain) => <AppProvider me={owner}><CfControls domain={d} controlsEnabled={controlsEnabled} /></AppProvider>;
+  const r = render(ui(domain));
+  rerender = (d) => r.rerender(ui(d));
   return { api, user };
 }
 const patches = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.method === "PATCH");
@@ -30,6 +33,18 @@ describe("CfControls", () => {
   it("is hidden when controls are off", () => {
     boot(dom("account"), false);
     expect(screen.queryByText("Cloudflare")).toBeNull();
+  });
+
+  it("new stored controls for the same domain refresh the untouched fields and keep an unsaved edit", async () => {
+    const { api, user } = boot(dom("account"), true, { "PATCH /api/domains/d1/cloudflare": ({ body }) => ({ body: { securityLevel: "low", rateLimit: null, ...(body as object) } }) });
+    await user.click(screen.getByRole("radio", { name: "Low" })); // an unsaved edit
+    rerender(dom("account", "high", 40));
+    expect((screen.getByLabelText("Rate limit") as HTMLInputElement).value).toBe("40");
+    expect(screen.getByRole("radio", { name: "Low" }).getAttribute("aria-checked")).toBe("true");
+    await user.clear(screen.getByLabelText("Rate limit"));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(patches(api)).toHaveLength(1));
+    expect(patches(api)[0]!.body).toEqual({ securityLevel: "low", rateLimit: null }); // the empty rate now removes the stored rule
   });
 
   it("High then Ctrl+Enter sends only securityLevel", async () => {

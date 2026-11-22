@@ -20,9 +20,18 @@ const LEVELS = [
 export function CfControls({ domain, controlsEnabled }: { domain: Domain; controlsEnabled: boolean }) {
   const { me, reloadDomains } = useApp();
   const fromServer = (v: { securityLevel?: string | null; rateLimit?: number | null } | undefined) => ({ level: v?.securityLevel ?? "default", rate: v?.rateLimit == null ? "" : String(v.rateLimit) });
-  const [base, setBase] = useState(() => fromServer(domain.cloudflare)); // what Cloudflare holds, as far as we know
+  const server = fromServer(domain.cloudflare);
+  const [base, setBase] = useState(server); // what Cloudflare holds, as far as we know
   const [level, setLevel] = useState(base.level);
   const [rate, setRate] = useState(base.rate);
+  // New stored values for the same domain (a reload or a poll): move the baseline, and every field the person has not edited.
+  const [seen, setSeen] = useState(server);
+  if (server.level !== seen.level || server.rate !== seen.rate) {
+    setSeen(server);
+    setBase(server);
+    if (level === base.level) setLevel(server.level);
+    if (rate === base.rate) setRate(server.rate);
+  }
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const busy = useRef(false);
