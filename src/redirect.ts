@@ -3,7 +3,7 @@ import { classifyAgent, referrerHost, splitQrMarker, UA_MAX, utcDay, visitorHash
 import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, pendingPage } from "./pages";
-import { withQuery } from "./routing";
+import { countryOf, pickDestination, routeDeviceOf, withQuery } from "./routing";
 import type { DomainRow, LinkRow } from "./types";
 import { checkSlugShape, slugKey } from "./validate";
 
@@ -16,15 +16,19 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
 
   if (!domain || domain.status === "disabled") return html(notFoundPage, 404);
   if (domain.status === "pending") return html(pendingPage, 200);
+  // R8: POST is only for unlocking a protected link; everything else here is GET or HEAD.
+  if (!head && req.method !== "GET" && req.method !== "POST") return notAllowed();
+  const post = req.method === "POST";
 
   const miss = (target: string | null) => (target ? redirect(target, 302, domain) : html(notFoundPage, 404));
-  if (url.pathname === "/") return miss(domain.bareRedirect);
+  if (url.pathname === "/") return post ? notAllowed() : miss(domain.bareRedirect);
 
   const slug = slugFromPath(url.pathname);
   // Junk slugs never reach D1 or KV. Reserved words are a creation-time rule only, so stored links stay reachable.
   const link = slug === null || !checkSlugShape(slug).ok ? null : await getLink(env, domain.id, slugKey(slug, domain.caseSensitive), ctx);
   const live = link && (link.startsAt === null || link.startsAt <= now) && (link.expiresAt === null || link.expiresAt > now);
   if (!live) {
+    if (post) return notAllowed();
     // Built-in replies only when no live link owns the path (imported links may use these slugs).
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
     if (url.pathname === "/robots.txt") {
@@ -34,8 +38,13 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
     return miss(domain.notfoundRedirect);
   }
 
+  if (link.passwordHash) return protectedLink(head);
+  if (post) return notAllowed();
+
   const m = splitQrMarker(url.search);
-  const dest = withQuery(link.url, link.passQuery, m.search);
+  // The UA is read (capped) only when a route needs the device: a plain link does no agent work before it answers.
+  const device = link.routes.some((r) => r.devices.length) ? routeDeviceOf(req.headers.get("user-agent")) : "desktop";
+  const dest = withQuery(pickDestination(link, countryOf(req), device), link.passQuery, m.search);
   const res = redirect(dest, link.redirectCode, domain);
   // Off the hot path: the response never waits for, or fails because of, analytics.
   if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
@@ -68,3 +77,13 @@ const robots = (d: DomainRow | null): Record<string, string> => (d?.noindex ? { 
 
 const redirect = (to: string, status: number, d: DomainRow) =>
   new Response(null, { status, headers: { location: to, "cache-control": "private, max-age=0", ...robots(d) } });
+
+const notAllowed = () =>
+  new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD", "content-type": "text/plain; charset=utf-8" } });
+
+// shortcut: fails closed until the Task 7 password page and unlock replace it; never the destination, no cookie, no click.
+const protectedLink = (head: boolean) =>
+  new Response(head ? null : "Password check is unavailable right now.", {
+    status: 503,
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+  });
