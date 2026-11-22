@@ -334,3 +334,84 @@ describe("budget", () => {
     expect(m.rows).toBeLessThan(10 * 100 + 200 + 250);
   });
 });
+
+describe("fix round 1", () => {
+  for (const mode of ["forward", "copy"] as const) {
+    it(`${mode} as A: B's links on a shared and the main domain and on B's private domain forbidden, A's own ok; nothing for the refused`, async () => {
+      await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('ds','shared.test','shared','active','uo',1)");
+      await run("INSERT INTO domain_members (domain_id, user_id) VALUES ('ds','ua'), ('ds','ub')");
+      await seed("bs", "ub", { domain_id: "ds", url: "https://secret.test/s", password_hash: HASH });
+      await seed("bm", "ub", { url: "https://secret.test/m", password_hash: HASH });
+      await seed("bp", "ub", { domain_id: "db", url: "https://secret.test/p" });
+      await seed("mine", "ua");
+      for (const k of ["l2:da:bs", "l2:da:bm", "l2:da:bp", "l2:ds:bs"]) await env.CACHE.put(k, "null");
+      const before = await all<Row>("SELECT * FROM links ORDER BY id");
+      const r = await answer(await move("a", ["bs", "bm", "bp", "mine"], "da", mode));
+      expect(byId(r.results)).toEqual({ bs: "forbidden", bm: "forbidden", bp: "forbidden", mine: "ok" });
+      const after = await all<Row>("SELECT * FROM links ORDER BY id");
+      for (const id of ["bs", "bm", "bp"]) expect(after.find((x) => x.id === id)).toEqual(before.find((x) => x.id === id));
+      expect(await count("links WHERE url LIKE 'https://secret.test/%'")).toBe(3);
+      expect(await count("links WHERE password_hash IS NOT NULL")).toBe(2);
+      expect(await count("links WHERE forward_to IN ('bs','bm','bp')")).toBe(0);
+      expect(await count("links")).toBe(5);
+      expect(await count("audit_log WHERE detail LIKE '%secret.test%' OR target_id IN ('bs','bm','bp')")).toBe(0);
+      expect(await count("audit_log")).toBe(1);
+      for (const k of ["l2:da:bs", "l2:da:bm", "l2:da:bp", "l2:ds:bs"]) expect(await env.CACHE.get(k)).toBe("null");
+    });
+  }
+
+  it("M1: a concurrent move of the same link wins: the losing batch writes no forwarder and no audit", async () => {
+    await seed("w", "ua", { slug: "w" });
+    // The winner moved it to a.test and its forwarder on go.test/w was already deleted (address free again).
+    const restore = beforeBatch(4, () => run("UPDATE links SET domain_id = 'da', slug_key = 'w', updated_by = 'uo', updated_at = 99 WHERE id = 'w'"));
+    let r;
+    try { r = await answer(await move("a", ["w"], "da", "forward")); } finally { restore(); }
+    expect(byId(r.results)).toEqual({ w: "conflict" });
+    expect(await at("dm", "w")).toBeNull();
+    expect(await count("audit_log")).toBe(0);
+  });
+
+  it("M2: a revision change races a move back: the forwarder it would reclaim survives, no repoint, no audit", async () => {
+    await seed("X", "uo", { slug: "x" });
+    await answer(await move("owner", ["X"], "da", "forward"));
+    await answer(await move("owner", ["X"], "db", "forward"));
+    const audits = await count("audit_log");
+    const restore = beforeBatch(4, () => run("UPDATE links SET updated_at = updated_at + 50 WHERE id = 'X'"));
+    let r;
+    try { r = await answer(await move("owner", ["X"], "dm", "forward")); } finally { restore(); }
+    expect(byId(r.results)).toEqual({ X: "conflict" });
+    expect(await at("dm", "x")).toMatchObject({ url: "https://b.test/x", forward_to: "X" });
+    expect(await at("da", "x")).toMatchObject({ url: "https://b.test/x", forward_to: "X" });
+    expect(await at("db", "x")).toMatchObject({ id: "X" });
+    expect(await count("audit_log")).toBe(audits);
+  });
+
+  it("M2: rows read for a 100-link forward move where every link reclaims one forwarder and repoints another", async () => {
+    const seq = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 999)";
+    const s100 = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 99)";
+    const ins = (sel: string) => run(`INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,forward_to,created_by,updated_by,created_at,updated_at) ${sel}`);
+    for (const d of ["dm", "da"]) {
+      await run(`${seq} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
+        SELECT '${d}' || i, '${d}', 'z${d}' || i, 'z${d}' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
+      await run(`${seq} INSERT INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT '${d}', 'k' || i, 1, 'uo' FROM n`);
+    }
+    // Each r<i> lives on b.test, came from a.test (its forwarder there is reclaimed) and earlier from go.test (repointed).
+    await run(`${s100} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
+      SELECT 'r' || i, 'db', 'r' || i, 'r' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
+    await ins(`${s100} SELECT 'fa' || i, 'da', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
+    await ins(`${s100} SELECT 'fm' || i, 'dm', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
+    const ids = Array.from({ length: 100 }, (_, i) => `r${i}`);
+    const m = meter();
+    let r;
+    try { r = await answer(await move("owner", ids, "da", "forward")); } finally { m.restore(); }
+    expect(r.results.every((x) => x.ok)).toBe(true);
+    expect(await count("links WHERE id LIKE 'fa%'")).toBe(0);
+    expect(await count("links WHERE id LIKE 'fm%' AND url LIKE 'https://a.test/r%'")).toBe(100);
+    expect(await count("links WHERE domain_id = 'db' AND forward_to IS NOT NULL")).toBe(100);
+    console.log(`bulk move forward x100 with reclaim and repoint: rows_read ${m.rows}`);
+    // Measures 3306: link read 200, domains 6, target checks 599 (two forwarders counted per link), reclaim DELETE 700,
+    // move 500, forwarder insert 300, repoint UPDATE-FROM 799, audit 201. Each total is a small multiple of the 100 selected
+    // links, well under the 2000 other links and 2000 locks seeded, so no form scans a table; bound about 35 x N.
+    expect(m.rows).toBeLessThan(35 * 100);
+  });
+});
