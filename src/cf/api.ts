@@ -91,9 +91,13 @@ export const createDns = async (cfg: CfConfig, zoneId: string, host: string): Pr
 export const deleteDns = (cfg: CfConfig, zoneId: string, id: string) => del(cfg, `/zones/${q(zoneId)}/dns_records/${q(id)}`);
 
 const routeS = z.object({ id: z.string(), pattern: z.string(), script: z.string().nullish() });
+export type Route = { id: string; pattern: string; script: string | null };
+// The routes list is not paginated: one GET returns every route on the zone.
+export const listRoutes = async (cfg: CfConfig, zoneId: string): Promise<Route[]> =>
+  parseList(routeS, (await cf(cfg, "GET", `/zones/${q(zoneId)}/workers/routes`)).result).map((r) => ({ id: r.id, pattern: r.pattern, script: r.script ?? null }));
 export async function findRoute(cfg: CfConfig, zoneId: string, pattern: string): Promise<{ id: string; script: string | null } | null> {
-  const r = parseList(routeS, (await cf(cfg, "GET", `/zones/${q(zoneId)}/workers/routes`)).result).find((x) => x.pattern === pattern);
-  return r ? { id: r.id, script: r.script ?? null } : null;
+  const r = (await listRoutes(cfg, zoneId)).find((x) => x.pattern === pattern);
+  return r ? { id: r.id, script: r.script } : null;
 }
 export const createRoute = async (cfg: CfConfig, zoneId: string, pattern: string): Promise<{ id: string }> =>
   parse(z.object({ id: z.string() }), (await cf(cfg, "POST", `/zones/${q(zoneId)}/workers/routes`, { pattern, script: cfg.workerName })).result);

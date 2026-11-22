@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { rowToCf, type CfRow, type DomainRow } from "../types";
-import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findRoute, findZone, listDns, type CfConfig } from "./api";
+import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findRoute, findZone, listDns, listRoutes, type CfConfig } from "./api";
 import { dnsPointsAt } from "./dns";
 
 export class AttachError extends Error {
@@ -25,16 +25,22 @@ type Made = Partial<Record<IdCol, string>>;
 type Snap = Pick<CfRow, "dns" | "ownership" | "certificate" | "errors">;
 
 const ownershipOf = (s: string): CfRow["ownership"] =>
-  s === "active" ? "verified" : s === "pending" ? "pending" : ["blocked", "moved", "deleted"].includes(s) ? "failed" : "unknown";
+  s === "active" || s === "active_redeploying" ? "verified" : s === "pending" ? "pending" : ["blocked", "moved", "deleted"].includes(s) ? "failed" : "unknown";
 const certificateOf = (s: string | null): CfRow["certificate"] =>
   s === null ? "unknown"
-  : s === "active" ? "issued"
-  : /(timed_out|deleted|expired)$/.test(s) ? "failed"
+  : s === "active" || s === "backup_issued" ? "issued"
+  : /(timed_out|deleted|expired)$/.test(s) || ["pending_deletion", "pending_expiration", "pending_cleanup"].includes(s) ? "failed"
   : s === "initializing" || s.startsWith("pending_") ? "pending"
   : "unknown";
 
 // Only these types serve traffic at the host; TXT, MX and friends never conflict with the placeholder.
 const ADDRESS = new Set(["A", "AAAA", "CNAME"]);
+
+/** Whether a Worker route pattern matches requests for `host` (any path). A leading `*` matches as a suffix. */
+export function routeCovers(pattern: string, host: string): boolean {
+  const hp = pattern.toLowerCase().replace(/^https?:\/\//, "").split("/")[0]!;
+  return hp.startsWith("*") ? host.endsWith(hp.slice(1)) : hp === host;
+}
 
 /**
  * Reads come first and every refusal is thrown before the first write. Ids are recorded the moment
@@ -48,7 +54,13 @@ export async function syncDomain(env: Env, cfg: CfConfig, d: DomainRow, cf: CfRo
     return await save(env, d.id, cf, made, { ...snap, errors: JSON.stringify(snap.errors), last_error: null, checked_at: Math.floor(Date.now() / 1000) });
   } catch (e) {
     // checked_at stays as it was so the next poll retries at once.
-    if (e instanceof CfError || e instanceof AttachError) await save(env, d.id, cf, made, { last_error: e instanceof AttachError ? e.code : e.message });
+    const code = e instanceof AttachError ? e.code : e instanceof CfError ? e.message : "internal_error";
+    try {
+      await save(env, d.id, cf, made, { last_error: code });
+    } catch {
+      // Ids and codes only: never the token or Cloudflare's own text.
+      console.warn("linkwarren: could not store domain_cf after a failed sync", JSON.stringify({ domainId: d.id, lastError: code, made }));
+    }
     throw e;
   }
 }
@@ -70,25 +82,35 @@ async function syncAccount(cfg: CfConfig, host: string, cf: CfRow, opts: { attac
   const zoneId = cf.zoneId ?? z.id;
   if (!cf.zoneId) made.zone_id = zoneId;
   const pattern = `${host}/*`;
-  const records = (await listDns(cfg, zoneId, host)).filter((r) => ADDRESS.has(r.type));
-  const route = await findRoute(cfg, zoneId, pattern);
+  const atHost = await listDns(cfg, zoneId, host);
+  const records = atHost.filter((r) => ADDRESS.has(r.type));
+  const delegated = atHost.some((r) => r.type === "NS");
+  // A wildcard one label up answers for the host when nothing exists at the host itself.
+  const parent = host.slice(host.indexOf(".") + 1);
+  const inZone = host !== z.name && (parent === z.name || parent.endsWith("." + z.name));
+  const wild = inZone ? (await listDns(cfg, zoneId, `*.${parent}`)).filter((r) => ADDRESS.has(r.type)) : [];
+  const covering = records.length ? records : wild;
+  const routes = await listRoutes(cfg, zoneId);
+  const route = routes.find((r) => r.pattern === pattern) ?? null;
   // A stored route means an attach already succeeded (and any takeover was confirmed then): keep it repaired.
   const attached = cf.routeId !== null;
   const attach = opts.attach || attached;
   if (attach) {
-    if (records.some((r) => !r.proxied)) throw new AttachError("dns_not_proxied");
+    // A delegated subdomain is served by other nameservers: no confirmation can make the placeholder visible.
+    if (delegated || covering.some((r) => !r.proxied)) throw new AttachError("dns_not_proxied");
     const onlyOurs = records.length === 1 && records[0]!.id === cf.dnsRecordId;
-    if (records.length > 0 && !onlyOurs && !opts.confirmTakeover && !attached) throw new AttachError("dns_record_exists");
-    if (route && route.script !== cfg.workerName) throw new AttachError("route_in_use");
-    if (records.length === 0) {
+    if (covering.length > 0 && !onlyOurs && !opts.confirmTakeover && !attached) throw new AttachError("dns_record_exists");
+    if (routes.some((r) => routeCovers(r.pattern, host) && r.script !== cfg.workerName)) throw new AttachError("route_in_use");
+    // Repair only re-creates a placeholder we had; it never adds a record next to the owner's takeover.
+    if (covering.length === 0 && (opts.attach || cf.dnsRecordId !== null)) {
       const rec = await createDns(cfg, zoneId, host);
       made.dns_record_id = rec.id;
-      records.push(rec);
+      covering.push(rec);
     }
     if (!route) made.route_id = (await createRoute(cfg, zoneId, pattern)).id;
   }
   return {
-    dns: records.some((r) => r.proxied) ? "found" : records.length ? "wrong_target" : "missing",
+    dns: covering.some((r) => r.proxied) ? "found" : covering.length || delegated ? "wrong_target" : "missing",
     // A route to this worker that someone else made also serves the host, so it reads as verified (never adopted).
     ownership: attach || route?.script === cfg.workerName ? "verified" : "pending",
     // Universal SSL covers the apex and one label below it.

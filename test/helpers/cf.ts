@@ -7,7 +7,7 @@ export type FakeZone = { id: string; name: string; accountName?: string };
  * In-memory Cloudflare API + DoH. Install with `vi.spyOn(globalThis, "fetch").mockImplementation((i, init) => fake.handle(new Request(i, init)))`
  * (see installFakeCloudflare). Unknown URLs throw so a test can never reach the real API.
  * Error shapes mirror measured live behaviour: 403 code 10000 for a missing permission (POST workers/routes: 403 with no code),
- * 401 code 10000 for a bad token, 400 for validation, 404 code 10003 for a missing ruleset entrypoint, 404 code 1551 for an unset fallback origin.
+ * 401 code 10000 for a bad token, duplicates rejected (DNS name+type 400 81058, route pattern 409 10020, custom hostname 409 1406), 400 for validation, 404 code 10003 for a missing ruleset entrypoint, 404 code 1551 for an unset fallback origin.
  */
 export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, string[]> } = {}) {
   let seq = 0;
@@ -68,6 +68,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       if (m === "GET") return ok(state.dns.filter((d) => d.zoneId === zoneId && d.name === url.searchParams.get("name")));
       if (m === "POST") {
         if (typeof b.name !== "string" || typeof b.type !== "string") return err(400, 9000);
+        if (state.dns.some((d) => d.zoneId === zoneId && d.name === b.name && d.type === b.type)) return err(400, 81058);
         const rec = { id: nid("dns"), zoneId: zoneId!, type: b.type, name: b.name, content: String(b.content), proxied: b.proxied === true, comment: typeof b.comment === "string" ? b.comment : null };
         state.dns.push(rec);
         return ok(rec);
@@ -79,6 +80,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       if (m === "GET") return ok(state.routes.filter((x) => x.zoneId === zoneId));
       if (m === "POST") {
         if (typeof b.pattern !== "string" || typeof b.script !== "string") return err(400, 10022);
+        if (state.routes.some((x) => x.zoneId === zoneId && x.pattern === b.pattern)) return err(409, 10020);
         const rec = { id: nid("route"), zoneId: zoneId!, pattern: b.pattern, script: b.script };
         state.routes.push(rec);
         return ok(rec);
@@ -102,6 +104,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       }
       if (m === "POST") {
         if (typeof b.hostname !== "string") return err(400, 1407);
+        if (state.hostnames.some((x) => x.hostname === b.hostname)) return err(409, 1406);
         const rec = { id: nid("ch"), hostname: b.hostname, status: "pending", ssl: { status: "pending_validation" } };
         state.hostnames.push(rec);
         return ok(rec);

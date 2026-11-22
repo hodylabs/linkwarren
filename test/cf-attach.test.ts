@@ -1,14 +1,14 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CfError, type CfConfig } from "../src/cf/api";
-import { AttachError, classify, detachDomain, isVerified, syncDomain } from "../src/cf/attach";
+import { AttachError, classify, detachDomain, isVerified, routeCovers, syncDomain } from "../src/cf/attach";
 import { rowToCf, rowToDomain, type CfRow } from "../src/types";
 import type { Env } from "../src/env";
 import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare } from "./helpers/cf";
 
 const cfg: CfConfig = { token: "tok-SECRET-123", accountId: "acc1", workerName: "lw", saasZoneId: "saas1", cnameTarget: "edge.test" };
 const e = env as unknown as Env;
-const zones = [{ id: "zsaas", name: "saas.test" }, { id: "z1", name: "example.com" }];
+const zones = [{ id: "zsaas", name: "saas.test" }, { id: "z1", name: "example.com" }, { id: "zo", name: "owned.test" }];
 const writes = <T extends { method: string }>(calls: T[]) => calls.filter((c) => c.method !== "GET");
 
 beforeEach(async () => {
@@ -81,6 +81,10 @@ describe("syncDomain outside", () => {
       ["moved", "validation_timed_out", "failed", "failed"],
       ["deleted", "deleted", "failed", "failed"],
       ["active", "expired", "verified", "failed"],
+      ["active_redeploying", "backup_issued", "verified", "issued"],
+      ["active", "pending_deletion", "verified", "failed"],
+      ["active", "pending_expiration", "verified", "failed"],
+      ["active", "pending_cleanup", "verified", "failed"],
       ["weird", "weird", "unknown", "unknown"],
     ];
     for (const [status, ssl, ownership, certificate] of table) {
@@ -270,6 +274,109 @@ describe("syncDomain account", () => {
     installFakeCloudflare({ zones });
     const { d, cf } = await mk("go.example.com", "account");
     expect((await syncDomain(e, cfg, d, cf, { attach: false })).zoneId).toBe("z1");
+  });
+});
+
+describe("routeCovers", () => {
+  it.each([
+    ["shop.owned.test/*", true], ["shop.owned.test/a/*", true], ["*.owned.test/*", true], ["*owned.test/*", true],
+    ["*/*", true], ["*", true], ["SHOP.owned.test/*", true], ["https://shop.owned.test/*", true],
+    ["owned.test/*", false], ["*.other.test/*", false], ["x.shop.owned.test/*", false], ["*.shop.owned.test/*", false],
+  ])("%s -> %s", (pattern, want) => expect(routeCovers(pattern, "shop.owned.test")).toBe(want));
+});
+
+describe("syncDomain account: wildcards and delegations (I1)", () => {
+  const wild = (proxied: boolean) => ({ id: "rec-wild", zoneId: "zo", type: "A", name: "*.owned.test", content: "192.0.2.9", proxied, comment: null });
+  it("a proxied wildcard record needs confirmTakeover; with it only a route is added", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push(wild(true));
+    const { d, cf } = await mk("shop.owned.test", "account", { zone_id: "zo" });
+    await expect(syncDomain(e, cfg, d, cf, { attach: true })).rejects.toMatchObject({ code: "dns_record_exists" });
+    expect(writes(fake.calls)).toEqual([]);
+    fake.calls.length = 0;
+    const r = await syncDomain(e, cfg, d, (await load(d.id)).cf, { attach: true, confirmTakeover: true });
+    expect(writes(fake.calls).map((c) => `${c.method} ${c.path}`)).toEqual(["POST /zones/zo/workers/routes"]);
+    expect(fake.state.dns).toEqual([wild(true)]);
+    expect(r).toMatchObject({ dnsRecordId: null, dns: "found", ownership: "verified", lastError: null });
+  });
+  it("a non-proxied wildcard is dns_not_proxied even with confirmTakeover", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push(wild(false));
+    const { d, cf } = await mk("shop.owned.test", "account", { zone_id: "zo" });
+    await expect(syncDomain(e, cfg, d, cf, { attach: true, confirmTakeover: true })).rejects.toMatchObject({ code: "dns_not_proxied" });
+    expect(writes(fake.calls)).toEqual([]);
+  });
+  it("the apex has no parent wildcard to look up", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { d, cf } = await mk("owned.test", "account", { zone_id: "zo" });
+    await syncDomain(e, cfg, d, cf, { attach: true });
+    expect(fake.calls.filter((c) => c.path.includes("dns_records?")).map((c) => c.path)).toEqual(["/zones/zo/dns_records?name=owned.test"]);
+  });
+  it("a wildcard route to another script is route_in_use with zero writes; one to our worker is fine", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.routes.push({ id: "r-wild", zoneId: "zo", pattern: "*.owned.test/*", script: "tenant" });
+    const { d, cf } = await mk("shop.owned.test", "account", { zone_id: "zo" });
+    await expect(syncDomain(e, cfg, d, cf, { attach: true, confirmTakeover: true })).rejects.toMatchObject({ code: "route_in_use" });
+    expect(writes(fake.calls)).toEqual([]);
+    fake.state.routes[0]!.script = "lw";
+    await syncDomain(e, cfg, d, (await load(d.id)).cf, { attach: true });
+    expect(fake.state.routes.map((x) => x.pattern)).toEqual(["*.owned.test/*", "shop.owned.test/*"]);
+  });
+  it("an NS record at the host (delegated) is refused even with confirmTakeover, zero writes", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push({ id: "rec-ns", zoneId: "zo", type: "NS", name: "shop.owned.test", content: "ns1.elsewhere.test", proxied: false, comment: null });
+    const { d, cf } = await mk("shop.owned.test", "account", { zone_id: "zo" });
+    await expect(syncDomain(e, cfg, d, cf, { attach: true, confirmTakeover: true })).rejects.toMatchObject({ code: "dns_not_proxied" });
+    expect(writes(fake.calls)).toEqual([]);
+  });
+});
+
+describe("syncDomain account repair (I2)", () => {
+  it("after a takeover attach, the owner deleting their record never makes a poll create one", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push({ id: "rec-theirs", zoneId: "z1", type: "A", name: "www.example.com", content: "192.0.2.1", proxied: true, comment: null });
+    const { d, cf } = await mk("www.example.com", "account", { zone_id: "z1" });
+    const r = await syncDomain(e, cfg, d, cf, { attach: true, confirmTakeover: true });
+    fake.state.dns.length = 0;
+    fake.calls.length = 0;
+    const r2 = await syncDomain(e, cfg, d, r, { attach: false });
+    expect(writes(fake.calls)).toEqual([]);
+    expect(r2).toMatchObject({ dns: "missing", dnsRecordId: null });
+  });
+  it("our own placeholder is re-created by a poll", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { d, cf } = await mk("go.example.com", "account", { zone_id: "z1" });
+    const r = await syncDomain(e, cfg, d, cf, { attach: true });
+    fake.state.dns.length = 0;
+    const r2 = await syncDomain(e, cfg, d, r, { attach: false });
+    expect(fake.state.dns).toHaveLength(1);
+    expect(r2.dnsRecordId).toBe(fake.state.dns[0]!.id);
+  });
+});
+
+describe("syncDomain error-path save", () => {
+  it("a failing error-path save warns without the token and rethrows the original error", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { d, cf } = await mk("go.outside.test", "outside");
+    fake.failNext(/workers\/routes$/, 500); // first match is the route GET
+    const broken = { DB: { prepare: () => { throw new Error("d1 down"); } } } as unknown as Env;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(syncDomain(broken, cfg, d, cf, { attach: true })).rejects.toMatchObject({ status: 500 });
+    expect(warn).toHaveBeenCalled();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("SECRET");
+  });
+});
+
+describe("syncDomain concurrency", () => {
+  it("two concurrent syncs of a new outside domain end with one hostname, one route and the real ids stored", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { d, cf } = await mk("go.outside.test", "outside");
+    await Promise.allSettled([syncDomain(e, cfg, d, cf, { attach: true }), syncDomain(e, cfg, d, cf, { attach: true })]);
+    expect(fake.calls.filter((c) => c.method === "POST" && c.path.endsWith("/custom_hostnames"))).toHaveLength(2); // both raced to create
+    expect(fake.state.hostnames).toHaveLength(1);
+    expect(fake.state.routes).toHaveLength(1);
+    const r = await syncDomain(e, cfg, d, (await load(d.id)).cf, { attach: true });
+    expect(r).toMatchObject({ hostnameId: fake.state.hostnames[0]!.id, routeId: fake.state.routes[0]!.id, lastError: null });
   });
 });
 
