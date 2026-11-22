@@ -25,6 +25,8 @@ export type ApprovalView = {
   redirectHost: string;
   redirectIsLoopback: boolean;
   who: { email: string; role: string };
+  /** The person the page was shown to; POST refuses a different signed-in person. Never a source of identity. */
+  uid: string;
   handle: string;
 };
 
@@ -39,6 +41,7 @@ export function renderApproval(v: ApprovalView): string {
       `<p class="muted">Signed in as ${esc(v.who.email)} (${esc(v.who.role)})</p>` +
       `<form method="post" action="/authorize">` +
       `<input type="hidden" name="handle" value="${esc(v.handle)}">` +
+      `<input type="hidden" name="uid" value="${esc(v.uid)}">` +
       `<fieldset><legend>Access</legend>` +
       `<label><input type="radio" name="access" value="read" checked><span><b>Read only</b><span class="muted">Search and read links and domains you can use</span></span></label>` +
       `<label><input type="radio" name="access" value="write"><span><b>Read and write</b><span class="muted">Also create and edit links, shown in the audit log as you via ${name}</span></span></label>` +

@@ -61,7 +61,14 @@ async function who(req: Request, env: Env) {
 
 const helpers = (env: Env): OAuthHelpers | null => env.OAUTH_PROVIDER ?? null;
 
+/** The library falls back to the client id when a client gave no name; that is not a name to show or audit. */
+const nameOf = (d: { clientName: string; clientId: string }) => cleanClientName(d.clientName === d.clientId ? undefined : d.clientName);
+const FAILED = () => msg(500, "Something went wrong", "The connection could not be finished. Start again from your agent.");
+
 authorize.get("/", async (c) => {
+  // Each page spends a KV write: only a top-level navigation may open it, never a cross-site <img>, frame or fetch.
+  const dest = c.req.header("sec-fetch-dest");
+  if (dest !== undefined && dest !== "document") return msg(403, "Refused", "Open this page in your browser from your agent.");
   const w = await who(c.req.raw, c.env);
   if (!w.user) {
     if (w.status === 401 && authMode(c.env) === "app") {
@@ -89,10 +96,11 @@ authorize.get("/", async (c) => {
   }
   const { handle, headers } = await oauth.beginConsent(req);
   const page = renderApproval({
-    clientName: cleanClientName(d.clientName),
+    clientName: nameOf(d),
     redirectHost: d.redirectHost,
     redirectIsLoopback: d.redirectIsLoopback,
     who: { email: w.user.email, role: w.user.role },
+    uid: w.user.id,
     handle,
   });
   // The approve/deny answer is a redirect to the client: form-action must allow its origin (registration allowlists it).
@@ -114,6 +122,8 @@ authorize.post("/", async (c) => {
     return EXPIRED();
   }
   const handle = typeof form.handle === "string" ? form.handle : "";
+  // The page names the person it was shown to; a different person signed in since then starts again (handle not spent).
+  if (form.uid !== user.id) return EXPIRED();
 
   if (form.action === "deny") {
     try {
@@ -135,19 +145,28 @@ authorize.post("/", async (c) => {
     return EXPIRED();
   }
   const { request } = approved;
-  const d = await oauth.describeConsent(request);
-  const clientName = cleanClientName(d.clientName);
   const connId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT INTO agent_connections (id, user_id, client_id, client_name, redirect_host, can_write, can_delete, created_at) VALUES (?,?,?,?,?,?,?,?)",
-    ).bind(connId, user.id, request.clientId, clientName, d.redirectHost, write ? 1 : 0, del ? 1 : 0, now),
-    auditStmt(c.env, {
-      actorId: user.id, via: clientName, action: "agent.connect", targetType: "agent_connection", targetId: connId,
-      detail: { clientId: request.clientId, redirectHost: d.redirectHost, write, del },
-    }, { sql: "EXISTS (SELECT 1 FROM agent_connections WHERE id = ?)", binds: [connId] }),
-  ]);
+  let clientName: string;
+  try {
+    const d = await oauth.describeConsent(request);
+    clientName = nameOf(d);
+    await c.env.DB.batch([
+      // The library revokes this person's older grants for the client (revokeExistingGrants default); D1 follows.
+      c.env.DB.prepare("UPDATE agent_connections SET revoked_at = ? WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL")
+        .bind(now, user.id, request.clientId),
+      c.env.DB.prepare(
+        "INSERT INTO agent_connections (id, user_id, client_id, client_name, redirect_host, can_write, can_delete, created_at) VALUES (?,?,?,?,?,?,?,?)",
+      ).bind(connId, user.id, request.clientId, clientName, d.redirectHost, write ? 1 : 0, del ? 1 : 0, now),
+      auditStmt(c.env, {
+        actorId: user.id, via: clientName, action: "agent.connect", targetType: "agent_connection", targetId: connId,
+        detail: { clientId: request.clientId, redirectHost: d.redirectHost, write, del },
+      }, { sql: "EXISTS (SELECT 1 FROM agent_connections WHERE id = ?)", binds: [connId] }),
+    ]);
+  } catch (err) {
+    console.error("connection write failed", err instanceof Error ? err.name : "unknown");
+    return FAILED();
+  }
   try {
     const { redirectTo } = await oauth.completeAuthorization({
       request, userId: user.id, scope, props: { userId: user.id, connId }, metadata: { connId, clientName },
@@ -155,7 +174,12 @@ authorize.post("/", async (c) => {
     return html(null, 302, { lib: approved.headers, location: redirectTo });
   } catch (err) {
     console.error("completeAuthorization failed", err instanceof Error ? err.name : "unknown");
-    await c.env.DB.prepare("UPDATE agent_connections SET revoked_at = ? WHERE id = ?").bind(now, connId).run();
-    return msg(500, "Something went wrong", "The connection could not be finished. Start again from your agent.");
+    // No grant exists: revoke the row and mark the connect audit as undone in one batch.
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE agent_connections SET revoked_at = ? WHERE id = ?").bind(now, connId),
+      auditStmt(c.env, { actorId: user.id, via: clientName, action: "agent.disconnect", targetType: "agent_connection", targetId: connId, detail: { reason: "failed" } },
+        { sql: "EXISTS (SELECT 1 FROM agent_connections WHERE id = ?)", binds: [connId] }),
+    ]).catch((e: unknown) => console.error("revoke after failure failed", e instanceof Error ? e.name : "unknown"));
+    return FAILED();
   }
 });

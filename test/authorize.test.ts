@@ -2,14 +2,14 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanClientName } from "../src/mcp/authorize";
 import { setupAccess, tokenFor } from "./helpers/access";
-import { CLAUDE_CB, authorizePath, openConsent, pkce, postConsent, registerClient, signInHeaders } from "./helpers/oauth";
+import { CLAUDE_CB, authorizePath, connectAgentFull, openConsent, pkce, postConsent, registerClient, signInHeaders, token } from "./helpers/oauth";
 
 const e = env as { AUTH_MODE?: string };
 const orig = e.AUTH_MODE;
 beforeAll(setupAccess);
 afterEach(() => { e.AUTH_MODE = orig; vi.restoreAllMocks(); });
 
-async function request(o: { redirect?: string; name?: string; auth?: string; method?: string | null; challenge?: boolean } = {}) {
+async function request(o: { redirect?: string; name?: string | null; auth?: string; method?: string | null; challenge?: boolean } = {}) {
   const redirect = o.redirect ?? CLAUDE_CB;
   const { clientId } = await registerClient(redirect, { name: o.name, auth: o.auth });
   const { challenge } = await pkce();
@@ -90,7 +90,7 @@ describe("GET /authorize, access mode", () => {
     expect(p.html).not.toContain("<img src=x>");
     expect(p.html).toContain("&lt;img src=x&gt;Claude");
     expect(p.html).not.toContain("‮");
-    const r = await postConsent(p.auth, p.binding, { handle: p.handle, action: "approve", access: "read" });
+    const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
     expect(r.status).toBe(302);
     const row = await env.DB.prepare("SELECT client_name FROM agent_connections WHERE client_id = ?").bind(p.clientId).first<{ client_name: string }>();
     expect(row!.client_name).toBe("<img src=x>Claude");
@@ -100,7 +100,7 @@ describe("GET /authorize, access mode", () => {
 
   it("cuts a 200-char client name to 40", async () => {
     const p = await ready("acc4@example.com", { name: "N".repeat(200) });
-    await postConsent(p.auth, p.binding, { handle: p.handle, action: "approve", access: "read" });
+    await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
     const row = await env.DB.prepare("SELECT client_name FROM agent_connections WHERE client_id = ?").bind(p.clientId).first<{ client_name: string }>();
     expect(row!.client_name).toBe("N".repeat(40));
   });
@@ -127,7 +127,7 @@ describe("GET /authorize, access mode", () => {
 describe("POST /authorize", () => {
   it("refuses a foreign Origin and a missing Origin with 403", async () => {
     const p = await ready("post1@example.com");
-    const form = { handle: p.handle, action: "approve", access: "read" };
+    const form = { handle: p.handle, uid: p.uid, action: "approve", access: "read" };
     expect((await postConsent(p.auth, p.binding, form, "https://evil.test")).status).toBe(403);
     expect((await postConsent(p.auth, p.binding, form, null)).status).toBe(403);
     // Neither refusal spent the handle.
@@ -136,7 +136,7 @@ describe("POST /authorize", () => {
 
   it("refuses a handle without its binding cookie (another browser)", async () => {
     const p = await ready("post2@example.com");
-    const r = await postConsent(p.auth, "", { handle: p.handle, action: "approve", access: "read" });
+    const r = await postConsent(p.auth, "", { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
     expect(r.status).toBe(400);
     expect(await r.text()).toContain("Approval expired, start again from your agent");
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("n")).toBe(0);
@@ -144,21 +144,21 @@ describe("POST /authorize", () => {
 
   it("refuses the POST without a valid sign-in", async () => {
     const p = await ready("post3@example.com");
-    const r = await postConsent({}, p.binding, { handle: p.handle, action: "approve", access: "read" });
+    const r = await postConsent({}, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
     expect(r.status).toBe(401);
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("n")).toBe(0);
   });
 
   it("is single-use", async () => {
     const p = await ready("post4@example.com");
-    const form = { handle: p.handle, action: "approve", access: "read" };
+    const form = { handle: p.handle, uid: p.uid, action: "approve", access: "read" };
     expect((await postConsent(p.auth, p.binding, form)).status).toBe(302);
     expect((await postConsent(p.auth, p.binding, form)).status).toBe(400);
   });
 
   it("Deny redirects with error=access_denied and stores nothing", async () => {
     const p = await ready("post5@example.com");
-    const r = await postConsent(p.auth, p.binding, { handle: p.handle, action: "deny" });
+    const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "deny" });
     expect(r.status).toBe(302);
     const to = new URL(r.headers.get("location")!);
     expect(to.origin + to.pathname).toBe(CLAUDE_CB);
@@ -169,7 +169,7 @@ describe("POST /authorize", () => {
 
   it("Approve read-only writes one read-only connection and one agent.connect audit row", async () => {
     const p = await ready("post6@example.com");
-    const r = await postConsent(p.auth, p.binding, { handle: p.handle, action: "approve", access: "read" });
+    const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
     expect(r.status).toBe(302);
     const to = new URL(r.headers.get("location")!);
     expect(to.searchParams.get("code")).toBeTruthy();
@@ -187,10 +187,10 @@ describe("POST /authorize", () => {
 
   it("del=1 without write stores can_delete = 0; write+del stores both", async () => {
     const p = await ready("post7@example.com");
-    await postConsent(p.auth, p.binding, { handle: p.handle, action: "approve", access: "read", del: "1" });
+    await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read", del: "1" });
     expect(await env.DB.prepare("SELECT can_delete FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("can_delete")).toBe(0);
     const q = await ready("post7@example.com");
-    await postConsent(q.auth, q.binding, { handle: q.handle, action: "approve", access: "write", del: "1" });
+    await postConsent(q.auth, q.binding, { handle: q.handle, uid: q.uid, action: "approve", access: "write", del: "1" });
     const row = await env.DB.prepare("SELECT can_write, can_delete FROM agent_connections WHERE client_id = ?").bind(q.clientId).first();
     expect(row).toEqual({ can_write: 1, can_delete: 1 });
   });
@@ -216,8 +216,92 @@ describe("/authorize, app mode", () => {
     expect(p.html).toContain("Connect Claude");
     expect(p.html).toContain("app1@example.com");
     await env.DB.prepare("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)").bind("app1@example.com").run();
-    const r = await postConsent(p.auth, p.binding, { handle: p.handle, action: "approve", access: "read" });
+    const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
     expect(r.status).toBe(401);
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("n")).toBe(0);
+  });
+});
+
+describe("fix round 1", () => {
+  const count = (clientId: string) => env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(clientId).first("n");
+
+  it("re-approving the same client revokes the older connection and its refresh token, not another person's", async () => {
+    const first = await connectAgentFull("again@example.com");
+    const other = await connectAgentFull("other@example.com", { clientId: first.clientId });
+    const second = await connectAgentFull("again@example.com", { clientId: first.clientId });
+    const rows = await env.DB.prepare("SELECT id, revoked_at FROM agent_connections WHERE client_id = ?").bind(first.clientId).all<{ id: string; revoked_at: number | null }>();
+    const by = new Map(rows.results.map((r) => [r.id, r.revoked_at]));
+    expect(by.get(first.connId)).not.toBeNull();
+    expect(by.get(second.connId)).toBeNull();
+    expect(by.get(other.connId)).toBeNull();
+    const old = await token({ grant_type: "refresh_token", refresh_token: first.refreshToken, client_id: first.clientId });
+    expect((await old.json<{ error: string }>()).error).toBe("invalid_grant");
+    expect((await token({ grant_type: "refresh_token", refresh_token: second.refreshToken, client_id: first.clientId })).status).toBe(200);
+  });
+
+  it("refuses a POST whose page was shown to another person, without spending the handle", async () => {
+    const p = await ready("uidA@example.com");
+    const b = await signInHeaders("uidB@example.com");
+    const r = await postConsent(b, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
+    expect(r.status).toBe(400);
+    expect(await count(p.clientId)).toBe(0);
+    expect((await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" })).status).toBe(302);
+  });
+
+  it("a failed completeAuthorization leaves the row revoked and no unmarked connect audit", async () => {
+    const p = await ready("fail@example.com");
+    await env.OAUTH_KV.delete(`client:${p.clientId}`);
+    const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
+    expect(r.status).toBe(500);
+    expect(r.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await r.text()).not.toContain("Error");
+    const row = await env.DB.prepare("SELECT id, revoked_at FROM agent_connections WHERE client_id = ?").bind(p.clientId).first<{ id: string; revoked_at: number | null }>();
+    expect(row!.revoked_at).not.toBeNull();
+    const a = await env.DB.prepare("SELECT action, detail FROM audit_log WHERE target_id = ? ORDER BY id").bind(row!.id).all<{ action: string; detail: string }>();
+    expect(a.results.map((x) => x.action)).toEqual(["agent.connect", "agent.disconnect"]);
+    expect(JSON.parse(a.results[1]!.detail)).toEqual({ reason: "failed" });
+  });
+
+  it("refuses a GET that is not a top-level document (cross-site img or fetch)", async () => {
+    const { path } = await request();
+    const auth = await signInHeaders("dest@example.com");
+    for (const dest of ["image", "iframe", "empty"]) {
+      const r = await openConsent(path, { ...auth, "sec-fetch-dest": dest });
+      expect(r.res.status).toBe(403);
+      expect(r.handle).toBe("");
+    }
+    expect((await openConsent(path, { ...auth, "sec-fetch-dest": "document" })).res.status).toBe(200);
+  });
+
+  it("shows Unnamed client for a client without a name", async () => {
+    const p = await ready("noname@example.com", { name: null });
+    expect(p.html).toContain("Connect Unnamed client");
+    await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
+    expect(await env.DB.prepare("SELECT client_name FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("client_name")).toBe("Unnamed client");
+  });
+
+  for (const mode of ["access", "app"]) {
+    it(`a disabled person cannot approve (${mode} mode)`, async () => {
+      e.AUTH_MODE = mode;
+      const email = `disabled-${mode}@example.com`;
+      const p = await ready(email);
+      await env.DB.prepare("UPDATE users SET status = 'disabled' WHERE email = ?").bind(email).run();
+      const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
+      expect(r.status).toBe(403);
+      expect(await count(p.clientId)).toBe(0);
+      const g = await openConsent((await request()).path, p.auth);
+      expect(g.res.status).toBe(403);
+      expect(g.html).toContain("Your access has been turned off. Ask the owner.");
+    });
+  }
+
+  it("a concurrent double POST leaves exactly one active connection", async () => {
+    const p = await ready("double@example.com");
+    const form = { handle: p.handle, uid: p.uid, action: "approve", access: "read" };
+    const rs = await Promise.all([postConsent(p.auth, p.binding, form), postConsent(p.auth, p.binding, form)]);
+    const codes = rs.map((r) => r.status).sort();
+    expect(codes[0]).toBe(302);
+    expect([302, 400]).toContain(codes[1]);
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ? AND revoked_at IS NULL").bind(p.clientId).first("n")).toBe(1);
   });
 });
