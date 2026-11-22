@@ -65,7 +65,7 @@ describe("GET /authorize, access mode", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("referrer-policy")).toBe("same-origin") // no-referrer makes browsers send Origin: null on the approve POST, which the Origin check refuses;
     expect(res.headers.getSetCookie().some((c) => c.startsWith("__Host-"))).toBe(true);
     expect(html).toContain("Connect Claude");
     expect(html).toContain("Claude wants to use linkwarren as you. It will return to");
@@ -164,6 +164,7 @@ describe("POST /authorize", () => {
     const p = await ready("post5@example.com");
     const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "deny" });
     expect(r.status).toBe(302);
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer"); // the client never sees the consent URL
     const to = new URL(r.headers.get("location")!);
     expect(to.origin + to.pathname).toBe(CLAUDE_CB);
     expect(to.searchParams.get("error")).toBe("access_denied");

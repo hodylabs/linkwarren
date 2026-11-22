@@ -30,7 +30,9 @@ function html(body: string | null, status: number, o: { csp?: string; lib?: Head
   h.set("Cache-Control", "no-store");
   h.set("X-Frame-Options", "DENY");
   h.set("X-Content-Type-Options", "nosniff");
-  h.set("Referrer-Policy", "no-referrer");
+  // Pages: same-origin, because no-referrer makes browsers post the approve form with Origin: null (refused below).
+  // Redirects to the client: no-referrer, so the client never sees the consent URL.
+  h.set("Referrer-Policy", o.location ? "no-referrer" : "same-origin");
   h.set("Content-Security-Policy", o.csp ?? CSP("'none'"));
   if (o.location) h.set("Location", o.location);
   return new Response(body, { status, headers: h });
