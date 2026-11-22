@@ -74,6 +74,17 @@ describe("/auth body cap", () => {
 });
 
 describe("POST /auth/email: sending", () => {
+  it("uses the instance name in the subject and sender", async () => {
+    await addUser("a@example.com", "active");
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at, updated_by) VALUES ('instance.name', ?, 1, 'u')").bind(JSON.stringify("Acme")).run();
+    try {
+      expect((await ask("a@example.com")).status).toBe(202);
+      expect(fake.sent[0]!.subject).toBe("Your sign-in link for Acme");
+      expect(fake.sent[0]!.from).toBe("Acme <links@example.com>");
+    } finally {
+      await env.DB.prepare("DELETE FROM settings").run();
+    }
+  });
   it("mails an active user", async () => {
     await addUser("a@example.com", "active");
     const r = await ask("a@example.com");
@@ -83,7 +94,7 @@ describe("POST /auth/email: sending", () => {
     expect(fake.sent).toHaveLength(1);
     const m = fake.sent[0]!;
     expect(m.to).toEqual(["a@example.com"]);
-    expect(m.from).toBe("links@example.com");
+    expect(m.from).toBe("linkwarren <links@example.com>");
     expect(m.subject).toBe("Your sign-in link for linkwarren");
     expect(m.text).toMatch(LINK);
     expect(m.html).toMatch(LINK);

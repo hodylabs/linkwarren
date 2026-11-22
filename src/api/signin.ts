@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { resolveUser } from "../auth";
 import { emailConfigured, sendEmail, signInEmail } from "../email";
+import { getSettings } from "../settings";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { DAY_KEYS_SQL, LIMITS, blocked, hit, limitKey } from "../limits";
@@ -117,7 +118,7 @@ async function mailLink(env: Env, email: string, next: string | undefined, now: 
     const secret = newSecret();
     await env.DB.prepare("INSERT INTO login_tokens (token_hash, email, next, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
       .bind(await sha256Hex(secret), email, safeNext(next, origin(env)), now, now + TOKEN_TTL).run();
-    await sendEmail(env, { to: email, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}` }) });
+    await sendEmail(env, { to: email, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}`, name: (await getSettings(env)).name }) });
   } catch {
     console.warn("sign_in_mail_failed"); // codes only: a D1 error text could carry bound values
   }

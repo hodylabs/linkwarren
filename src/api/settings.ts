@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
+import { emailConfigured, sendEmail } from "../email";
+import { LIMITS, hitAll, limitKey } from "../limits";
 import { CfError, cfConfig, cfConfigFor, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
 import { syncDomain, syncErrorCode } from "../cf/attach";
 import { checkToken, sampleZone } from "../cf/perms";
@@ -227,4 +229,17 @@ settings.delete("/secrets/:name", async (c) => {
   if (!name) return c.json({ error: "not_found" }, 404);
   await c.env.DB.batch(deleteSecretStmts(c.env, c.var.user.id, name));
   return c.json(await secretStatus(c.env));
+});
+
+// Mails the caller's own address only. Order: config, the one-a-minute test limit, the instance mail cap, then the send.
+settings.post("/email/test", async (c) => {
+  if (!(await emailConfigured(c.env))) return c.json({ error: "email_not_configured" }, 409);
+  const hit = await hitAll(c.env, [{ key: limitKey.mailTest, limit: LIMITS.mailTest }, { key: limitKey.inst, limit: LIMITS.instance }]);
+  if (!hit.ok) return c.json({ error: hit.key === limitKey.mailTest ? "too_soon" : "too_many" }, 429);
+  const user = c.var.user;
+  const text = "This is a test email from linkwarren. If you can read it, email is working.";
+  const r = await sendEmail(c.env, { to: user.email, subject: "linkwarren test email", text: `${text}\n`, html: `<p>${text}</p>\n` });
+  if (!r.ok) return c.json({ error: "email_failed", reason: r.reason }, 502);
+  await auditStmt(c.env, { actorId: user.id, action: "email.test", targetType: "settings", targetId: "email", detail: {} }).run();
+  return c.json({ ok: true });
 });

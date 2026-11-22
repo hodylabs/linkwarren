@@ -340,3 +340,49 @@ describe("POST /api/settings/cloudflare/resync", () => {
     expect(await (await call("owner", "POST", `${S}/resync`)).json()).toEqual({ error: "cloudflare_not_configured" });
   });
 });
+
+describe("POST /api/settings/email/test", () => {
+  const T = "/api/settings/email/test";
+  const ok = () => vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ id: "1" }));
+  const audits = async () => (await all("SELECT detail FROM audit_log WHERE action = 'email.test'")).length;
+  beforeEach(async () => {
+    e.EMAIL_FROM = "links@example.com";
+    e.RESEND_API_KEY = "re_testkey12345";
+    await run("DELETE FROM auth_limits");
+  });
+  afterEach(() => { e.EMAIL_FROM = undefined; e.RESEND_API_KEY = undefined; });
+
+  it("a member gets 403", async () => {
+    expect((await call("a", "POST", T)).status).toBe(403);
+  });
+  it("without email config answers 409 email_not_configured", async () => {
+    e.RESEND_API_KEY = undefined;
+    const r = await call("owner", "POST", T);
+    expect([r.status, await r.json()]).toEqual([409, { error: "email_not_configured" }]);
+  });
+  it("sends to the caller only, audits once, and a second call within 60 s is too_soon", async () => {
+    const f = ok();
+    const r = await call("owner", "POST", T);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(String(f.mock.calls[0]![1]!.body)).to).toEqual([EMAIL.owner]);
+    const r2 = await call("owner", "POST", T);
+    expect([r2.status, await r2.json()]).toEqual([429, { error: "too_soon" }]);
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(await audits()).toBe(1);
+  });
+  it("the instance limiter at its cap refuses with too_many", async () => {
+    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('inst', ?, 50)", Math.floor(Date.now() / 1000));
+    const f = ok();
+    const r = await call("owner", "POST", T);
+    expect([r.status, await r.json()]).toEqual([429, { error: "too_many" }]);
+    expect(f).not.toHaveBeenCalled();
+    expect(await audits()).toBe(0);
+  });
+  it("a send failure is 502 email_failed with a reason and no audit", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}, { status: 422 }));
+    const r = await call("owner", "POST", T);
+    expect([r.status, await r.json()]).toEqual([502, { error: "email_failed", reason: "rejected" }]);
+    expect(await audits()).toBe(0);
+  });
+});

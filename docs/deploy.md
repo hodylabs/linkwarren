@@ -163,8 +163,11 @@ Sign-in links are sent through [Resend](https://resend.com) only.
 1. Add and verify your sending domain in Resend (the domain of `EMAIL_FROM`).
 2. In the domain's settings, turn **click tracking and open tracking off**. Click tracking would route the sign-in link through a third-party redirect, and open tracking adds an image.
 3. Create an API key with **sending access only**, restricted to that domain.
-4. Store it as a secret: `npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`. Never put it in `vars`.
-5. Set the var `EMAIL_FROM`, e.g. `links@example.com`.
+4. Give the key to linkwarren one of two ways: as a Worker secret (`npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`, never in `vars`; it wins when set), or pasted by the owner in the setup wizard, which stores it encrypted in the database (needs `SECRETS_KEY`).
+5. Set the var `EMAIL_FROM` to an address on that verified domain, e.g. `links@example.com`. Mail is sent as `<instance name> <EMAIL_FROM>`.
+6. In Settings, use **Send test email**: it mails the signed-in owner only, at most once a minute, and counts against the hourly instance cap.
+
+Invites and sign-in links use the instance name in the subject and sender. The invite says who invited the person, links only to the dashboard host over https, and adds an owner line for owners.
 
 How the link works: a person enters their email, and if it can sign in here (an active or invited person, or `OWNER_EMAIL` while there are no users yet) they get a link to `https://<dashboard host>/sign-in#token=...`. The token is in the URL fragment, so it never reaches server logs or a `Referer`. It works once and expires after 15 minutes. The answer is always the same `202`, whether or not a mail goes out, so the form never tells which addresses have accounts.
 

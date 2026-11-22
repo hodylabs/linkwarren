@@ -15,6 +15,10 @@ export const LIMITS = {
   apiDay: { n: 1000, s: 86400, utc: true },
   apiInstanceDay: { n: 3000, s: 86400, utc: true },
   authz: { n: 10, s: 3600 },
+  /** The settings test email, instance wide. */
+  mailTest: { n: 1, s: 60 },
+  /** One invite email per person per minute. */
+  inviteResend: { n: 1, s: 60 },
   /** KV deletes spent by bulk edits per UTC day: half the account's 1,000, the rest stays for single edits and OAuth. */
   bulkKvDay: { n: 500, s: 86400, utc: true },
 } as const;
@@ -43,6 +47,8 @@ export const limitKey = {
   apiInstanceDay: "api:day",
   /** GET and POST /authorize per person: each consent page and approval spends KV writes. */
   authz: (userId: string) => `authz:u:${userId}`,
+  mailTest: "mail:test",
+  invite: (userId: string) => `invite:${userId}`,
   /** Instance KV deletes spent by bulk edits, per UTC day (LIMITS.bulkKvDay). */
   bulkKv: "bulk:kv",
 } as const;
