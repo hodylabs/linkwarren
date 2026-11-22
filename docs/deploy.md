@@ -172,6 +172,15 @@ Instances deployed before the sign-in modes used Access. The default is now app 
 1. **Keep Access:** set `AUTH_MODE` to `access` before deploying this version. Nothing else changes.
 2. **Move to app mode later**, as its own step: set `EMAIL_FROM` and `RESEND_API_KEY`, apply the migrations, then set `AUTH_MODE` to `app` (or remove the `access` value; unset also means `app`) and deploy. Check that you can sign in, and only then remove the Access application.
 
+### Upgrading to bulk edit and forwarders (migration 0008)
+
+This version adds migration `0008_forwarders.sql`. **Apply it before you deploy the Worker.** It adds the column `links.forward_to`, the partial index `links_forward_to` and the index `slug_locks_lower` (case-insensitive lock lookups):
+
+1. `npx wrangler d1 migrations apply <db> --remote -c wrangler.instance.jsonc`
+2. Deploy: `npx wrangler deploy -c wrangler.instance.jsonc`
+
+Order matters. The new Worker reads `forward_to` on every link query and uses `slug_locks_lower` for every lock check. Without the migration, moves fail (the loop check errors and is swallowed, so every move is refused) and lock checks run without their index. The old Worker keeps working against the migrated database, so applying the migration first is always safe.
+
 ## Password-protected links
 
 A link with a password answers its short URL with a small form page instead of a redirect. The form posts back to the same URL (query included); a right password answers `303` to the destination (routes and query pass-through apply, the QR marker is stripped), with `Cache-Control: private, no-store` and `Referrer-Policy: no-referrer`. A wrong one shows the form again with a generic message (`401`). There is no unlock cookie: every visit asks again, and short hosts never set cookies. The unlock POST must carry `Origin: https://<short host>` and a form body of at most 2048 bytes (enough for 128 characters of any script), else `403`, `415`, `411` or `413`. Showing the form records no click; a right unlock records one.
@@ -197,6 +206,8 @@ HTTPS: a protected link is only served over HTTPS. A plain-HTTP GET or HEAD answ
 
 Hashing: PBKDF2-SHA256 with the iteration count from the optional var `PASSWORD_HASH_ITERATIONS` (integer, clamped to 1000..100000; unset uses the built-in default of 10000). The count is stored in each hash, so changing the var only affects passwords set afterwards; existing links keep working. One unlock attempt costs one PBKDF2 run. Measured live on Workers Free, 25000 iterations took 10 to 18 ms of CPU per unlock, over the Free plan's 10 ms per request. At 10000 an unlock usually takes 3 to 9 ms; a cold start measured about 14 ms, which the Free plan's burst allowance absorbed in testing. On the Free plan keep 10000; on Workers Paid you may raise it up to 100000. 10000 iterations is far below current guidance against offline cracking: if the D1 or KV contents ever leak, short passwords fall quickly, so use long ones.
 
+Bulk set: setting one password on many links hashes one link per request (a PBKDF2 run already fills the Free plan's 10 ms of CPU). The first link in the request gets the password; the others come back in `pending` and the caller sends the same request again with them (the dashboard does this by itself, an API client or agent loops on `pending`). Each link gets its own salt. Copying a protected link to another domain reuses the stored hash, so the copy has the same password and the same salt. Removing a password (`null`) needs no hashing and applies to all links at once.
+
 Caching: a browser that once got a `301` for a link keeps going straight to the old destination. A link that was `301` and now has a password can therefore still be skipped by those browsers (they already knew the destination), and a `301` link with routes sends returning visitors to the destination they got first, even after they travel or the routes change. Use `302` for links with routes.
 
 ## Agents and API
@@ -207,11 +218,20 @@ Agents (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) conne
 
 1. Create a second KV namespace for the OAuth state: `npx wrangler kv namespace create linkwarren-oauth`. Put its id in `wrangler.instance.jsonc` under the binding **`OAUTH_KV`** (the name is fixed by the OAuth library; see `wrangler.instance.example.jsonc`). Keep the binding on every deploy, also with MCP off: requests to the dashboard host pass through the OAuth library.
 2. Apply the migrations, which include `0007_agents.sql` (tables `api_keys`, `agent_connections`, `tool_calls`): `npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
-3. Set the var `MCP_ENABLED` to `"1"` and deploy. Check it: `curl -si -X POST https://<dashboard host>/mcp` answers `401` with a `WWW-Authenticate` header that contains `resource_metadata="https://<dashboard host>/.well-known/oauth-protected-resource/mcp"`, and `curl -s https://<dashboard host>/.well-known/oauth-authorization-server` answers JSON.
+3. Leave `MCP_ENABLED` unset and deploy, then sign in as the owner and turn agents on with the switch on the API & agents screen (see [MCP_ENABLED](#mcp_enabled)). Check it: `curl -si -X POST https://<dashboard host>/mcp` answers `401` with a `WWW-Authenticate` header that contains `resource_metadata="https://<dashboard host>/.well-known/oauth-protected-resource/mcp"`, and `curl -s https://<dashboard host>/.well-known/oauth-authorization-server` answers JSON.
 
 ### MCP_ENABLED
 
-MCP is **off unless `MCP_ENABLED` is exactly `"1"`**. Off, `/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (with or without `/mcp`) answer `404 {"error":"not_found"}` (`/authorize` in any URL encoding): no agent can register, connect, refresh or call a tool, and existing tokens stop working until it is turned back on. API keys on `/api/v1` keep working either way (revoke them in the dashboard). Turning it off is the kill switch after an incident; the API & agents screen then tells people that agent connections are off.
+Whether agents can connect is the owner's switch on the API & agents screen. It is stored in the D1 table `settings` (key `mcp.enabled`), changed only by the owner, and each change is written to the audit log as `settings.update`. Every signed-in person sees the state; only the owner can change it. The Worker caches the value for 10 seconds per isolate: the isolate that saved it applies it at once, others within 10 seconds.
+
+The var `MCP_ENABLED` is the instance-wide lock:
+
+- **Unset or `"1"`:** the owner's switch decides. With no saved choice, agents are on only when the var is `"1"`, otherwise off. So a fresh instance has agents off until the owner turns them on.
+- **Exactly `"0"`:** agents are locked off and the switch is disabled (a save answers `409 mcp_locked`). Any other value, for example `"false"`, does not lock: once a choice is saved, the switch decides.
+
+Off, `/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (with or without `/mcp`) answer `404 {"error":"not_found"}` (`/authorize` in any URL encoding): no agent can register, connect, refresh or call a tool. It revokes nothing: grants and connections stay, and turning agents back on makes them work again. If D1 cannot be read to decide, the same paths answer `503 {"error":"unavailable"}` (agents are treated as off). API keys on `/api/v1` are not affected either way.
+
+The kill switch after an incident is therefore the dashboard switch (instant in the saving isolate, within 10 seconds elsewhere), or `MCP_ENABLED="0"` plus a deploy. The API & agents screen tells people that agent connections are off. A token request already in flight when the switch is turned off can still complete (seen in the live check); the next call is refused.
 
 ### Access mode
 
@@ -263,6 +283,8 @@ Workers KV Free allows 1,000 writes, 1,000 deletes and 1,000 lists per day for t
 
 A refused refresh also deletes the grant (deletes column). So 100 agents in daily use cost about 200 writes a day for refreshes.
 
+**Bulk edits** spend KV deletes too (each changed link purges its cached redirect). They have their own counter, `bulk:kv`: **500 deletes per UTC day** for every bulk edit of the instance together (dashboard, API keys and MCP). That is half of the account's 1,000, so the rest stays for single edits and OAuth. Cost per link: delete, schedule, redirect and password 1 each; a forward move 2, plus 1 for each older forwarder it repoints; a copy 1. So about 500 single-link changes, or about 250 forward moves, a day. A request that does not fit in what is left is refused whole with `429 kv_budget` and writes nothing. Single edits are not counted against it. On Workers Paid raise `LIMITS.bulkKvDay` in `src/limits.ts`.
+
 D1 costs of the OAuth steps, on top of the limits below: each `/authorize` request (the approval page, then the approve or deny) reads 1 limiter row and writes 1; each token exchange (code or refresh) reads the connection and the person (1 read); approving the same client again writes 1 extra `UPDATE` to close the older connection. Domain lookups (`/api/v1/domains` and every MCP tool that resolves a domain) read only the person's domain memberships and the domains, never the links table. When the daily cap is reached, registering, connecting and refreshing fail with `503 {"error":"unavailable"}` until 00:00 UTC (agents drop off as their tokens expire), and redirect cache writes are skipped (redirects fall back to D1 reads). The limits below keep anonymous callers and loops from spending it.
 
 ### Limits
@@ -275,11 +297,22 @@ MCP tool calls (`/mcp`) and machine API requests (`/api/v1`) share the D1 limite
 - `POST /register`: 5 per hour per IP range, /24 or /48 (`reg:`), and 50 per UTC day for the instance (`reg:day`); over it `429` with `Retry-After: 3600`. Someone who rotates IP ranges can use up the 50 and block new connections for the rest of the UTC day; existing connections keep working. This is the accepted trade for keeping anonymous registration from spending the KV budget.
 - `/authorize`: 10 consent requests per hour per signed-in person (`authz:u:`), counting the approval page and the approve or deny, so a normal connect uses 2; over it the page answers `429`. If the limiter cannot be reached it answers `503`.
 
+Bulk edits (`POST /api/v1/links/bulk`, the MCP tool `bulk_links` and the dashboard) change up to **100 distinct links per request** (`400 too_many` above that; a list of up to 200 ids is accepted before duplicates are dropped):
+
+- The per-minute keys count a bulk request **once**.
+- The daily caps (`api:ud:`, `api:day`) count **one unit per link processed**, for keys and MCP: refused links and ids that do not exist count, links returned in `pending` do not. The middleware already charged one unit, the route charges the rest. So 100 links use a tenth of a person's daily cap. Over the cap the answer is `429 rate_limited`, and the middleware's unit is not refunded.
+- `bulk:kv` (see [KV budget](#kv-budget)): 500 KV deletes per UTC day for every caller, `429 kv_budget` when a request does not fit.
+- Nothing is refunded afterwards: a later `409 conflict`, or a `kv_budget` refusal that comes after the daily units were charged, keeps its charge.
+- Checking and charging are two steps, not one atomic operation: concurrent requests can overshoot a cap by at most one request's units. That is accepted.
+- Over MCP the route's `429` reaches the agent as the tool error `rate_limited`, not as the "Daily limit reached" text.
+- A request in which every link is refused reads rows but charges nothing on `bulk:kv`.
+
 Over a limit the API answers `429 {"error":"rate_limited"}`; an MCP tool answers "Rate limited, try again in a minute." or, for the two daily caps, "Daily limit reached, try again tomorrow (UTC).".
 
 D1 rows written, counted as under [Password-protected links](#password-protected-links) (a limiter key writes 2 rows per upsert, 3 when it is new in its window):
 
 - An MCP tool call that runs: 4 limiter upserts (8 rows, up to 12) plus one `tool_calls` row (3 rows: the row and its two indexes), so about 11, up to 15. The hourly cron deletes each `tool_calls` row after 90 days, 3 more rows then. A tool that changes a link also writes the link row, its indexes and the audit row.
+- A bulk edit writes about 3 to 8 rows per changed link (the link, its indexes, the audit row; a forward move adds the forwarder). Rows read per 100-link request: about 1,250 for a delete and about 1,450 for a forward move, up to 35 per link with address reclaim and repoint (counted on the batched statements; the final re-read of the changed links and the limiter reads add roughly 100 to 200 more).
 - An `/api/v1` request that runs: the same 4 limiter upserts (8, up to 12), plus 1 for `last_used_at` at most once a minute per key, plus the link and audit writes of a change.
 - A refused call writes nothing: a disconnected agent, a disabled person, or a call over a limit. Only the first refused MCP call in a window is counted and logged once (about 5 rows), so a client that keeps retrying costs no writes.
 
@@ -293,6 +326,12 @@ Against the Free plan's 100,000 rows written per day for the whole account: one 
 - **No IP allowlist.** Claude Code, Codex, Gemini CLI and scripts call from people's own machines, so a WAF rule limited to one vendor's IP ranges would break them. Protection is OAuth with sign-in on `/authorize`, hashed API keys, and the limits above.
 
 ## Behaviour to know
+
+- **Forwarders.** Moving a link to another domain with "forward" leaves its old address as a forwarder: a `302` to the new short link, one hop only (the query string is passed through unchanged, `POST` answers `405`, no click is recorded). A forwarder is never edited, only deleted. A QR scan of the old address is counted once, on the new link, under the link's current domain. Deleting the moved link also deletes its forwarders and locks their old slugs, so an old printed QR code ends on the not-found page and never lands on an unrelated link. Moving a link back to a domain where its own forwarder sits reclaims that address. A forward move costs 2 KV deletes plus 1 per older forwarder (see [KV budget](#kv-budget)).
+- **Move.** The target domain must be active (`400 target_not_active`); the person (or key) must be allowed to use it. A move needs an explicit choice for the old address, `forward` or `copy`; a copy makes an independent link on the target and leaves the original. Clicks recorded before a move stay under the old domain in domain-filtered analytics; the per-link chart follows the link.
+- **Who can delete a forwarder.** A forwarder is created by whoever moved the link, so when a manager or the owner moves a member's link, only they (and the owner) can delete the old address, not the member.
+- **Bulk delete is stricter than a single delete.** A link edited by someone else between loading and deleting comes back as `conflict` for that link and is not deleted.
+- **Double submit.** Two identical forward moves of the same link in the same second: the second request is rolled back whole with `409 conflict` and writes nothing.
 
 - Turning a domain case-sensitive changes which URLs match: `/Spring` and `/spring` become different links. Existing links keep their exact slug as the key. Turning it back off is refused while case twins conflict.
 - Cache staleness: redirects are cached in KV for up to about 5 minutes. After an edit or delete the old destination can still be served for that long in rare races, and KV deletes take up to about 60 seconds to propagate across locations.

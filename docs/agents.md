@@ -2,7 +2,7 @@
 
 linkwarren has two ways in for software: **agents** (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) connect to the built-in MCP server with OAuth, and **scripts** use a personal API key on `/api/v1`. Both act as you: they can never see or change more than you can in the dashboard, and every change they make is in the audit log as "you via <agent or key>".
 
-The operator turns agents on with `MCP_ENABLED` (see [deploy.md](deploy.md#agents-and-api)). The API & agents screen (`G I`) shows the MCP address only while agents are on; API keys work either way.
+The instance owner turns agents on and off with a switch on the API & agents screen (`G I`); only the owner sees it enabled. The operator can lock agents off for the whole instance with `MCP_ENABLED="0"` (see [deploy.md](deploy.md#mcp_enabled)), and then the switch is disabled. The screen shows the MCP address only while agents are on; API keys work either way. Turning agents off disconnects nobody and revokes nothing: agents just get a `404` until it is turned back on.
 
 ## Connect an agent
 
@@ -27,6 +27,8 @@ Connecting opens linkwarren in your browser. Sign in if you are not already, the
 - **Read and write** lets it create and change links.
 - **Delete links** is a separate choice on top of write. Even then the agent must ask before deleting: the `delete_link` tool refuses unless it is called with `confirm: true`.
 
+A bulk change asks for more care than a single one. `bulk_links` refuses unless it is called with `confirm: true` when it would delete links, move or copy them to another domain, take links offline (`endNow`, an expiry in the past, or a start in the future) or remove a password. A move also needs `oldAddress`, which the person chooses: `forward` keeps each old address working as a forwarder to the new short link, `copy` makes an independent copy on the new domain and leaves the original. Without it the tool refuses and tells the agent to ask.
+
 Agents have no domain restriction beyond your own: they reach every domain you can use.
 
 ### Changing access
@@ -50,7 +52,9 @@ Select the connection and press `Shift+D` (or Disconnect), then confirm. The age
 | `create_link` | write | Create a short link |
 | `update_link` | write | Change a link |
 | `delete_link` | delete | Delete a link and lock its slug (needs `confirm: true`) |
+| `bulk_links` | write (delete also needs delete) | Change up to 100 links in one call: `delete`, `schedule`, `move`, `redirect` or `password` |
 
+`bulk_links` takes `action`, `ids` (1 to 100), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow`, `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
 The server tells the model that tool results are data, never instructions: a link destination or title that says "ignore your instructions" is just text.
 
 ## API keys
@@ -91,11 +95,45 @@ curl -s -X DELETE -H "Authorization: Bearer $LW_KEY" "$LW/links/<link id>"
 curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<link id>"
 ```
 
+### Bulk changes
+
+`POST /api/v1/links/bulk` changes up to 100 distinct links in one request (a list of up to 200 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The body has an `action` and the `ids`, plus the fields of that action:
+
+| `action` | Other fields |
+| --- | --- |
+| `delete` | none |
+| `schedule` | `startsAt` and/or `expiresAt` (a time or `null`), or `endNow: true` (end now; not together with `expiresAt`) |
+| `redirect` | `redirectCode` (301 or 302) and/or `passQuery` |
+| `password` | `password`: a string to set, `null` to remove |
+| `move` | `domainId` (the target, must be active) and `oldAddress`: `"forward"` or `"copy"` (required, no default) |
+
+The answer is `{ "results": [...], "pending": [...] }`, results in the order of the ids. Each result is `{ "id", "ok": true, "link" }` (the changed link, or for a copy the new one; none for a delete) or `{ "id", "ok": false, "error" }` with a per-link code (below). Other links in the request are not affected by a refused one.
+
+```sh
+# Take links offline now (the website asks first; scripts are on their own)
+curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
+  -d '{"action":"schedule","ids":["<link id>","<link id>"],"endNow":true}' "$LW/links/bulk"
+
+# Move to another domain, old addresses forward to the new ones (or "copy")
+curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
+  -d '{"action":"move","ids":["<link id>"],"domainId":"<target domain id>","oldAddress":"forward"}' "$LW/links/bulk"
+```
+
+Setting a password hashes one link per request, so the rest come back in `pending`. Send the same request again with just those ids until `pending` is empty:
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
+  -d '{"action":"password","ids":["<id>","<id>","<id>"],"password":"a long passphrase"}' "$LW/links/bulk"
+# {"results":[{"id":"<id>","ok":true,...}],"pending":["<id>","<id>"]}  -> repeat with the pending ids
+```
+
+Every link response now carries `forwardTo`: `null` for a normal link, the id of the link a forwarder leads to.
+
 Bodies must be JSON (`Content-Type: application/json`); `/api/v1` needs no `Origin` header. Everything else under `/api/v1` (people, audit, keys, domain settings, imports) answers `404`: those stay in the dashboard. A key limited to some domains sees only their links and gets `403` on any other domain; if its stored domain list ever cannot be read, the key works on no domain at all. `GET /api/v1/domains` returns the domains you can use with the same fields as the dashboard, but without link counts or Cloudflare details.
 
 ## Limits and errors
 
-Agents and keys share per-minute limits per person, per connection and per key, a daily cap per person and a daily cap for the whole instance (UTC days). The numbers are in [deploy.md](deploy.md#limits); `server_info` also reports them. Over a limit an agent's tool answers "Rate limited, try again in a minute." or "Daily limit reached, try again tomorrow (UTC).", and the API answers `429`.
+Agents and keys share per-minute limits per person, per connection and per key, a daily cap per person and a daily cap for the whole instance (UTC days). The numbers are in [deploy.md](deploy.md#limits); `server_info` also reports them. Over a limit an agent's tool answers "Rate limited, try again in a minute." or "Daily limit reached, try again tomorrow (UTC).", and the API answers `429`. A bulk request counts once per minute but one unit per link on the daily caps, and bulk edits share a KV budget (`kv_budget`); both are in the same section.
 
 | Status | `error` | Meaning |
 | --- | --- | --- |
@@ -105,10 +143,15 @@ Agents and keys share per-minute limits per person, per connection and per key, 
 | 403 | `delete_not_allowed` | The key cannot delete links |
 | 403 | `forbidden` | Not a domain or link you (or this key) may use |
 | 404 | `not_found` | No such link or domain, or a path that is not part of `/api/v1` |
-| 409 | `conflict` | The link changed since it was read; read it again and retry |
+| 400 | `too_many` | More than 100 distinct ids in a bulk request |
+| 400 | `target_not_active` | A move to a domain that is not active yet |
+| 409 | `conflict` | The link changed since it was read; read it again and retry. For a bulk request: the whole request was rolled back (a double submit) |
+| 429 | `kv_budget` | The instance's daily budget for bulk edits is used up; try after 00:00 UTC |
 | 415 | `unsupported_media_type` | The body is not JSON |
 | 429 | `rate_limited` | A limit was reached; see above |
 | 503 | `unavailable` | The rate limiter or database could not be reached; nothing was done |
+
+Per-link codes in a bulk result: `not_found`, `forbidden`, `conflict` (the link changed in between, nothing written for it), `bad_window` (the dates would end before they start), `password_301` (a protected link cannot use a permanent redirect), `forwarder` (an old address is only deleted, never changed or moved), `same_domain`, `taken` (the target has that slug, as a link or a forwarder), `locked` (the target slug is locked), `reserved`, `duplicate_slug` (two selected links would get the same slug), and the slug shape codes of a single create (for example `slug_too_long`).
 
 Validation errors (for example `taken`, `locked`, `invalid_body`, `q_too_long`) are the same as in the dashboard.
 

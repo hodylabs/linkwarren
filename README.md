@@ -10,6 +10,10 @@ Copyright (C) 2026 Hody LLC
 
 The name and logo are covered by `TRADEMARK.md`. To contribute, read `CONTRIBUTING.md`.
 
+## Features
+
+Multi-domain slugs, link rules (schedule, password, routing), analytics, bulk edit on the Links page, moving links between domains with forwarding of the old address, and an owner switch for agent access. See `docs/spec.md`.
+
 ## Privacy
 
 Short links set no cookies and run no scripts. What linkwarren records per click, and what it never stores, is in `docs/privacy.md`.

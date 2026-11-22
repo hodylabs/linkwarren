@@ -28,6 +28,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 
 **Links**
 - Destination `http` or `https` only. Redirect **302 by default** (301 is opt-in per link), so a printed QR code can change destination.
+- **Bulk edit:** select rows on the Links page (keyboard, mouse or long-press) and delete, schedule, move, set the redirect type and options, set or remove a password, copy short URLs or export CSV; at most 100 links per request. Moving to another domain needs a choice: **forward** (the old address becomes a forwarder, one hop to the new short link) or **copy**. Deleting a link also deletes its forwarders and locks their slugs. Same rules as single edits; same actions from the API (`POST /api/v1/links/bulk`) and MCP (`bulk_links`).
 - Rules: schedule (starts at), expiry, password, country and device routing, campaign (UTM) builder, pass query string through.
 - QR codes always encode the short link, never the destination.
 
@@ -42,7 +43,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - Raw click detail kept 90 days (Analytics Engine), then daily totals in D1.
 
 **Agents and API**
-- MCP built into the app at `https://<dashboard host>/mcp` (off unless `MCP_ENABLED=1`), OAuth per the MCP standard Kind A: remote, read-only by default, read+write chosen on the approval screen, acts as the approving person, every tool call audited by tool name, revocable. Works from Claude, ChatGPT, Claude Code and Codex.
+- MCP built into the app at `https://<dashboard host>/mcp` (the owner turns it on or off on the API & agents screen; `MCP_ENABLED=0` locks it off for the instance), OAuth per the MCP standard Kind A: remote, read-only by default, read+write chosen on the approval screen, acts as the approving person, every tool call audited by tool name, revocable. Works from Claude, ChatGPT, Claude Code and Codex.
 - Personal API keys with scopes, domain limits and expiry for scripts, on `/api/v1` only. Connect guide: `docs/agents.md`.
 
 **Dashboard**
@@ -61,7 +62,7 @@ One Worker serves everything. The request **host** decides the path:
 - `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints, machine API under `/api/v1`. Signed in by the app or by Cloudflare Access (`AUTH_MODE`).
 - Any other host → the redirect handler, looking up `(domain for host, slug)`.
 
-Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.
+Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals, and a small `settings` table; forwarders are rows in `links` with `forward_to` set, and the agents on/off switch is the `settings` row `mcp.enabled`). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.
 
 Runtime dependencies kept to seven: `hono` (routing), `jose` (Access JWT), `zod` (input validation), `@simplewebauthn/server` (passkeys), and for MCP `@cloudflare/workers-oauth-provider`, `agents` and `@modelcontextprotocol/server`.
 
@@ -77,6 +78,7 @@ Each stage ships through the usual loop: branch, review, PR, merge, deploy to a 
 | S4 Analytics | Analytics Engine writes, bot filtering, SQL API queries, daily rollups, analytics screen with filters, audit retention purge | Clicks on the test domain show up with correct splits |
 | S5 Link rules | Password, country/device routing, UTM builder, QR (SVG/PNG) | Each rule verified with curl and a phone scan |
 | S6 Agents + API | MCP with OAuth (read / read+write), tools, API keys, "via" audit | Connect from claude.ai and Claude Code; scopes live-tested |
+| **S6b Bulk edit** | Select and bulk-change links, move between domains with forwarders, bulk API and MCP tool, owner switch for agents (migration 0008) | A move with forwarding: the old address answers one `302` to the new link, one click recorded; delete of the moved link answers the not-found page on both; the switch turns `/mcp` off and on |
 | S7 People + setup | Invites (Resend), settings screens, first-run setup wizard | Fresh instance set up from zero in the wizard |
 | S8 Migration + release | Import from legacy (selected domains), verify every old URL, switch DNS per domain, docs, release | Every old URL answers the same `Location` as before. Also the one-click deploy, built last: a Deploy to Cloudflare button that forks the repo and provisions D1, KV and the Worker in the user's own account, plus an `npm run setup` terminal fallback; both end in the first-run wizard |
 

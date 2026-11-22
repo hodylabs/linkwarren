@@ -98,6 +98,10 @@ A bare domain such as `example.com` (or `example.co.uk`) has `instructions.apex:
 
 The first 100 custom hostnames on the SaaS zone are free; Cloudflare bills each one after that. Every outside domain uses one, including pending ones, until the domain is rejected. linkwarren refuses with `hostname_limit` from the 95th on, so it never adds a billed custom hostname; other Cloudflare charges depend on the account's own plan and settings.
 
+## Moving links between domains
+
+A link can be moved (or copied) only to an **active** domain, one the person may use; pending, rejected and disabled domains refuse it with `target_not_active`. Moving with "forward" keeps the old address working as a forwarder, and deleting the moved link later deletes its forwarders and locks their old slugs, so an old printed QR code never lands on a link someone else creates there. A lock on a target slug (case-insensitive) blocks a move to it. Details are in [deploy.md](deploy.md#behaviour-to-know).
+
 ## Case-sensitive slugs
 
 Turning case-sensitivity on for a domain changes which public URLs match: `/Spring` stops reaching the link `spring`, and `/Spring` and `/spring` can become different links. Existing links keep their exact slug. Turning it back off is refused while two slugs differ only by case.
