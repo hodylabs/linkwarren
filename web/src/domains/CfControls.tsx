@@ -78,7 +78,7 @@ export function CfControls({ domain, controlsEnabled }: { domain: Domain; contro
       <h3>Cloudflare</h3>
       <div className="field stack">
         <span id="cfc-level">Security level</span>
-        <Seg options={LEVELS} value={level} label="Security level" onChange={setLevel} />
+        <Seg wrap options={LEVELS} value={level} label="Security level" onChange={setLevel} />
       </div>
       <div className="field">
         <label htmlFor="cfc-rate">Rate limit</label>

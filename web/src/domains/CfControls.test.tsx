@@ -127,4 +127,9 @@ describe("CfControls", () => {
     await user.click(screen.getByRole("button", { name: /^Save/ }));
     await waitFor(() => expect(api.calls.filter((c) => c.method === "GET" && c.path === "/api/domains").length).toBeGreaterThan(1));
   });
+
+  it("the wrapping Seg is a .seg.wrap group; other Seg uses stay plain", () => {
+    boot(dom("account", "medium"), true);
+    expect(document.querySelector('[aria-label="Security level"]')!.className).toBe("seg wrap");
+  });
 });
