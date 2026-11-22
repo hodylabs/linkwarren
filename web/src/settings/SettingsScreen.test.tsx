@@ -294,6 +294,12 @@ describe("Settings sections", () => {
     expect(narrow).toContain("grid-template-rows:max-content minmax(0,1fr)");
     expect(/\.sblock input,\.sblock select\{font-size:16px\}/.test(css)).toBe(true);
   });
+
+  it("at phone width a switch has a 44 px tall touch target (26 px track plus a 9 px hit area above and below)", () => {
+    const phone = css.slice(css.lastIndexOf("@media", css.indexOf(".sw{width:44px;height:26px}")));
+    expect(phone).toContain(".sw{width:44px;height:26px}");
+    expect(/\.sw::before\{[^}]*inset:-9px 0[^}]*\}/.test(phone)).toBe(true);
+  });
 });
 
 describe("Settings: unsaved drafts and section keys (Task 11)", () => {

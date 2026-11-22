@@ -141,6 +141,10 @@ describe("describeAudit agents and keys", () => {
     expect(pd({ action: "user.disable", targetType: "user", targetId: "gone", detail: { email: "jo@example.com" } }).code).toBe("jo@example.com");
     expect(pd({ action: "user.role", targetType: "user", targetId: "gone", detail: { email: "jo@example.com", to: "owner" } }).code).toBe("jo@example.com");
   });
+  it("user.role names the domains that moved to the actor on a demote", () => {
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "owner", to: "member", movedDomains: ["go.test", "s.test"] } }).suffix)
+      .toBe(" a member and took over go.test, s.test");
+  });
   it("user.remove names who got their links", () => {
     expect(pd({ action: "user.remove", detail: { email: "jo@example.com", role: "member", transferTo: "ub", links: 3, domains: [] } }))
       .toMatchObject({ text: "removed", code: "jo@example.com", suffix: ", moving their links to Bea" });

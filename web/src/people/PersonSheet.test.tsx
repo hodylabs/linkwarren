@@ -77,6 +77,9 @@ describe("Person sheet", () => {
     expect(within(dlg).getByText("nw.link")).toBeTruthy();
     expect(within(dlg).getByText("dana.test")).toBeTruthy();
     expect(within(dlg).queryAllByRole("switch")).toHaveLength(0);
+    // Never invited (an active person): "Added", not "Invited".
+    expect(dlg.textContent).toMatch(/Added [A-Z][a-z]{2} \d+/);
+    expect(dlg.textContent).not.toContain("Invited");
   });
 
   it("invited: shows the invited date, R re-sends once", async () => {

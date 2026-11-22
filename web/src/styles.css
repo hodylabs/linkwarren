@@ -466,6 +466,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .btn,.chip,.nav a,.search,.sug,.p-item,.seg button{min-height:44px}
   .chip.only .btn{min-height:44px;min-width:44px}
   .sw{width:44px;height:26px}
+  .sw::before{content:"";position:absolute;inset:-9px 0} /* 44 px tall touch target around the 26 px track */
   .sw::after{width:22px;height:22px}
   .sw.on::after{left:20px}
   input,select,textarea,.input,.ctl input,.ctl select,.ctl .pre,.p-in input,.sched input,.utm .ctl input,.pw input,.rt input{font-size:16px}

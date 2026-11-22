@@ -50,7 +50,10 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     }
     case "user.invite_resend": return done("re-sent the invite to", person);
     case "user.revoke": return done("revoked the invite for", person);
-    case "user.role": return done("made", person, a.detail.to === "owner" ? " an owner" : " a member");
+    case "user.role": {
+      const moved = Array.isArray(a.detail.movedDomains) ? a.detail.movedDomains.filter((h): h is string => typeof h === "string") : [];
+      return done("made", person, `${a.detail.to === "owner" ? " an owner" : " a member"}${moved.length ? ` and took over ${moved.join(", ")}` : ""}`);
+    }
     case "user.disable": return done("turned off access for", person);
     case "user.enable": return done("turned on access for", person);
     case "user.remove": {

@@ -132,7 +132,7 @@ export function PersonSheet({ id }: { id: string }) {
       <div className="sh-body">
         <p>
           {u.name && <>{u.email}<br /></>}
-          {!self && <small>Invited {shortDate(u.createdAt)}</small>}
+          {!self && <small>{u.status === "invited" ? "Invited" : "Added"} {shortDate(u.createdAt)}</small>}
         </p>
         <div className="f">
           <h3 className="lbl">Role</h3>
