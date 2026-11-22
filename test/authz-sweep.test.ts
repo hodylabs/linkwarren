@@ -46,7 +46,7 @@ const ROUTES: [M, string, Need, string?][] = [
   ["GET", "/api/audit", ["audit"]],
   ["GET", "/api/analytics", null], ["GET", "/api/analytics/links", null],
   ["GET", "/api/settings", ["settings"]], ["PATCH", "/api/settings", ["settings"]], ["PUT", "/api/settings/logo", ["settings"]], ["DELETE", "/api/settings/logo", ["settings"]],
-  ["GET", "/api/settings/cloudflare", ["settings"]], ["PATCH", "/api/settings/cloudflare", ["settings"]], ["POST", "/api/settings/cloudflare/check", "owner"],
+  ["GET", "/api/settings/cloudflare", ["settings", "domains.manage"]], ["PATCH", "/api/settings/cloudflare", ["settings"]], ["POST", "/api/settings/cloudflare/check", "owner"],
   ["POST", "/api/settings/cloudflare/setup", ["settings"]], ["POST", "/api/settings/cloudflare/resync", ["settings"]],
   ["GET", "/api/settings/secrets", ["settings"]], ["PUT", "/api/settings/secrets/resend", "owner"], ["DELETE", "/api/settings/secrets/resend", "owner"],
   ["POST", "/api/settings/email/test", ["settings"]],
@@ -61,7 +61,7 @@ const ROUTES: [M, string, Need, string?][] = [
   ["POST", "/api/export/start", ["data"]], ["POST", "/api/export/page", ["data"]],
 ];
 /** Ruled rows the code does not match yet; each has its own it.fails below, so the suite turns red once the fix lands. */
-const PENDING = new Set(["PUT /api/agents/mcp"]); // Task 8 fix pending: the MCP switch moves from owner only to `settings`
+const PENDING = new Set<string>(); // rows whose ruled behaviour is not built yet (none)
 /** The rows that were owner only before roles (the pre-S8 sweep's ownerOnly column): Member must still be refused on each. */
 const OLD_OWNER_ONLY = [
   "PATCH /api/domains/x/cloudflare", "POST /api/domains/x/approve", "POST /api/import", "GET /api/users", "PATCH /api/users/x", "DELETE /api/users/x",
@@ -179,9 +179,7 @@ describe("permissions by role (S8)", () => {
     await sweep(perms, login);
   });
 
-  // Task 8 fix pending: PUT /api/agents/mcp is ruled `settings` (R5) but still checks the owner role. When the fix lands this
-  // it.fails turns red: drop it and the PENDING entry.
-  it.fails("PUT /api/agents/mcp: a non-owner role with settings is not refused (Task 8 fix pending)", async () => {
+  it("PUT /api/agents/mcp: a non-owner role with settings is not refused", async () => {
     const u = await onRole(["settings"]);
     const r = await req("PUT", "/api/agents/mcp", { cookie: await sessionFor(u), "content-type": "application/json" }, JSON.stringify({ on: true }));
     expect(r.status).not.toBe(403);
