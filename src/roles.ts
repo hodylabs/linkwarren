@@ -21,6 +21,12 @@ export function parsePerms(text: unknown): Perm[] {
 
 export const can = (user: UserRow, p: Perm): boolean => user.status === "active" && (user.role === "owner" || user.perms.includes(p));
 
+/** Hono middleware: 403 forbidden unless the person has `p`, before any body parsing or lookup. */
+export const requirePerm = (p: Perm) => async (c: { var: { user: UserRow }; json: (b: unknown, s: 403) => Response }, next: () => Promise<void>) => {
+  if (!can(c.var.user, p)) return c.json({ error: "forbidden" }, 403);
+  await next();
+};
+
 /** The actor is active and has every key of `perms` (an owner has all). Same answer as roleWithin. */
 export const within = (perms: readonly Perm[], actor: UserRow): boolean =>
   actor.status === "active" && (actor.role === "owner" || perms.every((p) => actor.perms.includes(p)));

@@ -34,7 +34,7 @@ const membersBody = z.strictObject({ userIds: z.array(z.string().min(1)).max(100
 
 const exists = (id: string) => ({ sql: "EXISTS (SELECT 1 FROM domains WHERE id = ?)", binds: [id] });
 /** One read of a write's guard, to tell a refused write apart from a lost race. */
-const holds = async (env: Env, g: Guard) => !!(await env.DB.prepare(`SELECT ${g.sql} AS ok`).bind(...g.binds).first<{ ok: number }>())?.ok;
+export const holds = async (env: Env, g: Guard) => !!(await env.DB.prepare(`SELECT ${g.sql} AS ok`).bind(...g.binds).first<{ ok: number }>())?.ok;
 const manages = (user: UserRow) => actorCan(user.id, "domains.manage");
 /** The SQL re-check of canManageDomain for a write: none for an owner or the domain's own owner (baseline, as before), domains.manage otherwise. */
 const manageGuard = (user: UserRow, d: DomainRow): Guard | null => (user.role === "owner" || d.ownerId === user.id ? null : manages(user));

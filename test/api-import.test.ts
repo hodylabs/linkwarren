@@ -308,3 +308,84 @@ describe("N2: a file that does not say which links had a password", () => {
     expect((await o(body([], [D("only.test")]))).status).toBe(200);
   });
 });
+
+// S8 R12: `data` imports; a non-owner's import is refused before any write if it would create a domain without
+// domains.manage, or write onto a domain the person cannot use (or change one they cannot manage).
+describe("import by permission (S8 R12)", () => {
+  const dm = (id: string, host: string, type: string, status = "active", owner = "uo") =>
+    run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,?,?,?,1)", id, host, type, status, owner);
+  const as = (b: unknown, q = "") => imp("d@example.com", { confirmNoPasswords: true, ...(b as object) }, q);
+  const L = (host: string | null, slug: string) => ({ host, slug, destination: `https://example.org/${slug}` });
+  const nothing = async () => expect([await count("domains"), await count("links"), await count("slug_locks"), await count("audit_log")]).toEqual([4, 0, 0, 0]);
+  beforeEach(async () => {
+    await run("DELETE FROM roles WHERE builtin = 0");
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('dt','Data','[\"data\"]',0,1,1), ('dd','Data and domains','[\"data\",\"domains.manage\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('ud','d@example.com','member','dt','active',1)");
+    await dm("dmain", "main.example", "main");
+    await dm("dsh", "shared.example", "shared");
+    await dm("doff", "off.example", "main", "disabled");
+    await dm("dpriv", "mine.example", "private", "active", "ud");
+  });
+
+  it("a data role imports links onto the main domain and its own private domain", async () => {
+    const r = await as(body([L(null, "a"), L("mine.example", "b")]));
+    expect(r.status).toBe(200);
+    expect(await rep(r)).toMatchObject({ created: 2, conflicts: [], domainsCreated: [] });
+    expect(await all("SELECT slug, created_by FROM links ORDER BY slug")).toEqual([{ slug: "a", created_by: "ud" }, { slug: "b", created_by: "ud" }]);
+    expect(await all("SELECT actor_id FROM audit_log WHERE action = 'import.run'")).toEqual([{ actor_id: "ud" }]);
+  });
+
+  it("refused 403 with nothing written: a new domain without domains.manage, an unusable or disabled domain, a redirect on a domain it cannot manage", async () => {
+    for (const b of [body([L("new.example", "a")]), body([], [D("new.example")]), body([L("shared.example", "a")]), body([L("off.example", "a")]),
+      body([L(null, "a")], [D("main.example", "https://example.org/home")]), body([L(null, "a"), L("new.example", "b")])]) {
+      for (const q of ["", "?dryRun=1"]) {
+        const r = await as(b, q);
+        expect([q, r.status, await r.json()]).toEqual([q, 403, { error: "forbidden" }]);
+      }
+    }
+    await nothing();
+  });
+
+  it("a member of the shared domain imports onto it; data with domains.manage creates domains", async () => {
+    await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dsh','ud')");
+    expect(await rep(await as(body([L("shared.example", "s")])))).toMatchObject({ created: 1 });
+    await run("UPDATE users SET role_id = 'dd' WHERE id = 'ud'");
+    const r = await as(body([L("new.example", "n")], [D("main.example", "https://example.org/home")]));
+    expect(r.status).toBe(200);
+    expect(await rep(r)).toMatchObject({ created: 1, domainsCreated: ["new.example"] });
+    expect(await all("SELECT type, status, owner_id FROM domains WHERE host = 'new.example'")).toEqual([{ type: "private", status: "active", owner_id: "ud" }]);
+    expect(await all("SELECT bare_redirect FROM domains WHERE id = 'dmain'")).toEqual([{ bare_redirect: "https://example.org/home" }]);
+  });
+
+  it("a member without data gets 403 before the body is read", async () => {
+    const r = await imp("m@example.com", "not json");
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+  });
+
+  it("data lost between the checks and the write: 403 and nothing written", async () => {
+    const restore = beforeBatch(2, () => run("UPDATE roles SET perms = '[]' WHERE id = 'dt'"));
+    let r: Response;
+    try { r = await as(body([L(null, "a"), L("mine.example", "b")])); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    await nothing();
+  });
+
+  it("domains.manage lost before the write: no domain is created", async () => {
+    await run("UPDATE users SET role_id = 'dd' WHERE id = 'ud'");
+    const restore = beforeBatch(2, () => run("UPDATE roles SET perms = '[\"data\"]' WHERE id = 'dd'"));
+    let r: Response;
+    try { r = await as(body([L("new.example", "n")])); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    await nothing();
+  });
+
+  it("membership lost before the write: no link lands on the shared domain", async () => {
+    await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dsh','ud')");
+    const restore = beforeBatch(2, () => run("DELETE FROM domain_members"));
+    let r: Response;
+    try { r = await as(body([L("shared.example", "s")])); } finally { restore(); }
+    expect(r.status).toBe(200);
+    expect(await rep(r)).toMatchObject({ created: 0 });
+    expect(await count("links")).toBe(0);
+  });
+});

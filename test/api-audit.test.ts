@@ -18,8 +18,16 @@ beforeEach(async () => {
 });
 
 describe("GET /api/audit", () => {
-  it("owner only", async () => {
-    expect((await get("", "a@example.com")).status).toBe(403);
+  it("owner and the audit permission only (S8): a member 403, an audit role reads it", async () => {
+    expect([(await get("", "a@example.com")).status, await (await get("", "a@example.com")).json()]).toEqual([403, { error: "forbidden" }]);
+    await run("DELETE FROM roles WHERE builtin = 0");
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('au','Auditor','[\"audit\"]',0,1,1), ('ot','Other','[\"settings\",\"data\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('uu','u@example.com','member','au','active',1), ('ux','x@example.com','member','ot','active',1)");
+    await seed("uo", "link.create", "link");
+    const r = await get("", "u@example.com");
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as Page).items.map((i) => i.action)).toEqual(["link.create"]);
+    expect((await get("", "x@example.com")).status).toBe(403);
   });
   it("paginates 50 newest first, then the rest with next null", async () => {
     for (let i = 0; i < 60; i++) await seed("uo", "link.create", "link");

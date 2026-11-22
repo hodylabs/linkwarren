@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { auditStmt } from "./audit";
 import type { Env } from "./env";
+import { actorCan } from "./roles";
 
 export type InstanceSettings = {
   name: string | null;
@@ -54,11 +55,13 @@ export function parseSettings(rows: { key: string; value: string }[]): InstanceS
  * `when`: an extra SQL condition every upsert and audit also needs (e.g. the chosen main domain is still valid). */
 export function settingStmts(env: Env, actorId: string, patch: Partial<InstanceSettings>, when?: { sql: string; binds: unknown[] }): D1PreparedStatement[] {
   const now = Math.floor(Date.now() / 1000);
+  // S8 R5: every write re-checks the settings permission in its own statement, so one lost mid-request writes nothing.
+  const may = actorCan(actorId, "settings");
+  const w = ` AND ${may.sql}${when ? ` AND ${when.sql}` : ""}`;
+  const wb = [...may.binds, ...(when?.binds ?? [])];
   return NAMES.filter((n) => patch[n] !== undefined).flatMap((n) => {
     const key = FIELDS[n].key;
     const value = patch[n] ?? null;
-    const w = when ? ` AND ${when.sql}` : "";
-    const wb = when?.binds ?? [];
     const audit = (guard: { sql: string; binds: unknown[] }) =>
       auditStmt(env, { actorId, action: "settings.update", targetType: "settings", targetId: key, detail: { key, value } }, { sql: guard.sql + w, binds: [...guard.binds, ...wb] });
     if (value === null) return [env.DB.prepare(`DELETE FROM settings WHERE key = ?${w}`).bind(key, ...wb), audit({ sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: [key] })];

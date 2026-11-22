@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
+import { actorCan, requirePerm } from "../roles";
 import type { UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
@@ -13,7 +14,9 @@ export const exportApi = new Hono<E>();
  * `computed`: name -> boolean SQL expression. `where`: a fixed filter. SQL is built only from this constant, never from input.
  */
 export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]; computed?: Record<string, string>; where?: string; analytics?: true }[] = [
-  { table: "users", columns: ["id", "email", "name", "role", "status", "created_at"] },
+  // Roles before users: a restore inserts them before users.role_id refers to them (S8).
+  { table: "roles", columns: ["id", "name", "perms", "builtin", "created_at", "updated_at", "updated_by"] },
+  { table: "users", columns: ["id", "email", "name", "role", "role_id", "status", "created_at"] },
   { table: "domains", columns: ["id", "host", "type", "status", "owner_id", "bare_redirect", "notfound_redirect", "case_sensitive", "noindex", "reserved_extra", "created_at"] },
   { table: "domain_cf", columns: ["domain_id", "kind", "zone_id", "dns_record_id", "route_id", "hostname_id", "dns", "ownership", "certificate", "errors", "last_error", "checked_at", "security_level", "rate_limit", "updated_at"] },
   { table: "domain_members", columns: ["domain_id", "user_id"] },
@@ -41,10 +44,8 @@ const RUN_TTL_S = 6 * 3600;
 const q = (id: string) => `"${id}"`;
 const outColumns = (t: (typeof EXPORT_TABLES)[number]) => [...t.columns, ...Object.keys(t.computed ?? {})];
 
-exportApi.use("*", async (c, next) => {
-  if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
-  await next();
-});
+// S8 R12: `data` exports the whole instance; every page re-checks it.
+exportApi.use("*", requirePerm("data"));
 
 /** R7 logo (KV `instance:logo`, metadata `{ type }`) as base64, or null. */
 async function logo(env: Env): Promise<{ type: string; data: string } | null> {
@@ -68,11 +69,14 @@ exportApi.post("/start", async (c) => {
   const estimatedReads = rows.reduce((a, b) => a + b, 0);
   const run = crypto.randomUUID(), now = Math.floor(Date.now() / 1000);
   const names = tables.map((t) => t.table);
-  await c.env.DB.batch([
+  // The run and its audit re-check `data` in SQL: lost meanwhile, neither is written.
+  const may = actorCan(c.var.user.id, "data");
+  const [, lock] = await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM locks WHERE key LIKE 'export:%' AND until <= ?").bind(now),
-    c.env.DB.prepare("INSERT INTO locks (key, token, until) VALUES (?,?,?)").bind(`export:${run}`, `${c.var.user.id}|${includeAnalytics ? 1 : 0}`, now + RUN_TTL_S),
-    auditStmt(c.env, { actorId: c.var.user.id, action: "export.run", targetType: "instance", targetId: "export", detail: { tables: names, includeAnalytics, estimatedReads } }),
+    c.env.DB.prepare(`INSERT INTO locks (key, token, until) SELECT ?,?,? WHERE ${may.sql}`).bind(`export:${run}`, `${c.var.user.id}|${includeAnalytics ? 1 : 0}`, now + RUN_TTL_S, ...may.binds),
+    auditStmt(c.env, { actorId: c.var.user.id, action: "export.run", targetType: "instance", targetId: "export", detail: { tables: names, includeAnalytics, estimatedReads } }, may),
   ]);
+  if (!lock!.meta.changes) return c.json({ error: "forbidden" }, 403);
   return c.json({
     format: "linkwarren-export",
     version: 1,

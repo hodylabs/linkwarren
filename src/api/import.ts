@@ -5,6 +5,8 @@ import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { parseSettings, settingsQ } from "../settings";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
+import { canManageDomain, usableDomainsSql } from "../perm";
+import { actorCan, can, type Guard } from "../roles";
 import { checkDestination, checkSlugShape, slugKey } from "../validate";
 import { hostError } from "./domains";
 import { purgeHost, purgeMany } from "./shared";
@@ -45,7 +47,8 @@ type Out = { kind: "create"; sql: "link" | "lock" } | { kind: "skip" } | { kind:
 
 importApi.post("/", async (c) => {
   const user = c.var.user;
-  if (user.role !== "owner") return c.json({ error: "forbidden" }, 403);
+  // S8 R12: import is the `data` permission, checked before the body is read.
+  if (!can(user, "data")) return c.json({ error: "forbidden" }, 403);
   const parsed = body.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid_body" }, 400);
   const b = parsed.data;
@@ -108,11 +111,19 @@ importApi.post("/", async (c) => {
   for (const d of doms.values()) { live.set(d.id, new Map()); locks.set(d.id, new Set()); }
   // Two queries in total, whatever the domain count: ids go in as one JSON bind (D1 caps queries per invocation and binds per query).
   const reused = JSON.stringify([...doms.values()].filter((d) => !d.isNew).map((d) => d.id));
-  const [liveRows, lockRows, setRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string }>([
+  const [liveRows, lockRows, setRows, usableRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string; id?: string }>([
     c.env.DB.prepare("SELECT domain_id, slug_key, url FROM links WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
     c.env.DB.prepare("SELECT domain_id, slug_key FROM slug_locks WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
     settingsQ(c.env),
+    c.env.DB.prepare(usableDomainsSql).bind(user.id),
   ]);
+  // S8 R12, before any write and in a dry run too: a new domain needs domains.manage; every existing domain the file names must
+  // be one the person can use, and a redirect filled in needs the right to manage that domain.
+  const usable = new Set(usableRows!.results.map((r) => r.id!));
+  const named = [...doms.values()];
+  if (named.some((d) => d.isNew) && !can(user, "domains.manage")) return c.json({ error: "forbidden" }, 403);
+  if (named.some((d) => !d.isNew && (!usable.has(d.id) || ((d.fillBare || d.fillNf) && !canManageDomain(user, existing.get(d.host)!)))))
+    return c.json({ error: "forbidden" }, 403);
   // The import format carries no redirect code or query rule, so imported links take the instance defaults.
   const defaults = parseSettings(setRows!.results as unknown as { key: string; value: string }[]);
   for (const r of liveRows!.results) live.get(r.domain_id)!.set(r.slug_key, r.url!);
@@ -171,45 +182,53 @@ importApi.post("/", async (c) => {
 
   const now = Math.floor(Date.now() / 1000);
   const db = c.env.DB;
+  // Every write re-checks in SQL what the checks above allowed: data, domains.manage for a new domain, the domain usable
+  // (links, locks) or managed (redirects). A chunk whose audit guard fails wrote nothing and ends the import with 403.
+  const may = actorCan(user.id, "data"), mgr = actorCan(user.id, "domains.manage");
+  const use = (domainId: string): Guard => ({ sql: `${may.sql} AND ? IN (${usableDomainsSql})`, binds: [...may.binds, domainId, user.id] });
   // Work statements carry their kind and host so each D1 batch can audit exactly what it touches.
   type Work = { stmt: D1PreparedStatement; kind: "domain" | "fill" | "link" | "lock"; host: string; counted: boolean; plan?: Plan };
   const work: Work[] = [];
   for (const d of newDoms) {
     work.push({ kind: "domain", host: d.host, counted: false, stmt: db.prepare(
-      "INSERT INTO domains (id,host,type,status,owner_id,bare_redirect,notfound_redirect,case_sensitive,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-    ).bind(d.id, d.host, "private", "active", user.id, d.bare, d.nf, d.cs ? 1 : 0, now) });
+      `INSERT INTO domains (id,host,type,status,owner_id,bare_redirect,notfound_redirect,case_sensitive,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${may.sql} AND ${mgr.sql}`,
+    ).bind(d.id, d.host, "private", "active", user.id, d.bare, d.nf, d.cs ? 1 : 0, now, ...may.binds, ...mgr.binds) });
   }
   for (const d of doms.values()) {
     // Fill only while still null, so a concurrent edit is never clobbered.
-    if (d.fillBare) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare("UPDATE domains SET bare_redirect = ? WHERE id = ? AND bare_redirect IS NULL").bind(d.bare, d.id) });
-    if (d.fillNf) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare("UPDATE domains SET notfound_redirect = ? WHERE id = ? AND notfound_redirect IS NULL").bind(d.nf, d.id) });
+    const manage = `${may.sql} AND (owner_id = ? OR ${mgr.sql})`, mb = [...may.binds, user.id, ...mgr.binds];
+    if (d.fillBare) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare(`UPDATE domains SET bare_redirect = ? WHERE id = ? AND bare_redirect IS NULL AND ${manage}`).bind(d.bare, d.id, ...mb) });
+    if (d.fillNf) work.push({ kind: "fill", host: d.host, counted: false, stmt: db.prepare(`UPDATE domains SET notfound_redirect = ? WHERE id = ? AND notfound_redirect IS NULL AND ${manage}`).bind(d.nf, d.id, ...mb) });
   }
   // The slug key was computed from the case mode read at planning time; insert only while the domain still has it.
   for (const p of plans.link) {
     work.push({ kind: "link", host: p.dom.host, counted: true, plan: p, stmt: db.prepare(
       `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
-       AND EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?)`,
-    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0) });
+       AND EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?) AND ${use(p.dom.id).sql}`,
+    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0, ...use(p.dom.id).binds) });
   }
   // A live link committed after planning wins its key over a planned lock.
   for (const p of plans.lock) {
     work.push({ kind: "lock", host: p.dom.host, counted: true, plan: p, stmt: db.prepare(
       `INSERT OR IGNORE INTO slug_locks (domain_id,slug_key,locked_at,locked_by)
-       SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM links WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
-    ).bind(p.dom.id, p.key, now, user.id, p.dom.id, p.key) });
+       SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM links WHERE domain_id = ? AND lower(slug_key) = lower(?)) AND ${use(p.dom.id).sql}`,
+    ).bind(p.dom.id, p.key, now, user.id, p.dom.id, p.key, ...use(p.dom.id).binds) });
   }
-  const runAudit = auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "file",
-    detail: { planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } });
+  const runAudit = (g: Guard) => auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "file",
+    detail: { planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } }, g);
   let inserted = 0; // INSERT OR IGNORE can lose a race; report what was really written
   const lostLinks: Plan[] = [], lostLocks: Plan[] = [];
   const SIZE = CHUNK - 2; // room for the run row (first batch) and the chunk row
   for (let i = 0; i === 0 || i < work.length; i += SIZE) {
     const part = work.slice(i, i + SIZE);
     const n = (k: Work["kind"]) => part.filter((w) => w.kind === k).length;
+    const g: Guard = n("domain") ? { sql: `${may.sql} AND ${mgr.sql}`, binds: [...may.binds, ...mgr.binds] } : may;
     const chunkAudit = auditStmt(c.env, { actorId: user.id, action: "import.chunk", targetType: "import", targetId: "file",
-      detail: { hosts: [...new Set(part.map((w) => w.host))], domains: n("domain"), links: n("link"), locks: n("lock") } });
-    const res = await db.batch([...(i === 0 ? [runAudit] : []), chunkAudit, ...part.map((w) => w.stmt)]);
+      detail: { hosts: [...new Set(part.map((w) => w.host))], domains: n("domain"), links: n("link"), locks: n("lock") } }, g);
+    const res = await db.batch([...(i === 0 ? [runAudit(g)] : []), chunkAudit, ...part.map((w) => w.stmt)]);
+    // The audit and every statement share the batch's view: a refused audit guard means a lost permission and no write.
+    if (!res[i === 0 ? 1 : 0]!.meta.changes) return c.json({ error: "forbidden" }, 403);
     const off = res.length - part.length;
     part.forEach((w, k) => {
       if (!w.counted) return;

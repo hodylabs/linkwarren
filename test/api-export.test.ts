@@ -5,6 +5,7 @@ import { hashKey } from "../src/keys";
 import { hashPassword } from "../src/password";
 import { putSecretStmts } from "../src/secrets";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { beforeBatch } from "./helpers/race";
 import { signedIn } from "./helpers/session";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -61,13 +62,15 @@ function countD1() {
 }
 const restoreDB = () => { (env as unknown as Record<string, unknown>).DB = realDB; };
 
-const BASE_TABLES = ["users", "domains", "domain_cf", "domain_members", "links", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
-const ALL_TABLES = ["users", "domains", "domain_cf", "domain_members", "links", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "api_keys", "agent_connections", "tool_calls"];
+// roles first: a restore needs them before users.role_id refers to them. Never deleted here: the built-in rows stay.
+const BASE_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
+const ALL_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "api_keys", "agent_connections", "tool_calls"];
 const NEVER = ["sessions", "login_tokens", "passkeys", "auth_challenges", "auth_limits", "locks", "analytics_state"];
 
 beforeAll(setupAccess);
 beforeEach(async () => {
-  await env.DB.batch([...ALL_TABLES, ...NEVER].reverse().map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch([...ALL_TABLES.filter((t) => t !== "roles"), ...NEVER].reverse().map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await run("DELETE FROM roles WHERE builtin = 0");
   for (const [id, email, role] of [["uo", EMAIL.owner, "owner"], ["ua", EMAIL.a, "member"]])
     await run("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,?,?,1)", id, email, role, "active");
   await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('d1','a.test','main','active','uo',1)");
@@ -285,5 +288,40 @@ describe("POST /api/export/page", () => {
       expect(t.columns).not.toContain("hash");
       expect(t.columns).not.toContain("password_hash");
     }
+  });
+});
+
+// S8 R12: `data` exports the whole instance, roles included, so a restore keeps custom roles.
+describe("export by permission (S8 R12)", () => {
+  beforeEach(async () => {
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('dt','Data','[\"data\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('ud','d@example.com','member','dt','active',1)");
+    EMAIL.d = "d@example.com";
+  });
+  it("a data role exports every table, roles and role_id included, and the run is audited as them", async () => {
+    const s = await start("d");
+    expect(s.status).toBe(200);
+    const j = (await s.json()) as { run: string; tables: { name: string; columns: string[] }[] };
+    expect(j.tables.map((t) => t.name)).toEqual(BASE_TABLES);
+    expect(j.tables.find((t) => t.name === "users")!.columns).toContain("role_id");
+    const rows = async (table: string) => ((await (await page(table, null, "d", j.run)).json()) as { rows: Record<string, unknown>[] }).rows;
+    expect((await rows("users")).find((u) => u.id === "ud")).toMatchObject({ role: "member", role_id: "dt" });
+    expect((await rows("roles")).map((r) => [r.id, r.perms])).toEqual(expect.arrayContaining([["dt", '["data"]'], ["member", expect.any(String)], ["owner", "[]"]]));
+    expect((await env.DB.prepare("SELECT actor_id FROM audit_log WHERE action = 'export.run'").all()).results).toEqual([{ actor_id: "ud" }]);
+  });
+  it("data lost: the next page is 403; lost just before the start batch, no run and no audit", async () => {
+    const s = (await (await start("d")).json()) as { run: string };
+    await run("UPDATE roles SET perms = '[]' WHERE id = 'dt'");
+    const p = await page("users", null, "d", s.run);
+    expect([p.status, await p.json()]).toEqual([403, { error: "forbidden" }]);
+    await run("UPDATE roles SET perms = '[\"data\"]' WHERE id = 'dt'");
+    await run("DELETE FROM locks WHERE key LIKE 'export:%'");
+    await run("DELETE FROM audit_log");
+    const restore = beforeBatch(2, () => run("UPDATE roles SET perms = '[]' WHERE id = 'dt'"));
+    let r: Response;
+    try { r = await start("d"); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM locks WHERE key LIKE 'export:%'").first<{ n: number }>())!.n).toBe(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM audit_log").first<{ n: number }>())!.n).toBe(0);
   });
 });
