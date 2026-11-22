@@ -178,9 +178,6 @@ authorize.post("/", async (c) => {
     const d = await oauth.describeConsent(request);
     clientName = nameOf(d);
     await c.env.DB.batch([
-      // The library revokes this person's older grants for the client (revokeExistingGrants default); D1 follows.
-      c.env.DB.prepare("UPDATE agent_connections SET revoked_at = ? WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL")
-        .bind(now, user.id, request.clientId),
       c.env.DB.prepare(
         "INSERT INTO agent_connections (id, user_id, client_id, client_name, redirect_host, can_write, can_delete, created_at) VALUES (?,?,?,?,?,?,?,?)",
       ).bind(connId, user.id, request.clientId, clientName, d.redirectHost, write ? 1 : 0, del ? 1 : 0, now),
@@ -197,6 +194,12 @@ authorize.post("/", async (c) => {
     const { redirectTo } = await oauth.completeAuthorization({
       request, userId: user.id, scope, props: { userId: user.id, connId }, metadata: { connId, clientName },
     });
+    // The library revoked this person's older grants for the client (revokeExistingGrants default), only now that the
+    // new grant is stored; D1 follows. Older rows only (rowid), so of two racing approvals the newer one stays.
+    await c.env.DB.prepare(
+      "UPDATE agent_connections SET revoked_at = ? WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL AND rowid < (SELECT rowid FROM agent_connections WHERE id = ?)",
+    ).bind(now, user.id, request.clientId, connId).run()
+      .catch((e: unknown) => console.error("older connection revoke failed", e instanceof Error ? e.name : "unknown")); // their grants are gone already
     return html(null, 302, { lib: approved.headers, location: redirectTo });
   } catch (err) {
     console.error("completeAuthorization failed", err instanceof Error ? err.name : "unknown");

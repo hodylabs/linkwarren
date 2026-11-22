@@ -380,4 +380,17 @@ describe("final fix wave", () => {
     expect(r.res.status).toBe(400);
     expect(r.res.headers.get("location")).toBeNull();
   });
+
+  it("a failed re-approval leaves the person's existing connection usable", async () => {
+    const first = await connectAgentFull("keep@example.com");
+    const { challenge } = await pkce();
+    const auth = await signInHeaders("keep@example.com");
+    const p = await openConsent(authorizePath({
+      response_type: "code", client_id: first.clientId, redirect_uri: CLAUDE_CB, state: "s", code_challenge: challenge, code_challenge_method: "S256",
+    }), auth);
+    expect(p.res.status).toBe(200);
+    await env.OAUTH_KV.delete(`client:${first.clientId}`);
+    expect((await postConsent(auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" })).status).toBe(500);
+    expect(await env.DB.prepare("SELECT revoked_at FROM agent_connections WHERE id = ?").bind(first.connId).first("revoked_at")).toBeNull();
+  });
 });
