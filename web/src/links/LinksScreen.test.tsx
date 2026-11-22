@@ -349,7 +349,7 @@ describe("Link detail", () => {
 
 describe("Links screen stats", () => {
   const stat = (id: string, o: object = {}) => ({ linkId: id, days: [0, 1, 2, 3, 4, 5, 6], clicks: 1284, qr: 783, topCountry: "US", ...o });
-  const statsRoute = (seen: string[], live = "on", fail = false) => ({
+  const statsRoute = (seen: string[], live = "ok", fail = false) => ({
     "GET /api/analytics/links": (r: { url: URL }) => {
       const ids = r.url.searchParams.get("ids") ?? "";
       seen.push(ids);
@@ -384,7 +384,7 @@ describe("Links screen stats", () => {
 
   it("the cell stays an empty td with a data-label until stats arrive, and a failed request leaves the table usable", async () => {
     const seen: string[] = [];
-    boot({ routes: statsRoute(seen, "on", true) });
+    boot({ routes: statsRoute(seen, "ok", true) });
     await ready();
     await waitFor(() => expect(seen.length).toBe(1));
     const cell = rows()[0]!.querySelector('td[data-label="7 days"]')!;
@@ -399,7 +399,7 @@ describe("Links screen stats", () => {
     const cell = () => rows()[0]!.querySelector('td[data-label="7 days"]')!;
     expect(cell().childNodes).toHaveLength(0);
     expect(cell().textContent).toBe("");
-    release({ body: { items: [stat("l1")], live: "on" } });
+    release({ body: { items: [stat("l1")], live: "ok" } });
     await waitFor(() => expect(cell().querySelector("svg.spark")).not.toBeNull());
   });
 
@@ -444,13 +444,13 @@ describe("Links screen stats", () => {
     let release: (r: FakeRes) => void = () => undefined;
     let n = 0;
     boot({
-      routes: { "GET /api/analytics/links": () => (++n === 1 ? new Promise<FakeRes>((r) => (release = r)) : { body: { items: [], live: "on" } }) },
+      routes: { "GET /api/analytics/links": () => (++n === 1 ? new Promise<FakeRes>((r) => (release = r)) : { body: { items: [], live: "ok" } }) },
     });
     await ready();
     await waitFor(() => expect(n).toBe(1));
     await userEvent.click(screen.getByRole("button", { name: "Active" }));
     await waitFor(() => expect(n).toBe(2));
-    release({ body: { items: [stat("l1")], live: "on" } });
+    release({ body: { items: [stat("l1")], live: "ok" } });
     await new Promise((r) => setTimeout(r, 20));
     expect(document.querySelectorAll("svg.spark")).toHaveLength(0);
   });

@@ -12,7 +12,7 @@ import { Sparkline } from "./Sparkline";
 import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
 
 const STATS_CHUNK = 50; // the server takes at most 50 ids per request
-const WORST: StatsLive[] = ["on", "off", "unavailable"];
+const WORST: StatsLive[] = ["ok", "off", "unavailable"];
 
 const STATUSES = ["all", "active", "scheduled", "expired"] as const;
 
@@ -43,7 +43,7 @@ export function LinksScreen() {
   const [confirming, setConfirming] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [stats, setStats] = useState<Record<string, LinkStats>>({});
-  const [live, setLive] = useState<StatsLive>("on");
+  const [live, setLive] = useState<StatsLive>("ok");
   const generation = useRef(0);
   const loading = useRef(false); // a next-page request is in flight
   const deleting = useRef(false);
@@ -73,7 +73,7 @@ export function LinksScreen() {
     const ok = done.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     if (ok.length === 0) return;
     setStats((cur) => ({ ...cur, ...Object.fromEntries(ok.flatMap((r) => r.items.map((s) => [s.linkId, s] as const))) }));
-    setLive((cur) => ok.reduce((w, r) => (WORST.indexOf(r.live) > WORST.indexOf(w) ? r.live : w), fresh ? "on" : cur));
+    setLive((cur) => ok.reduce((w, r) => (WORST.indexOf(r.live) > WORST.indexOf(w) ? r.live : w), fresh ? "ok" : cur));
   }, []);
 
   // New scope or an explicit reload: start over. A stale answer (older generation) is dropped.

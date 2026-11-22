@@ -133,7 +133,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               <div className="stat"><b>{stats.clicks > 0 ? Math.round((100 * stats.qr) / stats.clicks) : 0}%</b><small>from QR</small></div>
               <div className="stat"><b>{stats.topCountry ?? "None"}</b><small>top country</small></div>
             </div>
-            {live !== "on" && <p className="hint">{LIVE_HINT[live]} These counts leave out yesterday and today.</p>}
+            {live !== "ok" && <p className="hint">{LIVE_HINT[live]} These counts leave out yesterday and today.</p>}
           </div>
         )}
         <fieldset className="plain" disabled={!canEdit}>

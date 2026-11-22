@@ -90,10 +90,10 @@ analytics.get("/links", async (c) => {
     aeFrom = new Date(Date.parse(`${w}T00:00:00Z`) + DAY_MS);
   }
   const end = new Date(Date.parse(`${today}T00:00:00Z`) + DAY_MS);
-  let live: "on" | "off" | "unavailable" = aeConfigured(env) ? "on" : "off";
-  if (aeFrom < end && linkIds.length && live === "on") {
+  let live: "ok" | "off" | "unavailable" = aeConfigured(env) ? "ok" : "off";
+  if (aeFrom < end && linkIds.length && live === "ok") {
     try {
-      // One AE query (clicks per link and day). topCountry comes from D1 days only; the AE days add no country.
+      // One AE query per id chunk (clicks per link and day). topCountry comes from D1 days only; the AE days add no country.
       for (const r of await aeLinkDays(env, aeFrom, end, linkIds)) add(r.linkId, r.bucket, r.qr, r.typed);
     } catch (e) {
       live = "unavailable";

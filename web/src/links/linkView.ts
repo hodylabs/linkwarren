@@ -34,7 +34,7 @@ export function linksQuery(o: LinksFilter): string {
   return p.toString();
 }
 
-export type StatsLive = "on" | "off" | "unavailable";
+export type StatsLive = "ok" | "off" | "unavailable";
 
 /** Polyline points for a 72x20 box. `of` is the full point count when only the first days are known. */
 export function sparkPoints(days: number[], of = days.length): string {

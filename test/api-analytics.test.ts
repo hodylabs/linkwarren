@@ -148,7 +148,7 @@ describe("GET /api/analytics/links", () => {
       expect(m.days).toEqual([0, 0, 0, 3, 0, 5, 6]); // D1 day today-3, AE today-1 and today
       expect(m).toMatchObject({ clicks: 14, qr: 5 });
       expect(r.items.find((i: any) => i.linkId === "lS").days).toEqual([0, 0, 0, 3, 0, 0, 0]);
-      expect(r.live).toBe("on");
+      expect(r.live).toBe("ok");
     });
     expect(fetchSpy).toHaveBeenCalledTimes(1); // one AE query, not the five-query aggregate
     const sent = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body));
