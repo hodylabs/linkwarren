@@ -272,4 +272,30 @@ describe("final fix wave", () => {
     const a = await connectAgent(A);
     expect((await refresh(a)).status).toBe(200);
   });
+
+  it("an owner demoted between the read and the write changes nothing: lowering, disconnect and the MCP switch answer 403", async () => {
+    const w = await connectAgent(B, { write: true });
+    const demoteFirstBatch = () => {
+      const batch = env.DB.batch.bind(env.DB);
+      vi.spyOn(env.DB, "batch").mockImplementationOnce(async (stmts) => {
+        await run("UPDATE users SET role = 'member' WHERE id = 'uo'"); // another owner, concurrently
+        return batch(stmts);
+      });
+    };
+    const reset = () => run("UPDATE users SET role = 'owner' WHERE id = 'uo'");
+    demoteFirstBatch();
+    expect((await patch(O, w.connId, { write: false, del: false })).status).toBe(403);
+    expect(await one("SELECT can_write FROM agent_connections WHERE id = ?", w.connId)).toEqual({ can_write: 1 });
+    await reset();
+    demoteFirstBatch();
+    expect((await del(O, w.connId)).status).toBe(403);
+    expect(await one("SELECT revoked_at FROM agent_connections WHERE id = ?", w.connId)).toEqual({ revoked_at: null });
+    await reset();
+    const before = await one("SELECT value FROM settings WHERE key = 'mcp.enabled'");
+    const { on } = await (await as(O, "/api/agents/mcp")).json<{ on: boolean }>();
+    demoteFirstBatch();
+    expect((await as(O, "/api/agents/mcp", { method: "PUT", body: JSON.stringify({ on: !on }) })).status).toBe(403);
+    expect(await one("SELECT value FROM settings WHERE key = 'mcp.enabled'")).toEqual(before);
+    expect([...(await audits("agent.access")), ...(await audits("agent.disconnect")), ...(await audits("settings.update"))]).toHaveLength(0);
+  });
 });

@@ -4,6 +4,7 @@ import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { MCP_KEY, mcpState, rememberMcp, resetMcpCache } from "../mcp/switch";
 import { actor, type Grant } from "../principal";
+import { ACTOR_OK } from "./users";
 import type { UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -28,6 +29,11 @@ const toItem = (r: Row, withEmail: boolean): ConnectionItem => ({
 });
 const now = () => Math.floor(Date.now() / 1000);
 const notFound = { error: "not_found" } as const;
+const forbidden = { error: "forbidden" } as const;
+/** Checked in the write itself: the caller is still active and still the connection's person or an owner (a demotion mid-request wins). */
+const MAY_MANAGE = "EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active' AND (role = 'owner' OR id = ?))";
+const mayManage = async (env: Env, u: UserRow, userId: string) =>
+  !!(await env.DB.prepare(`SELECT ${MAY_MANAGE} ok`).bind(u.id, userId).first<{ ok: number }>())?.ok;
 
 /** An unrevoked connection the caller may manage (own, or the owner for anyone's); unknown and foreign ids both give null. */
 const find = (env: Env, u: UserRow, id: string) =>
@@ -69,13 +75,16 @@ agents.patch("/connections/:id", async (c) => {
   const res = await c.env.DB.batch([
     // Optimistic: write only if the row still holds what we read, so a change in between answers 409 and `before`
     // is never stale; with the owner's lowering-only check above, this can never raise what the person set.
-    c.env.DB.prepare("UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL AND can_write = ? AND can_delete = ?")
-      .bind(w, d, id, item.write ? 1 : 0, item.del ? 1 : 0),
+    c.env.DB.prepare(`UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL AND can_write = ? AND can_delete = ? AND ${MAY_MANAGE}`)
+      .bind(w, d, id, item.write ? 1 : 0, item.del ? 1 : 0, u.id, row.user_id),
     auditStmt(c.env, { ...actor(c), action: "agent.access", targetType: "agent_connection", targetId: id,
       detail: { write, del, before: { write: item.write, del: item.del } } },
       { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM agent_connections WHERE id = ? AND revoked_at IS NULL)", binds: [id] }),
   ]);
-  if (!res[0]!.meta.changes) return (await find(c.env, u, id)) ? c.json({ error: "changed" }, 409) : c.json(notFound, 404); // revoked in between
+  if (!res[0]!.meta.changes) {
+    if (!(await mayManage(c.env, u, row.user_id))) return c.json(forbidden, 403);
+    return (await find(c.env, u, id)) ? c.json({ error: "changed" }, 409) : c.json(notFound, 404); // revoked in between
+  }
   return c.json({ ...item, write, del });
 });
 
@@ -86,12 +95,12 @@ agents.delete("/connections/:id", async (c) => {
   const t = now();
   // D1 first: the per-call check refuses the token from here on, whatever happens to the KV grant below.
   const res = await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE agent_connections SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").bind(t, id),
+    c.env.DB.prepare(`UPDATE agent_connections SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL AND ${MAY_MANAGE}`).bind(t, id, u.id, row.user_id),
     auditStmt(c.env, { ...actor(c), action: "agent.disconnect", targetType: "agent_connection", targetId: id,
       detail: { userId: row.user_id, clientName: row.client_name } },
       { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM agent_connections WHERE id = ? AND revoked_at = ?)", binds: [id, t] }),
   ]);
-  if (!res[0]!.meta.changes) return c.json(notFound, 404);
+  if (!res[0]!.meta.changes) return (await mayManage(c.env, u, row.user_id)) ? c.json(notFound, 404) : c.json(forbidden, 403);
   try {
     const oauth = c.env.OAUTH_PROVIDER;
     if (!oauth) throw new Error("no oauth helpers");
@@ -130,13 +139,15 @@ agents.put("/mcp", async (c) => {
   if (state.locked) return c.json({ error: "mcp_locked" }, 409);
   if (state.on === on) return c.json(state);
   const value = on ? "1" : "0";
-  await c.env.DB.batch([
+  // Both statements check the caller is still an active owner, so a demotion that lands first changes nothing.
+  const [set] = await c.env.DB.batch([
     c.env.DB.prepare(
-      "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-    ).bind(MCP_KEY, value, now(), u.id),
+      `INSERT INTO settings (key, value, updated_at, updated_by) SELECT ?,?,?,? WHERE ${ACTOR_OK} ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    ).bind(MCP_KEY, value, now(), u.id, u.id),
     auditStmt(c.env, { actorId: u.id, action: "settings.update", targetType: "settings", targetId: MCP_KEY, detail: { key: MCP_KEY, value } },
-      { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [MCP_KEY, value] }),
+      { sql: `changes() > 0 AND EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)`, binds: [MCP_KEY, value] }),
   ]);
+  if (!set!.meta.changes) return c.json({ error: "forbidden" }, 403);
   rememberMcp(c.env, value);
   return c.json({ on, locked: false });
 });
