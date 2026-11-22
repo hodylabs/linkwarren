@@ -126,9 +126,9 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
   // Esc while running cancels after the request in flight; the results then show what was done.
   const close = () => (phase.k === "running" ? ctl.current?.abort() : onClose());
   // Whole-request codes once each with their count (in the order they happened), per-link reasons as a list.
-  const perLink = phase.k === "results" ? phase.failed.filter(([id]) => !phase.whole.has(id)) : [];
+  const perLink = phase.k === "results" ? phase.failed.filter(([id, c]) => !phase.whole.has(id) && c !== "lost_connection") : [];
   const wholeCodes = phase.k === "results"
-    ? [...phase.failed.filter(([id]) => phase.whole.has(id)).reduce((m, [, c]) => m.set(c, (m.get(c) ?? 0) + 1), new Map<string, number>())]
+    ? [...phase.failed.filter(([id, c]) => phase.whole.has(id) && c !== "lost_connection").reduce((m, [, c]) => m.set(c, (m.get(c) ?? 0) + 1), new Map<string, number>())]
     : [];
   // A request whose answer was lost may have been applied: its links are unknown, never retried blind (the list reloads).
   const unknown = phase.k === "results" ? phase.failed.filter(([, c]) => c === "lost_connection").length : 0;
@@ -274,6 +274,13 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
                     <b>{count} not changed:</b> <span>{reason(phase.op, c)}</span>
                   </p>
                 ))}
+              </div>
+            )}
+            {unknown > 0 && (
+              <div role="alert">
+                <p className="err">
+                  <b>{unknown} outcome unknown:</b> <span>{errorText("lost_connection")}</span>
+                </p>
               </div>
             )}
             {perLink.length > 0 && (

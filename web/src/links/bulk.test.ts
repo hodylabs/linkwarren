@@ -84,6 +84,13 @@ describe("runBulk", () => {
     expect(r.failed.get("a")).toBe("lost_connection");
   });
 
+  it("an answer that cannot be read (network) is lost_connection too: outcome unknown", async () => {
+    vi.stubGlobal("fetch", async () => new Response("<html>", { status: 200 }));
+    const r = await runBulk({ action: "delete" }, ["a", "b"], { onProgress: () => undefined, signal: new AbortController().signal });
+    expect(r.stop).toBe("lost_connection");
+    expect([...r.failed]).toEqual([["a", "lost_connection"], ["b", "lost_connection"]]);
+  });
+
   it("a 409 conflict marks its chunk and carries on with the next", async () => {
     let n = 0;
     const api = fakeApi({ "POST /api/links/bulk": (req) => (++n === 1 ? { status: 409, body: { error: "conflict" } } : okAll(req)) });

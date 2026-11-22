@@ -359,6 +359,21 @@ describe("bulk results", () => {
     expect((posts(api)[2] as { ids: string[] }).ids).toEqual(many.slice(200).map((l) => l.id));
   });
 
+  it("lost links are listed only under Outcome unknown, never as not changed", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => mk(`m${i}`, `s${i}`));
+    let n = 0;
+    const { user } = boot({ items: many, bulk: (req) => { if (++n === 2) throw new TypeError("Failed to fetch"); return okAll(req); } });
+    await selectAll(user);
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}");
+    const sheet = await screen.findByRole("dialog", { name: "Delete links" });
+    await waitFor(() => expect(within(sheet).getByText("100 changed, 50 not changed, 100 unknown")).toBeTruthy());
+    expect(within(sheet).getByText("100 outcome unknown:")).toBeTruthy();
+    expect(within(sheet).getByText(errorText("lost_connection"))).toBeTruthy();
+    expect(within(sheet).queryByText("100 not changed:")).toBeNull();
+    expect(within(sheet).getByText("50 not changed:")).toBeTruthy();
+  });
+
   it("Esc while running focuses nothing new, cancels after the request in flight and lists the rest once as not run", async () => {
     const many = Array.from({ length: 150 }, (_, i) => mk(`m${i}`, `s${i}`));
     let release: (() => void) | undefined;
