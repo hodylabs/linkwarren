@@ -7,7 +7,7 @@ import { useApp } from "../state";
 
 const label = (u: { name: string | null; email: string; status: string }) => `${u.name || u.email}${u.status === "disabled" ? " (disabled)" : ""}`;
 
-/** Owner only. Saves the whole member set in one call, so it is all or nothing. */
+/** Needs domains.manage (S8 R8). Saves the whole member set in one call, so it is all or nothing. */
 export function MembersEditor({ domain }: { domain: Domain }) {
   const app = useApp();
   const { me, users } = app;

@@ -46,6 +46,8 @@ const SAVE_REVERT: Row[] = [
 ];
 const OPEN_ROW: Row = [["Enter"], "Select the focused row"]; // row onKeyDown in each list
 const bulk = any("links.bulk");
+// R9: a link is editable by its creator (links.create), links.editAny, or the owner of its domain (only domain roles can own one).
+const edits = any("links.create", "links.editAny", "domains.own", "domains.manage");
 
 /** Every group with every row; `need` on a group or row hides it from a role that cannot use it (S8: hidden, not just greyed). */
 const GROUPS: { title: string; rows: Row[]; need?: Need }[] = [
@@ -59,7 +61,7 @@ const GROUPS: { title: string; rows: Row[]; need?: Need }[] = [
   },
   // "In search and go" rows come from the palette's own commands for the role (groupsFor).
   { title: "In search and go (Ctrl K)", rows: [] },
-  { title: "Links", rows: [...rows(LINKS_KEYS, { n: any("links.create"), x: bulk, "shift+j": bulk, "shift+k": bulk, "mod+a": bulk }), OPEN_ROW, ...SAVE_REVERT] },
+  { title: "Links", rows: [...rows(LINKS_KEYS, { n: any("links.create"), e: edits, "shift+d": edits, x: bulk, "shift+j": bulk, "shift+k": bulk, "mod+a": bulk }), OPEN_ROW, ...SAVE_REVERT] },
   { title: "Selected links", rows: [...rows(BULK_KEYS), ...rows(BULK_SHEET_KEYS)], need: bulk },
   { title: "New link", rows: rows(NEW_LINK_KEYS), need: any("links.create") },
   {
@@ -76,7 +78,7 @@ const GROUPS: { title: string; rows: Row[]; need?: Need }[] = [
     title: "People",
     need: (me) => canSee(me, "people"),
     rows: [
-      ...rows(PEOPLE_KEYS, { n: any("people.manage") }),
+      ...rows(PEOPLE_KEYS, { n: any("people.manage"), j: any("people.manage"), k: any("people.manage") }),
       [["Enter"], "Open the focused person", any("people.manage")],
       ...rows(PERSON_KEYS, Object.fromEntries(Object.keys(PERSON_KEYS).map((k) => [k, any("people.manage")]))),
       [["Enter"], "Confirm", any("people.manage")],
@@ -113,7 +115,7 @@ const GROUPS: { title: string; rows: Row[]; need?: Need }[] = [
       [["Ctrl", "Enter"], "Save the section you are in"], // useEdit and SecretField onKeyDown
       [["Esc"], "Revert unsaved edits in the section"],
       ...rows(SETTINGS_KEYS, { c: owner }),
-      ...rows(EXPORT_KEYS),
+      ...rows(EXPORT_KEYS, { escape: any("data") }),
     ],
   },
   { title: "Sign-in and security", rows: [...rows(ACCOUNT_KEYS), [["Enter"], "Confirm"], [["Esc"], "Cancel or close"]], need: (me) => me.authMode === "app" },

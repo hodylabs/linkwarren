@@ -45,7 +45,7 @@ const writes = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.me
 afterEach(() => vi.restoreAllMocks());
 
 describe("Settings sections", () => {
-  it("a member at /settings/email sees Owner only and never reads /api/settings", async () => {
+  it("a member at /settings/email sees Not in your role and never reads /api/settings", async () => {
     const { api } = boot("/settings/email", { me: member });
     expect(await screen.findByText("Not in your role")).toBeTruthy();
     await new Promise((r) => setTimeout(r, 20));
@@ -58,6 +58,20 @@ describe("Settings sections", () => {
     expect(screen.getByText("Resend API key")).toBeTruthy();
     expect(document.querySelector("input[type=password]")).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
+  it("without data: no Backups and export link, and its URL lands on This instance", async () => {
+    boot("/settings/backups", { me: { ...member, ...customRole(["settings"]) } });
+    expect(await screen.findByRole("heading", { name: "This instance" })).toBeTruthy();
+    expect(location.pathname).toBe("/settings/instance");
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(within(nav).queryByRole("link", { name: "Backups and export" })).toBeNull();
+    expect(within(nav).getAllByRole("link")).toHaveLength(6);
+  });
+
+  it("with data the Backups and export section is there", async () => {
+    boot("/settings/backups", { me: { ...member, ...customRole(["settings", "data"]) } });
+    expect(await screen.findByRole("heading", { name: "Backups and export" })).toBeTruthy();
   });
 
   it("/settings and unknown sections land on This instance", async () => {

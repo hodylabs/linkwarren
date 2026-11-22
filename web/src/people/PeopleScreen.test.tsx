@@ -214,10 +214,15 @@ describe("People screen", () => {
     const { api } = boot({ me: { ...member, ...customRole(["audit"]) } });
     await screen.findByRole("complementary", { name: "Audit log" });
     expect(screen.queryByRole("button", { name: /Invite person/ })).toBeNull();
+    // Straight to the audit log: no people table to dead-end on, no "0 people" count, no people filters.
+    expect(screen.queryByRole("region", { name: "People" })).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText(/0 people/)).toBeNull();
+    expect(screen.queryByRole("group", { name: "Filter people" })).toBeNull();
     await waitFor(() => expect(auditPaths(api).length).toBeGreaterThan(0));
   });
 
-  it("a member sees the Owner only pane and no users or audit request", async () => {
+  it("a member sees the Not in your role pane and no users or audit request", async () => {
     const { api } = boot({ me: member });
     await screen.findByText("Not in your role");
     expect(api.calls.filter((c) => c.path.startsWith("/api/users") || c.path.startsWith("/api/audit"))).toHaveLength(0);

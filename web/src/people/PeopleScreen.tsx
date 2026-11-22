@@ -160,7 +160,7 @@ export function PeopleScreen() {
   }, [list]);
 
   const move = (step: 1 | -1) => {
-    if (list.length === 0) return;
+    if (!manage || list.length === 0) return; // no people list without people.manage
     const to = at < 0 ? list[step === 1 ? 0 : list.length - 1] : list[at + step];
     if (to) select(to.id, true);
   };
@@ -182,21 +182,22 @@ export function PeopleScreen() {
     <>
       <ScreenHeader
         title="People & audit log"
-        count={`${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending`}
+        count={manage ? `${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending` : undefined}
         text="Who can sign in, what they can reach, and every change made by a person or an agent."
       >
         <SearchButton q={q} placeholder="Search people and activity" onOpen={() => app.open({ kind: "palette" })} />
-        <div className="chips" role="group" aria-label="Filter people">
+        {manage && <div className="chips" role="group" aria-label="Filter people">
           {FILTERS.map((f) => (
             <Chip key={f} pressed={filter === f} onClick={() => setFilter(f)}>
               {f[0]!.toUpperCase() + f.slice(1)}
             </Chip>
           ))}
-        </div>
+        </div>}
         {manage && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
       </ScreenHeader>
-      <div className={open ? "body people open" : "body people"}>
-        <section className="list" aria-label="People" ref={listRef} tabIndex={-1}>
+      {/* An audit-only role (no people.manage) gets the audit log alone: no people list to open a person from. */}
+      <div className={!manage ? "body people solo" : open ? "body people open" : "body people"}>
+        {manage && <section className="list" aria-label="People" ref={listRef} tabIndex={-1}>
           <table>
             <thead>
               <tr>
@@ -242,8 +243,8 @@ export function PeopleScreen() {
             </tbody>
           </table>
           {users !== null && list.length === 0 && <Empty title="No people match." text="Try another filter or search." />}
-        </section>
-        {open && <BackBar label="All people" onBack={back} />}
+        </section>}
+        {manage && open && <BackBar label="All people" onBack={back} />}
         {audit && <aside className="detail" aria-label="Audit log">
           <div className="d-head">
             <div className="title">Activity across every domain</div>

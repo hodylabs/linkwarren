@@ -335,10 +335,10 @@ export function AgentsScreen() {
     return { label: u?.name || mail || "Someone", name: u?.name ?? null, email: mail, own: false };
   };
 
-  // R7: a key whose person's role has no `keys` is refused, not revoked; it stays listed so it can be revoked.
-  const paused = (k: KeyItem) => {
-    const who = k.userId === me.id ? me : users?.find((u) => u.id === k.userId);
-    return who !== undefined && !can(who, "keys");
+  // R7: a key (or connection) whose person's role has no `keys` (`agents`) is refused, not revoked; it stays listed to revoke.
+  const paused = (row: { userId: string }, p: "keys" | "agents") => {
+    const who = row.userId === me.id ? me : users?.find((u) => u.id === row.userId);
+    return who !== undefined && !can(who, p);
   };
   const ids = [...(conns ?? []).map((c) => c.id), ...(keys ?? []).map((k) => k.id)];
   const at = sel ? ids.indexOf(sel) : -1;
@@ -517,7 +517,7 @@ export function AgentsScreen() {
                   <tr key={c.id} {...row(c.id)}>
                     <td>{c.clientName}</td>
                     <td><Who p={person(c.userId, c.userEmail)} /></td>
-                    <td>{access(c.write)}</td>
+                    <td>{paused(c, "agents") && <><Tag tone="off">Paused by role</Tag> </>}{access(c.write)}</td>
                     <td data-label="Connected">{shortDate(c.createdAt)}</td>
                     <td data-label="Last used">{used(c.lastUsedAt)}</td>
                     <td className="num" data-label="Calls, 7 days">{c.calls7d}</td>
@@ -551,7 +551,8 @@ export function AgentsScreen() {
                     <td data-label="Last used">{used(k.lastUsedAt)}</td>
                     {/* Expired keys still count toward the 20-key cap until revoked, so they stay listed. */}
                     <td data-label="Expires">
-                      {paused(k) ? <Tag tone="off">Paused by role</Tag> : expired(k) ? <Tag tone="bad">Expired</Tag> : unused(k) ? <Tag tone="bad">Unused 6 weeks</Tag> : longDate(k.expiresAt)}
+                      {paused(k, "keys") && <><Tag tone="off">Paused by role</Tag> </>}
+                      {expired(k) ? <Tag tone="bad">Expired</Tag> : unused(k) ? <Tag tone="bad">Unused 6 weeks</Tag> : longDate(k.expiresAt)}
                     </td>
                   </tr>
                 ))}

@@ -34,4 +34,4 @@ export function mayOpen(me: Who, o: Overlay): boolean {
 
 /** Same rule as the server's canUseDomain (src/perm.ts); `canUse: false` marks a domain a domain manager may administer but not use. */
 export const canUseDomain = (me: Pick<Me, "id" | "role" | "perms">, d: Domain): boolean =>
-  d.canUse !== false && d.status !== "disabled" && (isOwner(me) || d.type === "main" || d.isMember || d.ownerId === me.id);
+  d.canUse !== false && d.status !== "disabled" && (isOwner(me) || d.type === "main" || d.isMember || (d.type === "private" && d.ownerId === me.id));

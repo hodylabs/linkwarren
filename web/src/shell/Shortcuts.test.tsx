@@ -104,10 +104,13 @@ describe("Shortcuts sheet follows the role", () => {
     const links = sheetRows(dlg, "Links");
     expect(links).not.toContain("N = New link");
     expect(links).not.toContain("X = Select or unselect the link");
+    expect(links).not.toContain("E = Edit the selected link");
+    expect(links).not.toContain("Shift D = Delete the selected link");
     expect(sheetRows(dlg, "Domains")).not.toContain("N = Add a domain");
     expect(sheetRows(dlg, "API & agents")).not.toContain("N = New API key");
     expect(sheetRows(dlg, "API & agents")).not.toContain("C = Copy the agent address");
     expect(sheetRows(dlg, "Settings")).not.toContain("C = Check the Cloudflare token");
+    expect(sheetRows(dlg, "Settings")).not.toContain("Esc = Cancel the running export"); // needs data
     const palette = sheetRows(dlg, "In search and go (Ctrl K)");
     expect(palette).toContain("G S = Settings");
     for (const r of ["C L = New link", "C D = Add a domain", "C K = New API key", "C P = Invite a person", "G P = People & audit log"]) expect(palette).not.toContain(r);

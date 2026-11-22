@@ -2,7 +2,7 @@ import type { AppState, Overlay } from "../state";
 import type { Domain, Me } from "../api";
 import { canSee, mayOpen } from "../perms";
 import { navigate } from "../router";
-import { SECTIONS } from "../settings/copy";
+import { sectionsFor } from "../settings/copy";
 
 /** `quiet`: left out of the opening list; found by typing its name or its first key. */
 export type Command = { keys: string; section: "Go to" | "Create" | "Switch" | "Help"; label: string; run: () => void; quiet?: true };
@@ -50,7 +50,7 @@ export function buildCommands(ctx: Ctx, me: Pick<Me, "role" | "perms">, appMode 
     go("gi", "API & agents", "/agents"),
     ...(canSee(me, "people") ? [go("gp", "People & audit log", "/people")] : []),
     ...(canSee(me, "settings") ? [go("gs", "Settings", "/settings")] : []),
-    ...(canSee(me, "settings") ? SECTIONS.map((s, i): Command => ({ ...go(`s${i + 1}`, `Settings: ${s.label}`, `/settings/${s.id}`), quiet: true })) : []),
+    ...(canSee(me, "settings") ? sectionsFor(me).map((s, i): Command => ({ ...go(`s${i + 1}`, `Settings: ${s.label}`, `/settings/${s.id}`), quiet: true })) : []),
     ...switcherDomains(ctx.domains).slice(0, 9).map((d, i): Command => ({
       keys: `g${i + 1}`, section: "Switch", label: `Switch to ${d.host}`, run: () => ctx.setCurrentDomain(d.id),
     })),

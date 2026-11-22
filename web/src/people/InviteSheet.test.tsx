@@ -195,7 +195,7 @@ describe("Invite sheet for a people manager", () => {
 
 describe("palette cp", () => {
   const ctx = { domains: [], open: vi.fn(), setCurrentDomain: () => {} };
-  it("Invite a person, owner only", () => {
+  it("Invite a person, people.manage only", () => {
     const cp = buildCommands(ctx, owner).find((c) => c.keys === "cp")!;
     expect(cp).toMatchObject({ section: "Create", label: "Invite a person" });
     cp.run();

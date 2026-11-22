@@ -50,5 +50,8 @@ describe("perms", () => {
     expect(canUseDomain(member, { ...d, isMember: true })).toBe(true);
     expect(canUseDomain(member, { ...d, type: "main" })).toBe(true);
     expect(canUseDomain(member, { ...d, type: "main", status: "disabled" })).toBe(false);
+    // Owning a domain counts only for a private one (src/perm.ts); a shared one needs membership.
+    expect(canUseDomain(member, { ...d, type: "private", ownerId: member.id })).toBe(true);
+    expect(canUseDomain(member, { ...d, type: "shared", ownerId: member.id })).toBe(false);
   });
 });

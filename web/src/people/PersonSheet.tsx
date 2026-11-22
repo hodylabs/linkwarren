@@ -145,6 +145,7 @@ export function PersonSheet({ id }: { id: string }) {
           <h3 className="lbl">Role</h3>
           {/* Only owners switch Owner and Member here (R4); the role picker for people managers is its own task. */}
           {self || me.role !== "owner" ? <p>{u.role === "owner" ? "Owner" : u.roleName}{self ? " (you)" : ""}</p> : <Seg label="Role" options={ROLES} value={u.role} onChange={(v) => v !== u.role && setAsk(v === "owner" ? "promote" : "demote")} />}
+          {!self && me.role === "owner" && u.role !== "owner" && u.roleId !== "member" && <p className="hint">Role: {u.roleName}</p>}
         </div>
         <div className="f">
           <h3 className="lbl">Domains</h3>

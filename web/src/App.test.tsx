@@ -48,7 +48,7 @@ describe("App shell", () => {
     expect(calls.some((c) => c.path.startsWith("/api/users"))).toBe(false);
   });
 
-  it("member at /people sees Owner only and no owner API call is made", async () => {
+  it("member at /people sees Not in your role and no owner API call is made", async () => {
     const { calls } = boot(member, {}, "/people");
     expect(await screen.findByText("Not in your role")).toBeTruthy();
     await screen.findByRole("button", { name: /Switch domain/ });

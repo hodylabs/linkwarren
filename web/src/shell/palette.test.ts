@@ -111,7 +111,8 @@ describe("buildCommands: follows the role", () => {
   it("a role without create, domains or keys has none of their commands; settings and audit add G S and G P", () => {
     const me: Me = { ...MEMBER, ...customRole(["settings", "audit"]) };
     expect(keys(me)).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "gs", "sd", "?"]);
-    expect(buildCommands(ctx, me).filter((c) => c.quiet).length).toBe(7); // Settings: <section>
+    expect(buildCommands(ctx, me).filter((c) => c.quiet).map((c) => c.label)).not.toContain("Settings: Backups and export"); // needs data
+    expect(buildCommands(ctx, { ...me, perms: [...me.perms, "data"] }).filter((c) => c.quiet)).toHaveLength(7);
   });
   it("people.manage adds G P and Invite; domains.manage alone adds Add a domain", () => {
     expect(keys({ ...MEMBER, ...customRole(["people.manage"]) })).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "cp", "sd", "?"]);

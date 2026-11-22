@@ -360,6 +360,24 @@ describe("API & agents follows the role", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     const row = screen.getByRole("cell", { name: "zapier" }).closest("tr")!;
     expect(within(row).getByText("Paused by role")).toBeTruthy();
+    expect(within(row).getByText("Unused 6 weeks")).toBeTruthy(); // the key's own state stays beside it
+  });
+
+  it("an expired key keeps Expired beside Paused by role", async () => {
+    boot({ ...member, ...customRole(["agents"]) }, { "GET /api/keys": () => ({ body: { items: [key({ expiresAt: now - DAY })] } }) });
+    const row = (await loaded()).closest("tr")!;
+    expect(within(row).getByText("Paused by role")).toBeTruthy();
+    expect(within(row).getByText("Expired")).toBeTruthy();
+  });
+
+  it("with agents off their connection row says Paused by role beside its access; with agents on it does not", async () => {
+    boot({ ...member, ...customRole(["keys"]) });
+    await loaded();
+    const conn = screen.getByRole("cell", { name: "Claude" }).closest("tr")!;
+    expect(within(conn).getByText("Paused by role")).toBeTruthy();
+    expect(within(conn).getByText("Read only")).toBeTruthy();
+    const keyRow = screen.getByRole("cell", { name: "zapier" }).closest("tr")!;
+    expect(within(keyRow).queryByText("Paused by role")).toBeNull();
   });
 
   it("with agents off: no agent address or connect help, the reason instead; keys stay", async () => {

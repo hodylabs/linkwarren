@@ -140,7 +140,12 @@ export function AnalyticsScreen() {
     overlay === null && sheets === 0 && !picker,
   );
 
-  const hostOf = (id: string) => domains.find((d) => d.id === id)?.host ?? id;
+  // R10: analytics.all reaches domains /api/domains does not list; the report names them, so they can be picked too.
+  const extra = can(me, "analytics.all")
+    ? (loaded?.report.domains ?? []).filter((r) => !domains.some((d) => d.id === r.domainId)).map((r) => ({ id: r.domainId, host: r.host }))
+    : [];
+  const pickable = [...switcherDomains(domains), ...extra.sort((a, b) => a.host.localeCompare(b.host))];
+  const hostOf = (id: string) => pickable.find((d) => d.id === id)?.host ?? id;
   const n = f.domains.length;
   const crumb = n === 0 ? "all domains you can see" : n === 1 ? `on ${hostOf(f.domains[0]!)}` : `${n} domains`;
   const chipLabel = n === 0 ? "All domains" : n === 1 ? hostOf(f.domains[0]!) : `${n} domains`;
@@ -254,7 +259,7 @@ export function AnalyticsScreen() {
               {chipLabel} <span className="car" aria-hidden="true">▾</span>
               <Kbd>D</Kbd>
             </button>
-            {picker && <DomainPicker domains={switcherDomains(domains)} selected={f.domains} onToggle={toggle} onAll={() => go({ domains: [] })} onClose={closePicker} />}
+            {picker && <DomainPicker domains={pickable} selected={f.domains} onToggle={toggle} onAll={() => go({ domains: [] })} onClose={closePicker} />}
           </div>
           <span className="count">Bots and link previews are left out</span>
         </div>

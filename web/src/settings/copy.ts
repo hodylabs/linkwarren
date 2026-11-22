@@ -1,4 +1,6 @@
+import type { Me } from "../api";
 import { errorText } from "../copy";
+import { can } from "../perms";
 
 /** Settings sections in subnav order: URL `/settings/<id>` (R15) and label. */
 export const SECTIONS = [
@@ -11,6 +13,8 @@ export const SECTIONS = [
   { id: "backups", label: "Backups and export" },
 ] as const;
 export type SectionId = (typeof SECTIONS)[number]["id"];
+/** The sections this person sees: Backups and export needs `data` (S8 R12); the rest come with `settings`. */
+export const sectionsFor = (me: Pick<Me, "role" | "perms">) => SECTIONS.filter((s) => s.id !== "backups" || can(me, "data"));
 
 const EXTRA: Record<string, string> = {
   fallback_in_use: "This Cloudflare zone already uses a different fallback origin for another service. linkwarren will not replace it.",

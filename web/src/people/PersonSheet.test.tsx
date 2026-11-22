@@ -70,6 +70,16 @@ describe("People list", () => {
   });
 });
 
+describe("Person sheet role", () => {
+  it("an owner sees the person's custom role name beside the Owner and Member switch", async () => {
+    const helper = USERS.map((x) => (x.id === "ud" ? { ...x, roleId: "hl", roleName: "Helper" } : x));
+    const { dlg } = await openPerson("Dana", { "GET /api/users": () => ({ body: { items: helper } }) });
+    expect(within(dlg).getByText("Role: Helper")).toBeTruthy();
+    expect(within(dlg).getByRole("radio", { name: "Member" })).toBeTruthy();
+    expect(within(dlg).getByRole("radio", { name: "Owner" })).toBeTruthy();
+  });
+});
+
 describe("Person sheet", () => {
   it("Enter on a row opens it with role, status and read-only domains", async () => {
     const { dlg } = await openPerson("Dana");
