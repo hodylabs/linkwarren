@@ -6,8 +6,9 @@ import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
 import { canManageDomain, canUseDomain, usableDomains } from "../perm";
 import { actor, type Grant } from "../principal";
-import { rowToLink, toApiLink, type LinkRow, type Route, type UserRow } from "../types";
+import { rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
+import { bulk } from "./bulk";
 import { allHosts, destination, getDomain, isMember, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -16,18 +17,18 @@ export const links = new Hono<E>();
 const PAGE = 50;
 const forbidden = { error: "forbidden" } as const;
 
-const times = {
+export const times = {
   startsAt: z.number().int().nonnegative().nullable().optional(),
   expiresAt: z.number().int().nonnegative().nullable().optional(),
 };
-const code = z.union([z.literal(301), z.literal(302)]);
+export const code = z.union([z.literal(301), z.literal(302)]);
 const routeInput = z.strictObject({
   countries: z.array(z.string()).max(50).optional(),
   devices: z.array(z.enum(["mobile", "tablet", "desktop"])).max(3).optional(),
   url: z.string(),
 });
 type RouteInput = z.infer<typeof routeInput>;
-const rules = {
+export const rules = {
   // A string sets, null clears, absent keeps. Length is checked by passwordRule (code points); 1024 units only caps the work
   // (a longer one is answered password_long, see bodyError).
   password: z.string().max(1024).nullable().optional(),
@@ -63,7 +64,7 @@ export async function validateRoutes(env: Env, input: RouteInput[]): Promise<{ r
 }
 
 /** Undefined: keep. Null: clear. Otherwise the new hash (hashed here, before any batch, outside the revision race window). */
-async function passwordInput(env: Env, raw: string | null | undefined): Promise<{ hash: string | null | undefined } | { error: string }> {
+export async function passwordInput(env: Env, raw: string | null | undefined): Promise<{ hash: string | null | undefined } | { error: string }> {
   if (raw === undefined || raw === null) return { hash: raw };
   const p = passwordRule(raw);
   if (!p.ok) return { error: p.reason };
@@ -71,14 +72,14 @@ async function passwordInput(env: Env, raw: string | null | undefined): Promise<
 }
 
 /** invalid_body, or password_long when an over-long password is the only problem (zod caps it at 1024 units). */
-function bodyError(e: z.ZodError): string {
+export function bodyError(e: z.ZodError): string {
   return e.issues.every((i) => i.code === "too_big" && i.path.length === 1 && i.path[0] === "password") ? "password_long" : "invalid_body";
 }
 
-const hasLock = async (env: Env, domainId: string, key: string) =>
+export const hasLock = async (env: Env, domainId: string, key: string) =>
   !!(await env.DB.prepare("SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)").bind(domainId, key).first());
 
-const badWindow = (s: number | null, x: number | null) => s !== null && x !== null && x <= s;
+export const badWindow = (s: number | null, x: number | null) => s !== null && x !== null && x <= s;
 
 links.get("/check", async (c) => {
   const user = c.var.user;
@@ -171,6 +172,9 @@ links.get("/", async (c) => {
   return c.json({ items: items.map(toApiLink), next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
 });
 
+// No POST /:id exists, so nothing shadows this.
+links.post("/bulk", bulk);
+
 links.post("/", async (c) => {
   const user = c.var.user;
   const body = createBody.safeParse(await c.req.json().catch(() => null));
@@ -223,7 +227,11 @@ links.post("/", async (c) => {
   return c.json(toApiLink(link), 201);
 });
 
-/** Loads a link and enforces edit rights: domain use, and (creator or domain manager). */
+/** The edit rule: domain use (narrowed by the grant's domains), and (creator or domain manager). Shared with the bulk route. */
+export const canEditLink = (user: UserRow, link: LinkRow, domain: DomainRow, member: boolean, only: readonly string[] | null): boolean =>
+  canUseDomain(user, domain, member, only) && (link.createdBy === user.id || canManageDomain(user, domain));
+
+/** Loads a link and enforces edit rights (canEditLink). */
 async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, id: string) {
   const user = c.var.user;
   const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(id).first();
@@ -231,9 +239,7 @@ async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, i
   const link = rowToLink(row);
   const domain = await getDomain(c.env, link.domainId);
   if (!domain) return { status: 404 as const };
-  const ok = canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)
-    && (link.createdBy === user.id || canManageDomain(user, domain));
-  return ok ? { link, domain } : { status: 403 as const };
+  return canEditLink(user, link, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains) ? { link, domain } : { status: 403 as const };
 }
 
 links.patch("/:id", async (c) => {
