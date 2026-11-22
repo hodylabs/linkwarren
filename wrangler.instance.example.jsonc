@@ -16,8 +16,15 @@
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
     "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
-    "ACCESS_AUD": "<your-access-application-aud-tag>"
+    "ACCESS_AUD": "<your-access-application-aud-tag>",
+    // Optional: Cloudflare domain onboarding (see docs/deploy.md). Leave these out to add domains by hand.
+    "CF_ACCOUNT_ID": "<your-cloudflare-account-id>",
+    "CF_WORKER_NAME": "linkwarren",
+    // Only for outside domains (Cloudflare for SaaS): a zone used only by linkwarren, and a host inside it.
+    "CF_SAAS_ZONE_ID": "<your-saas-zone-id>",
+    "CF_CNAME_TARGET": "edge.example.com"
     // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
+    // CF_API_TOKEN is a secret, never a var: wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc
   },
   // Add one route per short domain, plus the dashboard host.
   "routes": [

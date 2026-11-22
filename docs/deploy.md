@@ -82,6 +82,10 @@ Check the token from Settings, Cloudflare (`Check token`), or with `POST /api/se
 
 ### Outside domains (Cloudflare for SaaS)
 
+Use a SaaS zone that only linkwarren uses: no other Worker routes and no custom hostnames from other tools. linkwarren refuses an outside domain when another Worker's route covers the host (`route_in_use`) or when a custom hostname for it already exists that linkwarren did not create (`hostname_in_use`), so a shared zone mostly means refusals, but a dedicated zone removes the question entirely.
+
+Cloudflare for SaaS includes 100 custom hostnames and bills each one after that. linkwarren never creates the 101st: it counts the zone's hostnames before every create and refuses with `hostname_limit` at 100, so it can never cause a charge. Settings, Cloudflare shows how many are used.
+
 1. Enable Cloudflare for SaaS (custom hostnames) on the zone you chose for `CF_SAAS_ZONE_ID`.
 2. Create the fallback origin, either with Settings, Cloudflare, `Set up outside domains` (`POST /api/settings/cloudflare/setup`), or by hand: add a proxied `AAAA` record `CF_CNAME_TARGET` to `100::`, then set `CF_CNAME_TARGET` as the fallback origin under SSL/TLS, Custom Hostnames. The setup endpoint never changes anything it did not create: it refuses with `fallback_in_use` when the zone already has a different fallback origin (changing it would repoint every custom hostname in that zone), and with `target_in_use` when an address record it did not create already exists at the target. linkwarren remembers the id of the record it creates, so running setup again is safe.
 3. Wait until the fallback origin shows active. Outside domains can then be added: each one adds a CNAME from its host to `CF_CNAME_TARGET` at its own DNS provider.
@@ -92,7 +96,7 @@ A bare domain (for example `example.com` rather than `go.example.com`) cannot ca
 
 Worker routes created through the API survive `wrangler deploy`, so there is nothing to redo after a deploy. `Resync domains` in Settings (`POST /api/settings/cloudflare/resync`) is a repair tool: run it after someone changed or removed linkwarren's records, routes or custom hostnames in the Cloudflare dashboard, or after a write was lost. It re-creates only what linkwarren created itself, never takes over a record or route someone else made, and lists the domains it could not repair.
 
-Each call repairs at most 3 domains (in domain id order) so it stays within the Workers Free limit of 50 subrequests per request. The answer is `{ ok, failed, next }`: while `next` is not null, call again with `{ "after": "<next>" }` until it is. When Cloudflare cannot be reached the call stops at that domain and `next` points at it, so the retry starts there. The dashboard repeats the calls for you.
+Disabled domains are skipped. Each call repairs at most 3 domains (in domain id order) so it stays within the Workers Free limit of 50 subrequests per request. The answer is `{ ok, failed, next }`: while `next` is not null, call again with `{ "after": "<next>" }` until it is. Each failure carries one of the codes listed under Status in [domains.md](domains.md). When Cloudflare cannot be reached (`cloudflare_unreachable`) the call stops at that domain and `next` points at it, so the retry starts there; any other code is per domain and the run goes on. The dashboard repeats the calls for you.
 
 ## Access
 
