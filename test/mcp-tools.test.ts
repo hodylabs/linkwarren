@@ -294,7 +294,7 @@ describe("rate limits", () => {
 
   it("the instance daily cap applies to every person", async () => {
     const t = await connectAgent(A);
-    await seed("api:day", 5001);
+    await seed("api:day", 3001);
     const r = await tool(t.accessToken, "list_domains");
     unlogged();
     expect(r.content[0]!.text).toBe("Daily limit reached, try again tomorrow (UTC).");

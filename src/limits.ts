@@ -13,7 +13,7 @@ export const LIMITS = {
   apiKey: { n: 60, s: 60 },
   apiConn: { n: 60, s: 60 },
   apiDay: { n: 1000, s: 86400, utc: true },
-  apiInstanceDay: { n: 5000, s: 86400, utc: true },
+  apiInstanceDay: { n: 3000, s: 86400, utc: true },
 } as const;
 /** utc: the window is aligned to multiples of s since the epoch (s = 86400 is the UTC day) instead of starting at the first event. */
 type Limit = { n: number; s: number; utc?: boolean };

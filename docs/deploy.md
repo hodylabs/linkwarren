@@ -205,7 +205,7 @@ MCP tool calls (`/mcp`) and machine API requests (`/api/v1`) share the D1 limite
 
 - 120 calls per minute per person (`api:u:`), 60 per minute per MCP connection (`api:c:`) or API key (`api:k:`).
 - 1000 calls per UTC day per person (`api:ud:`).
-- 5000 calls per UTC day for the whole instance, every person and agent together (`api:day`).
+- 3000 calls per UTC day for the whole instance, every person and agent together (`api:day`).
 
 Over a limit the API answers `429 {"error":"rate_limited"}`; an MCP tool answers "Rate limited, try again in a minute." or, for the two daily caps, "Daily limit reached, try again tomorrow (UTC).".
 
@@ -215,7 +215,7 @@ D1 rows written, counted the same way as above (a limiter key writes 2 rows per 
 - An `/api/v1` request that runs: the same 4 limiter upserts (8, up to 12), plus 1 for `last_used_at` at most once a minute per key, plus the link and audit writes of a change.
 - A refused call writes nothing: a disconnected agent, a disabled person, or a call over a limit. Only the first refused MCP call in a window is counted and logged once (about 5 rows), so a client that keeps retrying costs no writes.
 
-Against the Free plan's 100,000 rows written per day for the whole account: one person at the 1000-call cap spends about 14,000 rows a day (counting the later prune), and the instance cap of 5000 calls about 70,000. That leaves room for sign-in, link edits, password unlocks and the rollup, but not much: a busy instance with several active agents reaches the instance cap first, and then agents and scripts stop until 00:00 UTC while the dashboard keeps working. The caps are constants in `src/limits.ts` (`apiDay`, `apiInstanceDay`); lower them if the account runs other Workers that write to D1.
+Against the Free plan's 100,000 rows written per day for the whole account: one person at the 1000-call cap spends about 14,000 rows a day (counting the later prune), and the instance cap of 3000 calls about 42,000. That leaves room for sign-in, link edits, password unlocks and the rollup, but not much: a busy instance with several active agents reaches the instance cap first, and then agents and scripts stop until 00:00 UTC while the dashboard keeps working. The caps are constants in `src/limits.ts` (`apiDay`, `apiInstanceDay`); lower them if the account runs other Workers that write to D1.
 
 ## Behaviour to know
 

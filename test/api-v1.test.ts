@@ -242,9 +242,9 @@ describe("rate limits (D1 limiter)", () => {
     expect(rows).toEqual([{ key: "api:day", count: 1 }, { key: `api:k:${k.id}`, count: 1 }, { key: "api:u:ua", count: 1 }, { key: "api:ud:ua", count: 1 }]);
   });
 
-  it("the instance daily cap: api:day at 5000 refuses every principal and writes no limiter rows", async () => {
+  it("the instance daily cap: api:day at 3000 refuses every principal and writes no limiter rows", async () => {
     const k = await key("ua");
-    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('api:day', ?, 5000)", Math.floor(Date.now() / 1000));
+    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('api:day', ?, 3000)", Math.floor(Date.now() / 1000));
     const before = await env.DB.prepare("SELECT key, count FROM auth_limits ORDER BY key").all();
     const r = await v1(k.secret, "/links");
     expect([r.status, await r.json()]).toEqual([429, { error: "rate_limited" }]);
