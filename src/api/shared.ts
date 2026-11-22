@@ -13,15 +13,19 @@ export function nonJsonBody(req: { header(name: string): string | undefined }): 
   return hasBody && !/^application\/json\s*(;|$)/i.test(req.header("content-type") ?? "");
 }
 
+/** The statements behind getDomain, isMember and allHosts, for routes that batch them. */
+export const domainQ = (env: Env, id: string) => env.DB.prepare("SELECT * FROM domains WHERE id = ?").bind(id);
+export const memberQ = (env: Env, domainId: string, userId: string) =>
+  env.DB.prepare("SELECT 1 FROM domain_members WHERE domain_id = ? AND user_id = ?").bind(domainId, userId);
+// Active only: a pending or disabled domain does not serve, so a link to it is not a loop (yet).
+export const hostsQ = (env: Env) => env.DB.prepare("SELECT host FROM domains WHERE status = 'active'");
+
 export const getDomain = async (env: Env, id: string): Promise<DomainRow | null> => {
-  const r = await env.DB.prepare("SELECT * FROM domains WHERE id = ?").bind(id).first();
+  const r = await domainQ(env, id).first();
   return r ? rowToDomain(r) : null;
 };
-export const isMember = async (env: Env, domainId: string, userId: string) =>
-  !!(await env.DB.prepare("SELECT 1 FROM domain_members WHERE domain_id = ? AND user_id = ?").bind(domainId, userId).first());
-// Active only: a pending or disabled domain does not serve, so a link to it is not a loop (yet).
-export const allHosts = async (env: Env) =>
-  (await env.DB.prepare("SELECT host FROM domains WHERE status = 'active'").all<{ host: string }>()).results.map((r) => r.host);
+export const isMember = async (env: Env, domainId: string, userId: string) => !!(await memberQ(env, domainId, userId).first());
+export const allHosts = async (env: Env) => (await hostsQ(env).all<{ host: string }>()).results.map((r) => r.host);
 
 // A failed purge must not turn a committed write into a 500; entries expire by TTL anyway.
 const swallow = (p: Promise<unknown>) => p.catch((e) => console.warn("cache invalidate failed", String(e)));

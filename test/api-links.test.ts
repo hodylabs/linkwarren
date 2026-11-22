@@ -243,7 +243,8 @@ describe("patch concurrency", () => {
     const l = await mk("a", "pc");
     let first: Response | undefined;
     // The second PATCH has read the row; the first runs to completion before the second writes.
-    const restore = beforeBatch(1, async () => { first = await call("a", "PATCH", `/api/links/${l.id}`, { url: "https://first.com/" }); });
+    // Batch 1 is the pre-read (link, domain, membership); batch 2 is the write.
+    const restore = beforeBatch(2, async () => { first = await call("a", "PATCH", `/api/links/${l.id}`, { url: "https://first.com/" }); });
     let second: Response;
     try { second = await call("a", "PATCH", `/api/links/${l.id}`, { passQuery: false }); } finally { restore(); }
     expect(first!.status).toBe(200);
@@ -263,7 +264,7 @@ describe("patch concurrency", () => {
 
   it("a PATCH on a link deleted after the read is 404, not 409", async () => {
     const l = await mk("a", "pd");
-    const restore = beforeBatch(1, () => run("DELETE FROM links WHERE id = ?", l.id));
+    const restore = beforeBatch(2, () => run("DELETE FROM links WHERE id = ?", l.id));
     try { expect((await call("a", "PATCH", `/api/links/${l.id}`, { passQuery: false })).status).toBe(404); } finally { restore(); }
     expect(await audits("link.update")).toBe(0);
   });
@@ -513,8 +514,8 @@ describe("password and routes", () => {
       (env as { DB: D1Database }).DB = real;
     }
     expect(r.status).toBe(201);
-    // One for the main destination, one shared by the five routes.
-    expect(reads).toBe(2);
+    // One, in the create pre-read batch, shared by the main destination and the five routes.
+    expect(reads).toBe(1);
   });
 
   it("a password link cannot be 301, on create or on a PATCH of a protected link", async () => {
@@ -644,7 +645,7 @@ describe("password and routes", () => {
   it("a PATCH {password} that loses the revision race is 409: hash unchanged, no audit row", async () => {
     const { id } = await mk("a", "race", { password: "spring-27" });
     const h1 = await hashOf(id);
-    const restore = beforeBatch(1, () => run("UPDATE links SET updated_at = updated_at + 100 WHERE id = ?", id));
+    const restore = beforeBatch(2, () => run("UPDATE links SET updated_at = updated_at + 100 WHERE id = ?", id));
     let r: Response;
     try { r = await call("a", "PATCH", `/api/links/${id}`, { password: "autumn-99x" }); } finally { restore(); }
     expect(await err(r)).toEqual([409, { error: "conflict" }]);

@@ -6,10 +6,10 @@ import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
 import { canManageDomain, canUseDomain, usableDomains } from "../perm";
 import { actor, type Grant } from "../principal";
-import { ROUTE_DEVICES, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
+import { ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
 import { bulk } from "./bulk";
-import { allHosts, destination, getDomain, isMember, purge } from "./shared";
+import { allHosts, destination, domainQ, getDomain, hostsQ, isMember, memberQ, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const links = new Hono<E>();
@@ -44,10 +44,10 @@ const patchBody = z.strictObject({
 });
 
 /** Countries two ASCII letters (raw, then upper-cased; never XX or T1, they never match), deduped; each url checked like the main destination. */
-export async function validateRoutes(env: Env, input: RouteInput[]): Promise<{ routes: Route[] } | { error: "bad_route"; index: number; reason: string }> {
+export async function validateRoutes(env: Env, input: RouteInput[], known?: string[]): Promise<{ routes: Route[] } | { error: "bad_route"; index: number; reason: string }> {
   const routes: Route[] = [];
-  // One host read for every route of the request.
-  const hosts = input.length ? await allHosts(env) : [];
+  // One host read for every route of the request (none when the caller already read them).
+  const hosts = input.length ? (known ?? await allHosts(env)) : [];
   for (const [index, r] of input.entries()) {
     const raw = r.countries ?? [];
     // Raw check first: "ß".toUpperCase() is "SS", which must not pass as a code.
@@ -76,8 +76,9 @@ export function bodyError(e: z.ZodError): string {
   return e.issues.every((i) => i.code === "too_big" && i.path.length === 1 && i.path[0] === "password") ? "password_long" : "invalid_body";
 }
 
-export const hasLock = async (env: Env, domainId: string, key: string) =>
-  !!(await env.DB.prepare("SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)").bind(domainId, key).first());
+const lockQ = (env: Env, domainId: string, key: string) =>
+  env.DB.prepare("SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)").bind(domainId, key);
+export const hasLock = async (env: Env, domainId: string, key: string) => !!(await lockQ(env, domainId, key).first());
 
 export const badWindow = (s: number | null, x: number | null) => s !== null && x !== null && x <= s;
 
@@ -180,22 +181,27 @@ links.post("/", async (c) => {
   const body = createBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
   const b = body.data;
-  const domain = await getDomain(c.env, b.domainId);
+  // Every pre-read in one batch, judged below in the old order. Slugs are ASCII, so lower(slug) = lower(slugKey(slug, *)).
+  const [dr, mr, hr, lr] = await c.env.DB.batch([
+    domainQ(c.env, b.domainId), memberQ(c.env, b.domainId, user.id), hostsQ(c.env), lockQ(c.env, b.domainId, b.slug),
+  ]);
+  const domain = dr!.results[0] ? rowToDomain(dr!.results[0] as Record<string, unknown>) : null;
   if (!domain) return c.json({ error: "not_found" }, 404);
-  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
+  if (!canUseDomain(user, domain, mr!.results.length > 0, c.var.grant.domains)) return c.json(forbidden, 403);
   const s = checkSlug(b.slug, domain.reservedExtra);
   if (!s.ok) return c.json({ error: s.reason === "too_long" ? "slug_too_long" : s.reason }, 400);
-  const dest = await destination(c.env, b.url);
+  const hosts = (hr!.results as { host: string }[]).map((r) => r.host);
+  const dest = await destination(c.env, b.url, [], hosts);
   if ("error" in dest) return c.json({ error: dest.error }, 400);
   const startsAt = b.startsAt ?? null, expiresAt = b.expiresAt ?? null;
   if (badWindow(startsAt, expiresAt)) return c.json({ error: "bad_window" }, 400);
   const redirectCode = b.redirectCode ?? 302;
   if (b.password != null && redirectCode === 301) return c.json({ error: "password_301" }, 400);
-  const rt = await validateRoutes(c.env, b.routes ?? []);
+  const rt = await validateRoutes(c.env, b.routes ?? [], hosts);
   if ("error" in rt) return c.json(rt, 400);
 
   const key = slugKey(b.slug, domain.caseSensitive);
-  if (await hasLock(c.env, domain.id, key)) return c.json({ error: "locked" }, 409);
+  if (lr!.results.length) return c.json({ error: "locked" }, 409);
   const pw = await passwordInput(c.env, b.password);
   if ("error" in pw) return c.json({ error: pw.error }, 400);
   const passwordHash = pw.hash ?? null;
@@ -231,15 +237,24 @@ links.post("/", async (c) => {
 export const canEditLink = (user: UserRow, link: LinkRow, domain: DomainRow, member: boolean, only: readonly string[] | null): boolean =>
   canUseDomain(user, domain, member, only) && (link.createdBy === user.id || canManageDomain(user, domain));
 
-/** Loads a link and enforces edit rights (canEditLink). */
-async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, id: string) {
+/** Loads a link and enforces edit rights (canEditLink); `withHosts` also reads the active hosts in the same batch. */
+async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, id: string, withHosts = false) {
   const user = c.var.user;
-  const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(id).first();
+  // The link, its domain and the membership in one batch (the last two found through the link).
+  const [lr, dr, mr, hr] = await c.env.DB.batch([
+    c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(id),
+    c.env.DB.prepare("SELECT d.* FROM links l JOIN domains d ON d.id = l.domain_id WHERE l.id = ?").bind(id),
+    c.env.DB.prepare("SELECT 1 FROM links l JOIN domain_members m ON m.domain_id = l.domain_id WHERE l.id = ? AND m.user_id = ?").bind(id, user.id),
+    ...(withHosts ? [hostsQ(c.env)] : []),
+  ]);
+  const hosts = hr ? (hr.results as { host: string }[]).map((r) => r.host) : undefined;
+  const row = lr!.results[0] as Record<string, unknown> | undefined;
   if (!row) return { status: 404 as const };
   const link = rowToLink(row);
-  const domain = await getDomain(c.env, link.domainId);
-  if (!domain) return { status: 404 as const };
-  return canEditLink(user, link, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains) ? { link, domain } : { status: 403 as const };
+  const d = dr!.results[0] as Record<string, unknown> | undefined;
+  if (!d) return { status: 404 as const };
+  const domain = rowToDomain(d);
+  return canEditLink(user, link, domain, mr!.results.length > 0, c.var.grant.domains) ? { link, domain, hosts } : { status: 403 as const };
 }
 
 links.patch("/:id", async (c) => {
@@ -247,20 +262,20 @@ links.patch("/:id", async (c) => {
   const body = patchBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
   const b = body.data;
-  const found = await editable(c, c.req.param("id"));
+  const found = await editable(c, c.req.param("id"), b.url !== undefined || !!b.routes?.length);
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
-  const { link, domain } = found;
+  const { link, domain, hosts } = found;
   // A forwarder is never edited: it can only be deleted.
   if (link.forwardTo) return c.json({ error: "forwarder" }, 409);
   let url = link.url;
   if (b.url !== undefined) {
-    const dest = await destination(c.env, b.url);
+    const dest = await destination(c.env, b.url, [], hosts);
     if ("error" in dest) return c.json({ error: dest.error }, 400);
     url = dest.href;
   }
   let routes = link.routes;
   if (b.routes !== undefined) {
-    const rt = await validateRoutes(c.env, b.routes);
+    const rt = await validateRoutes(c.env, b.routes, hosts);
     if ("error" in rt) return c.json(rt, 400);
     routes = rt.routes;
   }
