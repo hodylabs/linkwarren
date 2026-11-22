@@ -239,6 +239,25 @@ describe("bulk move reload and targets", () => {
     await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select b.test/spring" })).toBeTruthy());
   });
 
+  it("a target that already holds every selected link blocks Move with a hint; a mixed selection may move there", async () => {
+    const { user } = boot({ items: [L[0]!, mk("l9", "other", { domainId: "d2" })] });
+    await selectAll(user);
+    await user.keyboard("m");
+    const sheet = screen.getByRole("dialog", { name: "Move links" });
+    await user.click(within(sheet).getByRole("radio", { name: /^Keep a copy on both domains/ }));
+    const run = () => within(sheet).getByRole("button", { name: /^Move/ }) as HTMLButtonElement;
+    await user.click(within(sheet).getByRole("radio", { name: "go.test" }));
+    expect(run().disabled).toBe(false);
+    await user.click(within(sheet).getByRole("button", { name: /^Cancel/ }));
+    await user.click(screen.getByRole("checkbox", { name: "Select b.test/other" }));
+    await user.keyboard("m");
+    const one = screen.getByRole("dialog", { name: "Move links" });
+    await user.click(within(one).getByRole("radio", { name: /^Keep a copy on both domains/ }));
+    await user.click(within(one).getByRole("radio", { name: "go.test" }));
+    expect((within(one).getByRole("button", { name: /^Move/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(one).getByText("Every selected link is already on go.test")).toBeTruthy();
+  });
+
   it("the default target is never one of the source domains", async () => {
     const { user } = boot({ items: [L[0]!, mk("l9", "other", { domainId: "d2" })] });
     await selectAll(user);

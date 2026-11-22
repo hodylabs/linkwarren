@@ -87,6 +87,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
       return pwProblem ? { hint: errorText(pwProblem) } : { op: { action: "password", password } };
     }
     if (!target) return { hint: "There is no other active domain to move to" };
+    if (links.every((l) => l.domainId === target)) return { hint: `Every selected link is already on ${targetHost}` };
     if (!oldAddress) return { hint: "Pick what happens to the old addresses" };
     return { op: { action: "move", domainId: target, oldAddress } };
   };
