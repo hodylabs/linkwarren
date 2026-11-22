@@ -19,7 +19,7 @@ const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
 const L = [mk("l1", "spring"), mk("l2", "menu"), mk("l3", "app")];
 const okAll = (req: FakeReq): FakeRes => ({ body: { results: (req.body as { ids: string[] }).ids.map((id) => ({ id, ok: true })), pending: [] } });
 
-function boot(o: { items?: Link[]; page?: () => FakeRes; bulk?: (req: FakeReq) => FakeRes | Promise<FakeRes> } = {}) {
+function boot(o: { items?: Link[]; page?: () => FakeRes | Promise<FakeRes>; bulk?: (req: FakeReq) => FakeRes | Promise<FakeRes> } = {}) {
   history.replaceState(null, "", "/links");
   const api = fakeApi({
     "GET /api/me": () => ({ body: owner }),
@@ -263,6 +263,54 @@ describe("bulk move reload and targets", () => {
     await selectAll(user);
     await user.keyboard("m");
     expect(screen.getByRole("radio", { name: "e.test" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+describe("the list after a run", () => {
+  const listGets = (api: { calls: { method: string; path: string }[] }) => api.calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/links") && !c.path.includes("/bulk")).length;
+
+  it("a page that loads while a run is out stays in the list", async () => {
+    let releasePage!: () => void, releaseRun!: () => void;
+    const page2 = new Promise<void>((r) => (releasePage = r)), run = new Promise<void>((r) => (releaseRun = r));
+    let n = 0;
+    const { user } = boot({
+      page: () => (++n === 1 ? { body: { items: L, next: "100.l3" } } : page2.then(() => ({ body: { items: [mk("l4", "late")], next: null } }))),
+      bulk: async (req) => (await run, okAll(req)),
+    });
+    await selectAll(user);
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}");
+    releasePage();
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select go.test/late" })).toBeTruthy());
+    releaseRun();
+    const sheet = await screen.findByRole("dialog", { name: "Delete links" });
+    await waitFor(() => expect(within(sheet).getByText("3 changed, 0 not changed")).toBeTruthy());
+    await user.click(within(sheet).getByRole("button", { name: /^Done/ }));
+    expect(rows()).toHaveLength(1);
+    expect(screen.getByRole("checkbox", { name: "Select go.test/late" })).toBeTruthy();
+  });
+
+  it("a schedule change under the Active filter reloads the list; a redirect change under All does not", async () => {
+    const { api, user } = boot();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Active" }));
+    await selectAll(user);
+    const before = listGets(api);
+    await user.keyboard("s");
+    await user.click(screen.getByRole("radio", { name: "End now" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(listGets(api)).toBe(before + 1));
+    await user.click(screen.getByRole("button", { name: /^Done/ }));
+    await user.click(screen.getByRole("button", { name: "All" }));
+    await selectAll(user);
+    const all = listGets(api);
+    await user.keyboard("r");
+    await user.click(screen.getByRole("radio", { name: "302" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Done/ })).toBeTruthy());
+    expect(listGets(api)).toBe(all);
   });
 });
 

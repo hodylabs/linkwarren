@@ -254,7 +254,8 @@ export function LinksScreen() {
   // failed links that are still loaded (R12), so Retry or another action works on exactly those.
   const afterRun = (op: BulkOp, r: BulkRun) => {
     const copy = op.action === "move" && op.oldAddress === "copy";
-    const left = items.flatMap((l) => {
+    // The rows as they are now (a page may have loaded during the run), never the ones from when the sheet opened.
+    const left = latest.current.items.flatMap((l) => {
       if (!r.ok.has(l.id)) return [l];
       if (op.action === "delete") return [];
       const fresh = r.ok.get(l.id);
@@ -266,7 +267,8 @@ export function LinksScreen() {
     app.reloadDomains().catch(() => undefined); // link counts
     // A move adds rows the list does not hold (copies, forwarders) or takes them out of this scope; a dropped connection leaves
     // the outcome unknown. Reload the current scope; the reload keeps the selection to loaded ids.
-    if ((op.action === "move" && r.ok.size > 0) || r.stop === "lost_connection") app.bumpLinks();
+    // A schedule change under a status filter may take rows out of it (End now under Active) or bring others in.
+    if ((op.action === "move" && r.ok.size > 0) || (op.action === "schedule" && r.ok.size > 0 && status !== "all") || r.stop === "lost_connection") app.bumpLinks();
     app.announce(`${plural(r.ok.size, "link")} changed, ${r.failed.size} not changed`);
   };
 
