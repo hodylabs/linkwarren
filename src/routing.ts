@@ -1,8 +1,8 @@
 // Pure route picking for links that send visitors to different destinations by country or device.
 import { deviceOf } from "./clicks";
 
-export type RouteDevice = "mobile" | "tablet" | "desktop";
-export type Route = { countries: string[]; devices: RouteDevice[]; url: string };
+import type { Route, RouteDevice } from "./types";
+export type { Route, RouteDevice };
 
 const UA_MAX = 512; // same cap as click recording, before any regex runs
 
