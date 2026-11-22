@@ -298,6 +298,26 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     await run("DELETE FROM locks");
   });
 
+  it("a lease running short after a step: the next step is not sent, the done step is stored and audited, 409 conflict", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("owner", "go.owned.test");
+    let short = false;
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      const req = new Request(i as RequestInfo, init);
+      if (!short && req.method !== "GET" && req.url.includes("/rulesets")) {
+        short = true;
+        // Still ours, but under STEP_S left: no new Cloudflare write may start, the fenced D1 write still may.
+        await run("UPDATE locks SET until = ? WHERE key = ?", Math.floor(Date.now() / 1000) + 30, `domain:${id}`);
+      }
+      return fake.handle(req);
+    });
+    const r = await setCf(id, { securityLevel: "high", rateLimit: 40 });
+    expect([r.status, await r.json()]).toEqual([409, { error: "conflict", securityLevel: "high", rateLimit: null }]);
+    expect(fake.state.rulesets[RL]?.rules ?? []).toEqual([]);
+    expect(await row(id)).toEqual({ security_level: "high", rate_limit: null });
+    expect(await audits()).toEqual([{ host: "go.owned.test", securityLevel: "high" }]);
+  });
+
   it("other Cloudflare failure: 502 cloudflare_error, D1 unchanged", async () => {
     const fake = installFakeCloudflare({ zones });
     const id = await create("owner", "go.owned.test");

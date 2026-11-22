@@ -231,8 +231,9 @@ domains.patch("/:id/cloudflare", async (c) => {
     // A failure answers with the stored controls too, so the client knows which step landed.
     let failure: { body: { error: string }; status: 409 | 502 } | null = null;
     for (const [run, record] of steps) {
-      // A lost lease stops before the next Cloudflare write; the guarded batch below then writes nothing.
-      if (!(await lease.held())) break;
+      // A lease running short stops before the next Cloudflare write; the fenced batch below still stores the steps done
+      // (it writes nothing once the lease was reclaimed). A lease that runs short is answered as a conflict.
+      if (!(await lease.held())) { failure = { body: busy, status: 409 }; break; }
       try {
         await run();
         record();
@@ -250,8 +251,7 @@ domains.patch("/:id/cloudflare", async (c) => {
         break;
       }
     }
-    if (!failure && Object.keys(done).length < steps.length) return c.json(busy, 409);
-    if (Object.keys(done).length === 0) return c.json({ ...failure!.body, securityLevel: cf.securityLevel, rateLimit: cf.rateLimit }, failure!.status);
+    if (Object.keys(done).length === 0) return failure!.body === busy ? c.json(busy, 409) : c.json({ ...failure!.body, securityLevel: cf.securityLevel, rateLimit: cf.rateLimit }, failure!.status);
     const cols: [string, string | number | null][] = [];
     if ("securityLevel" in done) cols.push(["security_level", done.securityLevel!]);
     if ("rateLimit" in done) cols.push(["rate_limit", done.rateLimit!]);
