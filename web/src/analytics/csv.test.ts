@@ -9,6 +9,7 @@ describe("csvCell", () => {
     expect(csvCell("-1")).toBe("'-1");
     expect(csvCell("@x")).toBe("'@x");
     expect(csvCell("\tx")).toBe("'\tx");
+    expect(csvCell("\rx")).toBe('"\'\rx"'); // guarded, then quoted for the CR
   });
   it("quotes commas, quotes and newlines; numbers stay plain", () => {
     expect(csvCell("a,b")).toBe('"a,b"');

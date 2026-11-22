@@ -1,9 +1,9 @@
 import type { AnalyticsReport } from "../api";
 
-/** One CSV cell (R10): formula starters get a leading ', then RFC 4180 quoting. */
+/** One CSV cell (R10): formula starters (= + - @ tab CR) get a leading ', then RFC 4180 quoting. */
 export function csvCell(v: string | number): string {
   let s = String(v);
-  if (typeof v === "string" && /^[=+\-@\t]/.test(s)) s = `'${s}`;
+  if (typeof v === "string" && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
@@ -24,7 +24,8 @@ export function toCsv(r: AnalyticsReport, unit: AnalyticsReport["unit"]): string
 
 /** Saves the CSV through a Blob URL and a temporary <a download> (CSP-safe), then revokes the URL. */
 export function downloadCsv(r: AnalyticsReport): void {
-  const url = URL.createObjectURL(new Blob([toCsv(r, r.unit)], { type: "text/csv;charset=utf-8" }));
+  // The BOM makes Excel read the file as UTF-8, so IDN hosts and non-ASCII slugs survive.
+  const url = URL.createObjectURL(new Blob(["\uFEFF", toCsv(r, r.unit)], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url;
   // Hour reports carry ISO hour keys; the file name keeps the day part only.

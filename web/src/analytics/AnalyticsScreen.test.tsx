@@ -322,6 +322,7 @@ describe("Analytics screen", () => {
     await user.keyboard("x");
     expect(names).toEqual(["linkwarren-analytics-2026-10-22-to-2026-11-20.csv"]);
     expect(await blobs[0]!.text()).toContain("referrer,clicks\ndirect,2");
+    expect([...new Uint8Array(await blobs[0]!.arrayBuffer()).slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     expect(document.querySelector("a[download]")).toBeNull();
     vi.advanceTimersByTime(1000);
     expect(revoke).toHaveBeenCalledWith("blob:test");
