@@ -15,6 +15,8 @@
   "kv_namespaces": [{ "binding": "CACHE", "id": "<your-kv-namespace-id>" }],
   // Click analytics (see docs/deploy.md "Analytics"). The dataset is created on the first write; leave this out to record nothing.
   "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }],
+  // Daily at 00:15 UTC: rolls finished days of clicks into D1 and removes audit rows older than 3 years (see docs/deploy.md "Daily job").
+  "triggers": { "crons": ["15 0 * * *"] },
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
     // "app" (linkwarren's own sign-in, the default) or "access" (Cloudflare Access). See docs/deploy.md "Sign-in".

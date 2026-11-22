@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import app from "../src/index";
+import { app } from "../src/index";
 import { dash, ORIGIN, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();

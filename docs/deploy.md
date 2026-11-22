@@ -111,6 +111,22 @@ linkwarren records one Workers Analytics Engine data point per redirect to a liv
 
 Never put `VISITOR_SALT` or `AE_READ_TOKEN` in `vars`. Neither is ever logged, returned by the API or put in an error message. Workers Analytics Engine is available on the Workers Free plan.
 
+### Daily job
+
+A Cron Trigger runs once a day: `"triggers": { "crons": ["15 0 * * *"] }` (00:15 UTC) in `wrangler.instance.jsonc`. Cron Triggers are free on the Workers Free plan. Each run does two independent things; one failing never stops the other.
+
+- **Rollup.** Analytics Engine keeps raw clicks for 90 days, so the job copies each finished UTC day into the D1 tables `clicks_daily` and `clicks_daily_dim` and records the last day written in `analytics_state` (`rolled_through`). Reports read days up to that mark from D1 and later days live from Analytics Engine, so no day is lost or counted twice. A run writes at most 31 days, oldest first, starting no earlier than 89 days ago, with 5 Analytics Engine queries in total, so it stays inside the Free plan limits; a backlog catches up over a few runs. Re-running a day replaces it, never adds to it. Without `CF_ACCOUNT_ID` and `AE_READ_TOKEN` the rollup is skipped.
+- **Audit purge.** Audit rows older than 3 years (1096 days) are deleted, and the deletion itself is written to the audit log as `audit.purge` by the actor `system`.
+
+Logs show `analytics rollup: <days>` and `audit purge: <count>`; errors are logged by name only. To run the job locally:
+
+```sh
+npx wrangler dev --test-scheduled -c wrangler.instance.jsonc
+curl "http://localhost:8787/__scheduled?cron=15+0+*+*+*"
+```
+
+To re-roll days (for example after a fix), set the mark back, e.g. `UPDATE analytics_state SET v = '2026-11-17' WHERE k = 'rolled_through'`; the next run rewrites the days after it that Analytics Engine still holds.
+
 ## Sign-in
 
 `AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. The value is trimmed and must then be exactly `app` or `access` (lowercase); any other value fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting.

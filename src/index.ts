@@ -15,8 +15,9 @@ import { settings } from "./api/settings";
 import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
+import { scheduled } from "./cron";
 
-const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } }>();
+export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } }>();
 
 // Missing config fails closed with a clear error instead of a throw.
 app.use("*", async (c, next) => {
@@ -99,4 +100,4 @@ app.onError((err, c) => {
   return c.json({ error: "internal" }, 500);
 });
 
-export default app;
+export default { fetch: app.fetch, scheduled } satisfies ExportedHandler<Env>;
