@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { BulkResult } from "../api/bulk";
 import { callApi, type Principal } from "../call";
 import type { Env } from "../env";
 import { normalizeHost, slugFromPath } from "../host";
@@ -144,5 +145,55 @@ export const TOOLS: Record<string, ToolDef> = {
     description: "Daily click counts for one link over the last 7 days." + DATA,
     input: z.strictObject({ id }),
     run: async (api, a) => (await api("GET", `/analytics/links?${qs({ ids: a.id })}`)) as Record<string, unknown>,
+  },
+  bulk_links: {
+    description: "Change up to 100 links in one call with the same rules as one at a time: delete, schedule, move to another domain, "
+      + "redirect type or password. delete and move refuse without confirm: true; show the person the summary and ask first. "
+      + "move also needs oldAddress (forward or copy): ask the person, never choose for them. Results are per link, with a reason "
+      + "when refused; a password is set on one link per call and the rest come back in `pending` to send again." + DATA,
+    input: z.strictObject({
+      action: z.enum(["delete", "schedule", "move", "redirect", "password"]),
+      ids: z.array(id).min(1).max(100),
+      confirm: z.boolean().optional(),
+      domain: hostOrId.optional().describe("Move only: the target domain"),
+      startsAt: time,
+      expiresAt: time,
+      endNow: z.boolean().optional(),
+      oldAddress: z.enum(["forward", "copy"]).optional().describe("Move only, required: forward keeps the old address working as a forwarder to the new short link; copy makes an independent copy on the new domain and leaves the original. Ask the person; never choose for them."),
+      redirectCode: rules.redirectCode,
+      passQuery: rules.passQuery,
+      password: rules.password,
+    }),
+    write: true,
+    run: async (api, { action, ids, confirm, domain, ...rest }, p) => {
+      // Refuse early what the grant can never do, so the person is not asked to confirm it; the route checks again.
+      if (!p.grant.write) throw new ApiError("read_only", 403);
+      if (action === "delete" && !p.grant.del) throw new ApiError("delete_not_allowed", 403);
+      if ((action === "move") !== (domain !== undefined)) throw new ApiError("bad_input", 400);
+      const n = new Set(ids as string[]).size;
+      const target = action === "move" ? await domainOf(api, domain) : undefined;
+      if (target && rest.oldAddress === undefined) return {
+        refused: true,
+        summary: `Moving ${n} links to ${target.host}: ask the person whether each old address should forward to the new one (oldAddress: forward) or stay as an independent link with a copy on ${target.host} (oldAddress: copy).`,
+      };
+      if (confirm !== true && (action === "delete" || target)) return {
+        refused: true,
+        summary: !target ? `Deleting ${n} links sends their visitors to each domain's not-found page and locks the slugs.`
+          : rest.oldAddress === "forward" ? `Moving ${n} links to ${target.host}; each old address will forward to the new one.`
+          : `Copying ${n} links to ${target.host}; the originals stay as they are.`,
+      };
+      const r = (await api("POST", "/links/bulk", { action, ids, ...rest, ...(target ? { domainId: target.id } : {}) })) as
+        { results: BulkResult[]; pending: string[] };
+      const hosts = r.results.some((x) => x.ok && x.link)
+        ? new Map(((await api("GET", "/domains")) as Domain[]).map((d) => [d.id, d.host])) : new Map<string, string>();
+      // Only what the agent needs per link: never the full row (smaller output, no rules or routes echoed back).
+      const results = r.results.map((x) => {
+        if (!x.ok || !x.link) return x;
+        const { id: linkId, domainId, slug: s, url: u, hasPassword, forwardTo } = x.link;
+        const host = hosts.get(domainId);
+        return { id: x.id, ok: true, link: { id: linkId, shortUrl: host ? `https://${host}/${s}` : null, url: u, hasPassword, forwardTo: forwardTo ?? null } };
+      });
+      return { results, pending: r.pending };
+    },
   },
 };

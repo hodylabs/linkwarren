@@ -40,6 +40,10 @@ async function calls(n: number): Promise<Row[]> {
 }
 const lastCall = async () => (await calls(1)).at(-1)!;
 
+const seed = (key: string, count: number) =>
+  run("INSERT INTO auth_limits (key, window_start, count) VALUES (?, ?, ?)", key, Math.floor(Date.now() / 1000), count);
+const countOf = async (key: string) => (await one<{ count: number }>("SELECT count FROM auth_limits WHERE key = ?", key))?.count;
+
 beforeAll(setupAccess);
 beforeEach(async () => {
   await env.DB.batch(["tool_calls", "auth_limits", "links", "slug_locks", "audit_log", "agent_connections", "domain_members", "domains", "sessions", "users"]
@@ -73,7 +77,7 @@ describe("server", () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it("initialize returns the exact instructions and tools/list the nine tools", async () => {
+  it("initialize returns the exact instructions and tools/list the ten tools", async () => {
     const t = await connectAgent(A);
     const init = await mcpCall(t.accessToken, "initialize", {
       protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" },
@@ -83,11 +87,12 @@ describe("server", () => {
     const list = await mcpCall(t.accessToken, "tools/list");
     const tools = list.body.result.tools as { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean } }[];
     expect(tools.map((x) => x.name).sort()).toEqual(
-      ["check_slug", "create_link", "delete_link", "get_link", "link_stats", "list_domains", "search_links", "server_info", "update_link"]);
-    const writes = ["create_link", "update_link", "delete_link"];
+      ["bulk_links", "check_slug", "create_link", "delete_link", "get_link", "link_stats", "list_domains", "search_links", "server_info", "update_link"]);
+    const writes = ["create_link", "update_link", "delete_link", "bulk_links"];
     for (const x of tools) expect(x.annotations?.readOnlyHint ?? false).toBe(!writes.includes(x.name));
     const hint = (n: string) => tools.find((x) => x.name === n)!.annotations!;
-    expect([hint("create_link").destructiveHint, hint("update_link").destructiveHint, hint("delete_link").destructiveHint]).toEqual([false, true, true]);
+    expect([hint("create_link").destructiveHint, hint("update_link").destructiveHint, hint("delete_link").destructiveHint, hint("bulk_links").destructiveHint])
+      .toEqual([false, true, true, true]);
     for (const x of tools) expect(x.annotations?.openWorldHint).toBe(false);
   });
 
@@ -213,6 +218,130 @@ describe("writes", () => {
   });
 });
 
+describe("bulk_links", () => {
+  const ids = (r: Result) => r.structuredContent.results.map((x: { id: string; ok: boolean; error?: string }) => [x.id, x.ok ? "ok" : x.error]);
+
+  it("INSTRUCTIONS carry the bulk sentence before the locked-slugs one", () => {
+    expect(INSTRUCTIONS).toContain("bulk_links changes up to 100 links in one call with the same rules as one at a time; it refuses delete and move without confirm: true. A move needs oldAddress: forward (the old address keeps working and forwards to the new one) or copy (an independent copy on the new domain, the original stays); ask the person which, never choose for them. It sets a password on one link per call, returning the rest as pending to send again. Deleted slugs stay locked;");
+  });
+
+  it("read-only connection gets read_only and changes nothing", async () => {
+    const t = await connectAgent(A);
+    expect(errOf(await tool(t.accessToken, "bulk_links", { action: "schedule", ids: ["lgo"], endNow: true }))).toEqual({ error: "read_only", status: 403 });
+    expect(await one<Row>("SELECT expires_at FROM links WHERE id = 'lgo'")).toEqual({ expires_at: null });
+  });
+
+  it("schedule endNow on 2 links: both ok, slim link output, audit via = client name, N units on the daily caps", async () => {
+    const t = await connectAgent(A, { write: true });
+    const r = await tool(t.accessToken, "bulk_links", { action: "schedule", ids: ["lgo", "la"], endNow: true });
+    expect(r.isError).toBeFalsy();
+    expect(ids(r)).toEqual([["lgo", "ok"], ["la", "ok"]]);
+    expect(r.structuredContent.pending).toEqual([]);
+    expect(r.structuredContent.results[0].link).toEqual({ id: "lgo", shortUrl: "https://go.test/spring", url: "https://x.com/", hasPassword: false, forwardTo: null });
+    const audit = await all<Row>("SELECT target_id, via FROM audit_log WHERE action = 'link.update' ORDER BY target_id");
+    expect(audit).toEqual([{ target_id: "la", via: "Claude" }, { target_id: "lgo", via: "Claude" }]);
+    // runTool charges one unit, the route the other: a bulk of N costs N in total.
+    expect(await countOf("api:ud:ua")).toBe(2);
+    expect(await countOf("api:day")).toBe(2);
+    expect(await lastCall()).toMatchObject({ tool: "bulk_links", status: "ok" });
+  });
+
+  it("delete: refuses without confirm (links stay), delete_not_allowed without delete, deletes with both", async () => {
+    const t = await connectAgent(A, { write: true, del: true });
+    const r = await tool(t.accessToken, "bulk_links", { action: "delete", ids: ["lgo", "la", "lgo"] });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toEqual({
+      refused: true, summary: "Deleting 2 links sends their visitors to each domain's not-found page and locks the slugs.",
+    });
+    expect(await lastCall()).toMatchObject({ tool: "bulk_links", status: "refused" });
+    expect((await all("SELECT id FROM links WHERE id IN ('lgo','la')")).length).toBe(2);
+    const w = await connectAgent(A, { write: true });
+    expect(errOf(await tool(w.accessToken, "bulk_links", { action: "delete", ids: ["lgo"], confirm: true }))).toEqual({ error: "delete_not_allowed", status: 403 });
+    const ok = await tool(t.accessToken, "bulk_links", { action: "delete", ids: ["lgo", "la"], confirm: true });
+    expect(ids(ok)).toEqual([["lgo", "ok"], ["la", "ok"]]);
+    expect(await one("SELECT 1 FROM links WHERE id IN ('lgo','la')")).toBeNull();
+  });
+
+  it("move without oldAddress refuses naming both choices; without confirm refuses; nothing moves", async () => {
+    const t = await connectAgent(A, { write: true });
+    const r = await tool(t.accessToken, "bulk_links", { action: "move", ids: ["lgo"], domain: "a.test", confirm: true });
+    expect(r.structuredContent).toEqual({
+      refused: true,
+      summary: "Moving 1 links to a.test: ask the person whether each old address should forward to the new one (oldAddress: forward) or stay as an independent link with a copy on a.test (oldAddress: copy).",
+    });
+    const f = await tool(t.accessToken, "bulk_links", { action: "move", ids: ["lgo"], domain: "a.test", oldAddress: "forward" });
+    expect(f.structuredContent).toEqual({ refused: true, summary: "Moving 1 links to a.test; each old address will forward to the new one." });
+    const c = await tool(t.accessToken, "bulk_links", { action: "move", ids: ["lgo"], domain: "a.test", oldAddress: "copy" });
+    expect(c.structuredContent).toEqual({ refused: true, summary: "Copying 1 links to a.test; the originals stay as they are." });
+    expect((await calls(3)).map((x) => x.status)).toEqual(["refused", "refused", "refused"]);
+    expect(await one<Row>("SELECT domain_id FROM links WHERE id = 'lgo'")).toEqual({ domain_id: "dgo" });
+    expect((await all("SELECT id FROM links")).length).toBe(3);
+  });
+
+  it("move forward with confirm: the link moves and a forwarder keeps the old address", async () => {
+    const t = await connectAgent(A, { write: true });
+    const r = await tool(t.accessToken, "bulk_links", { action: "move", ids: ["lgo"], domain: "a.test", oldAddress: "forward", confirm: true });
+    expect(ids(r)).toEqual([["lgo", "ok"]]);
+    expect(r.structuredContent.results[0].link).toMatchObject({ id: "lgo", shortUrl: "https://a.test/spring", forwardTo: null });
+    expect(await one<Row>("SELECT domain_id FROM links WHERE id = 'lgo'")).toEqual({ domain_id: "da" });
+    expect(await one<Row>("SELECT url, forward_to FROM links WHERE domain_id = 'dgo' AND slug_key = 'spring'"))
+      .toEqual({ url: "https://a.test/spring", forward_to: "lgo" });
+  });
+
+  it("move copy with confirm: a copy on a.test, the original unchanged", async () => {
+    const t = await connectAgent(A, { write: true });
+    const before = await one<Row>("SELECT * FROM links WHERE id = 'lgo'");
+    const r = await tool(t.accessToken, "bulk_links", { action: "move", ids: ["lgo"], domain: "dgo", oldAddress: "copy", confirm: true });
+    expect(ids(r)).toEqual([["lgo", "same_domain"]]);
+    const ok = await tool(t.accessToken, "bulk_links", { action: "move", ids: ["lgo"], domain: "a.test", oldAddress: "copy", confirm: true });
+    expect(ids(ok)).toEqual([["lgo", "ok"]]);
+    expect(await one<Row>("SELECT * FROM links WHERE id = 'lgo'")).toEqual(before);
+    const copy = await one<Row>("SELECT id, url, forward_to FROM links WHERE domain_id = 'da' AND slug_key = 'spring'");
+    expect(copy).toMatchObject({ url: "https://x.com/", forward_to: null });
+    expect(copy!.id).not.toBe("lgo");
+    expect(ok.structuredContent.results[0].link.shortUrl).toBe("https://a.test/spring");
+  });
+
+  it("password on 3 links: 1 ok, 2 pending, never pbkdf2 or the password", async () => {
+    const t = await connectAgent(A, { write: true });
+    await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('l3','da','cherry','cherry','https://x.com/','ua','ua',1,1)");
+    const secret = "hunter2-correct-horse";
+    const r = await tool(t.accessToken, "bulk_links", { action: "password", ids: ["lgo", "la", "l3"], password: secret });
+    expect(ids(r)).toEqual([["lgo", "ok"]]);
+    expect(r.structuredContent.pending).toEqual(["la", "l3"]);
+    expect(r.structuredContent.results[0].link.hasPassword).toBe(true);
+    expect(r.raw).not.toContain("pbkdf2");
+    expect(r.raw).not.toContain(secret);
+  });
+
+  it("the daily cap counts per link: the route's 429 comes back as is and only runTool's unit stays", async () => {
+    const t = await connectAgent(A, { write: true });
+    await seed("api:ud:ua", 996);
+    const r = await tool(t.accessToken, "bulk_links", { action: "schedule", ids: ["lgo", "la", "x1", "x2", "x3"], endNow: true });
+    expect(errOf(r)).toEqual({ error: "rate_limited", status: 429 });
+    expect(r.raw).not.toContain("Daily limit");
+    expect(await lastCall()).toMatchObject({ tool: "bulk_links", status: "error" });
+    expect(await countOf("api:ud:ua")).toBe(997);
+    expect(await one<Row>("SELECT expires_at FROM links WHERE id = 'lgo'")).toEqual({ expires_at: null });
+  });
+
+  it("bounded input: over 100 ids, a bad id, a bad oldAddress or an oversize password never runs", async () => {
+    const t = await connectAgent(A, { write: true, del: true });
+    for (const args of [
+      { action: "schedule", ids: Array.from({ length: 101 }, (_, i) => `l${i}`), endNow: true },
+      { action: "schedule", ids: [], endNow: true },
+      { action: "delete", ids: ["../keys"], confirm: true },
+      { action: "move", ids: ["lgo"], domain: "a.test", oldAddress: "lock", confirm: true },
+      { action: "password", ids: ["lgo"], password: "p".repeat(1025) },
+      { action: "rename", ids: ["lgo"] },
+    ]) {
+      const r = await mcpCall(t.accessToken, "tools/call", { name: "bulk_links", arguments: args });
+      expect(r.body.error ?? r.body.result?.isError, JSON.stringify(r.body)).toBeTruthy();
+    }
+    expect(await all("SELECT * FROM auth_limits WHERE key LIKE 'api:%'")).toEqual([]);
+  });
+});
+
 describe("Review Focus 2: live access on every call", () => {
   it("revoked connection: every later call is refused, writes nothing, and a write does not run", async () => {
     const t = await connectAgent(A, { write: true });
@@ -247,10 +376,6 @@ describe("Review Focus 2: live access on every call", () => {
     expect(r.content[0]!.text).toBe("This connection was disconnected or its person no longer has access.");
   });
 });
-
-const seed = (key: string, count: number) =>
-  run("INSERT INTO auth_limits (key, window_start, count) VALUES (?, ?, ?)", key, Math.floor(Date.now() / 1000), count);
-const countOf = async (key: string) => (await one<{ count: number }>("SELECT count FROM auth_limits WHERE key = ?", key))?.count;
 
 describe("rate limits", () => {
   it("the 61st call on one connection is rate limited; retries after it write nothing (one rate_limited row)", async () => {
