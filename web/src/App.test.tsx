@@ -65,7 +65,6 @@ describe("App shell", () => {
 
   it.each([
     ["/agents", "Agent connections and API keys arrive in a later version."],
-    ["/settings", "Instance settings and the first-run setup arrive in a later version."],
   ])("owner at %s sees its coming-soon text", async (path, text) => {
     boot(owner, {}, path);
     expect(await screen.findByText(text)).toBeTruthy();

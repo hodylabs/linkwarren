@@ -7,6 +7,7 @@ import { DOMAINS_KEYS } from "../domains/DomainsScreen";
 import { LINKS_KEYS } from "../links/LinksScreen";
 import { NEW_LINK_KEYS } from "../links/NewLinkSheet";
 import { PEOPLE_KEYS } from "../people/PeopleScreen";
+import { SETTINGS_KEYS } from "../settings/CloudflareSection";
 import { buildCommands } from "./palette";
 import { OWNER_ONLY, SCREEN_TITLES } from "./Rail";
 import { Kbd } from "./ui";
@@ -58,6 +59,7 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
   { title: "New link", rows: rows(NEW_LINK_KEYS) },
   { title: "Domains", rows: [...rows(DOMAINS_KEYS), ...rows(DOMAIN_DETAIL_KEYS), OPEN_ROW, ...SAVE_REVERT, ...rows(ADD_DOMAIN_KEYS)] },
   { title: "People", rows: [...rows(PEOPLE_KEYS), OPEN_ROW] },
+  { title: "Settings", rows: rows(SETTINGS_KEYS) },
 ];
 
 export function Shortcuts() {

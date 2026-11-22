@@ -14,11 +14,11 @@ import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
 import { NewLinkSheet } from "./links/NewLinkSheet";
 import { PeopleScreen } from "./people/PeopleScreen";
+import { SettingsScreen } from "./settings/SettingsScreen";
 
 const SOON: Partial<Record<Screen, string>> = {
   analytics: "Clicks, countries, devices and referrers arrive in a later version.",
   agents: "Agent connections and API keys arrive in a later version.",
-  settings: "Instance settings and the first-run setup arrive in a later version.",
 };
 
 function ScreenView({ screen }: { screen: Screen }) {
@@ -29,6 +29,7 @@ function ScreenView({ screen }: { screen: Screen }) {
   if (soon) return <ComingSoon title={SCREEN_TITLES[screen]} text={soon} />;
   if (screen === "links") return <LinksScreen />;
   if (screen === "domains") return <DomainsScreen />;
+  if (screen === "settings") return <SettingsScreen />;
   return <PeopleScreen />;
 }
 
