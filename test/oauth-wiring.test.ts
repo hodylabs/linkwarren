@@ -131,10 +131,11 @@ describe("oauth front door on the dashboard host", () => {
       env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES ('reg:day', ?, 3)").bind(now - 7200),
       env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES ('api:ud:u1', ?, 3)").bind(now - 7200),
       env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES ('api:u:u1', ?, 3)").bind(now - 7200),
+      env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES ('api:day', ?, 3)").bind(now - 7200),
     ]);
     await worker.scheduled!({ cron: "15 * * * *", scheduledTime: now * 1000, noRetry() {} } as ScheduledController, env, {} as ExecutionContext);
     const keys = (await env.DB.prepare("SELECT key FROM auth_limits").all<{ key: string }>()).results.map((r) => r.key);
-    expect(keys.sort()).toEqual(["api:ud:u1", "reg:day"]);
+    expect(keys.sort()).toEqual(["api:day", "api:ud:u1", "reg:day"]);
   });
 
   it("accepts only the claude.ai callback and loopback /callback redirect URIs at registration", async () => {

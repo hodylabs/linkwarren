@@ -199,6 +199,24 @@ Hashing: PBKDF2-SHA256 with the iteration count from the optional var `PASSWORD_
 
 Caching: a browser that once got a `301` for a link keeps going straight to the old destination. A link that was `301` and now has a password can therefore still be skipped by those browsers (they already knew the destination), and a `301` link with routes sends returning visitors to the destination they got first, even after they travel or the routes change. Use `302` for links with routes.
 
+## Agents and API limits
+
+MCP tool calls (`/mcp`) and machine API requests (`/api/v1`) share the D1 limiter (table `auth_limits`, no paid features). Limits, all checked read-only before anything is written:
+
+- 120 calls per minute per person (`api:u:`), 60 per minute per MCP connection (`api:c:`) or API key (`api:k:`).
+- 1000 calls per UTC day per person (`api:ud:`).
+- 5000 calls per UTC day for the whole instance, every person and agent together (`api:day`).
+
+Over a limit the API answers `429 {"error":"rate_limited"}`; an MCP tool answers "Rate limited, try again in a minute." or, for the two daily caps, "Daily limit reached, try again tomorrow (UTC).".
+
+D1 rows written, counted the same way as above (a limiter key writes 2 rows per upsert, 3 when it is new in its window):
+
+- An MCP tool call that runs: 4 limiter upserts (8 rows, up to 12) plus one `tool_calls` row (3 rows: the row and its two indexes), so about 11, up to 15. The hourly cron deletes each `tool_calls` row after 90 days, 3 more rows then. A tool that changes a link also writes the link row, its indexes and the audit row.
+- An `/api/v1` request that runs: the same 4 limiter upserts (8, up to 12), plus 1 for `last_used_at` at most once a minute per key, plus the link and audit writes of a change.
+- A refused call writes nothing: a disconnected agent, a disabled person, or a call over a limit. Only the first refused MCP call in a window is counted and logged once (about 5 rows), so a client that keeps retrying costs no writes.
+
+Against the Free plan's 100,000 rows written per day for the whole account: one person at the 1000-call cap spends about 14,000 rows a day (counting the later prune), and the instance cap of 5000 calls about 70,000. That leaves room for sign-in, link edits, password unlocks and the rollup, but not much: a busy instance with several active agents reaches the instance cap first, and then agents and scripts stop until 00:00 UTC while the dashboard keeps working. The caps are constants in `src/limits.ts` (`apiDay`, `apiInstanceDay`); lower them if the account runs other Workers that write to D1.
+
 ## Behaviour to know
 
 - Turning a domain case-sensitive changes which URLs match: `/Spring` and `/spring` become different links. Existing links keep their exact slug as the key. Turning it back off is refused while case twins conflict.

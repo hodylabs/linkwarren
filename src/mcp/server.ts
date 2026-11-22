@@ -16,7 +16,10 @@ export function createServer(env: Env, ctx: ExecutionContext): McpServer {
     server.registerTool(name, {
       description: t.description,
       inputSchema: t.input,
-      annotations: t.write ? { readOnlyHint: false, destructiveHint: name !== "create_link" } : { readOnlyHint: true },
+      // openWorldHint false: every tool touches only this instance's data.
+      annotations: t.write
+        ? { readOnlyHint: false, destructiveHint: name !== "create_link", openWorldHint: false }
+        : { readOnlyHint: true, openWorldHint: false },
     }, (args: unknown) => runTool(name, env, ctx, (p) => t.run(apiAs(env, ctx, p), args, p, env)));
   return server;
 }

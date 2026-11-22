@@ -50,6 +50,7 @@ v1.use("*", async (c, next) => {
   const user = rowToUser(row);
   const keys = [
     [limitKey.apiUser(user.id), LIMITS.apiUser], [limitKey.apiKey(row.key_id), LIMITS.apiKey], [limitKey.apiDay(user.id), LIMITS.apiDay],
+    [limitKey.apiInstanceDay, LIMITS.apiInstanceDay],
   ] as const;
   try {
     // Reads first, so a refused call writes nothing.
