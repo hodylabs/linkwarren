@@ -441,18 +441,19 @@ describe("final wave", () => {
     });
   }
 
-  it("M3: the same person double-submits the same forward move in the same second: the second is 409 conflict whole, nothing half-written", async () => {
+  it("M3: the same person double-submits the same forward move in the same second: the second reports that link as conflict and still moves the others", async () => {
     await seed("w", "ua", { slug: "w" });
     await seed("v", "ua", { slug: "v" });
     let inner: Response | undefined;
     const restore = beforeBatch(4, async () => { inner = await move("a", ["w"], "da", "forward"); });
     let r;
-    try { r = await move("a", ["w", "v"], "da", "forward"); } finally { restore(); }
+    try { r = await answer(await move("a", ["w", "v"], "da", "forward")); } finally { restore(); }
     expect(inner!.status).toBe(200);
-    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
-    expect(await one("SELECT domain_id FROM links WHERE id = 'v'")).toEqual({ domain_id: "dm" });
-    expect(await count("links WHERE forward_to = 'w'")).toBe(1);
-    expect(await count("audit_log WHERE action = 'link.move'")).toBe(1);
+    expect(byId(r.results)).toEqual({ w: "conflict", v: "ok" });
+    expect(await one("SELECT domain_id FROM links WHERE id = 'v'")).toEqual({ domain_id: "da" });
+    expect([await count("links WHERE forward_to = 'w'"), await count("links WHERE forward_to = 'v'")]).toEqual([1, 1]);
+    // One move audit per link that this batch or the first one actually moved: none claimed twice for w.
+    expect([await count("audit_log WHERE action = 'link.move' AND target_id = 'w'"), await count("audit_log WHERE action = 'link.move' AND target_id = 'v'")]).toEqual([1, 1]);
   });
 });
 
@@ -532,7 +533,8 @@ describe("fix round 1", () => {
     console.log(`bulk move forward x50 with reclaim and repoint: rows_read ${m.rows}`);
     // Measures 3306: link read 200, domains 6, target checks 599 (two forwarders counted per link), reclaim DELETE 700,
     // move 500, forwarder insert 300, repoint UPDATE-FROM 799, audit 201. Each total is a small multiple of the 100 selected
-    // links, well under the 2000 other links and 2000 locks seeded, so no form scans a table; bound about 35 x N.
-    expect(m.rows).toBeLessThan(35 * 50);
+    // links, well under the 2000 other links and 2000 locks seeded, so no form scans a table; bound about 37 x N (the repoint
+    // and audit each add one primary-key probe per link for this batch's own forwarder).
+    expect(m.rows).toBeLessThan(37 * 50);
   });
 });
