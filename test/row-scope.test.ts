@@ -26,7 +26,7 @@ const others = async (skip: { domain?: string; link?: string; lockDomain?: strin
 
 beforeAll(setupAccess);
 beforeEach(async () => {
-  await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["api_keys", "agent_connections", "sessions", "login_tokens", "links", "slug_locks", "audit_log", "domain_members", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   for (const [id, email, role] of [["uo", EMAIL.owner, "owner"], ["ua", EMAIL.a, "member"], ["ub", EMAIL.b, "member"]])
     await run("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,?,'active',1)", id, email, role);
   const dom = (id: string, host: string, type: string, owner: string, cs: number, noindex: number, bare: string | null, nf: string | null, reserved: string) =>
@@ -191,4 +191,60 @@ describe("user admin: role, disable and remove touch only the person", () => {
       mode.AUTH_MODE = prev;
     }
   });
+});
+
+describe("S6 and S7 writes touch only their target (Task 11 sweep)", () => {
+  const appMode = async <T>(fn: () => Promise<T>) => {
+    const mode = env as { AUTH_MODE?: string };
+    const prev = mode.AUTH_MODE;
+    mode.AUTH_MODE = "app";
+    try { return await fn(); } finally { mode.AUTH_MODE = prev; }
+  };
+  const go = (cookie: string, method: string, path: string, body?: unknown) =>
+    dash(path, { method, headers: { cookie, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+
+  it("invite revoke leaves another invitee, their grants and their sign-in links alone", () => appMode(async () => {
+    const { signedIn } = await import("./helpers/session");
+    await env.DB.batch(["login_tokens", "sessions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+    const o = await signedIn("ro@example.com", { role: "owner" });
+    for (const [id, e] of [["i1", "i1@example.com"], ["i2", "i2@example.com"]]) {
+      await run("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,'member','invited',1)", id, e);
+      await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dM',?)", id);
+      await run("INSERT INTO login_tokens (token_hash,email,created_at,expires_at) VALUES (?,?,1,9999999999)", `t${id}`, e);
+    }
+    const i2 = async () => ({ u: await rows("SELECT * FROM users WHERE id = 'i2'"), m: await rows("SELECT * FROM domain_members WHERE user_id = 'i2'"), t: await rows("SELECT * FROM login_tokens WHERE email = 'i2@example.com'") });
+    const before = { i2: await i2(), rest: await others({ user: "i1", members: "dM" }) };
+    expect((await go(o.cookie, "DELETE", "/api/users/i1/invite")).status).toBe(200);
+    expect({ i2: await i2(), rest: await others({ user: "i1", members: "dM" }) }).toEqual(before);
+  }));
+
+  it("settings PATCH, logo and secret removal leave the other settings rows alone", () => appMode(async () => {
+    const { signedIn } = await import("./helpers/session");
+    await run("DELETE FROM settings");
+    await run("INSERT INTO settings (key,value,updated_at,updated_by) VALUES ('cf.controls','1',1,'x'),('mcp.enabled','1',1,'x'),('secret.CF_API_TOKEN','v1.a.b',1,'x'),('links.defaultPassQuery','true',1,'x')");
+    const keep = () => rows("SELECT * FROM settings WHERE key IN ('cf.controls','mcp.enabled','secret.CF_API_TOKEN','links.defaultPassQuery') ORDER BY key");
+    const before = await keep();
+    const o = await signedIn("so2@example.com", { role: "owner" });
+    expect((await go(o.cookie, "PATCH", "/api/settings", { name: "Acme" })).status).toBe(200);
+    expect((await go(o.cookie, "DELETE", "/api/settings/secrets/resend")).status).toBe(200);
+    expect((await go(o.cookie, "DELETE", "/api/settings/logo")).status).toBe(200);
+    expect(await keep()).toEqual(before);
+  }));
+
+  it("API key revoke and agent connection change or revoke leave another person's rows alone", () => appMode(async () => {
+    const { signedIn } = await import("./helpers/session");
+    await env.DB.batch(["api_keys", "agent_connections", "sessions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+    const p = await signedIn("kp@example.com"), q = await signedIn("kq@example.com");
+    for (const [u, k] of [[p.user.id, "p"], [q.user.id, "q"]]) {
+      await run("INSERT INTO api_keys (id,user_id,name,prefix,hash,expires_at,created_at) VALUES (?,?,'k','lw_x',?,9999999999,1)", `k${k}`, u, `h${k}`);
+      await run("INSERT INTO agent_connections (id,user_id,client_id,client_name,redirect_host,can_write,created_at) VALUES (?,?,'c','C','claude.ai',1,1)", `c${k}`, u);
+    }
+    const qRows = async () => ({ k: await rows("SELECT * FROM api_keys WHERE user_id = ?", q.user.id), c: await rows("SELECT * FROM agent_connections WHERE user_id = ?", q.user.id) });
+    const before = await qRows();
+    expect((await go(p.cookie, "DELETE", "/api/keys/kp")).status).toBeLessThan(300);
+    expect((await go(p.cookie, "PATCH", "/api/agents/connections/cp", { write: false, del: false })).status).toBeLessThan(300);
+    expect((await go(p.cookie, "DELETE", "/api/agents/connections/cp")).status).toBeLessThan(300);
+    expect(await qRows()).toEqual(before);
+    expect((await rows("SELECT revoked_at FROM api_keys WHERE id = 'kp'"))[0]!.revoked_at).not.toBeNull();
+  }));
 });
