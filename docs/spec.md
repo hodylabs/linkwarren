@@ -32,7 +32,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - QR codes always encode the short link, never the destination.
 
 **People and access**
-- Sign-in through **Cloudflare Access** (Google, one-time email code). Access proves the email; the app's own `users` table decides who gets in. People are invited from the dashboard.
+- Sign-in by **email link or passkey** (app mode, the default) or through **Cloudflare Access** (`AUTH_MODE=access`). Sign-in proves the email; the app's own `users` table decides who gets in. People are invited from the dashboard.
 - The **owner** sees and manages every user, domain and link.
 - **Full audit log** of every change by every person and agent, kept **3 years**. Agent changes are recorded as "person via tool".
 
@@ -42,8 +42,8 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - Raw click detail kept 90 days (Analytics Engine), then daily totals in D1.
 
 **Agents and API**
-- MCP built into the app at `/<dashboard host>/mcp`, OAuth per the MCP standard Kind A: remote, read-only by default, read+write chosen on the approval screen, acts as the approving person, every tool call audited by tool name, revocable. Works from Claude, ChatGPT, Claude Code and Codex.
-- Personal API keys with scopes and expiry for scripts.
+- MCP built into the app at `https://<dashboard host>/mcp` (off unless `MCP_ENABLED=1`), OAuth per the MCP standard Kind A: remote, read-only by default, read+write chosen on the approval screen, acts as the approving person, every tool call audited by tool name, revocable. Works from Claude, ChatGPT, Claude Code and Codex.
+- Personal API keys with scopes, domain limits and expiry for scripts, on `/api/v1` only. Connect guide: `docs/agents.md`.
 
 **Dashboard**
 - Approved mockups: `design/ui/index.html` and `design/ui/setup.html`. Keyboard-first: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
@@ -58,12 +58,12 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 ## 3. Architecture
 
 One Worker serves everything. The request **host** decides the path:
-- `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints. Behind Cloudflare Access.
+- `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints, machine API under `/api/v1`. Signed in by the app or by Cloudflare Access (`AUTH_MODE`).
 - Any other host → the redirect handler, looking up `(domain for host, slug)`.
 
 Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.
 
-Runtime dependencies kept to: `hono` (routing), `jose` (Access JWT), `zod` (input validation), and later `@cloudflare/workers-oauth-provider` + `agents` (MCP stage).
+Runtime dependencies kept to seven: `hono` (routing), `jose` (Access JWT), `zod` (input validation), `@simplewebauthn/server` (passkeys), and for MCP `@cloudflare/workers-oauth-provider`, `agents` and `@modelcontextprotocol/server`.
 
 ## 4. Stages
 
