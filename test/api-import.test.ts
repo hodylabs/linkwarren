@@ -292,6 +292,12 @@ describe("N2: a file that does not say which links had a password", () => {
     const b = body([{ host: "a.test", slug: "s", destination: "https://e.org/x", protected: false }]);
     expect((await o(b)).status).toBe(200);
   });
+  it("one row without protected beside rows that carry it still needs the confirmation", async () => {
+    const b = body([{ host: "a.test", slug: "s", destination: "https://e.org/x", protected: false }, { host: "a.test", slug: "t", destination: "https://e.org/y" }]);
+    const r = await o(b);
+    expect([r.status, await r.json()]).toEqual([400, { error: "protected_unknown" }]);
+    expect(await count("links")).toBe(0);
+  });
   it("a domains-only request needs no confirmation", async () => {
     expect((await o(body([], [D("only.test")]))).status).toBe(200);
   });
