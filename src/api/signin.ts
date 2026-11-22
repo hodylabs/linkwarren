@@ -6,6 +6,7 @@ import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { LIMITS, blocked, hit, limitKey } from "../limits";
 import { createSession, ipPrefix, newSecret, safeNext, sha256Hex } from "../session";
+import { PasskeyError, authenticationOptions, verifyAuthentication } from "../webauthn";
 
 type E = { Bindings: Env };
 /** Mounted at /auth behind appModeOnly (R2, R3); never behind requireUser, so it never calls authenticate. */
@@ -26,17 +27,51 @@ signin.use("*", async (c, next) => {
   await next();
 });
 
-/** The parsed body, or null for oversized, non-JSON or invalid input (zod issues are never echoed). */
-async function parse<T extends z.ZodType>(c: Context<E>, schema: T): Promise<z.infer<T> | null> {
-  if (Number(c.req.header("content-length") ?? 0) > MAX_BODY) return null;
+/** The body as text, or null past `max` bytes: stops reading there, so a chunked body without Content-Length is capped too. */
+async function readCapped(req: Request, max: number): Promise<string | null> {
+  if (Number(req.headers.get("content-length") ?? 0) > max) return null;
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    parts.push(value);
+  }
+  const all = new Uint8Array(n);
+  let i = 0;
+  for (const p of parts) { all.set(p, i); i += p.byteLength; }
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(all);
+}
+
+/** The parsed body, or null for oversized, non-JSON or invalid input (zod issues are never echoed). Shared with /api/account. */
+export async function parse<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T> | null> {
   try {
-    const raw = await c.req.text();
-    if (raw.length > MAX_BODY) return null;
+    const raw = await readCapped(c.req.raw, MAX_BODY);
+    if (raw === null) return null;
     const r = schema.safeParse(JSON.parse(raw));
     return r.success ? r.data : null;
   } catch {
     return null;
   }
+}
+
+/** R6 opportunistic prune, one bounded DELETE per table (D1 has no DELETE ... LIMIT). Over-90-day sessions already have expires_at <= now. */
+function prunes(env: Env, now: number): D1PreparedStatement[] {
+  const prune = (t: string, col: string, before: number) =>
+    env.DB.prepare(`DELETE FROM ${t} WHERE rowid IN (SELECT rowid FROM ${t} WHERE ${col} <= ? LIMIT 100)`).bind(before);
+  return [
+    prune("login_tokens", "expires_at", now),
+    prune("auth_challenges", "expires_at", now),
+    prune("auth_limits", "window_start", now - 3600),
+    prune("sessions", "expires_at", now),
+  ];
 }
 
 const invalid = { error: "invalid_body" } as const;
@@ -56,15 +91,9 @@ signin.post("/email", async (c) => {
   if (!byAddr || !byIp) return c.json(tooMany, 429);
 
   const now = nowS();
-  // R6 opportunistic prune, one bounded DELETE per table (D1 has no DELETE ... LIMIT). Over-90-day sessions already have expires_at <= now.
-  const prune = (t: string, col: string, before: number) =>
-    env.DB.prepare(`DELETE FROM ${t} WHERE rowid IN (SELECT rowid FROM ${t} WHERE ${col} <= ? LIMIT 100)`).bind(before);
   // One lookup for every address: same queries whether or not a mail goes out (R5).
   const [, , , , who] = await env.DB.batch([
-    prune("login_tokens", "expires_at", now),
-    prune("auth_challenges", "expires_at", now),
-    prune("auth_limits", "window_start", now - 3600),
-    prune("sessions", "expires_at", now),
+    ...prunes(env, now),
     env.DB.prepare("SELECT (SELECT status FROM users WHERE email = ?) status, EXISTS (SELECT 1 FROM users) any_user").bind(b.email),
   ]);
   const row = who!.results[0] as { status: string | null; any_user: number };
@@ -116,4 +145,37 @@ signin.post("/email/verify", async (c) => {
   await env.DB.batch(s.stmts);
   c.header("Set-Cookie", s.setCookie);
   return c.json({ next: safeNext(t.next, origin(env)) });
+});
+
+signin.post("/passkey/options", async (c) => {
+  if (!(await parse(c, z.strictObject({})))) return c.json(invalid, 400);
+  await c.env.DB.batch(prunes(c.env, nowS()));
+  return c.json(await authenticationOptions(c.env));
+});
+
+const passkeyBody = z.strictObject({ response: z.unknown(), next: z.string().max(2048).optional() });
+const passkeyFailed = { error: "passkey_failed" } as const;
+
+signin.post("/passkey/verify", async (c) => {
+  const b = await parse(c, passkeyBody);
+  if (!b) return c.json(invalid, 400);
+  const env = c.env;
+  const failKey = limitKey.fail(ipPrefix(c.req.header("cf-connecting-ip") ?? null));
+  if (await blocked(env, failKey, LIMITS.failIp)) return c.json(tooMany, 429);
+  let v;
+  try {
+    v = await verifyAuthentication(env, b.response);
+  } catch (err) {
+    if (!(err instanceof PasskeyError)) throw err;
+    await hit(env, failKey, LIMITS.failIp);
+    return c.json(passkeyFailed, 400); // one answer for every cause (R10); nothing logged, library text can quote client data
+  }
+  if (v.user.status !== "active") return c.json({ error: "disabled" }, 403);
+  const s = await createSession(env, c.req.raw, v.user, "passkey");
+  await env.DB.batch([
+    env.DB.prepare("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?").bind(v.newCounter, nowS(), v.passkeyId),
+    ...s.stmts,
+  ]);
+  c.header("Set-Cookie", s.setCookie);
+  return c.json({ next: safeNext(b.next, origin(env)) });
 });

@@ -55,6 +55,24 @@ const linkFor = async (email: string, extra: Record<string, unknown> = {}) => {
   return fake.tokenFrom();
 };
 
+describe("/auth body cap", () => {
+  it("stops reading a chunked body without Content-Length past 8 KiB", async () => {
+    const chunk = new TextEncoder().encode(" ".repeat(1024));
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(ctl) {
+        if (sent++ < 64) ctl.enqueue(chunk); // 64 KiB of whitespace around nothing: only the cap refuses it
+        else ctl.close();
+      },
+    });
+    const r = await exports.default.fetch(new Request(`${ORIGIN}/auth/email`, {
+      method: "POST", headers: { origin: ORIGIN, "content-type": "application/json" }, body, duplex: "half",
+    } as RequestInit));
+    expect([r.status, await r.text()]).toEqual([400, '{"error":"invalid_body"}']);
+    expect(sent).toBeLessThan(64);
+  });
+});
+
 describe("POST /auth/email: sending", () => {
   it("mails an active user", async () => {
     await addUser("a@example.com", "active");

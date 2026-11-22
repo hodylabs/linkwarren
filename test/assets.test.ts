@@ -42,6 +42,13 @@ describe("dashboard host", () => {
     expect(r.headers.get("content-security-policy")).toBe(CSP);
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
   });
+  it.each(["/sign-in/", "/sign-in//", "//sign-in", "/sign%2Din", "/sign-in?x=1"])("serves %s with Referrer-Policy no-referrer too", async (p) => {
+    const r = await get("dash.test", p);
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+  it.each(["/sign-in/x", "/sign-inx"])("keeps the default Referrer-Policy on %s", async (p) => {
+    expect((await get("dash.test", p)).headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+  });
   it("serves a real asset with the headers", async () => {
     const r = await get("dash.test", "/assets/app.js");
     expect(r.status).toBe(200);

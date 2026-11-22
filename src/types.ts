@@ -64,3 +64,6 @@ export const rowToCf = (r: R): CfRow => ({
   checkedAt: r.checked_at as number | null, securityLevel: r.security_level as string | null, rateLimit: r.rate_limit as number | null,
   updatedAt: r.updated_at as number,
 });
+
+/** What the API shows about a passkey (never the credential id, public key or counter). */
+export type PasskeyItem = { id: string; name: string; createdAt: number; lastUsedAt: number | null; backedUp: boolean };
