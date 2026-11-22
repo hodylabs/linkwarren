@@ -211,4 +211,46 @@ describe("SignIn landing", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("This sign-in link has expired or was already used. Ask for a new one.");
     expect(screen.getByLabelText("Email")).toBeTruthy();
   });
+
+  it("verify ok but /api/me failing still says signed in, with Continue and no sign-out or offer", async () => {
+    const { user } = landing({ "POST /auth/email/verify": () => ({ body: { next: "/domains" } }), "GET /api/me": () => ({ status: 500, body: { error: "internal" } }) });
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("You are signed in.")).toBeTruthy();
+    expect(screen.queryByLabelText("Email")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Not you? Sign out" })).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(assign).toHaveBeenCalledWith("/domains");
+  });
+
+  it("cancelling the Offer prompt says adding was cancelled, not sign-in", async () => {
+    wa.startRegistration.mockRejectedValue(notAllowed());
+    const { user } = landing({ ...verifyOk("/domains", 0), "POST /api/account/passkeys/options": () => ({ body: { challenge: "r" } }) });
+    await user.keyboard("{Enter}");
+    await screen.findByText(/Signed in as/);
+    await user.keyboard("{Enter}");
+    await screen.findByText(/Add a passkey to sign in/);
+    await user.keyboard("{Enter}");
+    expect((await screen.findByRole("alert")).textContent).toBe("Adding a passkey was cancelled.");
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("a token that is not 43 characters is dropped from the URL and explained above the form", async () => {
+    history.replaceState(null, "", "/sign-in#token=" + "A".repeat(20));
+    const api = fakeApi({ "GET /api/me": () => ({ status: 401, body: { error: "unauthenticated", signIn: "app" } }) });
+    render(<Gate>{() => <p>app</p>}</Gate>);
+    expect((await screen.findByRole("alert")).textContent).toBe("This sign-in link is incomplete. Copy the whole link from the email, or ask for a new one.");
+    expect(screen.getByLabelText("Email")).toBeTruthy();
+    expect(location.hash).toBe("");
+    expect(JSON.stringify(api.calls)).not.toContain("AAAA");
+  });
+
+  it("after the token is used, Gate no longer holds it: a failed verify shows the form and a second send has no token", async () => {
+    const { api, user } = landing({ "POST /auth/email/verify": () => ({ status: 400, body: { error: "link_invalid" } }), "POST /auth/email": () => ({ status: 202, body: { ok: true } }) });
+    await user.keyboard("{Enter}");
+    await screen.findByText(/expired or was already used/);
+    await user.type(screen.getByLabelText("Email"), "a@example.com{Enter}");
+    await screen.findByText("Check your email");
+    expect(api.calls.filter((c) => JSON.stringify(c.body ?? "").includes(TOKEN))).toHaveLength(1);
+    expect(api.calls.some((c) => c.path === "/api/me")).toBe(false);
+  });
 });

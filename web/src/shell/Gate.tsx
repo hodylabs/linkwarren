@@ -15,10 +15,13 @@ const nextHere = () => (onSignInPage() ? new URLSearchParams(location.search).ge
  * screen in place; an email link's landing (/sign-in#token=) renders it without any request.
  */
 export function Gate({ children }: { children: (me: Me) => ReactNode }) {
-  const [token] = useState(takeToken);
+  const [taken] = useState(takeToken);
+  // The email link's token lives here only until the sign-in screen uses it (it is single-use), then it is dropped.
+  const [token, setToken] = useState(taken.token);
+  const landing = taken.token !== null;
   const [state, setState] = useState<GateState>(null);
   useEffect(() => {
-    if (token) return;
+    if (landing) return;
     const ac = new AbortController();
     api<Me>("GET", "/api/me", undefined, ac.signal).then(
       (me) => (onSignInPage() ? goNext(nextHere()) : setState({ me })),
@@ -32,10 +35,10 @@ export function Gate({ children }: { children: (me: Me) => ReactNode }) {
       },
     );
     return () => ac.abort();
-  }, [token]);
-  if (token) return <SignIn token={token} next="/" />;
+  }, [landing]);
+  if (landing) return <SignIn token={token ?? undefined} next="/" onSpent={() => setToken(null)} />;
   if (state === null) return null;
-  if ("signIn" in state) return <SignIn next={state.signIn} />;
+  if ("signIn" in state) return <SignIn next={state.signIn} incomplete={taken.incomplete} />;
   if ("error" in state)
     return (
       <div className="gate" role="alert">
