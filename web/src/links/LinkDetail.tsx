@@ -91,6 +91,8 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
 
     const save = async () => {
       if (!canEdit || busy) return;
+      // Password switched on with nothing stored and nothing typed: refuse, never save the link as if it were protected.
+      if (draft.passwordOn && !link.hasPassword && draft.password === "") return setError({ code: "password_short" });
       const body = diff(link, draft);
       if (Object.keys(body).length === 0) return;
       const re = routesOf(draft).errors;
@@ -136,6 +138,8 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     const utm = readUtm(draft.url);
     const tags = (["source", "medium", "campaign"] as const).filter((k) => utm[k]).map((k) => `utm_${k}=${utm[k]}`).join(" · ");
     const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
+    // Password codes show next to the password field, the rest next to the URL.
+    const pwError = !!error && draft.passwordOn && error.code.startsWith("password_");
 
     return (
       <aside className="detail" aria-label="Selected link" onKeyDown={onKeyDown}>
@@ -191,7 +195,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
                 Campaign tags: {tags}
               </p>
             )}
-            {error && (
+            {error && !pwError && (
               <p className="err" role="alert">
                 {errorText(error.code)}
                 {error.code === "conflict" && (
@@ -230,6 +234,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
                 onChange={(on) => {
                   set({ passwordOn: on, password: "" });
                   setChangePw(false);
+                  setError(null);
                 }}
                 label="Password"
               />
@@ -246,12 +251,18 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
                     <label htmlFor="ld-pw">New password</label>
                     <input
                       id="ld-pw" className="input" type="password" value={draft.password} autoComplete="new-password" spellCheck={false} autoCapitalize="off"
+                      aria-invalid={pwError || undefined} aria-describedby={pwError ? "ld-pw-err" : undefined}
                       onChange={(e) => set({ password: e.target.value })}
                     />
                   </>
                 )}
                 <p className="utm-note">Applies everywhere within a few minutes.</p>
                 {draft.code === 301 && <p className="utm-note">{errorText("password_301")}</p>}
+                {pwError && (
+                  <p className="err" role="alert" id="ld-pw-err">
+                    {errorText(error!.code)}
+                  </p>
+                )}
               </div>
             )}
             <div className="toggle">

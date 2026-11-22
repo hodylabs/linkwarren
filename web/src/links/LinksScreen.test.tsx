@@ -304,6 +304,16 @@ describe("Link detail", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ })));
   });
 
+  it("?qr=1 focuses once: it leaves the URL, and J after it focuses row 2", async () => {
+    const { user } = boot({ path: "/links?sel=l1&qr=1" });
+    await ready();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ })));
+    await waitFor(() => expect(location.search).not.toContain("qr="));
+    await user.keyboard("j");
+    await waitFor(() => expect(document.activeElement).toBe(rows()[1]));
+    expect(rows()[1]!.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("Shift+D opens the confirm, Esc cancels without DELETE", async () => {
     const { api, user } = boot({ path: "/links?sel=l1" });
     await ready();
@@ -578,6 +588,49 @@ describe("Link detail rules", () => {
     await waitFor(() => expect((screen.queryByLabelText("New password") as HTMLInputElement | null)?.value ?? "").toBe(""));
   });
 
+  it("Password on with nothing stored and nothing typed blocks the save, next to the password field", async () => {
+    const bodies: unknown[] = [];
+    const { user } = boot({ path: "/links?sel=l1", routes: patch(bodies) });
+    await ready();
+    await user.click(within(detail()).getByRole("switch", { name: "Password" }));
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
+    await save(user);
+    const alert = await within(detail()).findByText(errorText("password_short"));
+    expect(alert.closest(".pw")).toBeTruthy();
+    expect(urlInput().closest(".field")!.parentElement!.querySelector(".err")).toBeNull();
+    const input = screen.getByLabelText("New password");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe(alert.id);
+    // With no other change, it still says why instead of doing nothing.
+    fireEvent.change(urlInput(), { target: { value: L1.url } });
+    await save(user);
+    expect(within(detail()).getByText(errorText("password_short"))).toBeTruthy();
+    expect(bodies).toEqual([]);
+  });
+
+  it("a password and a route typed while the save is pending are kept", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const { api } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [protectedLink], next: null } }),
+      routes: { "PATCH /api/links/l1": async ({ body }) => (await held, { body: { ...protectedLink, url: "https://example.com/saved", updatedAt: 101 } }) },
+    });
+    await ready();
+    fireEvent.click(within(detail()).getByRole("button", { name: "Change password" }));
+    const pw = () => screen.getByLabelText("New password") as HTMLInputElement;
+    fireEvent.change(pw(), { target: { value: "first-pass" } });
+    fireEvent.keyDown(pw(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    fireEvent.change(pw(), { target: { value: "second-pass" } });
+    fireEvent.change(screen.getByLabelText("Rule 1 countries"), { target: { value: "fr" } });
+    release();
+    expect(await within(detail()).findByText("https://example.com/saved")).toBeTruthy();
+    expect(urlInput().value).toBe("https://example.com/saved");
+    expect(pw().value).toBe("second-pass");
+    expect((screen.getByLabelText("Rule 1 countries") as HTMLInputElement).value).toBe("fr");
+  });
+
   it("301 with a password is explained and not sent", async () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
@@ -652,7 +705,10 @@ describe("Link detail rules", () => {
     expect(within(rows()[0]!).getByLabelText("Password")).toBeTruthy();
     expect(within(rows()[0]!).getByLabelText("Country and device routing")).toBeTruthy();
     expect(within(rows()[1]!).queryByLabelText("Password")).toBeNull();
-    expect(rows()[1]!.querySelectorAll("td:empty").length).toBeGreaterThan(0);
+    // The Rules column is the third cell: empty on the plain row, holding the icons on the protected one.
+    const rulesCell = (r: HTMLElement) => r.querySelectorAll("td")[2]!;
+    expect(rulesCell(rows()[1]!).childNodes.length).toBe(0);
+    expect(rulesCell(rows()[0]!).querySelector("svg[aria-label='Password']")).toBeTruthy();
   });
 
   it("a member viewing a teammate's link sees the rules read-only", async () => {

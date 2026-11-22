@@ -152,7 +152,12 @@ export function LinksScreen() {
   const canEdit = (l: Link) => me.role === "owner" || l.createdBy === me.id || domainOf(l.domainId)?.ownerId === me.id;
 
   useEffect(() => {
-    if (wantQr && selectedId) detailRef.current?.focusQr();
+    if (!wantQr || !selectedId) return;
+    detailRef.current?.focusQr();
+    // Once only: later selections (J, K, clicks) focus their row, not this panel.
+    const p = new URLSearchParams(location.search);
+    p.delete("qr");
+    navigate(`/links?${p}`, { replace: true });
   }, [wantQr, selectedId]);
 
   const move = async (step: 1 | -1) => {
