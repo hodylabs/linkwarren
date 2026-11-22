@@ -44,3 +44,4 @@ CREATE TABLE tool_calls (
   status TEXT NOT NULL CHECK(status IN ('ok','refused','error','rate_limited'))
 );
 CREATE INDEX tool_calls_conn_at ON tool_calls(conn_id, at);
+CREATE INDEX tool_calls_at ON tool_calls(at); -- the hourly 90-day prune filters on `at` alone
