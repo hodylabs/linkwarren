@@ -56,7 +56,9 @@ const MAIN_OK = "EXISTS (SELECT 1 FROM domains WHERE id = ? AND type = 'main' AN
 const validMain = async (env: Env, id: string | null) => !!id && !!(await env.DB.prepare(`SELECT ${MAIN_OK} ok`).bind(id).first<{ ok: number }>())?.ok;
 
 async function settingsBody(env: Env) {
-  const [s, emailOk, secrets] = await Promise.all([getSettings(env), emailConfigured(env), secretStatus(env)]);
+  const [s, secrets] = await Promise.all([getSettings(env), secretStatus(env)]);
+  // Same rule as emailConfigured(), from the key secretStatus already resolved (one read and decrypt, not two).
+  const emailOk = !!env.EMAIL_FROM?.trim() && secrets.resend !== "missing";
   const mode = authMode(env);
   return {
     name: s.name, mainDomainId: s.mainDomainId, dashboardHost: normalizeHost(env.DASHBOARD_HOST), authMode: mode,
