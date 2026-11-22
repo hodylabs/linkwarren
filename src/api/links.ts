@@ -3,7 +3,7 @@ import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { canManageDomain, canUseDomain, usableDomainsSql } from "../perm";
-import { rowToLink, type LinkRow, type UserRow } from "../types";
+import { rowToLink, toApiLink, type LinkRow, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
 import { destination, getDomain, isMember, purge } from "./shared";
 
@@ -95,7 +95,7 @@ links.get("/", async (c) => {
     `SELECT * FROM links ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`,
   ).bind(...binds).all()).results.map(rowToLink);
   const items = rows.slice(0, PAGE);
-  return c.json({ items, next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
+  return c.json({ items: items.map(toApiLink), next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
 });
 
 links.post("/", async (c) => {
@@ -119,6 +119,7 @@ links.post("/", async (c) => {
   const link: LinkRow = {
     id: crypto.randomUUID(), domainId: domain.id, slug: b.slug, slugKey: key, url: dest.href,
     redirectCode: b.redirectCode ?? 302, startsAt, expiresAt, passQuery: b.passQuery ?? true,
+    passwordHash: null, routes: [],
     createdBy: user.id, updatedBy: user.id, createdAt: now, updatedAt: now,
   };
   try {
@@ -139,7 +140,7 @@ links.post("/", async (c) => {
     throw e;
   }
   await purge(c.env, domain.id, key);
-  return c.json(link, 201);
+  return c.json(toApiLink(link), 201);
 });
 
 /** Loads a link and enforces edit rights: domain use, and (creator or domain manager). */
@@ -198,7 +199,7 @@ links.patch("/:id", async (c) => {
     return gone ? c.json({ error: "not_found" }, 404) : c.json({ error: "conflict" }, 409);
   }
   await purge(c.env, link.domainId, link.slugKey);
-  return c.json(next);
+  return c.json(toApiLink(next));
 });
 
 links.delete("/:id", async (c) => {

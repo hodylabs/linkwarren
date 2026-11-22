@@ -16,7 +16,7 @@ const dx: Domain = { ...dm, id: "dx", host: "alt.test" };
 const dd: Domain = { ...dm, id: "dd", host: "off.test", status: "disabled" };
 const created: Link = {
   id: "new1", domainId: "dm", slug: "spring", slugKey: "spring", url: "https://x.com/a", redirectCode: 302, startsAt: null, expiresAt: null,
-  passQuery: true, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100,
+  passQuery: true, hasPassword: false, routes: [], createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100,
 };
 
 type Opts = { me?: Me; routes?: FakeRoutes; check?: (slug: string, domain: string) => FakeRes | Promise<FakeRes> };

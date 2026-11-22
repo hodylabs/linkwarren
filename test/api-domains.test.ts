@@ -159,11 +159,11 @@ describe("settings", () => {
   });
   it("a flip drops stale cached link entries under both spellings", async () => {
     await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('t1','dm','Fall','fall','https://x.com/','uo','uo',1,1)");
-    await env.CACHE.put("l:dm:fall", "null");
-    await env.CACHE.put("l:dm:Fall", "null");
+    await env.CACHE.put("l2:dm:fall", "null");
+    await env.CACHE.put("l2:dm:Fall", "null");
     await call("owner", "PATCH", "/api/domains/dm", { caseSensitive: true });
     await new Promise((r) => setTimeout(r, 50));
-    expect([await env.CACHE.get("l:dm:fall"), await env.CACHE.get("l:dm:Fall")]).toEqual([null, null]);
+    expect([await env.CACHE.get("l2:dm:fall"), await env.CACHE.get("l2:dm:Fall")]).toEqual([null, null]);
   });
   it("a redirect target whose normalized href exceeds 2048 is refused", async () => {
     const raw = `https://example.com/${"a".repeat(2000)}${"\u00e9".repeat(10)}`; // raw 2030 chars, href 2080

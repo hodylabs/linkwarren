@@ -416,3 +416,41 @@ describe("list", () => {
     expect(await q("\\")).toEqual([]);
   });
 });
+
+describe("api link shape", () => {
+  const HASH = "pbkdf2-sha256$10000$c2FsdA$aGFzaA";
+  const clean = (text: string) => {
+    expect(text).not.toContain("pbkdf2");
+    expect(text).not.toContain("passwordHash");
+    expect(text).not.toContain("password_hash");
+  };
+
+  it("POST 201 body has hasPassword false and routes, never a hash key", async () => {
+    const r = await post("a", { domainId: "dm", slug: "shape", url: "https://x.com/a" });
+    expect(r.status).toBe(201);
+    const text = await r.text();
+    clean(text);
+    expect(JSON.parse(text)).toMatchObject({ hasPassword: false, routes: [] });
+  });
+
+  it("GET list and PATCH body of a hashed link say hasPassword true and leak no hash", async () => {
+    const { id } = await mk("a", "locked1");
+    await run("UPDATE links SET password_hash = ?, routes = ? WHERE id = ?", HASH, '[{"countries":["CA"],"devices":[],"url":"https://ca.test/"}]', id);
+    const list = await (await call("a", "GET", "/api/links")).text();
+    clean(list);
+    const item = (JSON.parse(list) as { items: Record<string, unknown>[] }).items.find((i) => i.id === id)!;
+    expect(item).toMatchObject({ hasPassword: true, routes: [{ countries: ["CA"], devices: [], url: "https://ca.test/" }] });
+    const p = await call("a", "PATCH", `/api/links/${id}`, { passQuery: false });
+    expect(p.status).toBe(200);
+    const text = await p.text();
+    clean(text);
+    expect(JSON.parse(text)).toMatchObject({ hasPassword: true, passQuery: false });
+  });
+
+  it("routes JSON that does not parse is read as []", async () => {
+    const { id } = await mk("a", "badroutes");
+    await run("UPDATE links SET routes = 'not json' WHERE id = ?", id);
+    const list = (await (await call("a", "GET", "/api/links")).json()) as { items: Record<string, unknown>[] };
+    expect(list.items.find((i) => i.id === id)).toMatchObject({ routes: [], hasPassword: false });
+  });
+});

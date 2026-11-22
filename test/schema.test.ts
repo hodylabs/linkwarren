@@ -106,3 +106,12 @@ describe("analytics schema", () => {
     await dim("country");
   });
 });
+
+describe("link rules schema", () => {
+  it("a fresh link has password_hash NULL and routes '[]'", async () => {
+    await run("INSERT OR IGNORE INTO users (id,email,role,status,created_at) VALUES ('u1','o@x.com','member','active',1)");
+    await domain("d6", "g.test", "u1");
+    await link("l6", "d6", "rules");
+    expect(await db.prepare("SELECT password_hash, routes FROM links WHERE id = 'l6'").first()).toEqual({ password_hash: null, routes: "[]" });
+  });
+});

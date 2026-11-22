@@ -10,11 +10,18 @@ export type DomainRow = {
   bareRedirect: string | null; notfoundRedirect: string | null;
   caseSensitive: boolean; noindex: boolean; reservedExtra: string[]; createdAt: number;
 };
+export type RouteDevice = "mobile" | "tablet" | "desktop";
+export type Route = { countries: string[]; devices: RouteDevice[]; url: string };
 export type LinkRow = {
   id: string; domainId: string; slug: string; slugKey: string; url: string;
   redirectCode: 301 | 302; startsAt: number | null; expiresAt: number | null; passQuery: boolean;
+  /** Worker-only (redirect path and KV); never sent to a client, see toApiLink. */
+  passwordHash: string | null; routes: Route[];
   createdBy: string; updatedBy: string; createdAt: number; updatedAt: number;
 };
+/** A link as the API returns it: the password hash is replaced by a flag. */
+export type ApiLink = Omit<LinkRow, "passwordHash"> & { hasPassword: boolean };
+export const toApiLink = ({ passwordHash, ...l }: LinkRow): ApiLink => ({ ...l, hasPassword: passwordHash !== null });
 export type UserListItem = UserRow & { linkCount: number; domains: { id: string; host: string; via: "owner" | "member" }[] };
 export type AuditItem = {
   id: number; at: number; actorId: string; actorEmail: string | null; actorName: string | null; via: string | null;
@@ -38,9 +45,18 @@ export const rowToLink = (r: R): LinkRow => ({
   id: r.id as string, domainId: r.domain_id as string, slug: r.slug as string, slugKey: r.slug_key as string,
   url: r.url as string, redirectCode: r.redirect_code as 301 | 302,
   startsAt: r.starts_at as number | null, expiresAt: r.expires_at as number | null, passQuery: r.pass_query === 1,
+  passwordHash: (r.password_hash as string | null) ?? null, routes: parseRoutes(r.routes),
   createdBy: r.created_by as string, updatedBy: r.updated_by as string,
   createdAt: r.created_at as number, updatedAt: r.updated_at as number,
 });
+function parseRoutes(v: unknown): Route[] {
+  try {
+    const a: unknown = JSON.parse(v as string);
+    return Array.isArray(a) ? (a as Route[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 export type CfRow = {
   kind: "outside" | "account" | "manual"; zoneId: string | null; dnsRecordId: string | null; routeId: string | null;

@@ -151,7 +151,7 @@ describe("redirect", () => {
     const d = await seed({ nf: "https://nf.test/" });
     const r = await get(d.host, "/%3Cscript%3E", { redirect: "manual" });
     expect(r.headers.get("location")).toBe("https://nf.test/");
-    expect((await env.CACHE.list({ prefix: `l:${d.id}:` })).keys).toEqual([]);
+    expect((await env.CACHE.list({ prefix: `l2:${d.id}:` })).keys).toEqual([]);
   });
 
   it("keeps the destination's existing query bytes", async () => {

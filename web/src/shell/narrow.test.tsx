@@ -13,7 +13,7 @@ const domain: Domain = {
 };
 const mk = (id: string, slug: string): Link => ({
   id, domainId: "d1", slug, slugKey: slug, url: `https://example.com/${slug}`, redirectCode: 302, startsAt: null, expiresAt: null,
-  passQuery: true, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100,
+  passQuery: true, hasPassword: false, routes: [], createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100,
 });
 
 /** Pretend the window matches these media queries. */
