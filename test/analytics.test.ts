@@ -158,7 +158,7 @@ describe("loadRows (Review Focus 4)", () => {
     const r = await loadRows(ae, r1820, all, NOW);
     expect(sum(r.days)).toBe(12);
     expect(r.live).toBe("ok");
-    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 12 }]);
+    expect(r.links).toMatchObject([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 12 }]);
     expect(r.dims).toEqual([{ dim: "country", value: "CA", clicks: 5 }]);
     expect(bodies).toHaveLength(6);
     expect(bodies.every((b) => b.params.from === "2026-11-19T00:00:00Z" && b.params.cur === "2026-11-19T00:00:00Z")).toBe(true);
@@ -168,7 +168,7 @@ describe("loadRows (Review Focus 4)", () => {
     await run("INSERT INTO analytics_state (k, v) VALUES ('rolled_through', '2026-11-18')");
     stubAe(aeRows, 200, [{ linkId: "l1", domainId: "d2", slug: "spring", clicks: 7 }]);
     const r = await loadRows(ae, r1820, all, NOW);
-    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 5 }, { linkId: "l1", domainId: "d2", slug: "spring", clicks: 7 }]);
+    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 5, seen: "2026-11-18" }, { linkId: "l1", domainId: "d2", slug: "spring", clicks: 7, seen: "~" }]);
   });
   it("no watermark: everything in range comes from AE", async () => {
     await seedD1();
@@ -247,7 +247,7 @@ describe("loadRows (Review Focus 4)", () => {
     const range = { ...r1820, prev: { from: D("2026-11-16T00:00:00Z"), to: D("2026-11-18T00:00:00Z") } };
     const r = await loadRows({ ...env, CF_ACCOUNT_ID: "", AE_READ_TOKEN: "" }, range, all, NOW);
     expect(r.days.map((d) => [d.bucket, d.typed]).sort()).toEqual([["2026-11-16", 4], ["2026-11-18", 5]]);
-    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 5 }]);
+    expect(r.links).toMatchObject([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 5 }]);
     expect(r.dims).toEqual([{ dim: "country", value: "CA", clicks: 5 }]);
   });
   it("a 366-day range over many links gets aggregated rows from D1, not days x links (I1)", async () => {
@@ -291,7 +291,7 @@ describe("loadRows (Review Focus 4)", () => {
     const bodies = stubAe([{ bucket: "2026-11-20 10:00:00", qr: 2, typed: 0, bots: 0 }], 200, [{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 2 }]);
     const r = await loadRows(ae, span("2026-11-19T13:00:00Z", "2026-11-20T13:00:00Z", "hour"), all, NOW);
     expect(r.days).toEqual([{ bucket: "2026-11-20T10:00:00Z", qr: 2, typed: 0, bots: 0, visitors: 0 }]);
-    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 2 }]);
+    expect(r.links).toMatchObject([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 2 }]);
     expect(bodies[0].query).toContain("toStartOfHour");
   });
 });
@@ -341,6 +341,11 @@ describe("buildReport", () => {
     const r = buildReport(range, { days: [], links: [link("l1", "d1", 3), link("l1", "d2", 5)], dims: [], live: "ok" }, hosts, { truncated: false, visitors: true });
     expect(r.links).toEqual([{ linkId: "l1", domainId: "d2", host: "b.test", slug: "s-l1", clicks: 8 }]);
     expect(r.domains).toEqual([{ domainId: "d2", host: "b.test", clicks: 5 }, { domainId: "d1", host: "a.test", clicks: 3 }]);
+  });
+  it("a moved link shows the address it was last seen on, whatever order the rows arrive in", () => {
+    const rows = [{ ...link("l1", "d1", 3), seen: "~" }, { ...link("l1", "d2", 5), seen: "2026-11-18" }];
+    const r = buildReport(range, { days: [], links: rows, dims: [], live: "ok" }, hosts, { truncated: false, visitors: true });
+    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", host: "a.test", slug: "s-l1", clicks: 8 }]);
   });
   it("links keep the top 50", () => {
     const many = Array.from({ length: 60 }, (_, i) => link(`x${i}`, "d1", i + 1));

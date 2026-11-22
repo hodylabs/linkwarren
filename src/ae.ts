@@ -18,7 +18,8 @@ export type Dim = "country" | "device" | "referrer";
 /** Per-bucket totals (series, totals, prevClicks). Also the D1 report shape. */
 export type DayRow = { bucket: string; qr: number; typed: number; bots: number; visitors: number };
 /** Per-link human clicks over the current window. */
-export type LinkRow = { linkId: string; domainId: string; slug: string; clicks: number };
+/** `seen`: the last day the row covers ("~" for live AE rows, newer than any day), so a moved link shows its latest address. */
+export type LinkRow = { linkId: string; domainId: string; slug: string; clicks: number; seen?: string };
 /** Per (dim, value) human clicks over the current window. */
 export type DimCount = { dim: Dim; value: string; clicks: number };
 /** One clicks_daily row (without the day). */

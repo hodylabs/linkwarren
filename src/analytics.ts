@@ -127,7 +127,7 @@ async function d1Rows(env: Env, first: string, cur: string, end: string, scope: 
     const [wCur, bCur] = where(cur);
     stmts.push(
       // SQLite bare column: `slug` comes from the row with MAX(day), so a renamed link shows its latest slug.
-      env.DB.prepare(`SELECT link_id AS linkId, domain_id AS domainId, slug, MAX(day) AS lastDay, SUM(qr + typed) AS clicks FROM clicks_daily ${wCur} GROUP BY link_id, domain_id`).bind(...bCur),
+      env.DB.prepare(`SELECT link_id AS linkId, domain_id AS domainId, slug, MAX(day) AS seen, SUM(qr + typed) AS clicks FROM clicks_daily ${wCur} GROUP BY link_id, domain_id`).bind(...bCur),
       env.DB.prepare(`SELECT dim, value, SUM(clicks) AS clicks FROM clicks_daily_dim ${wCur} GROUP BY dim, value`).bind(...bCur),
     );
   }
@@ -162,6 +162,7 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
     const l = links.get(k) ?? { linkId: r.linkId, domainId: r.domainId, slug: "", clicks: 0 };
     l.clicks += r.clicks;
     if (r.slug) l.slug = r.slug; // AE rows come after D1 rows, so the newest slug wins
+    if ((r.seen ?? "") > (l.seen ?? "")) l.seen = r.seen;
     links.set(k, l);
   };
   const addDim = (r: DimCount) => {
@@ -180,7 +181,7 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
     if (w && w >= first) {
       const d1 = await d1Rows(env, first, curK, w < last ? w : last, scope);
       d1.days.forEach(addDay);
-      d1.links.forEach((r) => addLink({ linkId: r.linkId, domainId: r.domainId, slug: r.slug, clicks: r.clicks }));
+      d1.links.forEach((r) => addLink({ linkId: r.linkId, domainId: r.domainId, slug: r.slug, clicks: r.clicks, seen: r.seen }));
       d1.dims.forEach(addDim);
       aeFrom = addMs(dayStart(w), DAY_MS);
     }
@@ -199,7 +200,7 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
   }
   const aeK = bucketKey(aeFrom, unit); // keep the seam exact even if AE answers outside the bounds
   for (const r of live.days) if (r.bucket >= aeK) addDay(r);
-  live.links.forEach(addLink); // aeReport reads links and dims from max(aeFrom, range.from), after the seam
+  live.links.forEach((r) => addLink({ ...r, seen: "~" })); // aeReport reads links and dims from max(aeFrom, range.from), after the seam
   live.dims.forEach(addDim);
   return out("ok");
 }
@@ -232,13 +233,18 @@ export function buildReport(range: Range, rows: ReportRows, hosts: Map<string, s
   }
   const links = new Map<string, AnalyticsReport["links"][number]>();
   const domains = new Map<string, AnalyticsReport["domains"][number]>();
+  const lastSeen = new Map<string, string>();
   for (const r of rows.links) {
     const host = hosts.get(r.domainId) ?? "";
-    // The ranking is per link; its address is the newest row's (D1 rows come before AE rows).
-    // shortcut: two AE rows of a link moved inside the live window arrive in no set order; add a last-seen time if that shows.
+    // The ranking is per link; its address is the one it was last seen on.
+    // shortcut: two live (AE) rows of a link moved inside the live window tie on "~"; the later row wins. Add an AE max(timestamp) if that shows.
     const l = links.get(r.linkId) ?? { linkId: r.linkId, domainId: r.domainId, host, slug: "", clicks: 0 };
     l.clicks += r.clicks;
-    if (r.slug) Object.assign(l, { slug: r.slug, domainId: r.domainId, host });
+    const seen = r.seen ?? "";
+    if (r.slug && seen >= (lastSeen.get(r.linkId) ?? "")) {
+      Object.assign(l, { slug: r.slug, domainId: r.domainId, host });
+      lastSeen.set(r.linkId, seen);
+    }
     links.set(r.linkId, l);
     const d = domains.get(r.domainId) ?? { domainId: r.domainId, host, clicks: 0 };
     d.clicks += r.clicks;
