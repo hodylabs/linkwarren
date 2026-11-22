@@ -147,6 +147,100 @@ describe("Analytics screen", () => {
     expect(reports().length).toBe(before);
   });
 
+  const exportBtn = () => screen.getByRole("button", { name: /Export CSV/ });
+  const tilesShown = () => screen.queryByText("Clicks", { selector: ".tile2 small" }) !== null;
+
+  it("an invalid range after a loaded report hides the numbers and disables Export; X does nothing", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const { user } = boot("/analytics?range=custom&from=2026-11-01&to=2026-11-10");
+    await ready();
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-20" } });
+    expect(await screen.findByText("From must be on or before To")).toBeTruthy();
+    expect(tilesShown()).toBe(false);
+    expect(exportBtn().hasAttribute("disabled")).toBe(true);
+    await user.keyboard("x");
+    expect(click).not.toHaveBeenCalled();
+    click.mockRestore();
+  });
+
+  it("a failed request after a loaded report hides the numbers under the new filters", async () => {
+    const { user } = boot("/analytics", ({ url }) => (url.searchParams.get("range") === "7" ? { status: 403, body: { error: "forbidden" } } : { body: report(10) }));
+    await ready();
+    await user.click(screen.getByRole("radio", { name: "7 days" }));
+    expect(await screen.findByText("You do not have permission to do that.")).toBeTruthy();
+    expect(tilesShown()).toBe(false);
+    expect(exportBtn().hasAttribute("disabled")).toBe(true);
+  });
+
+  it("while newer filters load, the older numbers are dimmed and busy and cannot be exported", async () => {
+    let release7: (r: FakeRes) => void = () => undefined;
+    const { user } = boot("/analytics", ({ url }) =>
+      url.searchParams.get("range") === "7" ? new Promise<FakeRes>((res) => (release7 = res)) : { body: report(30) });
+    await ready();
+    const data = () => document.querySelector(".an-data")!;
+    expect(data().getAttribute("aria-busy")).toBe("false");
+    await user.click(screen.getByRole("radio", { name: "7 days" }));
+    await waitFor(() => expect(data().getAttribute("aria-busy")).toBe("true"));
+    expect(data().classList.contains("stale")).toBe(true);
+    expect(exportBtn().hasAttribute("disabled")).toBe(true);
+    release7({ body: report(7) });
+    await waitFor(() => expect(clicksTile()).toBe("7"));
+    expect(data().getAttribute("aria-busy")).toBe("false");
+    expect(exportBtn().hasAttribute("disabled")).toBe(false);
+  });
+
+  it.each([
+    ["an impossible date", "from=2026-02-30&to=2026-03-02"],
+    ["a future end", "from=2026-11-01&to=2999-01-01"],
+    ["more than 366 days", "from=2024-01-01&to=2025-06-01"],
+  ])("%s in the URL shows the range copy and sends nothing", async (_, dates) => {
+    const { reports } = boot(`/analytics?range=custom&${dates}`);
+    expect(await screen.findByText("Pick dates up to today, the start on or before the end, at most 366 days apart.")).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(reports()).toEqual([]);
+  });
+
+  it("a date still being typed (year under 1000) is not sent; leaving the field sends the finished date", async () => {
+    const { reports } = boot("/analytics?range=custom&from=2026-11-01&to=2026-11-10");
+    await ready();
+    const from = screen.getByLabelText("From") as HTMLInputElement;
+    from.focus();
+    fireEvent.change(from, { target: { value: "0002-11-03" } });
+    fireEvent.change(from, { target: { value: "0202-11-03" } });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(reports()).toEqual(["/api/analytics?range=custom&from=2026-11-01&to=2026-11-10"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.change(from, { target: { value: "2026-11-03" } });
+    fireEvent.blur(from);
+    await waitFor(() => expect(reports().at(-1)).toBe("/api/analytics?range=custom&from=2026-11-03&to=2026-11-10"));
+    expect(reports()).toHaveLength(2);
+  });
+
+  it("the 24 hour view with live off explains why there are no clicks", async () => {
+    boot("/analytics?range=1", () => ({ body: report(0, { unit: "hour", live: "off", series: [{ bucket: "2026-11-20T10:00:00Z", qr: 0, typed: 0 }] }) }));
+    expect(await screen.findByText("Hourly clicks need live clicks, which are off on this instance. Pick 7 days or longer for daily totals.")).toBeTruthy();
+  });
+
+  it("Tab out of the domain picker closes it", async () => {
+    const { user } = boot();
+    await ready();
+    await user.keyboard("d");
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    await user.tab(); // All domains, still inside
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    await user.tab();
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("V with the chart focused moves focus to the view toggle", async () => {
+    const series = [{ bucket: "2026-11-19", qr: 1, typed: 2 }];
+    const { user } = boot("/analytics", () => ({ body: report(3, { series }) }));
+    await ready();
+    screen.getByRole("group", { name: /Clicks chart/ }).focus();
+    await user.keyboard("v");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Chart view/ }));
+  });
+
   it("the Link pill × clears the search, and Clear all clears everything", async () => {
     const { user, reports } = boot("/analytics?range=7&q=spring&domains=d1");
     await ready();

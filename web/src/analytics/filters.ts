@@ -37,3 +37,20 @@ export function filtersQuery(f: Filters): string {
   if (f.q) p.set("q", f.q);
   return p.toString();
 }
+
+/** A real calendar day in `YYYY-MM-DD` (rejects 2026-02-30), as the server's check. */
+const realDay = (v: string): boolean => {
+  const t = Date.parse(`${v}T00:00:00Z`);
+  return DAY.test(v) && !isNaN(t) && new Date(t).toISOString().slice(0, 10) === v;
+};
+
+/**
+ * Why a custom range would be refused, mirroring the server (src/analytics.ts resolveRange): real days, `from` on or
+ * before `to`, `to` not after today, at most 366 days counting both ends. "order" and "bad_range" map to copy; null is fine.
+ */
+export function rangeProblem(from: string, to: string, today: string): "order" | "bad_range" | null {
+  if (!realDay(from) || !realDay(to)) return "bad_range";
+  if (from > to) return "order";
+  if (to > today) return "bad_range";
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1 > 366 ? "bad_range" : null;
+}
