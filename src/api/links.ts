@@ -357,19 +357,24 @@ links.delete("/:id", async (c) => {
   const found = await editable(c, c.req.param("id"));
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain } = found;
-  // Lock and audit run before the DELETE and only while the link still exists, so a racing second delete writes neither.
-  const here = { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] };
+  // Every write runs only while the link is still the revision read (same address, same updated_at): a racing second delete or
+  // a move in between writes nothing, so a moved link's new address is never left unlocked.
+  const rev = "id = ? AND domain_id = ? AND slug_key = ? AND updated_at = ?", revBinds = [link.id, link.domainId, link.slugKey, link.updatedAt];
+  const here = { sql: `EXISTS (SELECT 1 FROM links WHERE ${rev})`, binds: revBinds };
   const now = Math.floor(Date.now() / 1000);
+  const parent = JSON.stringify([{ t: link.id, d: link.domainId, s: link.slugKey, u: link.updatedAt }]);
   const res = await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM links WHERE id = ?)",
-    ).bind(link.domainId, link.slugKey, now, user.id, link.id),
+    c.env.DB.prepare(`INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT ?,?,?,? WHERE ${here.sql}`)
+      .bind(link.domainId, link.slugKey, now, user.id, ...revBinds),
     auditStmt(c.env, { ...actor(c), action: "link.delete", targetType: "link", targetId: link.id,
       detail: { host: domain.host, slug: link.slug, url: link.url } }, here),
-    ...forwarderDeletes(c.env, actor(c), now, JSON.stringify([{ t: link.id }]), "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t'))"),
-    c.env.DB.prepare("DELETE FROM links WHERE id = ?").bind(link.id),
+    ...forwarderDeletes(c.env, actor(c), now, parent, "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t') AND domain_id = json_extract(j.value,'$.d') AND slug_key = json_extract(j.value,'$.s') AND updated_at = json_extract(j.value,'$.u'))"),
+    c.env.DB.prepare(`DELETE FROM links WHERE ${rev}`).bind(...revBinds),
   ]);
-  if (res[5]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
+  if (res[5]!.meta.changes === 0) {
+    const still = await c.env.DB.prepare("SELECT 1 FROM links WHERE id = ?").bind(link.id).first();
+    return still ? c.json({ error: "conflict" }, 409) : c.json({ error: "not_found" }, 404);
+  }
   await Promise.all([purge(c.env, link.domainId, link.slugKey), purgeReturned(c.env, res[4]!)]);
   return c.body(null, 204);
 });

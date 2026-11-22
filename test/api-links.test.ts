@@ -181,6 +181,18 @@ describe("delete, locks and takeover", () => {
     expect(await audits("link.delete")).toBe(1);
   });
 
+  it("a move that lands between the read and the delete: 409 conflict, nothing locked, deleted or audited", async () => {
+    const l = await mk("owner", "mv");
+    const restore = beforeBatch(2, () => run("UPDATE links SET domain_id = 'ds', slug = 'mv2', slug_key = 'mv2', updated_at = updated_at + 1 WHERE id = ?", l.id));
+    let r: Response;
+    try { r = await call("owner", "DELETE", `/api/links/${l.id}`); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
+    expect(await one("SELECT domain_id, slug_key FROM links WHERE id = ?", l.id)).toEqual({ domain_id: "ds", slug_key: "mv2" });
+    expect([await one("SELECT 1 FROM slug_locks"), await audits("link.delete")]).toEqual([null, 0]);
+    expect((await call("owner", "DELETE", `/api/links/${l.id}`)).status).toBe(204); // a retry deletes it at its new address
+    expect(await one("SELECT domain_id, slug_key FROM slug_locks")).toEqual({ domain_id: "ds", slug_key: "mv2" });
+  });
+
   it("lock release normalizes case on a case-insensitive domain", async () => {
     const l = await mk("a", "gone2");
     await call("a", "DELETE", `/api/links/${l.id}`);
