@@ -421,6 +421,33 @@ describe("delete removes forwarders (QR codes never land on a new link)", () => 
   });
 });
 
+describe("final wave", () => {
+  for (const mode of ["forward", "copy"] as const) {
+    it(`M4 ${mode}: a link whose destination or a route points at the target host is refused loop; the rest move`, async () => {
+      await seed("p1", "ua", { slug: "p1", url: "https://A.test./x" });
+      await seed("p2", "ua", { slug: "p2", routes: JSON.stringify([{ countries: ["DE"], devices: [], url: "http://a.test:8080/y" }]) });
+      await seed("p3", "ua", { slug: "p3" });
+      const r = await answer(await move("a", ["p1", "p2", "p3"], "da", mode));
+      expect(byId(r.results)).toEqual({ p1: "loop", p2: "loop", p3: "ok" });
+      expect(await count("links WHERE domain_id = 'da'")).toBe(1);
+    });
+  }
+
+  it("M3: the same person double-submits the same forward move in the same second: the second is 409 conflict whole, nothing half-written", async () => {
+    await seed("w", "ua", { slug: "w" });
+    await seed("v", "ua", { slug: "v" });
+    let inner: Response | undefined;
+    const restore = beforeBatch(4, async () => { inner = await move("a", ["w"], "da", "forward"); });
+    let r;
+    try { r = await move("a", ["w", "v"], "da", "forward"); } finally { restore(); }
+    expect(inner!.status).toBe(200);
+    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
+    expect(await one("SELECT domain_id FROM links WHERE id = 'v'")).toEqual({ domain_id: "dm" });
+    expect(await count("links WHERE forward_to = 'w'")).toBe(1);
+    expect(await count("audit_log WHERE action = 'link.move'")).toBe(1);
+  });
+});
+
 describe("fix round 1", () => {
   for (const mode of ["forward", "copy"] as const) {
     it(`${mode} as A: B's links on a shared and the main domain and on B's private domain forbidden, A's own ok; nothing for the refused`, async () => {

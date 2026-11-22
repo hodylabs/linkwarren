@@ -6,12 +6,15 @@ import { fits, hitBy, LIMITS, limitKey } from "../limits";
 import { passwordRule } from "../password-rule";
 import { actor, type Grant } from "../principal";
 import { rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
+import { normalizeHost } from "../host";
 import { canUseDomain } from "../perm";
 import { checkSlug, slugKey } from "../validate";
 import { badWindow, bodyError, canEditLink, code, forwarderDeletes, passwordInput, purgeReturned, rules, times } from "./links";
 import { isV1, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
+
+const hostOf = (u: string) => { try { return normalizeHost(new URL(u).host); } catch { return null; } };
 
 /** Distinct link ids per request (R2). */
 export const BULK_MAX = 100;
@@ -117,6 +120,8 @@ export async function bulk(c: Context<E>) {
     let k = link.slugKey;
     if (target) {
       if (link.domainId === target.id) { out.set(id, { id, ok: false, error: "same_domain" }); continue; }
+      // A destination or route on the target host (saved while that domain was pending) would redirect to itself there.
+      if ([link.url, ...link.routes.map((r) => r.url)].some((u) => hostOf(u) === target.host)) { out.set(id, { id, ok: false, error: "loop" }); continue; }
       const s = checkSlug(link.slug, target.reservedExtra);
       if (!s.ok) { out.set(id, { id, ok: false, error: s.reason === "too_long" ? "slug_too_long" : s.reason }); continue; }
       k = slugKey(link.slug, target.caseSensitive);
