@@ -61,8 +61,12 @@ describe("dashboard /api routes", () => {
     expect(r.status).toBe(401);
   });
 
-  it.each(ROUTES)("%s %s with only a Bearer key (no session) is 401", async (m, path) => {
-    const r = await req(m, path, { authorization: `Bearer lw_${"a".repeat(40)}`, ...(m === "GET" ? {} : { "content-type": "application/json" }) }, "{}");
+  it.each(ROUTES)("%s %s with only a valid owner Bearer key (no session) is 401", async (m, path) => {
+    // A real, working key with every right: the dashboard must refuse it because it is a key, not because it is unknown.
+    const k = await dash("/api/keys", withCookie(owner, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "k", write: true, del: true, domainIds: [], expiresInDays: 90 }) }));
+    const secret = ((await k.json()) as { secret: string }).secret;
+    expect((await worker.fetch(new Request(`${ORIGIN}/api/v1/domains`, { headers: { authorization: `Bearer ${secret}` } }), env, createExecutionContext())).status).toBe(200);
+    const r = await req(m, path, { authorization: `Bearer ${secret}`, ...(m === "GET" ? {} : { "content-type": "application/json" }) }, "{}");
     expect(r.status).toBe(401);
   });
 
