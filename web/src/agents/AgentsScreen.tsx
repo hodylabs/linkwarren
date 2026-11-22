@@ -327,8 +327,15 @@ export function AgentsScreen() {
 
   const loadMcp = useCallback(() => api<McpState>("GET", "/api/agents/mcp").then(setMcpState, (e: unknown) => setMcpError(errorText(code(e)))), []);
   useEffect(() => void loadMcp(), [loadMcp]);
+  // One update at a time: a press while one is out is ignored (not disabled, so keyboard focus stays on the switch).
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const setMcpOn = (on: boolean) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     setMcpError(null);
+    const done = () => { savingRef.current = false; setSaving(false); };
     api<McpState>("PUT", "/api/agents/mcp", { on }).then(
       (st) => {
         setMcpState(st);
@@ -336,9 +343,9 @@ export function AgentsScreen() {
       },
       (e: unknown) => {
         setMcpError(errorText(code(e)));
-        void loadMcp();
+        return loadMcp();
       },
-    );
+    ).finally(done);
   };
 
   const person = (userId: string, email: string | null): Person => {
@@ -462,7 +469,7 @@ export function AgentsScreen() {
                   </small>
                 </div>
                 {isOwner ? (
-                  <fieldset className="plain" disabled={mcpState.locked}>
+                  <fieldset className="plain" disabled={mcpState.locked} aria-busy={saving}>
                     <Switch checked={mcpState.on} onChange={setMcpOn} label="Agent connections (MCP)" describedBy="mcp-hint" disabled={mcpState.locked} />
                   </fieldset>
                 ) : (

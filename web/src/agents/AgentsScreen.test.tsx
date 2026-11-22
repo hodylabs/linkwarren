@@ -124,6 +124,23 @@ describe("API & agents screen", () => {
     expect((await sw()).getAttribute("aria-checked")).toBe("false");
   });
 
+  it("one update at a time: a second press while the PUT is out sends nothing, and focus stays on the switch", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const { api, user } = boot(owner, { "PUT /api/agents/mcp": async () => { await held; return { body: { on: false, locked: false } }; } });
+    const s = (await sw()) as HTMLButtonElement;
+    s.focus();
+    await user.keyboard(" ");
+    await waitFor(() => expect(s.closest("fieldset")?.getAttribute("aria-busy")).toBe("true"));
+    await user.keyboard(" ");
+    await user.click(s);
+    expect(api.calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    expect(document.activeElement).toBe(s);
+    release();
+    await waitFor(() => expect(s.getAttribute("aria-checked")).toBe("false"));
+    expect(s.closest("fieldset")?.getAttribute("aria-busy")).toBe("false");
+  });
+
   it("owner with MCP off (not locked) sees the switch off and no MCP_ENABLED instruction", async () => {
     boot(owner, { "GET /api/agents/mcp": () => ({ body: { on: false, locked: false } }) });
     expect((await sw()).getAttribute("aria-checked")).toBe("false");
