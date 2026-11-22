@@ -378,6 +378,15 @@ describe("POST /api/settings/email/test", () => {
     expect(f).not.toHaveBeenCalled();
     expect(await audits()).toBe(0);
   });
+  it("ignores a body and refuses a foreign Origin", async () => {
+    const f = ok();
+    expect((await call("owner", "POST", T, { to: "x@evil.example", email: "x@evil.example" })).status).toBe(200);
+    expect(JSON.parse(String(f.mock.calls[0]![1]!.body)).to).toEqual([EMAIL.owner]);
+    await run("DELETE FROM auth_limits");
+    const r = await dash(T, { method: "POST", headers: { "Cf-Access-Jwt-Assertion": await tokenFor(EMAIL.owner!), origin: "https://evil.example" } });
+    expect(r.status).toBe(403);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
   it("a send failure is 502 email_failed with a reason and no audit", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}, { status: 422 }));

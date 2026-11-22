@@ -80,7 +80,7 @@ describe("POST /auth/email: sending", () => {
     try {
       expect((await ask("a@example.com")).status).toBe(202);
       expect(fake.sent[0]!.subject).toBe("Your sign-in link for Acme");
-      expect(fake.sent[0]!.from).toBe("Acme <links@example.com>");
+      expect(fake.sent[0]!.from).toBe('"Acme" <links@example.com>');
     } finally {
       await env.DB.prepare("DELETE FROM settings").run();
     }
@@ -94,7 +94,7 @@ describe("POST /auth/email: sending", () => {
     expect(fake.sent).toHaveLength(1);
     const m = fake.sent[0]!;
     expect(m.to).toEqual(["a@example.com"]);
-    expect(m.from).toBe("linkwarren <links@example.com>");
+    expect(m.from).toBe('"linkwarren" <links@example.com>');
     expect(m.subject).toBe("Your sign-in link for linkwarren");
     expect(m.text).toMatch(LINK);
     expect(m.html).toMatch(LINK);

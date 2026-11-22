@@ -118,7 +118,8 @@ async function mailLink(env: Env, email: string, next: string | undefined, now: 
     const secret = newSecret();
     await env.DB.prepare("INSERT INTO login_tokens (token_hash, email, next, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
       .bind(await sha256Hex(secret), email, safeNext(next, origin(env)), now, now + TOKEN_TTL).run();
-    await sendEmail(env, { to: email, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}`, name: (await getSettings(env)).name }) });
+    const name = (await getSettings(env)).name;
+    await sendEmail(env, { to: email, name, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}`, name }) });
   } catch {
     console.warn("sign_in_mail_failed"); // codes only: a D1 error text could carry bound values
   }

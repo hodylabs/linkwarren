@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { displayName, emailConfigured, escapeHtml, inviteEmail, sendEmail, signInEmail } from "../src/email";
 import type { Env } from "../src/env";
 import { putSecretStmts } from "../src/secrets";
+import { getSettings } from "../src/settings";
 
 // DB: the key resolver falls back to the dashboard-stored value (empty table here) when the Worker secret is unset.
 const cfg = (o: Partial<Env> = {}) => ({ DB: env.DB, EMAIL_FROM: "links@example.com", RESEND_API_KEY: "re_test", ...o }) as Env;
@@ -49,7 +50,7 @@ describe("sendEmail", () => {
     expect(init!.method).toBe("POST");
     expect(new Headers(init!.headers).get("authorization")).toBe("Bearer re_test");
     expect(new Headers(init!.headers).get("content-type")).toBe("application/json");
-    expect(JSON.parse(String(init!.body))).toEqual({ from: "linkwarren <links@example.com>", to: ["a@example.com"], subject: "s", text: "t", html: "<p>t</p>" });
+    expect(JSON.parse(String(init!.body))).toEqual({ from: '"linkwarren" <links@example.com>', to: ["a@example.com"], subject: "s", text: "t", html: "<p>t</p>" });
     expect(init!.signal).toBeInstanceOf(AbortSignal);
   });
   it("returns not_configured without a fetch when the key is unset", async () => {
@@ -129,7 +130,7 @@ describe("instance name", () => {
     try {
       const f = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) => Response.json({ id: "1" }));
       await sendEmail(cfg(), mail, f as typeof fetch);
-      expect(JSON.parse(String(f.mock.calls[0]![1]!.body)).from).toBe("Acmex <links@example.com>");
+      expect(JSON.parse(String(f.mock.calls[0]![1]!.body)).from).toBe('"Acmex" <links@example.com>');
     } finally {
       await env.DB.prepare("DELETE FROM settings").run();
     }
@@ -138,5 +139,55 @@ describe("instance name", () => {
     const logs = [vi.spyOn(console, "warn"), vi.spyOn(console, "log"), vi.spyOn(console, "error")].map((s) => s.mockImplementation(() => {}));
     await sendEmail(cfg(), mail, (async () => Response.json({}, { status: 500 })) as unknown as typeof fetch);
     expect(JSON.stringify(logs.map((l) => l.mock.calls))).not.toContain("re_test");
+  });
+});
+
+describe("review fixes", () => {
+  const sendAs = async (name: string) => {
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at, updated_by) VALUES ('instance.name', ?, 1, 'u')").bind(JSON.stringify(name)).run();
+    try {
+      const f = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) => Response.json({ id: "1" }));
+      await sendEmail(cfg(), mail, f as typeof fetch);
+      return JSON.parse(String(f.mock.calls[0]![1]!.body)).from as string;
+    } finally {
+      await env.DB.prepare("DELETE FROM settings").run();
+    }
+  };
+  it("the From name is always a quoted string", async () => {
+    expect(await sendAs("Acme, Inc.")).toBe('"Acme, Inc." <links@example.com>');
+    expect(await sendAs("a@b")).toBe('"a@b" <links@example.com>');
+    expect(await sendAs("x;y")).toBe('"x;y" <links@example.com>');
+    expect(await sendAs("A\u202eB\u2066C\u2028D\u2029E")).toBe('"ABCDE" <links@example.com>');
+  });
+  it("displayName cuts to 60 code points", () => {
+    expect([...displayName("😀".repeat(100))]).toHaveLength(60);
+  });
+  it("a 10k name is refused by the setting and truncated in the invite", async () => {
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at, updated_by) VALUES ('instance.name', ?, 1, 'u')").bind(JSON.stringify("n".repeat(10_000))).run();
+    try {
+      expect((await getSettings(env)).name).toBeNull();
+    } finally {
+      await env.DB.prepare("DELETE FROM settings").run();
+    }
+    const m = inviteEmail({ instanceName: "n".repeat(10_000), inviter: "i".repeat(10_000), dashboardHost: "h.example", role: "member" });
+    expect(m.subject.length).toBeLessThanOrEqual(120);
+    expect(m.text.length).toBeLessThan(400);
+    expect(m.html.length).toBeLessThan(600);
+  });
+  it("invite names lose bidi and line separators", () => {
+    const m = inviteEmail({ instanceName: "A\u202eB\u2028C", inviter: "x\u2066y", dashboardHost: "h.example", role: "member" });
+    expect(m.subject + m.text).not.toMatch(/[\u2028\u2029\u202a-\u202e\u2066-\u2069]/);
+  });
+  it("a settings read failure is its own reason, not network", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const bad = { ...cfg(), DB: { prepare: () => { throw new Error("d1"); } } } as unknown as Env;
+    // key resolves from the Worker secret, so only the settings read fails
+    expect(await sendEmail(bad, mail, vi.fn() as unknown as typeof fetch)).toEqual({ ok: false, reason: "settings" });
+  });
+  it("sendEmail with a given name does not read settings", async () => {
+    const bad = { ...cfg(), DB: { prepare: () => { throw new Error("d1"); } } } as unknown as Env;
+    const f = vi.fn(async () => Response.json({ id: "1" }));
+    expect(await sendEmail(bad, { ...mail, name: "Acme" }, f as unknown as typeof fetch)).toEqual({ ok: true });
+    expect(JSON.parse(String((f.mock.calls[0] as unknown[])[1] ? ((f.mock.calls[0] as unknown[])[1] as RequestInit).body : "")).from).toBe('"Acme" <links@example.com>');
   });
 });

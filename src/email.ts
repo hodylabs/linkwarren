@@ -8,27 +8,37 @@ export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => E
 /** EMAIL_FROM set and a Resend key from the Worker secret or the dashboard. */
 export const emailConfigured = async (env: Env): Promise<boolean> => !!env.EMAIL_FROM?.trim() && !!(await getSecret(env, "RESEND_API_KEY"));
 
-/** Sender display name: no quoting, angle or control characters (header injection), at most 60 characters; empty is linkwarren. */
-export const displayName = (name: string | null): string =>
-  (name ?? "").replace(/["<>\\]|[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60).trim() || "linkwarren";
+// Controls, C1, line/paragraph separators and bidi overrides/isolates: nothing that can break a header or reorder text.
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+const cut = (s: string, n: number): string => [...s].slice(0, n).join("");
 
-/** One line for a subject or a text line: control characters (CR/LF included) become nothing, runs of spaces one. */
-const oneLine = (s: string): string => s.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/ {2,}/g, " ").trim();
+/** Sender display name: unsafe characters, quotes and backslashes removed, at most 60 code points; empty is linkwarren. Callers emit it as a quoted string. */
+export const displayName = (name: string | null): string => cut((name ?? "").replace(UNSAFE, "").replace(/["<>\\]/g, "").trim(), 60).trim() || "linkwarren";
 
-export type Mail = { to: string; subject: string; text: string; html: string };
-export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" };
+/** One line for a subject or a text line: unsafe characters become a space, runs of spaces one, at most n code points. */
+const oneLine = (s: string, n = 80): string => cut(s.replace(UNSAFE, " ").replace(/ {2,}/g, " ").trim(), n).trim();
+
+/** name: the instance name for the sender; when undefined sendEmail reads it from the settings. */
+export type Mail = { to: string; subject: string; text: string; html: string; name?: string | null };
+export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings" };
 
 /** One POST to Resend. Never throws; logs the status code only (Resend's error body can echo the request, link included). */
 export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Promise<SendResult> {
   const from = env.EMAIL_FROM?.trim();
   const key = from ? (await getSecret(env, "RESEND_API_KEY"))?.value : undefined;
   if (!from || !key) return { ok: false, reason: "not_configured" };
+  let name: string;
   try {
-    const name = displayName((await getSettings(env)).name);
+    name = displayName(m.name !== undefined ? m.name : (await getSettings(env)).name);
+  } catch {
+    console.warn("settings_read_failed");
+    return { ok: false, reason: "settings" };
+  }
+  try {
     const r = await f("https://api.resend.com/emails", {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: `${name} <${from}>`, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
+      body: JSON.stringify({ from: `"${name}" <${from}>`, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
       signal: AbortSignal.timeout(10_000),
     });
     await r.body?.cancel();
