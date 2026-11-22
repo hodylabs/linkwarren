@@ -62,7 +62,8 @@ export async function checkToken(cfg: CfConfig): Promise<{ token: "active" | "in
   let zoneRead: State;
   try {
     zone = await sampleZone(cfg);
-    zoneRead = "ok";
+    // An empty list proves nothing: Cloudflare can answer 200 [] for a token that cannot see any zone.
+    zoneRead = zone ? "ok" : "unknown";
   } catch (e) {
     zoneRead = e instanceof CfError && (e.status === 401 || e.status === 403) ? "missing" : "unknown";
   }

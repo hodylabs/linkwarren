@@ -71,9 +71,9 @@ describe("checkToken", () => {
     expect(fake.calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["/zones/zsaas/dns_records", "/zones/zsaas/workers/routes"]);
     expect(states(r)).toMatchObject({ zone_read: "ok", dns_edit: "ok", routes_edit: "ok", ssl_edit: "unknown" });
   });
-  it("no zones at all: dns and routes unknown", async () => {
+  it("no zones at all (or a list the token cannot see): zone read, dns and routes unknown", async () => {
     installFakeCloudflare({ zones: [], tokens: { full: { perms: ALL } } });
-    expect(states(await checkToken({ ...cfg, saasZoneId: null }))).toMatchObject({ zone_read: "ok", dns_edit: "unknown", routes_edit: "unknown" });
+    expect(states(await checkToken({ ...cfg, saasZoneId: null }))).toMatchObject({ zone_read: "unknown", dns_edit: "unknown", routes_edit: "unknown" });
   });
   it("user-owned token falls back to /user/tokens/verify", async () => {
     const fake = installFakeCloudflare({ zones, tokens: { full: { perms: ALL, userOwned: true } } });

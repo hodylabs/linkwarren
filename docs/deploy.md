@@ -78,12 +78,12 @@ Create a custom API token (My Profile or Manage Account, API Tokens, Create Cust
 
 In the token UI the Config Rules permission is listed under the name "Config Settings". The controls group is only needed when the "Cloudflare controls" switch in Settings is on. Never grant Workers Scripts, Account settings, API Tokens or Access: linkwarren does not need them, and Workers Scripts would let a leaked token replace the app's own code.
 
-Check the token from Settings, Cloudflare (`Check token`), or with `POST /api/settings/cloudflare/check`. The check never writes: it verifies the token, then sends requests Cloudflare must reject (empty name, pattern or hostname) and reads the answer. The two controls permissions show "unknown" until first use, because no safe test request exists for them.
+Check the token from Settings, Cloudflare (`Check token`), or with `POST /api/settings/cloudflare/check`. The check never writes: it verifies the token, then sends requests Cloudflare must reject (empty name, pattern or hostname) and reads the answer. The two controls permissions show "unknown" until first use, because no safe test request exists for them. The check tests one zone only (the SaaS zone, or the first zone in the account), so a token limited to some zones can pass there and still miss another zone. If SSL and Certificates shows missing, also check that Cloudflare for SaaS is enabled on the zone.
 
 ### Outside domains (Cloudflare for SaaS)
 
 1. Enable Cloudflare for SaaS (custom hostnames) on the zone you chose for `CF_SAAS_ZONE_ID`.
-2. Create the fallback origin, either with Settings, Cloudflare, `Set up outside domains` (`POST /api/settings/cloudflare/setup`), or by hand: add a proxied `AAAA` record `CF_CNAME_TARGET` to `100::`, then set `CF_CNAME_TARGET` as the fallback origin under SSL/TLS, Custom Hostnames. The setup endpoint refuses (`target_in_use`) when a record it did not create already exists at the target; it never changes that record.
+2. Create the fallback origin, either with Settings, Cloudflare, `Set up outside domains` (`POST /api/settings/cloudflare/setup`), or by hand: add a proxied `AAAA` record `CF_CNAME_TARGET` to `100::`, then set `CF_CNAME_TARGET` as the fallback origin under SSL/TLS, Custom Hostnames. The setup endpoint never changes anything it did not create: it refuses with `fallback_in_use` when the zone already has a different fallback origin (changing it would repoint every custom hostname in that zone), and with `target_in_use` when an address record it did not create already exists at the target. linkwarren remembers the id of the record it creates, so running setup again is safe.
 3. Wait until the fallback origin shows active. Outside domains can then be added: each one adds a CNAME from its host to `CF_CNAME_TARGET` at its own DNS provider.
 
 A bare domain (for example `example.com` rather than `go.example.com`) cannot carry a plain CNAME. Its DNS provider must support CNAME flattening or an ALIAS/ANAME record pointing at `CF_CNAME_TARGET`.
@@ -91,6 +91,8 @@ A bare domain (for example `example.com` rather than `go.example.com`) cannot ca
 ### Resync
 
 Worker routes created through the API survive `wrangler deploy`, so there is nothing to redo after a deploy. `Resync domains` in Settings (`POST /api/settings/cloudflare/resync`) is a repair tool: run it after someone changed or removed linkwarren's records, routes or custom hostnames in the Cloudflare dashboard, or after a write was lost. It re-creates only what linkwarren created itself, never takes over a record or route someone else made, and lists the domains it could not repair.
+
+Each call repairs at most 3 domains (in domain id order) so it stays within the Workers Free limit of 50 subrequests per request. The answer is `{ ok, failed, next }`: while `next` is not null, call again with `{ "after": "<next>" }` until it is. When Cloudflare cannot be reached the call stops at that domain and `next` points at it, so the retry starts there. The dashboard repeats the calls for you.
 
 ## Access
 

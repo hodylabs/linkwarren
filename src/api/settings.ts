@@ -92,37 +92,67 @@ settings.patch("/cloudflare", async (c) => {
   return c.json({ controlsEnabled: body.data.controlsEnabled });
 });
 
+const TARGET_RECORD = "cf.target_record_id";
+
 settings.post("/cloudflare/setup", async (c) => {
   const cfg = cfConfig(c.env);
   if (!cfg) return c.json(notConfigured, 409);
   if (!cfg.saasZoneId || !cfg.cnameTarget) return c.json({ error: "outside_not_configured" }, 409);
-  const target = cfg.cnameTarget;
+  const { saasZoneId: zoneId, cnameTarget: target } = cfg;
+  const userId = c.var.user.id;
+  // The upsert and the audit share one batch; the audit is guarded by the row it records.
+  const record = (recordId: string | null, error?: string) => c.env.DB.batch([
+    ...(recordId ? [c.env.DB.prepare(
+      "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+    ).bind(TARGET_RECORD, recordId, Math.floor(Date.now() / 1000), userId)] : []),
+    auditStmt(c.env, { actorId: userId, action: "cloudflare.setup", targetType: "settings", targetId: "cloudflare", detail: { target, ...(recordId ? { recordId } : {}), ...(error ? { error } : {}) } },
+      recordId ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [TARGET_RECORD, recordId] } : undefined),
+  ]);
+  let created: string | null = null;
   try {
-    const records = (await listDns(cfg, cfg.saasZoneId, target)).filter((r) => ["A", "AAAA", "CNAME"].includes(r.type));
-    // shortcut: "ours" is recognised by the comment linkwarren writes; no table records this id. Fails closed on anything else.
-    if (records.some((r) => r.comment !== "linkwarren" || !r.proxied)) return c.json({ error: "target_in_use" }, 409);
-    if (!records.length) await createDns(cfg, cfg.saasZoneId, target);
-    await setFallbackOrigin(cfg);
-    const fb = await getFallbackOrigin(cfg).catch(() => null);
-    await auditStmt(c.env, { actorId: c.var.user.id, action: "cloudflare.setup", targetType: "settings", targetId: "cloudflare", detail: { target } }).run();
-    return c.json({ target, fallbackOrigin: fb?.status === "active" ? "active" : "pending" });
+    // Every refusal comes before the first write.
+    const fb = await getFallbackOrigin(cfg);
+    // The fallback origin is zone-wide: replacing someone else's would repoint every custom hostname in the zone.
+    if (fb && normalizeHost(fb.origin) !== target) return c.json({ error: "fallback_in_use" }, 409);
+    const ours = (await c.env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(TARGET_RECORD).first<{ value: string }>())?.value ?? null;
+    const records = (await listDns(cfg, zoneId, target)).filter((r) => ["A", "AAAA", "CNAME"].includes(r.type));
+    if (records.some((r) => r.id !== ours)) return c.json({ error: "target_in_use" }, 409);
+    if (!records.length) created = (await createDns(cfg, zoneId, target)).id;
+    if (!fb) await setFallbackOrigin(cfg);
+    const now = fb ?? (await getFallbackOrigin(cfg).catch(() => null));
+    await record(created);
+    return c.json({ target, fallbackOrigin: now?.status === "active" ? "active" : "pending" });
   } catch (e) {
     const f = cfFail(e);
+    // A record we created must stay known even when a later step failed, or a retry would call it foreign.
+    if (created) await record(created, f.body.error);
     return c.json(f.body, f.status);
   }
 });
 
+const BATCH = 3; // Workers Free allows 50 subrequests per call; one domain sync takes up to about 11.
+const resyncBody = z.strictObject({ after: z.string().min(1).max(64).optional() });
 settings.post("/cloudflare/resync", async (c) => {
   const cfg = cfConfig(c.env);
   if (!cfg) return c.json(notConfigured, 409);
+  const text = await c.req.text();
+  let raw: unknown = {};
+  try {
+    if (text) raw = JSON.parse(text);
+  } catch {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  const body = resyncBody.safeParse(raw);
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  // `after` is the `next` of the previous call: the first domain id not yet done (inclusive).
   const rows = (await c.env.DB.prepare(
     `SELECT d.id FROM domains d JOIN domain_cf c ON c.domain_id = d.id
-     WHERE c.kind = 'outside' OR (c.kind = 'account' AND c.route_id IS NOT NULL) ORDER BY d.host`,
-  ).all<{ id: string }>()).results;
+     WHERE (c.kind = 'outside' OR (c.kind = 'account' AND c.route_id IS NOT NULL)) AND d.id >= ? ORDER BY d.id LIMIT ?`,
+  ).bind(body.data.after ?? "", BATCH + 1).all<{ id: string }>()).results;
   let ok = 0;
+  let next = rows[BATCH]?.id ?? null;
   const failed: { host: string; error: string }[] = [];
-  // Sequential on purpose: keeps Cloudflare's rate limit and the subrequest budget predictable.
-  for (const { id } of rows) {
+  for (const { id } of rows.slice(0, BATCH)) {
     const [d, cf] = await Promise.all([
       c.env.DB.prepare("SELECT * FROM domains WHERE id = ?").bind(id).first(),
       c.env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(id).first(),
@@ -135,8 +165,14 @@ settings.post("/cloudflare/resync", async (c) => {
       ok++;
     } catch (e) {
       failed.push({ host: dom.host, error: e instanceof AttachError ? e.code : e instanceof CfError ? e.message : "internal_error" });
+      // Status 0 is unreachable or the subrequest limit: later domains would fail the same way, so retry from here.
+      // Code -1 is outside_not_configured, a per-domain verdict that a retry cannot fix.
+      if (e instanceof CfError && e.status === 0 && !e.codes.includes(-1)) {
+        next = id;
+        break;
+      }
     }
   }
-  await auditStmt(c.env, { actorId: c.var.user.id, action: "cloudflare.resync", targetType: "settings", targetId: "cloudflare", detail: { ok, failed: failed.length } }).run();
-  return c.json({ ok, failed });
+  await auditStmt(c.env, { actorId: c.var.user.id, action: "cloudflare.resync", targetType: "settings", targetId: "cloudflare", detail: { ok, failed: failed.length, next } }).run();
+  return c.json({ ok, failed, next });
 });

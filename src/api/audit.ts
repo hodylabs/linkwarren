@@ -21,7 +21,7 @@ const query = z.strictObject({
   actor: z.string().min(1).max(64).optional(),
   via: z.enum(["present", "absent"]).optional(),
   action: z.string().regex(/^[a-z.]{1,40}$/).optional(),
-  target: z.enum(["link", "domain", "user", "lock", "import"]).optional(),
+  target: z.enum(["link", "domain", "user", "lock", "import", "settings"]).optional(),
 });
 const CURSOR = /^[1-9]\d{0,15}$/;
 

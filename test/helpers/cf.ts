@@ -56,6 +56,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
     const fi = failures.findIndex((f) => f.re.test(path + url.search));
     if (fi >= 0) {
       const f = failures.splice(fi, 1)[0]!;
+      if (f.status === 0) throw new TypeError("network connection lost"); // what cf() sees as unreachable or over the subrequest limit
       return json(f.status, f.body ?? { success: false, errors: [{ code: 10000, message: "error" }], messages: [], result: null });
     }
     if (!auth?.startsWith("Bearer ")) return err(401, 10000);
