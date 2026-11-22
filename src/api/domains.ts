@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
-import { CfError, cfConfig, cnameTarget } from "../cf/api";
+import { CfError, cfConfigFor, cnameTarget } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
@@ -67,7 +67,7 @@ function cfView(env: Env, d: DomainRow, cf: CfRow | null, manage = true): CfView
 
 /** After a committed write a failed sync is reported through lastError (syncDomain stored it), never as a 5xx. */
 async function trySync(env: Env, d: DomainRow, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }): Promise<CfRow> {
-  const cfg = cfConfig(env);
+  const cfg = await cfConfigFor(env);
   if (!cfg || cf.kind === "manual") return cf;
   try {
     return await syncDomain(env, cfg, d, cf, opts); // logs internal errors itself
@@ -119,7 +119,7 @@ domains.post("/", async (c) => {
   if (await c.env.DB.prepare("SELECT 1 FROM domains WHERE host = ?").bind(host).first()) return c.json({ error: "host_taken" }, 409);
   if (!isOwner && (await c.env.DB.prepare("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'").bind(user.id).first<{ n: number }>())!.n >= MAX_PENDING_PER_MEMBER)
     return c.json({ error: "pending_limit" }, 409);
-  const cfg = cfConfig(c.env);
+  const cfg = await cfConfigFor(c.env);
   let kind: CfRow["kind"] = "manual";
   if (cfg) {
     // Every Cloudflare read and refusal happens before the first write.
@@ -206,7 +206,7 @@ domains.patch("/:id/cloudflare", async (c) => {
     if (on?.value !== "1") return c.json({ error: "controls_off" }, 409);
     const cf = await getCf(c.env, d.id);
     if (!cf || cf.kind !== "account" || !cf.routeId || !cf.zoneId) return c.json({ error: "not_same_account" }, 409);
-    const cfg = cfConfig(c.env);
+    const cfg = await cfConfigFor(c.env);
     if (!cfg) return c.json(notConfigured, 409);
     // Each step that succeeds in Cloudflare is recorded, so a later failure never leaves D1 claiming the old value.
     const done: { securityLevel?: string | null; rateLimit?: number | null } = {};
@@ -384,7 +384,7 @@ domains.post("/:id/approve", async (c) => {
     const confirmed = body.data.confirmTakeover === true && cf?.kind === "account" ? { confirmTakeover: true } : {};
     if (d.status === "active" && !finish) return c.json({ ...d, ...(await loopField(c.env, d.host)) });
     if (cf && cf.kind !== "manual") {
-      const cfg = cfConfig(c.env);
+      const cfg = await cfConfigFor(c.env);
       // Without Cloudflare settings nothing can be checked, so nothing is approved.
       if (!cfg) return c.json(notConfigured, 409);
       if (!(await lease.held())) return c.json(busy, 409);
@@ -439,7 +439,7 @@ domains.delete("/:id", async (c) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     if (d.status !== "pending") return c.json({ error: "not_pending" }, 409);
-    const cfg = cfConfig(c.env);
+    const cfg = await cfConfigFor(c.env);
     // Re-read right before detach, so ids a sync stored earlier in this request's lifetime are included.
     const cf = await getCf(c.env, d.id);
     if (cf && cfIds(cf).some((v) => v)) {

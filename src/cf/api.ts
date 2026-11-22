@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
+import { getSecret } from "../secrets";
 
 const BASE = "https://api.cloudflare.com/client/v4";
 
@@ -19,6 +20,11 @@ export function cfConfig(env: Env, tokenOverride?: string): CfConfig | null {
   const workerName = t(env.CF_WORKER_NAME);
   if (!token || !accountId || !workerName) return null;
   return { token, accountId, workerName, saasZoneId: t(env.CF_SAAS_ZONE_ID), cnameTarget: cnameTarget(env) };
+}
+
+/** The live config: the Worker secret CF_API_TOKEN when set, else the token pasted in the dashboard (getSecret returns the secret first). */
+export async function cfConfigFor(env: Env): Promise<CfConfig | null> {
+  return cfConfig(env, (await getSecret(env, "CF_API_TOKEN"))?.value);
 }
 
 /** Message is the numeric status only: Cloudflare's own text can echo request input. */

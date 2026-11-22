@@ -1,8 +1,11 @@
+import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { emailConfigured, escapeHtml, sendEmail, signInEmail } from "../src/email";
 import type { Env } from "../src/env";
+import { putSecretStmts } from "../src/secrets";
 
-const cfg = (o: Partial<Env> = {}) => ({ EMAIL_FROM: "links@example.com", RESEND_API_KEY: "re_test", ...o }) as Env;
+// DB: the key resolver falls back to the dashboard-stored value (empty table here) when the Worker secret is unset.
+const cfg = (o: Partial<Env> = {}) => ({ DB: env.DB, EMAIL_FROM: "links@example.com", RESEND_API_KEY: "re_test", ...o }) as Env;
 const mail = { to: "a@example.com", subject: "s", text: "t", html: "<p>t</p>" };
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -32,8 +35,8 @@ describe("signInEmail", () => {
 });
 
 describe("emailConfigured", () => {
-  it.each([[{}, true], [{ EMAIL_FROM: " " }, false], [{ RESEND_API_KEY: "" }, false], [{ RESEND_API_KEY: undefined }, false]])("%j -> %j", (o, want) => {
-    expect(emailConfigured(cfg(o as Partial<Env>))).toBe(want);
+  it.each([[{}, true], [{ EMAIL_FROM: " " }, false], [{ RESEND_API_KEY: "" }, false], [{ RESEND_API_KEY: undefined }, false]])("%j -> %j", async (o, want) => {
+    expect(await emailConfigured(cfg(o as Partial<Env>))).toBe(want);
   });
 });
 
@@ -53,6 +56,17 @@ describe("sendEmail", () => {
     const f = vi.fn();
     expect(await sendEmail(cfg({ RESEND_API_KEY: undefined }), mail, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "not_configured" });
     expect(f).not.toHaveBeenCalled();
+  });
+  it("uses the dashboard-stored key when the Worker secret is unset", async () => {
+    const SECRETS_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(3)));
+    await env.DB.batch(await putSecretStmts(cfg({ SECRETS_KEY }), "u1", "RESEND_API_KEY", "re_dashboard_123456"));
+    try {
+      const f = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) => Response.json({ id: "1" }));
+      expect(await sendEmail(cfg({ RESEND_API_KEY: undefined, SECRETS_KEY }), mail, f as typeof fetch)).toEqual({ ok: true });
+      expect(new Headers(f.mock.calls[0]![1]!.headers).get("authorization")).toBe("Bearer re_dashboard_123456");
+    } finally {
+      await env.DB.batch(["settings", "audit_log"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+    }
   });
   it("returns rejected on 422 and logs the status only", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

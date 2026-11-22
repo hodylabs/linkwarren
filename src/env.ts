@@ -25,6 +25,8 @@ export type Env = {
   ACCESS_JWKS_JSON?: string;
   /** Cloudflare onboarding (all optional; features stay off when unset). CF_API_TOKEN is a secret. */
   CF_API_TOKEN?: string;
+  /** Optional secret: base64 of 32 random bytes; enables pasting CF_API_TOKEN / RESEND_API_KEY in the dashboard (stored AES-GCM encrypted in D1). */
+  SECRETS_KEY?: string;
   CF_ACCOUNT_ID?: string;
   CF_WORKER_NAME?: string;
   CF_SAAS_ZONE_ID?: string;

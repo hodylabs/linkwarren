@@ -63,7 +63,7 @@ Vars (in `wrangler.instance.jsonc`):
 - `CF_SAAS_ZONE_ID`: the zone that serves outside domains through Cloudflare for SaaS (only needed for outside domains).
 - `CF_CNAME_TARGET`: a host inside that zone, for example `edge.example.com`. Outside domains add a CNAME to it.
 
-Secret: `CF_API_TOKEN`, set only with `npx wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc` (never in `vars`). Cloudflare features are on only when the token, `CF_ACCOUNT_ID` and `CF_WORKER_NAME` are all set; outside domains also need `CF_SAAS_ZONE_ID` and `CF_CNAME_TARGET`. The token is never shown again, never stored in D1 or KV and never written to logs or the audit log.
+Secret: `CF_API_TOKEN`, set only with `npx wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc` (never in `vars`). Cloudflare features are on only when the token, `CF_ACCOUNT_ID` and `CF_WORKER_NAME` are all set; outside domains also need `CF_SAAS_ZONE_ID` and `CF_CNAME_TARGET`. The token is never shown again and never written to logs or the audit log. Instead of the Worker secret, the owner can paste the token in Settings (see "Secrets pasted in the dashboard"); it is then stored encrypted in D1, never in plain text.
 
 ### API token
 
@@ -130,6 +130,19 @@ curl "http://localhost:8787/__scheduled?cron=15+*+*+*+*"
 ```
 
 To re-roll days (for example after a fix), set the mark back, e.g. `UPDATE analytics_state SET v = '2026-11-17' WHERE k = 'rolled_through'`; the next runs rewrite the days after it that Analytics Engine still holds, 3 per hour. A re-roll costs D1 writes on the Free plan: about 6 per rollup row of each day (3 to delete the old row, 3 to insert the new one), inside the same write budgets, so moving the mark far back takes several hours or days to catch up.
+
+## Secrets pasted in the dashboard (optional)
+
+`CF_API_TOKEN` and `RESEND_API_KEY` can come from two places:
+
+1. **Worker secret** (`npx wrangler secret put <NAME> -c wrangler.instance.jsonc`). When set (non-empty), it always wins, and the dashboard refuses a paste for that name (`409 set_by_secret`).
+2. **Pasted by the owner** in Settings or the setup wizard. This needs the optional secret `SECRETS_KEY`: base64 of exactly 32 random bytes. Create it with `openssl rand -base64 32` and set it with `npx wrangler secret put SECRETS_KEY -c wrangler.instance.jsonc`. Without a valid `SECRETS_KEY` the paste field is hidden and the API answers `409 secrets_key_missing`.
+
+A pasted value is encrypted with AES-GCM (256-bit key from `SECRETS_KEY`, a fresh random 96-bit IV on every save, the secret's name bound as additional data) and stored in the `settings` table under the key `secret.<NAME>`. Values are write-only: no screen or API returns them, only whether each is set by Worker secret, set in the dashboard, or missing. Saves and removals are audited as `secret.update` / `secret.delete` with the name only. The full export never includes these rows.
+
+- **Losing or changing `SECRETS_KEY`** makes the stored values unreadable. They read as missing (Workers Logs shows `secrets_unreadable <NAME>`, never the value) and the owner pastes them again. Nothing else breaks: sign-in and redirects never depend on them.
+- **A pasted Cloudflare token** is checked against Cloudflare before it is saved (it must verify as active); `CF_ACCOUNT_ID` and `CF_WORKER_NAME` must already be set as vars. This works on a fresh instance.
+- **A pasted Resend key cannot bootstrap a fresh app-mode instance**: the owner has to sign in first, and in app mode that needs a working email link (or a passkey), so the first key must be the Worker secret. Pasting is for replacing a key later.
 
 ## Sign-in
 

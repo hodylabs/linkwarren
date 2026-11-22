@@ -51,6 +51,8 @@
     // saves a choice. API keys on /api/v1 work either way.
     // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
     // CF_API_TOKEN is a secret, never a var: wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc
+    // Optional secret SECRETS_KEY (base64 of 32 random bytes, openssl rand -base64 32): lets the owner paste CF_API_TOKEN or
+    // RESEND_API_KEY in the dashboard, stored encrypted in D1. npx wrangler secret put SECRETS_KEY -c wrangler.instance.jsonc
     // AE_READ_TOKEN and VISITOR_SALT are secrets, never vars: wrangler secret put AE_READ_TOKEN (and VISITOR_SALT) -c wrangler.instance.jsonc
   },
   // Add one route per short domain, plus the dashboard host.

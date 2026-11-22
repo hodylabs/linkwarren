@@ -1,21 +1,25 @@
 import type { Env } from "./env";
+import { getSecret } from "./secrets";
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => ESC[ch]!);
 
-export const emailConfigured = (env: Env): boolean => !!env.EMAIL_FROM?.trim() && !!env.RESEND_API_KEY?.trim();
+/** EMAIL_FROM set and a Resend key from the Worker secret or the dashboard. */
+export const emailConfigured = async (env: Env): Promise<boolean> => !!env.EMAIL_FROM?.trim() && !!(await getSecret(env, "RESEND_API_KEY"));
 
 export type Mail = { to: string; subject: string; text: string; html: string };
 export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" };
 
 /** One POST to Resend. Never throws; logs the status code only (Resend's error body can echo the request, link included). */
 export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Promise<SendResult> {
-  if (!emailConfigured(env)) return { ok: false, reason: "not_configured" };
+  const from = env.EMAIL_FROM?.trim();
+  const key = from ? (await getSecret(env, "RESEND_API_KEY"))?.value : undefined;
+  if (!from || !key) return { ok: false, reason: "not_configured" };
   try {
     const r = await f("https://api.resend.com/emails", {
       method: "POST",
-      headers: { authorization: `Bearer ${env.RESEND_API_KEY!.trim()}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: env.EMAIL_FROM!.trim(), to: [m.to], subject: m.subject, text: m.text, html: m.html }),
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({ from, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
       signal: AbortSignal.timeout(10_000),
     });
     await r.body?.cancel();

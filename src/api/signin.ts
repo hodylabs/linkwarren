@@ -84,7 +84,7 @@ signin.post("/email", async (c) => {
   const b = await parse(c, emailBody);
   if (!b) return c.json(invalid, 400);
   const env = c.env;
-  if (!emailConfigured(env)) return c.json({ error: "email_not_configured" }, 503);
+  if (!(await emailConfigured(env))) return c.json({ error: "email_not_configured" }, 503);
   const prefix = ipPrefix(c.req.header("cf-connecting-ip") ?? null);
   // Both limiters count before any lookup, so unknown addresses use up their budget too (R5).
   const [byAddr, byIp] = await Promise.all([hit(env, await limitKey.addr(b.email), LIMITS.address), hit(env, limitKey.ip(prefix), LIMITS.ip)]);

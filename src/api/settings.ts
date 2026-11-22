@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
-import { CfError, cfConfig, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
+import { CfError, cfConfig, cfConfigFor, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
 import { syncDomain, syncErrorCode } from "../cf/attach";
 import { checkToken, sampleZone } from "../cf/perms";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
+import { deleteSecretStmts, putSecretStmts, secretsReady, secretStatus, type SecretName } from "../secrets";
 import { rowToCf, rowToDomain, type UserRow } from "../types";
 import type { Grant } from "../principal";
 
@@ -29,7 +30,7 @@ const cfFail = (e: unknown) => {
 const orNull = <T>(p: Promise<T>) => p.catch(() => null);
 
 settings.get("/cloudflare", async (c) => {
-  const cfg = cfConfig(c.env);
+  const cfg = await cfConfigFor(c.env);
   const saas = !!(cfg?.saasZoneId && cfg.cnameTarget);
   const [zone, fb, used, attached, controls] = await Promise.all([
     cfg ? orNull(sampleZone(cfg)) : null,
@@ -65,7 +66,7 @@ settings.post("/cloudflare/check", async (c) => {
   // Never echo the zod issues: they would carry the candidate token.
   if (!body.success) return c.json({ error: body.error.issues.some((i) => i.path[0] === "token") ? "invalid_token_format" : "invalid_body" }, 400);
   // A candidate token (first-run wizard) is only held in this request: nothing is stored.
-  const cfg = cfConfig(c.env, body.data.token);
+  const cfg = body.data.token ? cfConfig(c.env, body.data.token) : await cfConfigFor(c.env);
   if (!cfg) return c.json(notConfigured, 409);
   try {
     return c.json(await checkToken(cfg));
@@ -96,7 +97,7 @@ const TARGET_RECORD = "cf.target_record_id";
 const TARGET_INTENT = "cf.target_record_intent";
 
 settings.post("/cloudflare/setup", async (c) => {
-  const cfg = cfConfig(c.env);
+  const cfg = await cfConfigFor(c.env);
   if (!cfg) return c.json(notConfigured, 409);
   if (!cfg.saasZoneId || !cfg.cnameTarget) return c.json({ error: "outside_not_configured" }, 409);
   const { saasZoneId: zoneId, cnameTarget: target } = cfg;
@@ -147,7 +148,7 @@ settings.post("/cloudflare/setup", async (c) => {
 const BATCH = 3;
 const resyncBody = z.strictObject({ after: z.string().min(1).max(64).optional() });
 settings.post("/cloudflare/resync", async (c) => {
-  const cfg = cfConfig(c.env);
+  const cfg = await cfConfigFor(c.env);
   if (!cfg) return c.json(notConfigured, 409);
   const text = await c.req.text();
   let raw: unknown = {};
@@ -189,4 +190,41 @@ settings.post("/cloudflare/resync", async (c) => {
   }
   await auditStmt(c.env, { actorId: c.var.user.id, action: "cloudflare.resync", targetType: "settings", targetId: "cloudflare", detail: { ok, failed: failed.length, next } }).run();
   return c.json({ ok, failed, next });
+});
+
+// Write-only (R2): every response is the status, never a value. The Worker secret always wins, so a paste over it is refused.
+const secretName = (p: string): SecretName | null => (p === "cf" ? "CF_API_TOKEN" : p === "resend" ? "RESEND_API_KEY" : null);
+const secretBody = z.strictObject({ value: z.string() });
+settings.get("/secrets", async (c) => c.json(await secretStatus(c.env)));
+
+settings.put("/secrets/:name", async (c) => {
+  const name = secretName(c.req.param("name"));
+  if (!name) return c.json({ error: "not_found" }, 404);
+  const body = secretBody.safeParse(await c.req.json().catch(() => null));
+  // Never echo the zod issues: they could carry the value.
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  if (c.env[name]?.trim()) return c.json({ error: "set_by_secret" }, 409);
+  if (!secretsReady(c.env)) return c.json({ error: "secrets_key_missing" }, 409);
+  const value = body.data.value.trim();
+  if (name === "RESEND_API_KEY" && !/^re_[A-Za-z0-9_]{10,200}$/.test(value)) return c.json({ error: "bad_key" }, 400);
+  if (name === "CF_API_TOKEN") {
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(value)) return c.json({ error: "token_invalid" }, 400);
+    const cfg = cfConfig(c.env, value);
+    if (!cfg) return c.json(notConfigured, 409);
+    try {
+      if ((await checkToken(cfg)).token !== "active") return c.json({ error: "token_invalid" }, 400);
+    } catch (e) {
+      const f = cfFail(e);
+      return c.json(f.body, f.status);
+    }
+  }
+  await c.env.DB.batch(await putSecretStmts(c.env, c.var.user.id, name, value));
+  return c.json(await secretStatus(c.env));
+});
+
+settings.delete("/secrets/:name", async (c) => {
+  const name = secretName(c.req.param("name"));
+  if (!name) return c.json({ error: "not_found" }, 404);
+  await c.env.DB.batch(deleteSecretStmts(c.env, c.var.user.id, name));
+  return c.json(await secretStatus(c.env));
 });
