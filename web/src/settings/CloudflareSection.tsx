@@ -68,6 +68,8 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
   const edits = useRef(0); // bumped by every controls toggle: older loads and toggles must not overwrite a newer one
   const saved = useRef<boolean | null>(null); // the last controls value the server confirmed
   const failed = useRef(0); // the newest toggle that failed
+  const tokenGen = useRef(0); // bumped by every token change: a check started for an older token is ignored
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   // A load that a toggle overtook keeps the toggled value and takes the rest.
   const load = useCallback((signal?: AbortSignal) => {
@@ -91,10 +93,12 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
     busy.current = true;
     setChecking(true);
     setCheckError(null);
+    const gen = tokenGen.current;
     try {
-      setCheck(await checkCloudflare());
+      const r = await checkCloudflare();
+      if (gen === tokenGen.current) setCheck(r);
     } catch (e) {
-      setCheckError(code(e));
+      if (gen === tokenGen.current) setCheckError(code(e));
     } finally {
       busy.current = false;
       setChecking(false);
@@ -179,13 +183,28 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
     overlay === null && (resync.running || !!s?.configured),
   );
 
-  // A new or removed token changes what Cloudflare answers, so the section loads again.
+  // A new or removed token changes what Cloudflare answers, so the section loads again. A failed reload keeps the section
+  // (and the field) on screen with the error and a Retry.
+  const reload = () => {
+    setRefreshError(null);
+    load().catch((e) => setRefreshError(code(e)));
+  };
   const token = (
-    <SecretField name="cf" status={secrets.cf} pasteAvailable={secrets.pasteAvailable} onSaved={(st) => {
-      onSecrets(st);
-      setCheck(null);
-      load().catch((e) => setLoadError(code(e)));
-    }} />
+    <>
+      <SecretField name="cf" status={secrets.cf} pasteAvailable={secrets.pasteAvailable} onSaved={(st) => {
+        onSecrets(st);
+        tokenGen.current++;
+        setCheck(null);
+        setCheckError(null);
+        reload();
+      }} />
+      {refreshError && (
+        <div className="row-actions">
+          <p className="err" role="alert">{settingsError(refreshError)}</p>
+          <button type="button" className="btn" onClick={reload}>Retry</button>
+        </div>
+      )}
+    </>
   );
   if (loadError) return <p className="err" role="alert">{settingsError(loadError)}</p>;
   if (!s) return <p className="muted" role="status">Loading</p>;

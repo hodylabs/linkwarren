@@ -53,6 +53,39 @@ describe("Cloudflare settings", () => {
     expect(screen.getAllByText(/Checked on first use/)).toHaveLength(2);
   });
 
+  const PASTE = { "GET /api/settings": () => ({ body: { authMode: "app", dashboardHost: "links.example.com", secrets: { pasteAvailable: true, cf: "dashboard", resend: "missing" } } }) };
+  const PUT = { "PUT /api/settings/secrets/cf": () => ({ body: { pasteAvailable: true, cf: "dashboard", resend: "missing" } }) };
+
+  it("a check still running when a new token is saved never shows the old token's result", async () => {
+    let release!: () => void;
+    const { user } = boot({ routes: { ...PASTE, ...PUT,
+      "POST /api/settings/cloudflare/check": () => new Promise((r) => (release = () => r({ body: { token: "active", accountName: "Northwind", permissions: perms("missing") } }))),
+    } });
+    await screen.findByText(/Connected to the account/);
+    await user.click(screen.getByRole("button", { name: /Check token/ }));
+    await user.type(screen.getByLabelText("Cloudflare API token"), "tok_ABCDEFGHIJKLMNOPQRSTUV{Control>}{Enter}{/Control}");
+    await waitFor(() => expect((screen.getByLabelText("Cloudflare API token") as HTMLInputElement).value).toBe(""));
+    release();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText(/The token can't add outside domains yet/)).toBeNull();
+    expect(screen.getByText("Not checked yet")).toBeTruthy();
+  });
+
+  it("a failed reload after saving a token keeps the section, shows the error beside the field and offers Retry", async () => {
+    let n = 0;
+    const { user } = boot({ routes: { ...PASTE, ...PUT,
+      "GET /api/settings/cloudflare": () => (++n === 2 ? { status: 500, body: { error: "internal" } } : { body: CFG }),
+    } });
+    await screen.findByText(/Connected to the account/);
+    await user.type(screen.getByLabelText("Cloudflare API token"), "tok_ABCDEFGHIJKLMNOPQRSTUV{Control>}{Enter}{/Control}");
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByText(/Connected to the account/)).toBeTruthy();
+    expect(screen.getByLabelText("Cloudflare API token")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry" })).toBeNull());
+    expect(n).toBe(3);
+  });
+
   it("Space on the controls switch sends controlsEnabled true; a 500 restores it", async () => {
     const { api, user } = boot({ routes: { "PATCH /api/settings/cloudflare": () => ({ status: 500, body: { error: "internal" } }) } });
     const sw = await screen.findByRole("switch", { name: "Cloudflare controls in domain settings" });
