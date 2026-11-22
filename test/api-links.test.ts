@@ -2,6 +2,8 @@ import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { beforeBatch } from "./helpers/race";
+import { getLink } from "../src/cache";
+import { verifyPassword } from "../src/password";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -452,5 +454,165 @@ describe("api link shape", () => {
     await run("UPDATE links SET routes = 'not json' WHERE id = ?", id);
     const list = (await (await call("a", "GET", "/api/links")).json()) as { items: Record<string, unknown>[] };
     expect(list.items.find((i) => i.id === id)).toMatchObject({ routes: [], hasPassword: false });
+  });
+});
+
+describe("password and routes", () => {
+  const hashOf = async (id: string) => (await one<{ h: string | null }>("SELECT password_hash h FROM links WHERE id = ?", id))!.h;
+  const details = async () => (await env.DB.prepare("SELECT detail FROM audit_log ORDER BY id").all<{ detail: string }>()).results.map((r) => r.detail);
+  const err = async (r: Response) => [r.status, await r.json()];
+
+  it("create with a password: 201 hasPassword, stored hash verifies, audit says set and leaks nothing", async () => {
+    const r = await post("a", { domainId: "dm", slug: "pw", url: "https://x.com/a", password: "spring-27" });
+    expect(r.status).toBe(201);
+    const text = await r.text();
+    expect(text).not.toContain("spring-27");
+    expect(text).not.toContain("pbkdf2");
+    const l = JSON.parse(text) as { id: string; hasPassword: boolean };
+    expect(l.hasPassword).toBe(true);
+    expect(await verifyPassword("spring-27", (await hashOf(l.id))!)).toBe(true);
+    const d = JSON.parse((await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'link.create'"))!.detail);
+    expect(d.protection).toBe("set");
+  });
+
+  it("password null on create is the same as absent", async () => {
+    const r = await post("a", { domainId: "dm", slug: "pn", url: "https://x.com/a", password: null });
+    expect(r.status).toBe(201);
+    expect(((await r.json()) as { hasPassword: boolean }).hasPassword).toBe(false);
+  });
+
+  it("password length is 8 to 128 code points", async () => {
+    expect(await err(await post("a", { domainId: "dm", slug: "s1", url: "https://x.com", password: "1234567" }))).toEqual([400, { error: "password_short" }]);
+    expect(await err(await post("a", { domainId: "dm", slug: "s2", url: "https://x.com", password: "a".repeat(129) }))).toEqual([400, { error: "password_long" }]);
+    expect((await post("a", { domainId: "dm", slug: "s3", url: "https://x.com", password: "12345678" })).status).toBe(201);
+  });
+
+  it("a password link cannot be 301, on create or on a PATCH of a protected link", async () => {
+    expect(await err(await post("a", { domainId: "dm", slug: "p3", url: "https://x.com", password: "spring-27", redirectCode: 301 }))).toEqual([400, { error: "password_301" }]);
+    const { id } = await mk("a", "p4", { password: "spring-27" });
+    expect(await err(await call("a", "PATCH", `/api/links/${id}`, { redirectCode: 301 }))).toEqual([400, { error: "password_301" }]);
+    // Clearing the password in the same PATCH makes 301 fine; adding one to a 301 link is refused.
+    expect((await call("a", "PATCH", `/api/links/${id}`, { redirectCode: 301, password: null })).status).toBe(200);
+    expect(await err(await call("a", "PATCH", `/api/links/${id}`, { password: "spring-27" }))).toEqual([400, { error: "password_301" }]);
+  });
+
+  it("routes: countries upper-cased and deduped, devices default to [], url normalized", async () => {
+    const r = await post("a", { domainId: "dm", slug: "rt", url: "https://x.com/a", routes: [{ countries: ["ca", "CA", "us"], url: "HTTPS://X.CA" }, { devices: ["mobile", "mobile"], url: "https://m.x.com/" }] });
+    expect(r.status).toBe(201);
+    const routes = [{ countries: ["CA", "US"], devices: [], url: "https://x.ca/" }, { countries: [], devices: ["mobile"], url: "https://m.x.com/" }];
+    expect(((await r.json()) as { routes: unknown }).routes).toEqual(routes);
+    const row = await one<{ routes: string }>("SELECT routes FROM links WHERE slug = 'rt'");
+    expect(JSON.parse(row!.routes)).toEqual(routes);
+    const d = JSON.parse((await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'link.create'"))!.detail);
+    expect(d.routes).toBe(2);
+  });
+
+  it.each([
+    [{ countries: ["CAN"], url: "https://x.ca/" }, "route_country"],
+    [{ countries: ["XX"], url: "https://x.ca/" }, "route_country"],
+    [{ countries: ["T1"], url: "https://x.ca/" }, "route_country"],
+    [{ countries: ["c1"], url: "https://x.ca/" }, "route_country"],
+    [{ countries: [], devices: [], url: "https://x.ca/" }, "route_empty"],
+    [{ url: "https://x.ca/" }, "route_empty"],
+    [{ countries: ["CA"], url: "https://go.test/x" }, "loop"],
+    [{ countries: ["CA"], url: "https://dash.test/x" }, "loop"],
+    [{ countries: ["CA"], url: "javascript:alert(1)" }, "bad_scheme"],
+    [{ countries: ["CA"], url: "https://u:p@x.com/" }, "userinfo"],
+    [{ countries: ["CA"], url: `https://x.com/${"a".repeat(2050)}` }, "url_too_long"],
+  ])("bad route case %# is bad_route with its reason", async (route, reason) => {
+    const r = await post("a", { domainId: "dm", slug: "br", url: "https://x.com/a", routes: [route] });
+    const body = (await r.json()) as Record<string, unknown>;
+    expect(r.status).toBe(400);
+    expect(body.error).toBe("bad_route");
+    expect(body.index).toBe(0);
+    if (reason === "bad_scheme" || reason === "userinfo") expect(typeof body.reason).toBe("string");
+    else expect(body.reason).toBe(reason);
+  });
+
+  it("bad_route names the failing index; limits: 11 routes, 51 countries, a fourth device, unknown device or key are invalid_body", async () => {
+    const ok = { countries: ["CA"], url: "https://x.ca/" };
+    const r = await post("a", { domainId: "dm", slug: "bi", url: "https://x.com/a", routes: [ok, { countries: ["ZZZ"], url: "https://x.ca/" }] });
+    expect(await r.json()).toMatchObject({ error: "bad_route", index: 1, reason: "route_country" });
+    const codes = Array.from({ length: 51 }, (_, i) => `A${String.fromCharCode(65 + (i % 26))}`);
+    for (const routes of [
+      Array.from({ length: 11 }, () => ok),
+      [{ countries: codes, url: "https://x.ca/" }],
+      [{ devices: ["mobile", "tablet", "desktop", "mobile"], url: "https://x.ca/" }],
+      [{ devices: ["tv"], url: "https://x.ca/" }],
+      [{ countries: ["CA"], url: "https://x.ca/", extra: 1 }],
+    ]) expect(await err(await post("a", { domainId: "dm", slug: "bl", url: "https://x.com/a", routes }))).toEqual([400, { error: "invalid_body" }]);
+    expect((await post("a", { domainId: "dm", slug: "ten", url: "https://x.com/a", routes: Array.from({ length: 10 }, () => ok) })).status).toBe(201);
+  });
+
+  it("PATCH routes replaces the list, [] clears it, and audits the count", async () => {
+    const { id } = await mk("a", "pr", { routes: [{ countries: ["CA"], url: "https://x.ca/" }] });
+    expect((await call("a", "PATCH", `/api/links/${id}`, { url: "https://y.com/" })).status).toBe(200);
+    expect(JSON.parse((await one<{ routes: string }>("SELECT routes FROM links WHERE id = ?", id))!.routes)).toHaveLength(1);
+    const r = await call("a", "PATCH", `/api/links/${id}`, { routes: [] });
+    expect(((await r.json()) as { routes: unknown }).routes).toEqual([]);
+    expect((await one<{ routes: string }>("SELECT routes FROM links WHERE id = ?", id))!.routes).toBe("[]");
+    const last = JSON.parse((await details()).at(-1)!);
+    expect(last.routes).toBe(0);
+    expect(await err(await call("a", "PATCH", `/api/links/${id}`, { routes: [{ countries: ["CA"], url: "https://shared.test/" }] })))
+      .toEqual([400, { error: "bad_route", index: 0, reason: "loop" }]);
+  });
+
+  it("Review Focus 5: PATCH {url} keeps the same hash; change re-hashes; {password:null} clears; audits never leak", async () => {
+    const { id } = await mk("a", "rf5", { password: "spring-27" });
+    const h1 = await hashOf(id);
+    expect((await call("a", "PATCH", `/api/links/${id}`, { url: "https://y.com/" })).status).toBe(200);
+    expect(await hashOf(id)).toBe(h1);
+    expect(JSON.parse((await details()).at(-1)!).protection).toBeUndefined();
+    const ch = await call("a", "PATCH", `/api/links/${id}`, { password: "autumn-99x" });
+    expect(ch.status).toBe(200);
+    expect(await ch.text()).not.toMatch(/autumn|pbkdf2/);
+    const h2 = await hashOf(id);
+    expect(h2).not.toBe(h1);
+    expect(await verifyPassword("autumn-99x", h2!)).toBe(true);
+    expect(JSON.parse((await details()).at(-1)!).protection).toBe("set");
+    const cl = await call("a", "PATCH", `/api/links/${id}`, { password: null });
+    expect(((await cl.json()) as { hasPassword: boolean }).hasPassword).toBe(false);
+    expect(await hashOf(id)).toBeNull();
+    expect(JSON.parse((await details()).at(-1)!).protection).toBe("cleared");
+    // Clearing an unprotected link changes nothing, so no protection key.
+    expect((await call("a", "PATCH", `/api/links/${id}`, { password: null })).status).toBe(200);
+    expect(JSON.parse((await details()).at(-1)!).protection).toBeUndefined();
+    for (const d of await details()) expect(d).not.toMatch(/spring-27|autumn-99x|pbkdf2/);
+  });
+
+  it("Review Focus 1: a password added to a cached public link drops the cached row; the next visit reads the protected row", async () => {
+    const { id } = await mk("a", "rf1");
+    // The redirect path's own lookup (awaited fill, no ctx), so the warm entry is there before the PATCH.
+    expect((await getLink(env, "dm", "rf1"))!.passwordHash).toBeNull();
+    expect(await env.CACHE.get("l2:dm:rf1")).not.toBeNull();
+    expect((await call("a", "PATCH", `/api/links/${id}`, { password: "spring-27" })).status).toBe(200);
+    expect(await env.CACHE.get("l2:dm:rf1")).toBeNull();
+    // Task 7 asserts the 200 form on the short host; here the next lookup must read the protected row.
+    expect(await verifyPassword("spring-27", (await getLink(env, "dm", "rf1"))!.passwordHash!)).toBe(true);
+  });
+
+  it("a member who is not the creator gets 403 on PATCH {password}; nothing changes", async () => {
+    const { id } = await mk("a", "authz");
+    expect(await err(await call("b", "PATCH", `/api/links/${id}`, { password: "spring-27" }))).toEqual([403, { error: "forbidden" }]);
+    expect(await hashOf(id)).toBeNull();
+  });
+
+  it("a PATCH {password} that loses the revision race is 409: hash unchanged, no audit row", async () => {
+    const { id } = await mk("a", "race", { password: "spring-27" });
+    const h1 = await hashOf(id);
+    const restore = beforeBatch(1, () => run("UPDATE links SET updated_at = updated_at + 100 WHERE id = ?", id));
+    let r: Response;
+    try { r = await call("a", "PATCH", `/api/links/${id}`, { password: "autumn-99x" }); } finally { restore(); }
+    expect(await err(r)).toEqual([409, { error: "conflict" }]);
+    expect(await hashOf(id)).toBe(h1);
+    expect(await audits("link.update")).toBe(0);
+  });
+
+  it("malformed stored route elements are dropped, never thrown on", async () => {
+    const { id } = await mk("a", "junk");
+    await run("UPDATE links SET routes = ? WHERE id = ?", '[null, {"url":1}, {"countries":["CA"],"devices":[],"url":"https://ca.test/"}]', id);
+    const list = (await (await call("a", "GET", "/api/links")).json()) as { items: Record<string, unknown>[] };
+    expect(list.items.find((i) => i.id === id)!.routes).toEqual([{ countries: ["CA"], devices: [], url: "https://ca.test/" }]);
+    expect((await exports.default.fetch("https://go.test/junk", { redirect: "manual" })).status).toBe(302);
   });
 });

@@ -2,8 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
+import { checkPassword, hashPassword, iterationsOf } from "../password";
 import { canManageDomain, canUseDomain, usableDomainsSql } from "../perm";
-import { rowToLink, toApiLink, type LinkRow, type UserRow } from "../types";
+import { rowToLink, toApiLink, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
 import { destination, getDomain, isMember, purge } from "./shared";
 
@@ -18,13 +19,48 @@ const times = {
   expiresAt: z.number().int().nonnegative().nullable().optional(),
 };
 const code = z.union([z.literal(301), z.literal(302)]);
+const routeInput = z.strictObject({
+  countries: z.array(z.string()).max(50).optional(),
+  devices: z.array(z.enum(["mobile", "tablet", "desktop"])).max(3).optional(),
+  url: z.string(),
+});
+type RouteInput = z.infer<typeof routeInput>;
+const rules = {
+  // A string sets, null clears, absent keeps. Length is checked by checkPassword (code points), 1024 only caps the body.
+  password: z.string().max(1024).nullable().optional(),
+  // Replaces the whole list; [] clears it.
+  routes: z.array(routeInput).max(10).optional(),
+};
 const createBody = z.strictObject({
   domainId: z.string().min(1), slug: z.string(), url: z.string(),
-  redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times,
+  redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
 });
 const patchBody = z.strictObject({
-  url: z.string().optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times,
+  url: z.string().optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
 });
+
+/** Countries upper-cased, two letters A to Z (never XX or T1, they never match), deduped; each url checked like the main destination. */
+export async function validateRoutes(env: Env, input: RouteInput[]): Promise<{ routes: Route[] } | { error: "bad_route"; index: number; reason: string }> {
+  const routes: Route[] = [];
+  for (const [index, r] of input.entries()) {
+    const countries = [...new Set((r.countries ?? []).map((c) => c.toUpperCase()))];
+    if (countries.some((c) => !/^[A-Z]{2}$/.test(c) || c === "XX")) return { error: "bad_route", index, reason: "route_country" };
+    const devices = [...new Set(r.devices ?? [])];
+    if (!countries.length && !devices.length) return { error: "bad_route", index, reason: "route_empty" };
+    const dest = await destination(env, r.url);
+    if ("error" in dest) return { error: "bad_route", index, reason: dest.error };
+    routes.push({ countries, devices, url: dest.href });
+  }
+  return { routes };
+}
+
+/** Undefined: keep. Null: clear. Otherwise the new hash (hashed here, before any batch, outside the revision race window). */
+async function passwordInput(env: Env, raw: string | null | undefined): Promise<{ hash: string | null | undefined } | { error: string }> {
+  if (raw === undefined || raw === null) return { hash: raw };
+  const p = checkPassword(raw);
+  if (!p.ok) return { error: p.reason };
+  return { hash: await hashPassword(p.value, iterationsOf(env)) };
+}
 
 const hasLock = async (env: Env, domainId: string, key: string) =>
   !!(await env.DB.prepare("SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)").bind(domainId, key).first());
@@ -112,26 +148,33 @@ links.post("/", async (c) => {
   if ("error" in dest) return c.json({ error: dest.error }, 400);
   const startsAt = b.startsAt ?? null, expiresAt = b.expiresAt ?? null;
   if (badWindow(startsAt, expiresAt)) return c.json({ error: "bad_window" }, 400);
+  const redirectCode = b.redirectCode ?? 302;
+  if (b.password != null && redirectCode === 301) return c.json({ error: "password_301" }, 400);
+  const rt = await validateRoutes(c.env, b.routes ?? []);
+  if ("error" in rt) return c.json(rt, 400);
 
   const key = slugKey(b.slug, domain.caseSensitive);
   if (await hasLock(c.env, domain.id, key)) return c.json({ error: "locked" }, 409);
+  const pw = await passwordInput(c.env, b.password);
+  if ("error" in pw) return c.json({ error: pw.error }, 400);
+  const passwordHash = pw.hash ?? null;
   const now = Math.floor(Date.now() / 1000);
   const link: LinkRow = {
     id: crypto.randomUUID(), domainId: domain.id, slug: b.slug, slugKey: key, url: dest.href,
-    redirectCode: b.redirectCode ?? 302, startsAt, expiresAt, passQuery: b.passQuery ?? true,
-    passwordHash: null, routes: [],
+    redirectCode, startsAt, expiresAt, passQuery: b.passQuery ?? true,
+    passwordHash, routes: rt.routes,
     createdBy: user.id, updatedBy: user.id, createdAt: now, updatedAt: now,
   };
   try {
     // The lock check is repeated inside the insert so a delete racing this request cannot be bypassed.
     const res = await c.env.DB.batch([
       c.env.DB.prepare(
-        `INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
-         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
+        `INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,password_hash,routes,created_by,updated_by,created_at,updated_at)
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
       ).bind(link.id, domain.id, link.slug, key, link.url, link.redirectCode, startsAt, expiresAt, link.passQuery ? 1 : 0,
-        user.id, user.id, now, now, domain.id, key),
+        passwordHash, JSON.stringify(link.routes), user.id, user.id, now, now, domain.id, key),
       auditStmt(c.env, { actorId: user.id, action: "link.create", targetType: "link", targetId: link.id,
-        detail: { host: domain.host, slug: link.slug, url: link.url } },
+        detail: { host: domain.host, slug: link.slug, url: link.url, ...(passwordHash ? { protection: "set" } : {}), ...(link.routes.length ? { routes: link.routes.length } : {}) } },
       { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] }),
     ]);
     if (res[0]!.meta.changes === 0) return c.json({ error: "locked" }, 409);
@@ -170,26 +213,42 @@ links.patch("/:id", async (c) => {
     if ("error" in dest) return c.json({ error: dest.error }, 400);
     url = dest.href;
   }
+  let routes = link.routes;
+  if (b.routes !== undefined) {
+    const rt = await validateRoutes(c.env, b.routes);
+    if ("error" in rt) return c.json(rt, 400);
+    routes = rt.routes;
+  }
+  // R4 and the window are checked on the merged next state; the write below only lands on the row read here.
+  const protectedNext = b.password === undefined ? link.passwordHash !== null : b.password !== null;
+  if (protectedNext && (b.redirectCode ?? link.redirectCode) === 301) return c.json({ error: "password_301" }, 400);
+  if (badWindow(b.startsAt === undefined ? link.startsAt : b.startsAt, b.expiresAt === undefined ? link.expiresAt : b.expiresAt))
+    return c.json({ error: "bad_window" }, 400);
+  const pw = await passwordInput(c.env, b.password);
+  if ("error" in pw) return c.json({ error: pw.error }, 400);
   const next: LinkRow = {
     ...link, url, redirectCode: b.redirectCode ?? link.redirectCode, passQuery: b.passQuery ?? link.passQuery,
+    passwordHash: pw.hash === undefined ? link.passwordHash : pw.hash, routes,
     startsAt: b.startsAt === undefined ? link.startsAt : b.startsAt,
     expiresAt: b.expiresAt === undefined ? link.expiresAt : b.expiresAt,
     // updated_at is the revision: always move it forward, even within the same second.
     updatedBy: user.id, updatedAt: Math.max(Math.floor(Date.now() / 1000), link.updatedAt + 1),
   };
-  // The write below only lands on the row read here, so this window is the one that gets stored.
-  if (badWindow(next.startsAt, next.expiresAt)) return c.json({ error: "bad_window" }, 400);
   const cols: [string, unknown][] = [];
   if (b.url !== undefined) cols.push(["url", next.url]);
   if (b.redirectCode !== undefined) cols.push(["redirect_code", next.redirectCode]);
   if (b.startsAt !== undefined) cols.push(["starts_at", next.startsAt]);
   if (b.expiresAt !== undefined) cols.push(["expires_at", next.expiresAt]);
   if (b.passQuery !== undefined) cols.push(["pass_query", next.passQuery ? 1 : 0]);
+  if (b.password !== undefined) cols.push(["password_hash", next.passwordHash]);
+  if (b.routes !== undefined) cols.push(["routes", JSON.stringify(next.routes)]);
+  // R13: protection only when it changed (a new password is always a change), never the password or its hash.
+  const protection = pw.hash ? "set" : pw.hash === null && link.passwordHash !== null ? "cleared" : undefined;
   cols.push(["updated_by", user.id], ["updated_at", next.updatedAt]);
   // Audit first, only while the row is still the revision read, so a lost race writes neither.
   const res = await c.env.DB.batch([
     auditStmt(c.env, { actorId: user.id, action: "link.update", targetType: "link", targetId: link.id,
-      detail: { host: domain.host, slug: link.slug, url: next.url } },
+      detail: { host: domain.host, slug: link.slug, url: next.url, ...(protection ? { protection } : {}), ...(b.routes !== undefined ? { routes: next.routes.length } : {}) } },
     { sql: "EXISTS (SELECT 1 FROM links WHERE id = ? AND updated_at = ?)", binds: [link.id, link.updatedAt] }),
     c.env.DB.prepare(`UPDATE links SET ${cols.map(([k]) => `${k}=?`).join(", ")} WHERE id=? AND updated_at=?`)
       .bind(...cols.map(([, v]) => v), link.id, link.updatedAt),
