@@ -1,0 +1,294 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError } from "../api";
+import { plural } from "../copy";
+import { useHotkeys, type Bindings } from "../keys";
+import { Kbd, Switch } from "../shell/ui";
+import { useApp } from "../state";
+import { checkCloudflare, getCloudflare, PERMISSIONS, resyncBatch, setControls, setupOutside, type CheckResult, type CloudflareSettings, type SecretStatus } from "./api";
+import { settingsError } from "./copy";
+import { SecretField } from "./SecretField";
+
+/** Settings hotkeys and their text on the shortcuts sheet. */
+export const SETTINGS_KEYS = {
+  c: "Check the Cloudflare token",
+  escape: "Stop resyncing domains",
+} as const;
+
+const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
+const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
+const SSL_MISSING =
+  "The token can't add outside domains yet. That's fine if every domain you'll use is in this Cloudflare account. To let people add their own domains with a CNAME, edit the token to include SSL and Certificates, then check again.";
+
+type Resync = { running: boolean; checked: number; failed: { host: string; error: string }[]; resume: string | undefined; stopped: string | null; done: boolean };
+const IDLE: Resync = { running: false, checked: 0, failed: [], resume: undefined, stopped: null, done: false };
+
+/** The token check: one row per permission, or the not-accepted callout. Reused by the setup wizard. */
+export function PermList({ check }: { check: CheckResult }) {
+  return (
+    <div aria-live="polite">
+      {check.token === "invalid" ? (
+        <div className="callout wait">Cloudflare does not accept this token. Create a new one and set it as the CF_API_TOKEN secret.</div>
+      ) : (
+        <>
+          <ul className="perms" aria-label="Token permissions">
+            {PERMISSIONS.map((p) => {
+              const st = check.permissions.find((q) => q.key === p.key)?.state ?? "unknown";
+              return (
+                <li className="perm" key={p.key}>
+                  <span className={st === "ok" ? "pk ok" : st === "missing" ? "pk miss" : "pk"} aria-hidden="true">{st === "ok" ? "✓" : st === "missing" ? "!" : "?"}</span>
+                  <div>
+                    <b className="perm-name">{p.label}</b>
+                    <small>{st === "ok" ? "OK" : st === "missing" ? "Missing" : "Checked on first use"}. {p.why}</small>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {check.permissions.find((q) => q.key === "ssl_edit")?.state === "missing" && <div className="callout wait gap">{SSL_MISSING}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatus; onSecrets: (s: SecretStatus) => void }) {
+  const { overlay } = useApp();
+  const [s, setS] = useState<CloudflareSettings | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [check, setCheck] = useState<CheckResult | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [controlsError, setControlsError] = useState<string | null>(null);
+  const [setup, setSetup] = useState<{ text: string; error: boolean } | null>(null);
+  const [settingUp, setSettingUp] = useState(false);
+  const setupBusy = useRef(false); // a double click sends one setup
+  const [resync, setResync] = useState<Resync>(IDLE);
+  const busy = useRef(false); // one check at a time: a double C sends once
+  const abort = useRef<AbortController | null>(null);
+  const edits = useRef(0); // bumped by every controls toggle: older loads and toggles must not overwrite a newer one
+  const saved = useRef<boolean | null>(null); // the last controls value the server confirmed
+  const failed = useRef(0); // the newest toggle that failed
+  const tokenGen = useRef(0); // bumped by every token change: a check started for an older token is ignored
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  // A load that a toggle overtook keeps the toggled value and takes the rest.
+  const load = useCallback((signal?: AbortSignal) => {
+    const at = edits.current;
+    return getCloudflare(signal).then((v) => {
+      if (at === edits.current) saved.current = v.controlsEnabled;
+      setS((cur) => (cur && at !== edits.current ? { ...v, controlsEnabled: cur.controlsEnabled } : v));
+    });
+  }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    load(ac.signal).catch((e) => !isAbort(e) && setLoadError(code(e)));
+    return () => {
+      ac.abort();
+      abort.current?.abort(); // leaving the screen cancels a running resync
+    };
+  }, [load]);
+
+  const runCheck = async () => {
+    if (busy.current || !s?.configured) return;
+    busy.current = true;
+    setChecking(true);
+    setCheckError(null);
+    const gen = tokenGen.current;
+    try {
+      const r = await checkCloudflare();
+      if (gen === tokenGen.current) setCheck(r);
+    } catch (e) {
+      if (gen === tokenGen.current) setCheckError(code(e));
+    } finally {
+      busy.current = false;
+      setChecking(false);
+    }
+  };
+
+  const toggle = async (on: boolean) => {
+    if (!s) return;
+    const mine = ++edits.current;
+    setControlsError(null);
+    setS({ ...s, controlsEnabled: on });
+    try {
+      await setControls(on);
+      saved.current = on;
+      // An older toggle landing after the newest one failed: the switch shows what is now saved.
+      if (mine !== edits.current && failed.current === edits.current) setS((cur) => cur && { ...cur, controlsEnabled: on });
+    } catch (e) {
+      if (mine !== edits.current) return; // a newer toggle owns the switch now
+      failed.current = mine;
+      // Back to what the server last confirmed, not the opposite of this toggle: an older one may have failed too.
+      setS((cur) => cur && { ...cur, controlsEnabled: saved.current ?? !on });
+      setControlsError(code(e));
+    }
+  };
+
+  const runSetup = async () => {
+    if (setupBusy.current) return;
+    setupBusy.current = true;
+    setSettingUp(true);
+    setSetup(null);
+    try {
+      const r = await setupOutside();
+      setSetup({ text: r.fallbackOrigin === "active" ? "Outside domains are ready." : "Set up. Cloudflare is still activating the fallback origin, check again in a minute.", error: false });
+      await load().catch(() => undefined);
+    } catch (e) {
+      setSetup({ text: settingsError(code(e)), error: true });
+    } finally {
+      setupBusy.current = false;
+      setSettingUp(false);
+    }
+  };
+
+  /** Loops batches until `next` is null. Stops (Retry) when the cursor does not move or one domain is unreachable twice in a row. */
+  const runResync = async () => {
+    if (abort.current) return;
+    const ac = (abort.current = new AbortController());
+    // A finished run starts over from the first domain; only a stopped one (Retry, Esc) continues from its cursor.
+    const from = resync.done ? IDLE : resync;
+    let after = from.resume;
+    let { checked } = from;
+    let failed = from.failed;
+    let pending: string | null = null; // the host whose retry decides whether Cloudflare is really unreachable
+    const view = (p: Partial<Resync>) => setResync({ running: true, checked, failed, resume: after, stopped: null, done: false, ...p });
+    view({});
+    try {
+      for (;;) {
+        const r = await resyncBatch(after, ac.signal);
+        const now = new Set(r.failed.map((f) => f.host)); // one row per host, the latest error
+        failed = [...failed.filter((f) => f.host !== pending && !now.has(f.host)), ...r.failed];
+        checked += r.ok;
+        const unreachable = r.failed.find((f) => f.error === "cloudflare_unreachable");
+        if (r.next === null) return view({ running: false, done: true });
+        if (r.next === after) return view({ running: false, stopped: "stalled" });
+        if (unreachable && unreachable.host === pending) return view({ running: false, resume: r.next, stopped: "stalled" });
+        pending = unreachable?.host ?? null;
+        after = r.next;
+        view({});
+      }
+    } catch (e) {
+      if (ac.signal.aborted) return view({ running: false, resume: after });
+      view({ running: false, stopped: code(e) });
+    } finally {
+      abort.current = null;
+    }
+  };
+
+  useHotkeys(
+    {
+      c: () => void runCheck(),
+      escape: () => abort.current?.abort(),
+    } satisfies Bindings<typeof SETTINGS_KEYS>,
+    overlay === null && (resync.running || !!s?.configured),
+  );
+
+  // A new or removed token changes what Cloudflare answers, so the section loads again. A failed reload keeps the section
+  // (and the field) on screen with the error and a Retry.
+  const reload = () => {
+    setRefreshError(null);
+    load().catch((e) => setRefreshError(code(e)));
+  };
+  const token = (
+    <>
+      <SecretField name="cf" status={secrets.cf} pasteAvailable={secrets.pasteAvailable} onSaved={(st) => {
+        onSecrets(st);
+        tokenGen.current++;
+        setCheck(null);
+        setCheckError(null);
+        reload();
+      }} />
+      {refreshError && (
+        <div className="row-actions">
+          <p className="err" role="alert">{settingsError(refreshError)}</p>
+          <button type="button" className="btn" onClick={reload}>Retry</button>
+        </div>
+      )}
+    </>
+  );
+  if (loadError) return <p className="err" role="alert">{settingsError(loadError)}</p>;
+  if (!s) return <p className="muted" role="status">Loading</p>;
+  if (!s.configured)
+    return (
+      <section className="sblock" aria-label="Cloudflare">
+        <h2>Cloudflare</h2>
+        <div className="callout wait">Cloudflare is not connected. Set the CF_API_TOKEN secret and the Cloudflare variables, then reload. See the deploy guide.</div>
+        {token}
+      </section>
+    );
+
+  const okCount = check?.permissions.filter((p) => p.state === "ok").length ?? 0;
+  const n = s.attachedCount;
+  const shown = resync.checked + resync.failed.length > 0 || resync.done;
+  return (
+    <section className="sblock" aria-label="Cloudflare">
+      <h2>Cloudflare</h2>
+      <div className="callout ok">
+        Connected to the account <b>{s.accountName ?? "your Cloudflare account"}</b>. {plural(n, "domain")} in this account {n === 1 ? "is" : "are"} attached directly; outside domains use a CNAME through Cloudflare for SaaS
+        {s.hostnames ? ` (${s.hostnames.used} of ${s.hostnames.limit} free hostnames used)` : ""}.
+      </div>
+      {token}
+      <div className="sfield">
+        <div>
+          <b>Token permissions</b>
+          <small>What the token may do in this Cloudflare account</small>
+        </div>
+        <div className="row-actions">
+          <span className="muted">{!check ? "Not checked yet" : check.token === "invalid" ? "Not accepted" : `${okCount} of ${PERMISSIONS.length} permissions confirmed`}</span>
+          <button type="button" className="btn" onClick={() => void runCheck()} disabled={checking} aria-keyshortcuts="C">
+            Check token<Kbd>C</Kbd>
+          </button>
+        </div>
+      </div>
+      {checkError && <p className="err" role="alert">{settingsError(checkError)}</p>}
+      {check && <PermList check={check} />}
+      <div className="toggle sfield">
+        <div>
+          <b>Cloudflare controls in domain settings</b>
+          <small>Security level and rate limits for domains in this account</small>
+        </div>
+        <Switch checked={s.controlsEnabled} onChange={(v) => void toggle(v)} label="Cloudflare controls in domain settings" />
+      </div>
+      {controlsError && <p className="err" role="alert">{settingsError(controlsError)}</p>}
+      {s.fallbackOrigin !== "active" && (
+        <div className="sfield">
+          <div>
+            <b>Outside domains</b>
+            <small>Creates the CNAME target and the fallback origin in Cloudflare for SaaS</small>
+          </div>
+          <div className="row-actions">
+            <button type="button" className="btn" onClick={() => void runSetup()} disabled={settingUp}>Set up outside domains</button>
+          </div>
+        </div>
+      )}
+      {setup && <p className={setup.error ? "err" : "muted"} role={setup.error ? "alert" : "status"}>{setup.text}</p>}
+      <div className="sfield">
+        <div>
+          <b>Resync domains</b>
+          <small>Repairs the Cloudflare pieces of attached domains, a few at a time</small>
+        </div>
+        <div className="row-actions">
+          <button type="button" className="btn" onClick={() => void runResync()} disabled={resync.running}>
+            {resync.stopped ? "Retry" : "Resync domains"}
+          </button>
+          {resync.running && <button type="button" className="btn ghost" onClick={() => abort.current?.abort()}>Stop<Kbd>Esc</Kbd></button>}
+        </div>
+      </div>
+      <div aria-live="polite">
+        {shown && (
+          <p className="muted">
+            {resync.running ? `Checked ${resync.checked + resync.failed.length} so far` : resync.done ? `Checked ${resync.checked + resync.failed.length}. ${resync.failed.length ? `${plural(resync.failed.length, "domain")} could not be repaired.` : "All repaired."}` : `Stopped after ${resync.checked + resync.failed.length}.`}
+          </p>
+        )}
+        {resync.stopped && <p className="err" role="alert">{settingsError(resync.stopped)}</p>}
+        {resync.failed.length > 0 && (
+          <ul className="fails">
+            {resync.failed.map((f) => (
+              <li key={f.host}><span className="mono">{f.host}</span>: {settingsError(f.error)}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}

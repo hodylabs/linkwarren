@@ -6,7 +6,8 @@ const POSITIVE_TTL = 300;
 const NEGATIVE_TTL = 60; // KV minimum is 60
 
 const hostKey = (host: string) => `h:${host}`;
-const linkKey = (domainId: string, key: string) => `l:${domainId}:${key}`;
+// l2: the cached row gained passwordHash and routes (S5); old l: entries are never read and expire on their TTL.
+const linkKey = (domainId: string, key: string) => `l2:${domainId}:${key}`;
 
 // KV holds JSON; a stored `null` is a cached miss.
 // Cache failures never break a lookup: a failed get falls through to D1, a failed put is dropped.

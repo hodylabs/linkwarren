@@ -1,8 +1,12 @@
 import { createLocalJWKSet, createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { createMiddleware } from "hono/factory";
 import { auditStmt } from "./audit";
+import { displayName } from "./email";
+import { readSession } from "./session";
+import { getSettings } from "./settings";
 import type { Env } from "./env";
-import { rowToUser, type UserRow } from "./types";
+import { rowToUser, type SessionRef, type UserRow } from "./types";
+import { FULL_GRANT, type Grant } from "./principal";
 
 // shortcut: remote JWKS cached per team URL for the isolate lifetime; jose refetches on unknown kid.
 const remoteKeys = new Map<string, JWTVerifyGetKey>();
@@ -41,13 +45,13 @@ export async function verifyAccess(token: string, env: Env, keys?: JWTVerifyGetK
   }
 }
 
-const findUser = async (env: Env, email: string) => {
+export const findUser = async (env: Env, email: string) => {
   const r = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(email).first(); // email column is NOCASE
   return r ? rowToUser(r) : null;
 };
 
 /** First-run owner: one atomic conditional insert, so concurrent first sign-ins can never create two owners. */
-async function bootstrapOwner(env: Env, email: string): Promise<void> {
+export async function bootstrapOwner(env: Env, email: string): Promise<void> {
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   await env.DB.batch([
@@ -59,30 +63,73 @@ async function bootstrapOwner(env: Env, email: string): Promise<void> {
   ]);
 }
 
-export const requireUser = createMiddleware<{ Bindings: Env; Variables: { user: UserRow } }>(async (c, next) => {
-  const token = c.req.header("Cf-Access-Jwt-Assertion");
-  const who = token ? await verifyAccess(token, c.env) : null;
-  if (!who) return c.json({ error: "unauthenticated" }, 401);
+export type AuthMode = "app" | "access";
 
-  let user = await findUser(c.env, who.email);
-  if (!user && c.env.OWNER_EMAIL && who.email.toLowerCase() === c.env.OWNER_EMAIL.trim().toLowerCase()) {
-    await bootstrapOwner(c.env, who.email);
-    user = await findUser(c.env, who.email);
+/** R2: unset or blank is app; "app" / "access" (trimmed, exact lowercase); anything else is null and fails closed. */
+export function authMode(env: Env): AuthMode | null {
+  const raw: unknown = env.AUTH_MODE; // a non-string var (number, boolean) is a misconfiguration too, not a crash
+  if (raw != null && typeof raw !== "string") return null;
+  const m = (raw ?? "").trim();
+  return m === "" || m === "app" ? "app" : m === "access" ? "access" : null;
+}
+
+/** Maps a verified email to a usable user: owner bootstrap, guarded invited activation, re-read. Shared by both modes. */
+export async function resolveUser(env: Env, email: string): Promise<{ user: UserRow } | { status: 403; error: "not_invited" | "disabled" }> {
+  let user = await findUser(env, email);
+  if (!user && env.OWNER_EMAIL && email.toLowerCase() === env.OWNER_EMAIL.trim().toLowerCase()) {
+    await bootstrapOwner(env, email);
+    user = await findUser(env, email);
   }
-  if (!user) return c.json({ error: "not_invited" }, 403);
-  if (user.status === "disabled") return c.json({ error: "disabled" }, 403);
+  if (!user) return { status: 403, error: "not_invited" };
+  if (user.status === "disabled") return { status: 403, error: "disabled" };
 
   if (user.status === "invited") {
     // Audit first, guarded on still being invited, so a racing sign-in audits once.
-    await c.env.DB.batch([
-      auditStmt(c.env, { actorId: user.id, action: "user.activate", targetType: "user", targetId: user.id },
+    await env.DB.batch([
+      auditStmt(env, { actorId: user.id, action: "user.activate", targetType: "user", targetId: user.id },
         { sql: "EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'invited')", binds: [user.id] }),
-      c.env.DB.prepare("UPDATE users SET status = 'active' WHERE id = ? AND status = 'invited'").bind(user.id),
+      env.DB.prepare("UPDATE users SET status = 'active' WHERE id = ? AND status = 'invited'").bind(user.id),
     ]);
     // Re-read: a concurrent disable may have landed, so trust the stored status, not the one we wrote.
-    user = await findUser(c.env, who.email);
-    if (!user || user.status !== "active") return c.json({ error: user ? "disabled" : "not_invited" }, 403);
+    user = await findUser(env, email);
+    if (!user || user.status !== "active") return { status: 403, error: user ? "disabled" : "not_invited" };
   }
-  c.set("user", user);
+  return { user };
+}
+
+type AuthFail = { status: 401 | 403; error: "unauthenticated" | "not_invited" | "disabled" };
+
+/** One entry point for both modes; they never mix (app ignores the Access JWT, access ignores the session cookie). */
+export async function authenticate(req: Request, env: Env): Promise<{ user: UserRow; session: SessionRef | null } | AuthFail> {
+  const mode = authMode(env);
+  if (mode === "access") {
+    const token = req.headers.get("Cf-Access-Jwt-Assertion");
+    const who = token ? await verifyAccess(token, env) : null;
+    if (!who) return { status: 401, error: "unauthenticated" };
+    const r = await resolveUser(env, who.email);
+    return "user" in r ? { user: r.user, session: null } : r;
+  }
+  if (mode !== "app") return { status: 401, error: "unauthenticated" }; // callers answer misconfigured first
+  const s = await readSession(req, env);
+  if (!s) return { status: 401, error: "unauthenticated" };
+  if (s.user.status === "disabled") return { status: 403, error: "disabled" };
+  if (s.user.status !== "active") return { status: 401, error: "unauthenticated" };
+  return s;
+}
+
+export const requireUser = createMiddleware<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>(async (c, next) => {
+  const mode = authMode(c.env);
+  if (!mode) return c.json({ error: "misconfigured" }, 500);
+  const r = await authenticate(c.req.raw, c.env);
+  if ("status" in r) {
+    // The signIn flag tells the dashboard to show its own sign-in instead of the Access text.
+    if (r.status !== 401 || mode !== "app") return c.json({ error: r.error }, r.status);
+    // /api/me also carries the instance name (already in every email's subject) so the invite page can say where you are invited.
+    const name = c.req.path === "/api/me" ? (await getSettings(c.env)).name : null;
+    return c.json({ error: r.error, signIn: "app", ...(name ? { name: displayName(name) } : {}) }, 401);
+  }
+  c.set("user", r.user);
+  c.set("session", r.session);
+  c.set("grant", FULL_GRANT);
   await next();
 });

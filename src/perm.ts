@@ -5,8 +5,11 @@ export function canManageDomain(user: UserRow, domain: DomainRow): boolean {
   return user.role === "owner" || domain.ownerId === user.id;
 }
 
-export function canUseDomain(user: UserRow, domain: DomainRow, isMember: boolean): boolean {
+/** `only` (a grant's domain restriction) narrows, never widens: a domain outside it is refused, for the owner too. */
+/** `only` is required so a forgotten restriction is a type error; the dashboard passes its grant's null. */
+export function canUseDomain(user: UserRow, domain: DomainRow, isMember: boolean, only: readonly string[] | null): boolean {
   if (user.status !== "active") return false;
+  if (only && !only.includes(domain.id)) return false;
   if (user.role === "owner") return true;
   if (domain.status === "disabled") return false;
   switch (domain.type) {
@@ -26,3 +29,11 @@ export const usableDomainsSql = `SELECT d.id FROM domains d JOIN users u ON u.id
     d.type = 'main'
     OR (d.type IN ('shared', 'private') AND EXISTS (SELECT 1 FROM domain_members m WHERE m.domain_id = d.id AND m.user_id = u.id))
     OR (d.type = 'private' AND d.owner_id = u.id))))`;
+
+/** usableDomainsSql narrowed to a grant's domains. Binds: user id, JSON array of domain ids. */
+export const usableDomainsSqlOnly = `${usableDomainsSql}
+  AND d.id IN (SELECT value FROM json_each(?))`;
+
+/** The usable-domains subquery for a grant: the plain one when unrestricted. */
+export const usableDomains = (userId: string, only: readonly string[] | null): { sql: string; binds: unknown[] } =>
+  only ? { sql: usableDomainsSqlOnly, binds: [userId, JSON.stringify(only)] } : { sql: usableDomainsSql, binds: [userId] };

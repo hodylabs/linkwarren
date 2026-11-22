@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import fixture from "./fixtures/legacy-export.json";
-import { chunkLinks, filterHosts, parseExport } from "../scripts/lib/export";
+import fixture from "./fixtures/sample-export.json";
+import { chunkLinks, filterHosts, parseExport } from "../src/importFormat";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { beforeBatch } from "./helpers/race";
 
@@ -10,7 +10,7 @@ const all = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).
 const count = async (t: string) => (await all<{ n: number }>(`SELECT COUNT(*) n FROM ${t}`))[0]!.n;
 const audits = async (a: string) => (await all<{ n: number }>("SELECT COUNT(*) n FROM audit_log WHERE action = ?", a))[0]!.n;
 
-type L = { host: string | null; slug: string; destination: string; enabled?: boolean; startDate?: string | null; endDate?: string | null };
+type L = { host: string | null; slug: string; destination: string; enabled?: boolean; protected?: boolean; startDate?: string | null; endDate?: string | null };
 const link = (l: L) => ({ enabled: true, startDate: null, endDate: null, ...l });
 const body = (links: L[], domains: unknown[] = [], mainHost = "main.example") => ({ mainHost, domains, links: links.map(link) });
 async function imp(who: string, b: unknown, q = "") {
@@ -20,14 +20,15 @@ async function imp(who: string, b: unknown, q = "") {
     body: JSON.stringify(b),
   });
 }
-const owner = (b: unknown, q = "") => imp("owner@example.com", b, q);
+// Most cases are about other rules: they confirm "no password links" unless the body says otherwise (N2 tests use imp).
+const owner = (b: unknown, q = "") => imp("owner@example.com", { confirmNoPasswords: true, ...(b as object) }, q);
 const get = (host: string, path: string) => exports.default.fetch(`https://${host}${path}`, { redirect: "manual" });
-const rep = async (r: Response) => (await r.json()) as { created: number; skipped: number; conflicts: { host: string; slug: string; reason: string }[]; caseSensitiveDomains: string[]; domainsCreated: string[]; ignored: { host: string; field: string }[] };
+const rep = async (r: Response) => (await r.json()) as { created: number; skipped: number; conflicts: { host: string; slug: string; reason: string }[]; caseSensitiveDomains: string[]; domainsCreated: string[]; ignored: { host: string; field: string }[]; protected: { host: string; slug: string }[] };
 const D = (host: string, i: string | null = null, n: string | null = null) => ({ host, customIndexUrl: i, customNotFoundUrl: n });
 
 beforeAll(setupAccess);
 beforeEach(async () => {
-  await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domains", "settings", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('uo','owner@example.com','owner','active',1)");
   await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('um','m@example.com','member','active',1)");
 });
@@ -37,7 +38,7 @@ describe("fixture import (main.example only)", () => {
   it("first run creates domain and links with exact slugs; second run skips all", async () => {
     const r1 = await owner(filtered());
     expect(r1.status).toBe(200);
-    expect(await rep(r1)).toEqual({ created: 4, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: ["main.example"], ignored: [] });
+    expect(await rep(r1)).toEqual({ created: 4, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: ["main.example"], ignored: [], protected: [] });
     const dom = (await all<Record<string, unknown>>("SELECT * FROM domains"))[0]!;
     expect(dom).toMatchObject({ host: "main.example", type: "private", status: "active", owner_id: "uo", bare_redirect: "https://example.org/home", notfound_redirect: "https://example.org/missing" });
     expect((await all<{ slug: string }>("SELECT slug FROM links ORDER BY slug")).map((r) => r.slug)).toEqual(["Spring", "app", "promo"]);
@@ -51,6 +52,16 @@ describe("fixture import (main.example only)", () => {
     expect(r2).toMatchObject({ created: 0, skipped: 4, conflicts: [] });
     expect(await count("links")).toBe(3);
     expect(await audits("import.run")).toBe(2);
+  });
+});
+
+describe("instance link defaults", () => {
+  it("imported links use the instance redirect code and query pass-through", async () => {
+    expect(await rep(await owner(body([{ host: null, slug: "a", destination: "https://example.org/a" }])))).toMatchObject({ created: 1 });
+    expect(await all("SELECT redirect_code, pass_query FROM links")).toEqual([{ redirect_code: 302, pass_query: 1 }]);
+    await run(`INSERT INTO settings (key,value,updated_at,updated_by) VALUES ('links.defaultRedirectCode','301',1,'uo'),('links.defaultPassQuery','false',1,'uo')`);
+    expect(await rep(await owner(body([{ host: null, slug: "b", destination: "https://example.org/b" }])))).toMatchObject({ created: 1 });
+    expect(await all("SELECT redirect_code, pass_query FROM links WHERE slug = 'b'")).toEqual([{ redirect_code: 301, pass_query: 0 }]);
   });
 });
 
@@ -98,6 +109,31 @@ describe("rules", () => {
     const r3 = await rep(await owner(body([{ host: "a.test", slug: "live", destination: "https://e.org/l", enabled: false }])));
     expect(r3.conflicts).toEqual([{ host: "a.test", slug: "live", reason: "exists" }]);
     expect(await count("slug_locks")).toBe(1);
+  });
+  it("a protected legacy link arrives as a lock, never live, and is listed", async () => {
+    const b = body([{ host: "a.test", slug: "Secret", destination: "https://e.org/private", protected: true }, { host: "a.test", slug: "open", destination: "https://e.org/o" }]);
+    const dry = await rep(await owner(b, "?dryRun=1"));
+    expect(dry.protected).toEqual([{ host: "a.test", slug: "Secret" }]);
+    const r = await rep(await owner(b));
+    expect(r).toMatchObject({ created: 2, conflicts: [], protected: [{ host: "a.test", slug: "Secret" }] });
+    expect((await all<{ slug: string }>("SELECT slug FROM links")).map((x) => x.slug)).toEqual(["open"]);
+    expect((await all<{ slug_key: string }>("SELECT slug_key FROM slug_locks")).map((x) => x.slug_key)).toEqual(["secret"]);
+    const res = await get("a.test", "/Secret");
+    expect(res.status).not.toBe(302);
+    expect(res.headers.get("location")).toBeNull();
+    expect(await res.text()).not.toContain("e.org/private");
+    // Running it again keeps it locked and still lists it, so the owner can find it.
+    const r2 = await rep(await owner(b));
+    expect(r2).toMatchObject({ created: 0, skipped: 2, protected: [{ host: "a.test", slug: "Secret" }] });
+  });
+  it("a protected link whose slug is already live is the conflict protected_live, so the owner sees the live open redirect", async () => {
+    // An earlier import (an old export, confirmed) put the password link live; the corrected export marks it protected.
+    await owner(body([{ host: "a.test", slug: "Secret", destination: "https://e.org/private" }]));
+    const r = await rep(await owner(body([{ host: "a.test", slug: "Secret", destination: "https://e.org/private", protected: true }])));
+    expect(r).toMatchObject({ created: 0, conflicts: [{ host: "a.test", slug: "Secret", reason: "protected_live" }], protected: [] });
+  });
+  it("protected must be a boolean", async () => {
+    expect((await owner({ ...body([]), links: [{ ...link({ host: null, slug: "a", destination: "https://e.org/" }), protected: "yes" }] })).status).toBe(400);
   });
   it("legacy reserved slugs are kept; invalid slug, destination and dates are reported", async () => {
     const r = await rep(await owner(body([
@@ -207,6 +243,14 @@ describe("rules", () => {
     expect(await all("SELECT host, case_sensitive FROM domains ORDER BY host")).toEqual([{ host: "x.test", case_sensitive: 1 }, { host: "y.test", case_sensitive: 0 }]);
   });
 
+  it("a link blocked by a lock that landed after planning is reported as locked", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dx','x.test','private','active','uo',1)");
+    const restore = beforeBatch(2, () => run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dx','abc',1,'uo')"));
+    let r;
+    try { r = await rep(await owner(body([{ host: "x.test", slug: "abc", destination: "https://e.org/" }]))); } finally { restore(); }
+    expect(r).toMatchObject({ created: 0, conflicts: [{ host: "x.test", slug: "abc", reason: "locked" }] });
+  });
+
   it("a domain whose case mode changed after planning gets no links; they are reported as mode_changed", async () => {
     await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dx','x.test','private','active','uo',1)");
     // Batch 1 is the planning read; batch 2 is the first write.
@@ -230,5 +274,37 @@ describe("rules", () => {
   it("duplicate rows within one export are skipped when identical", async () => {
     const l = { host: "a.test", slug: "x", destination: "https://e.org/" };
     expect(await rep(await owner(body([l, l])))).toMatchObject({ created: 1, skipped: 1 });
+  });
+});
+
+describe("N2: a file that does not say which links had a password", () => {
+  const old = () => body([{ host: "a.test", slug: "s", destination: "https://e.org/x" }]);
+  const o = (b: unknown, q = "") => imp("owner@example.com", b, q);
+  it("a real run without confirmNoPasswords is 400 protected_unknown and writes nothing", async () => {
+    const r = await o(old());
+    expect([r.status, await r.json()]).toEqual([400, { error: "protected_unknown" }]);
+    expect(await count("links")).toBe(0);
+    expect(await count("domains")).toBe(0);
+  });
+  it("the dry run still answers (the client shows the warning)", async () => {
+    expect((await o(old(), "?dryRun=1")).status).toBe(200);
+  });
+  it("with confirmNoPasswords: true it imports", async () => {
+    const r = await o({ ...old(), confirmNoPasswords: true });
+    expect(r.status).toBe(200);
+    expect(await count("links")).toBe(1);
+  });
+  it("a file whose rows carry protected (even all false) needs no confirmation", async () => {
+    const b = body([{ host: "a.test", slug: "s", destination: "https://e.org/x", protected: false }]);
+    expect((await o(b)).status).toBe(200);
+  });
+  it("one row without protected beside rows that carry it still needs the confirmation", async () => {
+    const b = body([{ host: "a.test", slug: "s", destination: "https://e.org/x", protected: false }, { host: "a.test", slug: "t", destination: "https://e.org/y" }]);
+    const r = await o(b);
+    expect([r.status, await r.json()]).toEqual([400, { error: "protected_unknown" }]);
+    expect(await count("links")).toBe(0);
+  });
+  it("a domains-only request needs no confirmation", async () => {
+    expect((await o(body([], [D("only.test")]))).status).toBe(200);
   });
 });

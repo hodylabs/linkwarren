@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
+import { parseSettings, settingsQ } from "../settings";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
 import { checkDestination, checkSlugShape, slugKey } from "../validate";
 import { hostError } from "./domains";
@@ -15,14 +16,17 @@ const MAX_LINKS = 1000;
 const CHUNK = 100; // statements per D1 batch
 
 const body = z.object({
-  mainHost: z.string().min(1),
+  mainHost: z.string().min(1).max(1024),
   domains: z.array(z.object({
-    host: z.string(), customIndexUrl: z.string().nullable().optional(), customNotFoundUrl: z.string().nullable().optional(),
+    host: z.string().max(1024), customIndexUrl: z.string().max(8192).nullable().optional(), customNotFoundUrl: z.string().max(8192).nullable().optional(),
   })).max(MAX_LINKS),
   links: z.array(z.object({
-    host: z.string().nullable(), slug: z.string(), destination: z.string(), enabled: z.boolean(),
-    startDate: z.string().nullable().optional(), endDate: z.string().nullable().optional(),
+    host: z.string().max(1024).nullable(), slug: z.string().max(1024), destination: z.string().max(8192), enabled: z.boolean(),
+    startDate: z.string().max(32).nullable().optional(), endDate: z.string().max(32).nullable().optional(),
+    // A legacy password link: its hash cannot be carried over, so it is imported like a disabled link (a lock) and listed.
+    protected: z.boolean().optional(),
   })),
+  confirmNoPasswords: z.boolean().optional(),
 });
 
 /** "YYYY-MM-DD HH:MM:SS" (UTC) -> unix seconds, null for null, undefined when unparseable. */
@@ -47,6 +51,10 @@ importApi.post("/", async (c) => {
   const b = parsed.data;
   if (b.links.length > MAX_LINKS) return c.json({ error: "too_many" }, 400);
   const dry = c.req.query("dryRun") === "1";
+  // N2: a row that does not say whether it had a password (an old export, a CSV, a mixed file) would go live as an open
+  // redirect, so a real run needs the owner's explicit confirmation if any row omits it. Export rows always carry it.
+  if (!dry && b.links.some((l) => l.protected === undefined) && b.confirmNoPasswords !== true)
+    return c.json({ error: "protected_unknown" }, 400);
   const dashboard = normalizeHost(c.env.DASHBOARD_HOST);
   const mainHost = normalizeHost(b.mainHost);
   const hostOf = (h: string | null) => (h === null ? mainHost : normalizeHost(h));
@@ -100,10 +108,13 @@ importApi.post("/", async (c) => {
   for (const d of doms.values()) { live.set(d.id, new Map()); locks.set(d.id, new Set()); }
   // Two queries in total, whatever the domain count: ids go in as one JSON bind (D1 caps queries per invocation and binds per query).
   const reused = JSON.stringify([...doms.values()].filter((d) => !d.isNew).map((d) => d.id));
-  const [liveRows, lockRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string }>([
+  const [liveRows, lockRows, setRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string }>([
     c.env.DB.prepare("SELECT domain_id, slug_key, url FROM links WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
     c.env.DB.prepare("SELECT domain_id, slug_key FROM slug_locks WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
+    settingsQ(c.env),
   ]);
+  // The import format carries no redirect code or query rule, so imported links take the instance defaults.
+  const defaults = parseSettings(setRows!.results as unknown as { key: string; value: string }[]);
   for (const r of liveRows!.results) live.get(r.domain_id)!.set(r.slug_key, r.url!);
   for (const r of lockRows!.results) locks.get(r.domain_id)!.add(r.slug_key.toLowerCase());
 
@@ -120,7 +131,7 @@ importApi.post("/", async (c) => {
     if (!dom) return conflict(i, badHost.get(host) ?? "invalid_host");
     if (!checkSlugShape(l.slug).ok) return conflict(i, "invalid_slug");
     if (!dom.cs && isTwin(host, l.slug)) return conflict(i, "case_twin");
-    if (!l.enabled) { disabled.push(i); return; }
+    if (!l.enabled || l.protected) { disabled.push(i); return; }
     const href = dest(l.destination);
     if (!href) return conflict(i, "invalid_destination");
     const startsAt = parseDate(l.startDate), expiresAt = parseDate(l.endDate);
@@ -138,7 +149,8 @@ importApi.post("/", async (c) => {
   for (const i of disabled) {
     const l = b.links[i]!, dom = doms.get(hostOf(l.host))!;
     const key = slugKey(l.slug, dom.cs);
-    if (liveLower.get(dom.id)!.has(key.toLowerCase())) { conflict(i, "exists"); continue; }
+    // protected_live: a former password link already serves as an open redirect here; the owner has to fix it by hand.
+    if (liveLower.get(dom.id)!.has(key.toLowerCase())) { conflict(i, l.protected ? "protected_live" : "exists"); continue; }
     if (locks.get(dom.id)!.has(key.toLowerCase())) { out[i] = { kind: "skip" }; continue; }
     locks.get(dom.id)!.add(key.toLowerCase());
     plans.lock.push({ dom, slug: l.slug, key, url: "", startsAt: null, expiresAt: null });
@@ -152,6 +164,8 @@ importApi.post("/", async (c) => {
   const report = {
     created: planned, skipped, conflicts, caseSensitiveDomains: newDoms.filter((d) => d.cs).map((d) => d.host),
     domainsCreated: newDoms.map((d) => d.host), ignored,
+    // Locked or already locked: the owner recreates each with a new password. Conflicts are already in `conflicts`.
+    protected: b.links.flatMap((l, i) => (l.protected && out[i]!.kind !== "conflict" ? [{ host: hostOf(l.host), slug: l.slug }] : [])),
   };
   if (dry) return c.json(report);
 
@@ -174,9 +188,9 @@ importApi.post("/", async (c) => {
   for (const p of plans.link) {
     work.push({ kind: "link", host: p.dom.host, counted: true, plan: p, stmt: db.prepare(
       `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
-       SELECT ?,?,?,?,?,302,?,?,1,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
        AND EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?)`,
-    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, p.startsAt, p.expiresAt, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0) });
+    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0) });
   }
   // A live link committed after planning wins its key over a planned lock.
   for (const p of plans.lock) {
@@ -185,7 +199,7 @@ importApi.post("/", async (c) => {
        SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM links WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
     ).bind(p.dom.id, p.key, now, user.id, p.dom.id, p.key) });
   }
-  const runAudit = auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "legacy",
+  const runAudit = auditStmt(c.env, { actorId: user.id, action: "import.run", targetType: "import", targetId: "file",
     detail: { planned, skipped, conflicts: conflicts.length, domainsCreated: report.domainsCreated } });
   let inserted = 0; // INSERT OR IGNORE can lose a race; report what was really written
   const lostLinks: Plan[] = [], lostLocks: Plan[] = [];
@@ -193,7 +207,7 @@ importApi.post("/", async (c) => {
   for (let i = 0; i === 0 || i < work.length; i += SIZE) {
     const part = work.slice(i, i + SIZE);
     const n = (k: Work["kind"]) => part.filter((w) => w.kind === k).length;
-    const chunkAudit = auditStmt(c.env, { actorId: user.id, action: "import.chunk", targetType: "import", targetId: "legacy",
+    const chunkAudit = auditStmt(c.env, { actorId: user.id, action: "import.chunk", targetType: "import", targetId: "file",
       detail: { hosts: [...new Set(part.map((w) => w.host))], domains: n("domain"), links: n("link"), locks: n("lock") } });
     const res = await db.batch([...(i === 0 ? [runAudit] : []), chunkAudit, ...part.map((w) => w.stmt)]);
     const off = res.length - part.length;
@@ -208,14 +222,21 @@ importApi.post("/", async (c) => {
   // Explain the writes a guard refused: a changed case mode, or a slug that went live before its lock.
   // Other lost races (a concurrent identical link or lock) stay uncounted, as before.
   if (lostLinks.length || lostLocks.length) {
-    const [modes, live] = await db.batch<{ id?: string; case_sensitive?: number; i?: number }>([
+    const [modes, live, locked] = await db.batch<{ id?: string; case_sensitive?: number; i?: number }>([
       db.prepare("SELECT id, case_sensitive FROM domains WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(lostLinks.map((p) => p.dom.id))),
       db.prepare(`SELECT j.key AS i FROM json_each(?) j WHERE EXISTS (SELECT 1 FROM links
         WHERE domain_id = json_extract(j.value, '$[0]') AND lower(slug_key) = lower(json_extract(j.value, '$[1]')))`)
         .bind(JSON.stringify(lostLocks.map((p) => [p.dom.id, p.key]))),
+      db.prepare(`SELECT j.key AS i FROM json_each(?) j WHERE EXISTS (SELECT 1 FROM slug_locks
+        WHERE domain_id = json_extract(j.value, '$[0]') AND lower(slug_key) = lower(json_extract(j.value, '$[1]')))`)
+        .bind(JSON.stringify(lostLinks.map((p) => [p.dom.id, p.key]))),
     ]);
     const mode = new Map(modes!.results.map((r) => [r.id!, !!r.case_sensitive]));
-    for (const p of lostLinks) if (mode.get(p.dom.id) !== p.dom.cs) report.conflicts.push({ host: p.dom.host, slug: p.slug, reason: "mode_changed" });
+    const lockedAt = new Set(locked!.results.map((r) => r.i!));
+    lostLinks.forEach((p, i) => {
+      const reason = mode.get(p.dom.id) !== p.dom.cs ? "mode_changed" : lockedAt.has(i) ? "locked" : null;
+      if (reason) report.conflicts.push({ host: p.dom.host, slug: p.slug, reason });
+    });
     for (const r of live!.results) { const p = lostLocks[r.i!]!; report.conflicts.push({ host: p.dom.host, slug: p.slug, reason: "exists" }); }
   }
 

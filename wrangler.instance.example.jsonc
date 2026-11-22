@@ -6,16 +6,54 @@
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
-  "observability": { "enabled": true },
+  // Workers Logs. Cloudflare keeps an invocation log per request (request metadata and headers) for its retention
+  // period; see docs/privacy.md "Platform logs". head_sampling_rate 0..1 is the share of requests logged; set
+  // "enabled": false to keep no logs, or add "logs": { "invocation_logs": false } to keep only the Worker's own lines.
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  // Built dashboard (npm run build:web first). run_worker_first must stay true: short hosts must never be answered by the asset layer.
+  "assets": { "directory": "./web/dist", "binding": "ASSETS", "run_worker_first": true },
   "d1_databases": [
     { "binding": "DB", "database_name": "linkwarren", "database_id": "<your-d1-database-id>", "migrations_dir": "migrations" }
   ],
-  "kv_namespaces": [{ "binding": "CACHE", "id": "<your-kv-namespace-id>" }],
+  // OAUTH_KV holds the OAuth state for agents (/mcp); the binding name is fixed by the OAuth library. Its writes share the
+  // account's 1,000 KV writes/day (Free) with CACHE.
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "<your-kv-namespace-id>" },
+    { "binding": "OAUTH_KV", "id": "<your-oauth-kv-namespace-id>" }
+  ],
+  // Click analytics (see docs/deploy.md "Analytics"). Enable Workers Analytics Engine on the account first, or the deploy
+  // fails with code 10089; keep this line commented out until then. The dataset is created on the first write; leave this out to record nothing.
+  "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }],
+  // Hourly at :15: rolls finished days of clicks into D1; the 00:15 UTC run also removes audit rows older than 3 years (see docs/deploy.md "Scheduled job").
+  "triggers": { "crons": ["15 * * * *"] },
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
+    // "app" (linkwarren's own sign-in, the default) or "access" (Cloudflare Access). See docs/deploy.md "Sign-in".
+    "AUTH_MODE": "app",
+    // App mode: sign-in email sender. The key is a secret: wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc
+    "EMAIL_FROM": "links@example.com",
+    // Access mode only:
     "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
-    "ACCESS_AUD": "<your-access-application-aud-tag>"
+    "ACCESS_AUD": "<your-access-application-aud-tag>",
+    // Optional: Cloudflare domain onboarding (see docs/deploy.md). Leave these out to add domains by hand.
+    "CF_ACCOUNT_ID": "<your-cloudflare-account-id>",
+    "CF_WORKER_NAME": "linkwarren",
+    // Only for outside domains (Cloudflare for SaaS): a zone used only by linkwarren, and a host inside it.
+    "CF_SAAS_ZONE_ID": "<your-saas-zone-id>",
+    "CF_CNAME_TARGET": "edge.example.com",
+    // Optional: PBKDF2 iterations for new link passwords (1000..100000, default 10000; see docs/deploy.md
+    // "Password-protected links"). Keep the default on the Workers Free plan (10 ms CPU); Workers Paid may raise it to 100000.
+    // "PASSWORD_HASH_ITERATIONS": "10000",
+    // Analytics: must match the dataset above. Reports also need CF_ACCOUNT_ID.
+    "AE_DATASET": "linkwarren_clicks"
+    // Agents (MCP at https://<DASHBOARD_HOST>/mcp with OAuth): the owner turns them on and off on the API & agents screen.
+    // Leave MCP_ENABLED out for that. "MCP_ENABLED": "0" locks agent connections off; "1" turns them on until the owner
+    // saves a choice. API keys on /api/v1 work either way.
     // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
+    // CF_API_TOKEN is a secret, never a var: wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc
+    // Optional secret SECRETS_KEY (base64 of 32 random bytes, openssl rand -base64 32): lets the owner paste CF_API_TOKEN or
+    // RESEND_API_KEY in the dashboard, stored encrypted in D1. npx wrangler secret put SECRETS_KEY -c wrangler.instance.jsonc
+    // AE_READ_TOKEN and VISITOR_SALT are secrets, never vars: wrangler secret put AE_READ_TOKEN (and VISITOR_SALT) -c wrangler.instance.jsonc
   },
   // Add one route per short domain, plus the dashboard host.
   "routes": [

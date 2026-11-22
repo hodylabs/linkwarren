@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import app from "../src/index";
+import { app } from "../src/index";
 import { dash, ORIGIN, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -66,6 +66,19 @@ describe("csrf and json-only bodies", () => {
       const r = await dash("/api/domains/dp/approve", { method: "POST", headers: { ...(await authed()), "content-length": "0" } });
       expect(r.status).toBe(200);
     });
+    it("a streamed text/plain body with no content-length is 415", async () => {
+      const body = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(good)); c.close(); } });
+      const r = await dash("/api/domains", {
+        method: "POST", headers: { ...(await authed()), "content-type": "text/plain", "transfer-encoding": "chunked" },
+        body, duplex: "half",
+      } as RequestInit);
+      expect(r.status).toBe(415);
+      expect(await count("domains")).toBe(0);
+    });
+    it("a bodyless DELETE with no content-length reaches the route", async () => {
+      const r = await dash("/api/links/nope", { method: "DELETE", headers: await authed() });
+      expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
+    });
     it("a foreign Origin bodyless DELETE is still 403", async () => {
       await seed();
       const r = await dash("/api/links/l1", { method: "DELETE", headers: { ...(await authed()), "content-length": "0", origin: "https://evil.example" } });
@@ -80,11 +93,14 @@ describe("csrf and json-only bodies", () => {
 describe("every /api route requires a token", () => {
   const routes = app.routes.filter((r) => r.method !== "ALL" && r.path.startsWith("/api/"));
   it("finds the routes", () => expect(routes.length).toBeGreaterThanOrEqual(14));
-  for (const { method, path } of routes)
-    it(`${method} ${path} -> 401`, async () => {
+  // This suite runs in access mode, where /api/account/* does not exist (R2); its app-mode 401s are in passkeys.test.ts.
+  for (const { method, path } of routes) {
+    const want = path === "/api/account" || path.startsWith("/api/account/") ? 404 : 401;
+    it(`${method} ${path} -> ${want}`, async () => {
       const r = await dash(path.replace(/:\w+/g, "x"), { method });
-      expect(r.status).toBe(401);
+      expect(r.status).toBe(want);
     });
+  }
 });
 
 describe("failure modes", () => {
@@ -108,8 +124,8 @@ describe("failure modes", () => {
       expect(text).not.toContain("boom");
     } finally { e.DB = orig; }
   });
-  it("unknown dashboard paths are JSON 404, short hosts keep their page", async () => {
-    const r = await dash("/nope");
+  it("unknown dashboard API paths and non-GET methods are JSON 404, short hosts keep their page", async () => {
+    const r = await dash("/nope", { method: "POST" });
     expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
     const s = await exports.default.fetch("https://short.test/nope");
     expect(s.status).toBe(404);

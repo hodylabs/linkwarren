@@ -32,8 +32,8 @@ describe("checkSlug", () => {
 
 describe("checkDestination", () => {
   it("accepts https", () => {
-    const r = checkDestination("https://northwind.io/x", []);
-    expect(r.ok && r.url.href).toBe("https://northwind.io/x");
+    const r = checkDestination("https://example.com/x", []);
+    expect(r.ok && r.url.href).toBe("https://example.com/x");
   });
   it.each(["javascript:alert(1)", "data:text/html,x", "ftp://x"])("scheme %s", (s) =>
     expect(checkDestination(s, [])).toEqual({ ok: false, reason: "scheme" }));

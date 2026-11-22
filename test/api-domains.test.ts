@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -159,11 +159,11 @@ describe("settings", () => {
   });
   it("a flip drops stale cached link entries under both spellings", async () => {
     await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('t1','dm','Fall','fall','https://x.com/','uo','uo',1,1)");
-    await env.CACHE.put("l:dm:fall", "null");
-    await env.CACHE.put("l:dm:Fall", "null");
+    await env.CACHE.put("l2:dm:fall", "null");
+    await env.CACHE.put("l2:dm:Fall", "null");
     await call("owner", "PATCH", "/api/domains/dm", { caseSensitive: true });
-    await new Promise((r) => setTimeout(r, 50));
-    expect([await env.CACHE.get("l:dm:fall"), await env.CACHE.get("l:dm:Fall")]).toEqual([null, null]);
+    // Polled, not a fixed sleep: the purge may land after the response.
+    await vi.waitFor(async () => expect([await env.CACHE.get("l2:dm:fall"), await env.CACHE.get("l2:dm:Fall")]).toEqual([null, null]));
   });
   it("a redirect target whose normalized href exceeds 2048 is refused", async () => {
     const raw = `https://example.com/${"a".repeat(2000)}${"\u00e9".repeat(10)}`; // raw 2030 chars, href 2080
@@ -213,5 +213,93 @@ describe("list", () => {
     expect(mine.find((d) => d.id === "ds")).toMatchObject({ isMember: true });
     const b = (await (await call("b", "GET", "/api/domains")).json()) as { id: string }[];
     expect(b.map((d) => d.id).sort()).toEqual(["dc", "dm"]);
+  });
+});
+
+describe("onboarding rules", () => {
+  const link = (id: string, url: string) =>
+    run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?, 'dm', ?, ?, ?, 'uo','uo',1,1)", id, id, id, url);
+  const pendingOf = async (u: string) => (await one<{ n: number }>("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'", u))!.n;
+
+  it("a member's pending cap is 3: the 4th is 409 with no row and no audit", async () => {
+    await status(await create("a", "p2.example.com", "private"), 201);
+    await status(await create("a", "p3.example.com", "private"), 201); // dp is already pending
+    const before = await audits("domain.create");
+    await status(await create("a", "p4.example.com", "private"), 409, { error: "pending_limit" });
+    expect(await one("SELECT 1 FROM domains WHERE host = 'p4.example.com'")).toBeNull();
+    expect(await audits("domain.create")).toBe(before);
+    expect(await one("SELECT 1 FROM domain_cf c LEFT JOIN domains d ON d.id = c.domain_id WHERE d.id IS NULL")).toBeNull();
+  });
+  it("approving one frees a slot; the owner is not capped", async () => {
+    await create("a", "p2.example.com", "private"); await create("a", "p3.example.com", "private");
+    await status(await call("owner", "POST", "/api/domains/dp/approve"), 200);
+    await status(await create("a", "p4.example.com", "private"), 201);
+    for (const h of ["o1", "o2", "o3", "o4"]) await status(await create("owner", `${h}.example.com`, "shared"), 201);
+  });
+  it("two concurrent 4th creates leave exactly 3 pending", async () => {
+    await create("a", "p2.example.com", "private");
+    const rs = await Promise.all([create("a", "r1.example.com", "private"), create("a", "r2.example.com", "private")]);
+    expect(rs.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(await pendingOf("ua")).toBe(3);
+  });
+  it("create writes a manual domain_cf row", async () => {
+    const d = (await (await create("owner", "cf.example.com", "shared")).json()) as { id: string };
+    expect(await one("SELECT kind, dns FROM domain_cf WHERE domain_id = ?", d.id)).toEqual({ kind: "manual", dns: "unknown" });
+  });
+  it("the CNAME target host is reserved", async () => {
+    await status(await create("owner", "edge.test", "shared"), 400, { error: "reserved_host" });
+    await status(await create("a", "Edge.Test.", "private"), 400, { error: "reserved_host" });
+  });
+  it("owner create reports loopLinks (any scheme/port); a member's response has no such key", async () => {
+    await link("la", "https://promo.example.com/a"); await link("lb", "http://promo.example.com:8080/b");
+    await link("lc", "https://other.example.com/a"); await link("ld", "https://x.com/?u=https://promo.example.com/z");
+    const o = (await (await create("owner", "promo.example.com", "shared")).json()) as Record<string, unknown>;
+    expect(o.loopLinks).toBe(2);
+    const m = (await (await create("a", "promo2.example.com", "private")).json()) as Record<string, unknown>;
+    expect("loopLinks" in m).toBe(false);
+  });
+  it("loopLinks works for a 60-char host (no LIKE pattern limit)", async () => {
+    const host = `${"a".repeat(50)}.example.com`;
+    await link("lh", `https://${host}/a`); await link("li", `http://${host}:81/b`);
+    const o = (await (await create("owner", host, "shared")).json()) as Record<string, unknown>;
+    expect(o.loopLinks).toBe(2);
+  });
+  it("a padded CF_CNAME_TARGET is trimmed for the reserved host and the loop check alike", async () => {
+    const e = env as unknown as Record<string, string | undefined>;
+    const was = e.CF_CNAME_TARGET;
+    e.CF_CNAME_TARGET = " Edge.test ";
+    try {
+      await status(await create("owner", "edge.test", "shared"), 400, { error: "reserved_host" });
+      await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "https://edge.test/x" }), 400, { error: "loop" });
+    } finally { e.CF_CNAME_TARGET = was; }
+  });
+  it("loopLinks counts destinations stored with a trailing dot on the host", async () => {
+    await link("la", "https://dot.example.com./a"); await link("lb", "http://dot.example.com.:81/b");
+    const o = (await (await create("owner", "dot.example.com", "shared")).json()) as Record<string, unknown>;
+    expect(o.loopLinks).toBe(2);
+  });
+  it("a pending domain cannot redirect to itself: it would loop once approved", async () => {
+    await status(await call("a", "PATCH", "/api/domains/dp", { bareRedirect: "https://priv.test/" }), 400, { error: "loop" });
+    await status(await call("a", "PATCH", "/api/domains/dp", { notfoundRedirect: "http://PRIV.test.:8080/x" }), 400, { error: "loop" });
+    expect((await call("a", "PATCH", "/api/domains/dp", { bareRedirect: "https://elsewhere.test/" })).status).toBe(200);
+  });
+  it("approve as owner returns loopLinks", async () => {
+    await link("la", "https://priv.test/a");
+    const j = (await (await call("owner", "POST", "/api/domains/dp/approve")).json()) as { status: string; loopLinks: number };
+    expect([j.status, j.loopLinks]).toEqual(["active", 1]);
+  });
+});
+
+describe("members audit never overclaims (S1 deferral)", () => {
+  it("a person removed between the check and the batch: 400 unknown_user, members unchanged, no audit", async () => {
+    const { beforeBatch } = await import("./helpers/race");
+    await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('uc','c@example.com','member','active',1)");
+    await run("INSERT INTO domain_members (domain_id, user_id) VALUES ('ds', 'ub')");
+    const restore = beforeBatch(1, () => run("DELETE FROM users WHERE id = 'uc'"));
+    let r: Response;
+    try { r = await call("owner", "PUT", "/api/domains/ds/members", { userIds: ["uc", "ub"] }); } finally { restore(); }
+    await status(r, 400, { error: "unknown_user" });
+    expect((await env.DB.prepare("SELECT user_id FROM domain_members WHERE domain_id = 'ds'").all()).results).toEqual([{ user_id: "ub" }]);
+    expect(await audits("domain.members")).toBe(0);
   });
 });

@@ -28,11 +28,12 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 
 **Links**
 - Destination `http` or `https` only. Redirect **302 by default** (301 is opt-in per link), so a printed QR code can change destination.
-- Rules: schedule (starts at), expiry, password, country and device routing, campaign (UTM) builder, pass query string through.
+- **Bulk edit:** select rows on the Links page (keyboard, mouse or long-press) and delete, schedule, move, set the redirect type and options, set or remove a password, copy short URLs or export CSV; at most 50 links per request. Moving to another domain needs a choice: **forward** (the old address becomes a forwarder, one hop to the new short link) or **copy**. Deleting a link also deletes its forwarders and locks their slugs. Same rules as single edits; same actions from the API (`POST /api/v1/links/bulk`) and MCP (`bulk_links`).
+- Rules: schedule (starts at), expiry, password, country and device routing (form factor, phone OS iOS/Android, computer OS Windows/macOS/Linux/ChromeOS; an iPad in desktop mode counts as macOS and desktop), campaign (UTM) builder, pass query string through.
 - QR codes always encode the short link, never the destination.
 
 **People and access**
-- Sign-in through **Cloudflare Access** (Google, one-time email code). Access proves the email; the app's own `users` table decides who gets in. People are invited from the dashboard.
+- Sign-in by **email link or passkey** (app mode, the default) or through **Cloudflare Access** (`AUTH_MODE=access`). Sign-in proves the email; the app's own `users` table decides who gets in. People are invited from the dashboard.
 - The **owner** sees and manages every user, domain and link.
 - **Full audit log** of every change by every person and agent, kept **3 years**. Agent changes are recorded as "person via tool".
 
@@ -42,11 +43,11 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - Raw click detail kept 90 days (Analytics Engine), then daily totals in D1.
 
 **Agents and API**
-- MCP built into the app at `/<dashboard host>/mcp`, OAuth per the MCP standard Kind A: remote, read-only by default, read+write chosen on the approval screen, acts as the approving person, every tool call audited by tool name, revocable. Works from Claude, ChatGPT, Claude Code and Codex.
-- Personal API keys with scopes and expiry for scripts.
+- MCP built into the app at `https://<dashboard host>/mcp` (the owner turns it on or off on the API & agents screen; `MCP_ENABLED=0` locks it off for the instance), OAuth per the MCP standard Kind A: remote, read-only by default, read+write chosen on the approval screen, acts as the approving person, every tool call audited by tool name, revocable. Works from Claude, ChatGPT, Claude Code and Codex.
+- Personal API keys with scopes, domain limits and expiry for scripts, on `/api/v1` only. Connect guide: `docs/agents.md`.
 
 **Dashboard**
-- Approved mockups: `design/ui/index.html` and `design/ui/setup.html`. Keyboard-first: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
+- Keyboard-first: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
 - Brand: logo `design/logo/linkwarren-mark.svg` (faceted orange rabbit), graphite `#15181D` + orange `#FD8D27`, Unbounded (titles, wordmark), IBM Plex Sans (UI), IBM Plex Mono (links and domains). Primary buttons graphite with an orange plus.
 - First-run setup: name, sign-in, Cloudflare token (permissions checked one by one), main domain, email, bring your links.
 
@@ -58,12 +59,12 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 ## 3. Architecture
 
 One Worker serves everything. The request **host** decides the path:
-- `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints. Behind Cloudflare Access.
+- `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints, machine API under `/api/v1`. Signed in by the app or by Cloudflare Access (`AUTH_MODE`).
 - Any other host → the redirect handler, looking up `(domain for host, slug)`.
 
-Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.
+Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals, and a small `settings` table; forwarders are rows in `links` with `forward_to` set, and the agents on/off switch is the `settings` row `mcp.enabled`). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.
 
-Runtime dependencies kept to: `hono` (routing), `jose` (Access JWT), `zod` (input validation), and later `@cloudflare/workers-oauth-provider` + `agents` (MCP stage).
+Runtime dependencies kept to seven: `hono` (routing), `jose` (Access JWT), `zod` (input validation), `@simplewebauthn/server` (passkeys), and for MCP `@cloudflare/workers-oauth-provider`, `agents` and `@modelcontextprotocol/server`.
 
 ## 4. Stages
 
@@ -71,16 +72,17 @@ Each stage ships through the usual loop: branch, review, PR, merge, deploy to a 
 
 | Stage | Delivers | Live check |
 |---|---|---|
-| **S1 Core** | Repo, license, schema, redirect hot path, Access sign-in, links + domains API with authz, slug locks, audit log, legacy import + verify scripts, dev deploy | A test short domain redirects; dashboard API answers only through Access |
+| **S1 Core** | Repo, license, schema, redirect hot path, Access sign-in, links + domains API with authz, slug locks, audit log, import API, dev deploy | A test short domain redirects; dashboard API answers only through Access |
 | S2 Dashboard | React SPA from the mockups: links, domains, people + audit, Ctrl+K palette, switcher, new-link form, keyboard model | Every mockup screen works against the dev API, keyboard-only |
 | S3 Domain onboarding | Cloudflare API: attach same-account domains, Cloudflare for SaaS custom hostnames, status checks, approval flow, Cloudflare controls | Add an outside test domain by CNAME end to end |
 | S4 Analytics | Analytics Engine writes, bot filtering, SQL API queries, daily rollups, analytics screen with filters, audit retention purge | Clicks on the test domain show up with correct splits |
 | S5 Link rules | Password, country/device routing, UTM builder, QR (SVG/PNG) | Each rule verified with curl and a phone scan |
 | S6 Agents + API | MCP with OAuth (read / read+write), tools, API keys, "via" audit | Connect from claude.ai and Claude Code; scopes live-tested |
+| **S6b Bulk edit** | Select and bulk-change links, move between domains with forwarders, bulk API and MCP tool, owner switch for agents (migration 0008) | A move with forwarding: the old address answers one `302` to the new link, one click recorded; delete of the moved link answers the not-found page on both; the switch turns `/mcp` off and on |
 | S7 People + setup | Invites (Resend), settings screens, first-run setup wizard | Fresh instance set up from zero in the wizard |
-| S8 Migration + release | Import from legacy (selected domains), verify every old URL, switch DNS per domain, docs, release | Every old URL answers the same `Location` as before. Also the one-click deploy, built last: a Deploy to Cloudflare button that forks the repo and provisions D1, KV and the Worker in the user's own account, plus an `npm run setup` terminal fallback; both end in the first-run wizard |
+| S8 Release | Docs, release, and the one-click deploy, built last: a Deploy to Cloudflare button that forks the repo and provisions D1, KV and the Worker in the user's own account, plus an `npm run setup` terminal fallback | Both deploy paths end in the first-run wizard |
 
 ## 5. Out of scope (v1)
-- Bio pages, splash pages, tracking pixels (legacy features not needed here).
+- Bio pages, splash pages, tracking pixels.
 - Billing, plans or quotas: this is self-hosted software, not a SaaS.
 - Bring-your-own database; non-Cloudflare hosting.
