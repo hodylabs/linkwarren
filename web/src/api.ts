@@ -57,22 +57,25 @@ export class ApiError extends Error {
 }
 
 const signedOutListeners = new Set<() => void>();
-/** Called on every API answer that means the Access session is gone (status 0 or 401). Returns an unsubscribe. */
+/** Called on every API answer that means the session is gone (a login redirect, a non-JSON 200, or 401). Returns an unsubscribe. */
 export function onSignedOut(fn: () => void): () => void {
   signedOutListeners.add(fn);
   return () => signedOutListeners.delete(fn);
 }
 
 function fail(status: number, code: string, data?: unknown): never {
-  if (status === 0 || status === 401) signedOutListeners.forEach((fn) => fn());
+  if (code === "network" || status === 401) signedOutListeners.forEach((fn) => fn());
   throw new ApiError(status, code, data);
 }
 
-/** Same-origin JSON call. Status 0 / "network" when fetch throws, which is what an expired Access session (login redirect) looks like. */
+/**
+ * Same-origin JSON call. Redirects are never followed, so an expired Access session (a redirect to its login page) is told
+ * apart from a dropped connection: the redirect is status 0 / "network" (signed out), a fetch that throws is 0 / "offline".
+ */
 export async function api<T>(method: Method, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   // Programming error, not a user error: only same-origin API and sign-in paths, never a full URL.
   if (!/^\/(api|auth)\//.test(path)) throw new Error(`api(): path must start with /api/ or /auth/, got ${path}`);
-  const init: RequestInit = { method, credentials: "same-origin", signal };
+  const init: RequestInit = { method, credentials: "same-origin", redirect: "manual", signal };
   if (body !== undefined) {
     init.headers = { "content-type": "application/json" };
     init.body = JSON.stringify(body);
@@ -82,8 +85,10 @@ export async function api<T>(method: Method, path: string, body?: unknown, signa
     res = await fetch(path, init);
   } catch (e) {
     if (signal?.aborted) throw e; // the caller cancelled: not a sign-in problem
-    fail(0, "network");
+    fail(0, "offline");
   }
+  // The API never redirects; Access does when the session is gone.
+  if (res.type === "opaqueredirect") fail(0, "network");
   if (res.status === 204) return undefined as T;
   const data: unknown = await res.json().catch((e: unknown) => {
     if (signal?.aborted) throw e; // cancelled while reading the body: not a sign-in problem either

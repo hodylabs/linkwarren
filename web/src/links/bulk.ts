@@ -31,8 +31,8 @@ export async function runBulk(body: BulkOp, ids: string[], o: { onProgress(done:
         // No signal on the request itself: one that reached the server finishes, so its results are known.
         res = await api<BulkResponse>("POST", "/api/links/bulk", { ...body, ids: chunk });
       } catch (e) {
-        const raw = e instanceof ApiError ? e.code : "network";
-        const code = raw === "network" ? "lost_connection" : raw;
+        const raw = e instanceof ApiError ? e.code : "offline";
+        const code = raw === "offline" ? "lost_connection" : raw;
         for (const id of chunk) (failed.set(id, code), whole.add(id));
         stop = code;
         if (code !== "conflict") stopped = true;

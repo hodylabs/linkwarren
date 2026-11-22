@@ -274,10 +274,10 @@ describe("Link detail", () => {
     expect(within(detail()).getByRole("button", { name: "Reload" })).toBeTruthy();
   });
 
-  it("a network failure shows the signed-out banner and keeps the typed URL", async () => {
+  it("a login redirect shows the signed-out banner and keeps the typed URL", async () => {
     const { user } = boot({
       path: "/links?sel=l1",
-      routes: { "PATCH /api/links/l1": () => { throw new Error("redirect"); } },
+      routes: { "PATCH /api/links/l1": () => ({ signIn: true }) },
     });
     await ready();
     await user.type(urlInput(), "x");

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import App from "./App";
 import type { Domain, Me } from "./api";
+import { errorText } from "./copy";
 import { fakeApi, type FakeRoutes } from "./test/fakeApi";
 
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive Owner", role: "owner" };
@@ -130,17 +131,31 @@ describe("App shell", () => {
     expect(screen.queryByRole("navigation")).toBeNull();
   });
 
-  it("/api/me failing with network shows the signed-out copy", async () => {
-    fakeApi({ "GET /api/me": () => { throw new TypeError("Failed to fetch"); } });
+  it("/api/me answered by a login redirect shows the signed-out copy", async () => {
+    fakeApi({ "GET /api/me": () => ({ signIn: true }) });
     render(<App />);
     expect(await screen.findByText("You are signed out. Reload the page to sign in.")).toBeTruthy();
   });
 
-  it("a later API call failing with network shows the signed-out banner over the shell", async () => {
-    boot(owner, { "GET /api/domains": () => { throw new TypeError("Failed to fetch"); } });
+  it("/api/me with a dropped connection says so, not signed out", async () => {
+    fakeApi({ "GET /api/me": () => { throw new TypeError("Failed to fetch"); } });
+    render(<App />);
+    expect(await screen.findByText(errorText("offline"))).toBeTruthy();
+    expect(screen.queryByText("You are signed out. Reload the page to sign in.")).toBeNull();
+  });
+
+  it("a later API call answered by a login redirect shows the signed-out banner over the shell", async () => {
+    boot(owner, { "GET /api/domains": () => ({ signIn: true }) });
     const banner = await screen.findByRole("alert");
     expect(banner.textContent).toContain("You are signed out. Reload the page to sign in.");
     expect(screen.getByRole("navigation")).toBeTruthy();
+  });
+
+  it("a later API call with a dropped connection shows the load error, not the signed-out banner", async () => {
+    boot(owner, { "GET /api/domains": () => { throw new TypeError("Failed to fetch"); } });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(errorText("offline"));
+    expect(screen.queryByText("You are signed out. Reload the page to sign in.")).toBeNull();
   });
 
   it("a 500 on the first domains load shows an error with Retry, and Retry recovers", async () => {

@@ -74,6 +74,7 @@ const ERRORS: Record<string, string> = {
   invalid_name: "Use 1 to 40 characters.",
   too_many_attempts: "Too many tries. Wait 15 minutes and try again.",
   network: "You are signed out. Reload the page to sign in.",
+  offline: "Lost the connection. Check your network and try again.",
   unauthenticated: "You are signed out. Reload the page to sign in.",
   link_invalid: "This sign-in link has expired or was already used. Ask for a new one.",
   passkey_failed: "That passkey did not work here. Try again or use an email link.",

@@ -3,11 +3,21 @@ import { api, ApiError, onSignedOut } from "./api";
 import { fakeApi } from "./test/fakeApi";
 
 describe("api", () => {
-  it("maps a fetch that throws to ApiError(0, network)", async () => {
+  it("maps a fetch that throws (a dropped connection) to ApiError(0, offline)", async () => {
     fakeApi({ "GET /api/me": () => { throw new TypeError("Failed to fetch"); } });
     const err = await api("GET", "/api/me").catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect(err).toMatchObject({ status: 0, code: "network" });
+    expect(err).toMatchObject({ status: 0, code: "offline" });
+  });
+
+  it("never follows a redirect: a login redirect (expired Access session) is ApiError(0, network)", async () => {
+    const api0 = fakeApi({ "GET /api/me": () => ({ signIn: true }) });
+    let init: RequestInit | undefined;
+    const real = fetch;
+    vi.stubGlobal("fetch", (u: RequestInfo | URL, i?: RequestInit) => ((init = i), real(u, i)));
+    await expect(api("GET", "/api/me")).rejects.toMatchObject({ status: 0, code: "network" });
+    expect(init?.redirect).toBe("manual");
+    expect(api0.calls).toHaveLength(1);
   });
 
   it("maps a JSON error answer to its status and code", async () => {
@@ -82,15 +92,16 @@ describe("api", () => {
     expect(err.name).toBe("AbortError");
   });
 
-  it("tells signed-out listeners about 0 and 401 only", async () => {
+  it("tells signed-out listeners about a login redirect, a non-JSON 200 and 401 only, never a dropped connection", async () => {
     const seen = vi.fn();
     const off = onSignedOut(seen);
     fakeApi({
-      "GET /api/a": () => { throw new TypeError("x"); },
+      "GET /api/a": () => ({ signIn: true }),
       "GET /api/b": () => ({ status: 401, body: { error: "unauthenticated" } }),
       "GET /api/c": () => ({ status: 403, body: { error: "forbidden" } }),
+      "GET /api/d": () => { throw new TypeError("Failed to fetch"); },
     });
-    for (const p of ["/api/a", "/api/b", "/api/c"]) await api("GET", p).catch(() => {});
+    for (const p of ["/api/a", "/api/b", "/api/c", "/api/d"]) await api("GET", p).catch(() => {});
     off();
     expect(seen).toHaveBeenCalledTimes(2);
   });

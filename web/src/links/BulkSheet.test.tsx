@@ -340,6 +340,7 @@ describe("bulk results", () => {
     const sheet = await screen.findByRole("dialog", { name: "Delete links" });
     await waitFor(() => expect(within(sheet).getByText("Lost the connection. Some links may have changed: reload to check.")).toBeTruthy());
     expect(within(sheet).getByText("0 changed, 0 not changed, 3 unknown")).toBeTruthy();
+    expect(screen.queryByText(errorText("network"))).toBeNull();
     expect(within(sheet).queryByRole("button", { name: /^Retry failed/ })).toBeNull();
     expect(document.activeElement?.textContent).toMatch(/^Done/);
   });

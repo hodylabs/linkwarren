@@ -96,7 +96,7 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
   useEffect(() => {
     setLoadError(null);
     Promise.all([reloadDomains(), reloadUsers()]).catch((e: unknown) => {
-      const signedOutError = e instanceof ApiError && (e.status === 0 || e.status === 401);
+      const signedOutError = e instanceof ApiError && (e.code === "network" || e.status === 401);
       if (!signedOutError) setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
     });
   }, [reloadDomains, reloadUsers, loadTry]);
