@@ -11,7 +11,8 @@ function check(v: CfView): Line {
   if (needsFinish(v)) return ["Not connected to Cloudflare yet", "bad"];
   if (v.kind === "account") return ["In your Cloudflare account", v.ownership === "verified" ? "ok" : "wait"];
   if (v.ownership === "failed") return ["Ownership check failed", "bad"];
-  if (v.dns === "unknown") return ["Could not check DNS right now. Retrying.", "wait"];
+  // "Retrying" only while polling goes on: a settled view (an error no retry fixes) gets no more checks.
+  if (v.dns === "unknown") return [cfSettled(v) ? "Could not check DNS" : "Could not check DNS right now. Retrying.", "wait"];
   if (v.dns === "missing") return ["Waiting for the DNS record", "wait"];
   if (v.dns === "wrong_target") return ["Record points somewhere else", "bad"];
   return v.ownership === "verified" ? ["Record found, ownership verified", "ok"] : ["Record found, checking ownership", "wait"];
@@ -19,9 +20,9 @@ function check(v: CfView): Line {
 
 function https(v: CfView): Line {
   if (v.kind === "account")
-    return v.certificate === "not_covered"
-      ? ["Not covered by the free certificate. Add an advanced certificate in Cloudflare", "bad"]
-      : ["Covered by your zone's certificate", "ok"];
+    return v.certificate === "not_covered" ? ["Not covered by the free certificate. Add an advanced certificate in Cloudflare", "bad"]
+      : v.certificate === "issued" ? ["Covered by your zone's certificate", "ok"]
+      : ["Certificate not checked yet", "wait"]; // no successful check yet (a failed attach keeps unknown)
   if (v.certificate === "issued") return ["Certificate issued by Cloudflare", "ok"];
   if (v.certificate === "failed") return ["Certificate failed", "bad"];
   return ["Certificate pending", "wait"];

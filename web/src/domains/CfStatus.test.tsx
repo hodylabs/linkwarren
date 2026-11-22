@@ -47,6 +47,21 @@ describe("CfStatus", () => {
     expect(text()).toContain("Not covered by the free certificate. Add an advanced certificate in Cloudflare");
   });
 
+  it("account certificate is green only once a check confirmed it", () => {
+    show({ ...ACC, certificate: "unknown", lastError: "cloudflare_error" });
+    expect(text()).toContain("Certificate not checked yet");
+    expect(text()).not.toContain("Covered by your zone's certificate");
+  });
+
+  it("unknown DNS promises a retry only while checks continue", () => {
+    show({ ...OUT, dns: "unknown", lastError: "cloudflare_forbidden" });
+    expect(text()).toContain("Could not check DNS");
+    expect(text()).not.toContain("Retrying.");
+    cleanup();
+    show({ ...OUT, dns: "unknown", lastError: "cloudflare_unreachable" });
+    expect(text()).toContain("Could not check DNS right now. Retrying.");
+  });
+
   it("lastError and Cloudflare errors show as plain text", () => {
     show({ ...OUT, lastError: "cloudflare_unreachable", errors: ["<b>txt</b> record missing"] });
     expect(text()).toContain("Cloudflare did not answer. Retrying.");
