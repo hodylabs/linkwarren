@@ -209,7 +209,9 @@ domains.post("/", async (c) => {
   // Cloudflare write (an attach, or an outside hostname) first re-checks the permission used: lost after the insert, the
   // domain stays as saved and unconnected (a domain manager connects it later), and nothing is written to Cloudflare.
   const writesCf = kind === "outside" || (kind === "account" && manager);
-  const cf = writesCf && !(await holds(c.env, g)) ? inserted : await trySync(c.env, d, inserted, { attach: kind === "outside" || manager, confirmTakeover });
+  // A failed re-check reads as lost (after a committed write it must not turn the answer into a 500).
+  const still = !writesCf || (await holds(c.env, g).catch((e) => { logInternal(d.id, e); return false; }));
+  const cf = !still ? inserted : await trySync(c.env, d, inserted, { attach: kind === "outside" || manager, confirmTakeover });
   const out = { ...d, cloudflare: cfView(c.env, d, cf) };
   return c.json(manager ? { ...out, ...(await loopField(c.env, host)) } : out, 201);
 });

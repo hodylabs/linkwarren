@@ -189,6 +189,23 @@ describe("POST /api/domains", () => {
     expect(writes(fake.calls)).toEqual([]);
   });
 
+  it("a failing permission re-check after the insert keeps the domain, writes nothing to Cloudflare and answers 201", async () => {
+    configure();
+    const fake = installFakeCloudflare({ zones });
+    const real = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => {
+      if (q.startsWith("SELECT EXISTS (SELECT 1 FROM users u JOIN roles") && q.endsWith(" AS ok")) throw new Error("D1 down");
+      return real(q);
+    });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await call("d", "POST", "/api/domains", { host: "down.owned.test", type: "shared" });
+    expect(r.status).toBe(201);
+    expect(await r.json()).toMatchObject({ status: "active", cloudflare: { kind: "account", attached: false } });
+    expect(writes(fake.calls)).toEqual([]);
+    expect(await one("SELECT status FROM domains WHERE host = 'down.owned.test'")).toEqual({ status: "active" });
+    expect(err).toHaveBeenCalledWith("linkwarren: internal error during domain sync", expect.stringContaining("D1 down"));
+  });
+
   it("with Cloudflare, a takeover is asked of a domains.manage holder", async () => {
     configure();
     const fake = installFakeCloudflare({ zones });
@@ -349,6 +366,12 @@ describe("canManageDomain call sites: domain settings, the live check and the li
     expect(m.find((x) => x.id === "dm")!.cloudflare.lastError).toBeNull();
     const d = await (await call("d", "GET", "/api/domains")).json<L>();
     expect(d.find((x) => x.id === "dm")!.cloudflare.lastError).toBe("cloudflare_error");
+    // also on a domain the manager neither owns nor can use (the full list): the whole view, not the reduced one
+    await run("INSERT INTO domain_cf (domain_id, kind, last_error, security_level, rate_limit, updated_at) VALUES ('ds', 'account', 'cloudflare_error', 'high', 40, 1)");
+    const full = (await (await call("d", "GET", "/api/domains")).json<{ id: string; canUse: boolean; cloudflare: Record<string, unknown> }[]>()).find((x) => x.id === "ds")!;
+    expect([full.canUse, full.cloudflare]).toMatchObject([false, { lastError: "cloudflare_error", securityLevel: "high", rateLimit: 40 }]);
+    const reduced = (await (await call("a", "GET", "/api/domains")).json<{ id: string }[]>()).find((x) => x.id === "ds");
+    expect(reduced).toBeUndefined();
   });
 });
 
