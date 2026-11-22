@@ -52,9 +52,10 @@ const certificateOf = (s: string | null): CfRow["certificate"] =>
 // Only these types serve traffic at the host; TXT, MX and friends never conflict with the placeholder.
 const ADDRESS = new Set(["A", "AAAA", "CNAME"]);
 
+const routeHost = (pattern: string) => pattern.toLowerCase().replace(/^https?:\/\//, "").split("/")[0]!;
 /** Whether a Worker route pattern matches requests for `host` (any path). A leading `*` matches as a suffix. */
 export function routeCovers(pattern: string, host: string): boolean {
-  const hp = pattern.toLowerCase().replace(/^https?:\/\//, "").split("/")[0]!;
+  const hp = routeHost(pattern);
   return hp.startsWith("*") ? host.endsWith(hp.slice(1)) : hp === host;
 }
 
@@ -123,8 +124,10 @@ async function inspectOutside(cfg: CfConfig, zoneId: string, host: string): Prom
  */
 async function outsideRefusal(cfg: CfConfig, host: string, f: OutsideFacts, heldHostnameId: string | null): Promise<AttachError["code"] | null> {
   const covers = f.routes.filter((r) => routeCovers(r.pattern, host));
-  // Our own exact route wins over a broader foreign one; without it, any foreign (or script-less) covering route refuses.
-  if (f.route ? f.route.script !== cfg.workerName : covers.some((r) => r.script !== cfg.workerName)) return "route_in_use";
+  const foreign = covers.filter((r) => r.script !== cfg.workerName);
+  // Our own exact route wins over a broader foreign one, but not over another pattern for the same host (a path route is more
+  // specific and takes those paths away). Without our route, any foreign (or script-less) covering route refuses.
+  if (f.route ? f.route.script !== cfg.workerName || foreign.some((r) => routeHost(r.pattern) === host) : foreign.length) return "route_in_use";
   if (f.hostname && f.hostname.id !== heldHostnameId && !covers.some((r) => r.script === cfg.workerName)) return "hostname_in_use";
   // Stops short of the free 100 so concurrent creates (the count is not atomic) cannot cross into billed hostnames.
   if (!f.hostname && (await hostnameCount(cfg)) >= HOSTNAME_GUARD) return "hostname_limit";

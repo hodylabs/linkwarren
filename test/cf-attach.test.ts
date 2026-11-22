@@ -114,6 +114,16 @@ describe("syncDomain outside", () => {
     expect((await load(d.id)).cf).toMatchObject({ lastError: "route_in_use", routeId: null, hostnameId: null });
   });
 
+  it("our exact route beside another Worker's path route for the same host is route_in_use; a broader foreign route is fine", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { d, cf } = await mk("go.outside.test", "outside");
+    const ok = await syncDomain(e, cfg, d, cf, { attach: true });
+    fake.state.routes.push({ id: "r-wide", zoneId: "saas1", pattern: "*.outside.test/*", script: "other" });
+    expect((await syncDomain(e, cfg, d, ok, { attach: false })).lastError).toBeNull();
+    fake.state.routes.push({ id: "r-path", zoneId: "saas1", pattern: "go.outside.test/private/*", script: "other" });
+    await expect(syncDomain(e, cfg, d, ok, { attach: false })).rejects.toMatchObject({ code: "route_in_use" });
+  });
+
   it("an existing route and hostname it did not create are used but never adopted", async () => {
     const fake = installFakeCloudflare({ zones });
     fake.state.routes.push({ id: "r-hand", zoneId: "saas1", pattern: "go.outside.test/*", script: "lw" });
