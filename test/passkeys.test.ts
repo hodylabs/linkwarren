@@ -145,6 +145,25 @@ describe("passkey registration", () => {
     expect(await all("SELECT COUNT(*) n FROM audit_log WHERE action = 'passkey.add'")).toEqual([{ n: 10 }]);
   });
 
+  it("a disable or sign-out that lands during verification stores no passkey (401, no audit)", async () => {
+    for (const cut of ["UPDATE users SET status = 'disabled' WHERE email = 'a@example.com'", "DELETE FROM sessions"]) {
+      await env.DB.batch(["passkeys", "sessions", "audit_log", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+      const cookie = await signInApp("a@example.com");
+      const { o } = await regOptions(cookie);
+      const resp = await softAuthenticator().register(o!);
+      const batch = env.DB.batch.bind(env.DB);
+      vi.spyOn(env.DB, "batch").mockImplementationOnce(async (stmts) => {
+        await env.DB.prepare(cut).run(); // the owner disables the account, or the person signs out elsewhere
+        return batch(stmts);
+      });
+      const r = await register(cookie, resp);
+      vi.restoreAllMocks();
+      expect([r.status, await r.text()]).toEqual([401, '{"error":"unauthenticated"}']);
+      expect(await all("SELECT COUNT(*) n FROM passkeys")).toEqual([{ n: 0 }]);
+      expect(await all("SELECT COUNT(*) n FROM audit_log WHERE action = 'passkey.add'")).toEqual([{ n: 0 }]);
+    }
+  });
+
   it("sanitizes the name like a rename: strips hidden characters, collapses whitespace", async () => {
     const cookie = await signInApp("a@example.com");
     for (const [raw, want] of [["evil\u202Eexe", "evilexe"], ["a\u2060\u2064b", "ab"], ["a\nb", "ab"], ["  a    b\u200B ", "a b"], ["a\u061Cb\uFEFFc", "abc"]] as const) {

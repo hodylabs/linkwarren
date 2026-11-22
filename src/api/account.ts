@@ -38,7 +38,7 @@ account.post("/passkeys", async (c) => {
   if (!b) return c.json({ error: "invalid_body" }, 400);
   const given = b.name === undefined ? undefined : cleanName(b.name);
   if (given === null) return c.json({ error: "invalid_name" }, 400);
-  const env = c.env, user = c.var.user;
+  const env = c.env, user = c.var.user, sid = c.var.session?.id ?? null;
   let k;
   try {
     k = await verifyRegistration(env, user, b.response);
@@ -51,16 +51,20 @@ account.post("/passkeys", async (c) => {
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   // The limit is re-checked inside the INSERT (two option fetches at 9 cannot make 11); a known credential id is skipped, not thrown.
+  // So are the account and the session: a disable or sign-out that landed during verification stores nothing.
+  const alive = "EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active') AND (? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id = ? AND user_id = ?))";
+  const aliveBinds = [user.id, sid, sid, user.id];
   const [ins] = await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO passkeys (id, credential_id, user_id, public_key, counter, transports, device_type, backed_up, name, created_at)
-       SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM passkeys WHERE user_id = ?) < ${MAX_PASSKEYS}
+       SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM passkeys WHERE user_id = ?) < ${MAX_PASSKEYS} AND ${alive}
        ON CONFLICT(credential_id) DO NOTHING`,
-    ).bind(id, k.credentialId, user.id, k.publicKey, k.counter, JSON.stringify(k.transports), k.deviceType, k.backedUp ? 1 : 0, name, now, user.id),
+    ).bind(id, k.credentialId, user.id, k.publicKey, k.counter, JSON.stringify(k.transports), k.deviceType, k.backedUp ? 1 : 0, name, now, user.id, ...aliveBinds),
     auditStmt(env, { actorId: user.id, action: "passkey.add", targetType: "passkey", targetId: id, detail: { name } },
       { sql: "EXISTS (SELECT 1 FROM passkeys WHERE id = ?)", binds: [id] }),
   ]);
   if (!ins!.meta.changes) {
+    if (!(await env.DB.prepare(`SELECT ${alive} ok`).bind(...aliveBinds).first<{ ok: number }>())?.ok) return c.json({ error: "unauthenticated" }, 401);
     const dup = await env.DB.prepare("SELECT 1 FROM passkeys WHERE credential_id = ?").bind(k.credentialId).first();
     return dup ? c.json(passkeyFailed, 400) : c.json(limit, 409);
   }
