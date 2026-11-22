@@ -2,10 +2,12 @@ import { getMcpAuthContext } from "agents/mcp/server";
 import type { Principal } from "../call";
 import type { Env } from "../env";
 import { hitAll, hitCount, LIMITS, limitKey } from "../limits";
-import { ROLE_JOIN, USER_COLS } from "../roles";
+import { can, ROLE_JOIN, USER_COLS } from "../roles";
 import { rowToUser } from "../types";
 
 export const REFUSED = "This connection was disconnected or its person no longer has access.";
+/** S8 R7: the person's role lost `agents`; the connection is kept, so turning it back on restores it. */
+export const ROLE_REFUSED = "Your role no longer allows AI agents. Ask an owner.";
 const RATE = "Rate limited, try again in a minute.";
 const DAILY = "Daily limit reached, try again tomorrow (UTC).";
 
@@ -29,10 +31,12 @@ async function resolve(env: Env): Promise<Resolved> {
   ).bind(connId, userId).first<ConnRow>();
   // Refused calls write nothing (no tool_calls row): a token still valid after a disconnect cannot spend D1 writes.
   if (!row) return { refused: REFUSED };
+  const user = rowToUser(row);
+  if (!can(user, "agents")) return { refused: ROLE_REFUSED };
   return {
     connId,
     p: {
-      user: rowToUser(row),
+      user,
       grant: { write: row.can_write === 1, del: row.can_delete === 1, domains: null, via: row.client_name },
       limiterKey: limitKey.apiConn(connId),
     },

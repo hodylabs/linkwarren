@@ -47,7 +47,7 @@ When people connect agents (MCP) or create API keys (see [agents.md](agents.md))
 
 A bulk CSV export from the Links page is generated in your browser and never sent to the server. It holds destinations, rules and creators as that person may see them, and `has_password` (yes or no), never a password.
 
-The OAuth state (registered clients, grants and hashed tokens) lives in the `OAUTH_KV` namespace. A grant carries only the person's id, the connection id and the agent's name, never link data. Grants end with Disconnect or when their refresh token expires (30 days unused); client registrations are kept 30 days.
+The OAuth state (registered clients, grants and hashed tokens) lives in the `OAUTH_KV` namespace. A grant carries only the person's id, the connection id and the agent's name, never link data. Grants end with Disconnect or when their refresh token expires (30 days unused); client registrations are kept 30 days. A role that loses AI agents keeps its people's grants and connections (refused, not deleted) until they are disconnected or expire.
 
 When an agent tries to register with a callback address the instance does not allow, linkwarren logs one line with that address's origin and path (never its query, the agent's name or any secret), so the owner can decide to allow it.
 

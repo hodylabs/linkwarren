@@ -3,6 +3,7 @@ import type { Env } from "./env";
 import { normalizeHost } from "./host";
 import { app } from "./app";
 import { mcpHandler } from "./mcp/server";
+import { actorCan } from "./roles";
 
 /** Every path the OAuth provider answers; all of them are JSON 404 while agent connections are off (mcpState). */
 export const OAUTH_PATHS: readonly string[] = [
@@ -56,24 +57,27 @@ const checkRegistration = ({ clientMetadata }: { clientMetadata: Record<string, 
 };
 
 /**
- * Every code exchange and refresh re-reads the connection and its person (one D1 read): a revoked connection (for example a
- * disconnect whose KV revoke failed) or a disabled person gets invalid_grant, and the library then revokes the grant.
- * No D1, no token (temporarily_unavailable, the grant is kept).
+ * Every code exchange and refresh re-reads the connection, its person and their role (one D1 read): a revoked connection (for
+ * example a disconnect whose KV revoke failed) or a disabled person gets invalid_grant, and the library then revokes the grant.
+ * A role without `agents` (S8 R7) is refused with access_denied, which the library does not revoke: the grant stays, so turning
+ * the permission back on restores the connection with no KV writes. No D1, no token (temporarily_unavailable, the grant is kept).
  */
 export async function checkConnection(o: TokenExchangeCallbackOptions<Env>): Promise<void> {
   const connId = (o.props as { connId?: unknown } | undefined)?.connId;
-  let ok: unknown = null;
+  let row: { agents: number } | null = null;
   if (typeof connId === "string") {
+    const g = actorCan(o.userId, "agents");
     try {
-      ok = await o.env.DB.prepare(
-        "SELECT 1 FROM agent_connections c JOIN users u ON u.id = c.user_id WHERE c.id = ? AND c.user_id = ? AND c.revoked_at IS NULL AND u.status = 'active'",
-      ).bind(connId, o.userId).first();
+      row = await o.env.DB.prepare(
+        `SELECT ${g.sql} agents FROM agent_connections c JOIN users u ON u.id = c.user_id WHERE c.id = ? AND c.user_id = ? AND c.revoked_at IS NULL AND u.status = 'active'`,
+      ).bind(...g.binds, connId, o.userId).first<{ agents: number }>();
     } catch (e) {
       console.error("connection check failed", e instanceof Error ? e.name : "unknown");
       throw new OAuthError("temporarily_unavailable", { description: "Try again later", statusCode: 503 });
     }
   }
-  if (!ok) throw new OAuthError("invalid_grant", { description: "This connection was disconnected" });
+  if (!row) throw new OAuthError("invalid_grant", { description: "This connection was disconnected" });
+  if (!row.agents) throw new OAuthError("access_denied", { description: "Your role does not allow AI agents", statusCode: 403 });
 }
 
 let cached: { host: string; p: OAuthProvider<Env> } | undefined;

@@ -5,6 +5,7 @@ import { authenticate, authMode } from "../auth";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { hitAll, LIMITS, limitKey } from "../limits";
+import { actorCan, can } from "../roles";
 import { safeNext } from "../session";
 import { mcpState } from "./switch";
 import { messagePage, renderApproval } from "./approval-page";
@@ -47,6 +48,8 @@ const REFUSALS = {
   disabled: ["Access turned off", "Your access has been turned off. Ask the owner."],
 } as const;
 
+/** S8 R7: the person's role lacks `agents`; refused before any limiter or consent write. */
+const NO_AGENTS = () => msg(403, "Not allowed", "Your role does not allow connecting AI agents.");
 const EXPIRED = () => msg(400, "Approval expired", "Approval expired, start again from your agent");
 
 type Ctx = { Bindings: Env };
@@ -107,6 +110,7 @@ authorize.get("/", async (c) => {
     }
     return w.fail;
   }
+  if (!can(w.user, "agents")) return NO_AGENTS();
   const oauth = helpers(c.env);
   if (!oauth) return msg(503, "Unavailable", "Connecting agents is unavailable right now.");
   const limited = await limitedFor(c.env, w.user.id);
@@ -148,6 +152,7 @@ authorize.post("/", async (c) => {
   const w = await who(c.req.raw, c.env);
   if (!w.user) return w.fail;
   const user = w.user;
+  if (!can(user, "agents")) return NO_AGENTS();
   const oauth = helpers(c.env);
   if (!oauth) return msg(503, "Unavailable", "Connecting agents is unavailable right now.");
   const limited = await limitedFor(c.env, user.id);
@@ -185,18 +190,21 @@ authorize.post("/", async (c) => {
   const connId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   let clientName: string;
+  const ok = actorCan(user.id, "agents");
   try {
     const d = await oauth.describeConsent(request);
     clientName = nameOf(d);
-    await c.env.DB.batch([
+    // The role's agents is re-checked inside the insert: a role edit after the check above leaves no row, audit or grant.
+    const res = await c.env.DB.batch([
       c.env.DB.prepare(
-        "INSERT INTO agent_connections (id, user_id, client_id, client_name, redirect_host, can_write, can_delete, created_at) VALUES (?,?,?,?,?,?,?,?)",
-      ).bind(connId, user.id, request.clientId, clientName, d.redirectHost, write ? 1 : 0, del ? 1 : 0, now),
+        `INSERT INTO agent_connections (id, user_id, client_id, client_name, redirect_host, can_write, can_delete, created_at) SELECT ?,?,?,?,?,?,?,? WHERE ${ok.sql}`,
+      ).bind(connId, user.id, request.clientId, clientName, d.redirectHost, write ? 1 : 0, del ? 1 : 0, now, ...ok.binds),
       auditStmt(c.env, {
         actorId: user.id, via: clientName, action: "agent.connect", targetType: "agent_connection", targetId: connId,
         detail: { clientId: request.clientId, redirectHost: d.redirectHost, write, del },
       }, { sql: "EXISTS (SELECT 1 FROM agent_connections WHERE id = ?)", binds: [connId] }),
     ]);
+    if (!res[0]!.meta.changes) return NO_AGENTS();
   } catch (err) {
     console.error("connection write failed", err instanceof Error ? err.name : "unknown");
     return FAILED();

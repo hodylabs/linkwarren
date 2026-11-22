@@ -1,7 +1,7 @@
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupAccess } from "./helpers/access";
-import { CLAUDE_CB, authorizePath, connectAgent, connectAgentFull, openConsent, pkce, registerClient, signInHeaders, token } from "./helpers/oauth";
+import { CLAUDE_CB, authorizePath, connectAgent, connectAgentFull, openConsent, pkce, postConsent, registerClient, signInHeaders, token } from "./helpers/oauth";
 
 beforeAll(setupAccess);
 afterEach(() => vi.restoreAllMocks());
@@ -65,5 +65,67 @@ describe("full OAuth flow", () => {
     });
     expect(r.status).toBeGreaterThanOrEqual(400);
     expect((await refresh(t.clientId, t.refreshToken)).status).toBe(200);
+  });
+});
+
+// S8 R7: without `agents` a token exchange is refused but nothing is revoked (no KV write); turning it back on restores it.
+describe("agents follow the role at the token endpoint", () => {
+  const role = (id: string, perms: readonly string[]) =>
+    env.DB.prepare("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms")
+      .bind(id, `Role ${id}`, JSON.stringify(perms)).run();
+  const grants = async (email: string) => {
+    const u = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>();
+    return (await env.OAUTH_PROVIDER!.listUserGrants(u!.id)).items.length;
+  };
+  const noKvWrites = () => [vi.spyOn(env.OAUTH_KV, "put"), vi.spyOn(env.OAUTH_KV, "delete")];
+
+  it("refresh with agents off: 403 access_denied, no KV write, the grant kept; on again: the same refresh token works", async () => {
+    const email = "role-refresh@example.com";
+    await role("rf", ["agents"]);
+    const t = await connectAgentFull(email, { roleId: "rf" });
+    await role("rf", []);
+    const spies = noKvWrites();
+    const r = await refresh(t.clientId, t.refreshToken);
+    expect([r.status, (await r.json<{ error: string }>()).error]).toEqual([403, "access_denied"]);
+    for (const s of spies) expect(s).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    expect(await grants(email)).toBe(1);
+    await role("rf", ["agents"]);
+    expect((await refresh(t.clientId, t.refreshToken)).status).toBe(200);
+  });
+
+  it("code exchange with agents removed after approval: 403 access_denied, nothing revoked; on again: the code exchanges", async () => {
+    const email = "role-code@example.com";
+    await role("rc", ["agents"]);
+    const { clientId } = await registerClient(CLAUDE_CB);
+    const { verifier, challenge } = await pkce();
+    const auth = await signInHeaders(email, "rc");
+    const page = await openConsent(authorizePath({
+      response_type: "code", client_id: clientId, redirect_uri: CLAUDE_CB, state: "s", code_challenge: challenge, code_challenge_method: "S256",
+    }), auth);
+    const done = await postConsent(auth, page.binding, { handle: page.handle, uid: page.uid, action: "approve", access: "read" });
+    expect(done.status).toBe(302);
+    const code = new URL(done.headers.get("location")!).searchParams.get("code")!;
+    const exchange = { grant_type: "authorization_code", code, redirect_uri: CLAUDE_CB, client_id: clientId, code_verifier: verifier };
+    await role("rc", []);
+    const spies = noKvWrites();
+    const r = await token(exchange);
+    expect([r.status, (await r.json<{ error: string }>()).error]).toEqual([403, "access_denied"]);
+    for (const s of spies) expect(s).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    expect(await grants(email)).toBe(1);
+    await role("rc", ["agents"]);
+    expect((await token(exchange)).status).toBe(200);
+  });
+
+  it("a revoked connection is still invalid_grant (and its grant revoked), whatever the role", async () => {
+    const email = "role-revoked@example.com";
+    await role("rv", []);
+    const t = await connectAgentFull(email);
+    await env.DB.prepare("UPDATE agent_connections SET revoked_at = 1 WHERE id = ?").bind(t.connId).run();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await refresh(t.clientId, t.refreshToken);
+    expect([r.status, (await r.json<{ error: string }>()).error]).toEqual([400, "invalid_grant"]);
+    expect(await grants(email)).toBe(0);
   });
 });

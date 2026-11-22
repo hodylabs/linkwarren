@@ -3,7 +3,7 @@ import type { Env } from "../env";
 import { hashKey, KEY_SHAPE } from "../keys";
 import { hitAll, LIMITS, limitKey } from "../limits";
 import type { Grant } from "../principal";
-import { ROLE_JOIN, USER_COLS } from "../roles";
+import { can, ROLE_JOIN, USER_COLS } from "../roles";
 import { rowToUser, type UserRow } from "../types";
 import { linkStats } from "./analytics";
 import { listDomains } from "./domains";
@@ -61,6 +61,8 @@ v1.use("*", async (c, next) => {
   }
   if (!row) return c.json(invalidKey, 401);
   const user = rowToUser(row);
+  // S8 R7: refused, not revoked, while the role lacks keys; before the limiter and last_used_at, so it writes nothing.
+  if (!can(user, "keys")) return c.json({ error: "keys_not_allowed" }, 403);
   try {
     // One atomic statement: a refused call writes nothing.
     if (!(await hitAll(c.env, [

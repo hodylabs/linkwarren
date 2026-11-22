@@ -368,3 +368,53 @@ describe("final fix wave", () => {
     }
   });
 });
+
+// S8 R7: a key follows its person's current role: refused (not revoked) without `keys`, and never more than the role.
+describe("keys follow the role", () => {
+  const role = (id: string, perms: readonly string[]) =>
+    run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms", id, `Role ${id}`, JSON.stringify(perms));
+  const settle = () => new Promise((r) => setTimeout(r, 100)); // let a waitUntil last_used_at write land if one was sent
+
+  it("keys off: every route 403 keys_not_allowed, no limiter row, no last_used_at write; on again: the same key works", async () => {
+    await role("kr", ["keys", "links.create"]);
+    await run("UPDATE users SET role_id = 'kr' WHERE id = 'ua'");
+    const k = await key("ua", { write: true });
+    await role("kr", ["links.create"]);
+    for (const [method, path, json] of [["GET", "/links"], ["GET", "/domains"], ["GET", "/analytics/links"], ["GET", "/links/la"], ["GET", "/nope"],
+      ["POST", "/links", { domainId: "dA", slug: "late", url: "https://y.com" }]] as const) {
+      const r = await v1(k.secret, path, { method, json });
+      expect([method, path, r.status, await r.json()]).toEqual([method, path, 403, { error: "keys_not_allowed" }]);
+    }
+    await settle();
+    expect(await count("auth_limits")).toBe(0);
+    expect(await one("SELECT last_used_at, revoked_at FROM api_keys WHERE id = ?", k.id)).toEqual({ last_used_at: null, revoked_at: null });
+    expect(await one("SELECT 1 FROM links WHERE slug = 'late'")).toBeNull();
+    await role("kr", ["keys", "links.create"]);
+    expect((await v1(k.secret, "/links")).status).toBe(200);
+  });
+
+  it("a write key never exceeds the role: links.create removed, POST /links is 403 and writes nothing", async () => {
+    await role("kw", ["keys", "links.create"]);
+    await run("UPDATE users SET role_id = 'kw' WHERE id = 'ua'");
+    const k = await key("ua", { write: true });
+    await role("kw", ["keys"]);
+    const r = await v1(k.secret, "/links", { method: "POST", json: { domainId: "dA", slug: "late", url: "https://y.com" } });
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await one("SELECT 1 FROM links WHERE slug = 'late'")).toBeNull();
+  });
+
+  it("agents off does not touch keys", async () => {
+    await role("ka", ["keys"]);
+    await run("UPDATE users SET role_id = 'ka' WHERE id = 'ua'");
+    const k = await key("ua");
+    expect((await v1(k.secret, "/links")).status).toBe(200);
+  });
+
+  it("the in-process MCP path is not gated on keys (agents has its own check)", async () => {
+    await role("ag", ["agents"]);
+    await run("UPDATE users SET role_id = 'ag' WHERE id = 'ua'");
+    const user = rowToUser((await one(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = 'ua'`))!);
+    const r = await callApi(env, createExecutionContext(), { user, grant: { write: false, del: false, domains: null, via: "Claude" }, limiterKey: "api:c:x" }, "GET", "/links");
+    expect(r.status).toBe(200);
+  });
+});

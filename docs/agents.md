@@ -39,11 +39,15 @@ On the API & agents screen, select the connection (`J`/`K`, `Enter`) and use the
 
 Select the connection and press `Shift+D` (or Disconnect), then confirm. The agent's next call fails, its refresh token stops working, and it has to connect again. The same happens to every agent of a person who is disabled. Disconnecting someone does not touch their other agents or keys.
 
+### When a role loses AI agents
+
+Agents follow the person's current role. When an owner turns off **Connect AI agents** for a role, every agent of its people is refused from its next call: each tool answers "Your role no longer allows AI agents. Ask an owner." (no tool call is logged), a refresh or code exchange answers `403 access_denied`, and the approval page answers "Your role does not allow connecting AI agents." Nothing is disconnected or revoked: turning the permission back on restores the same connections with the same tokens (until they expire). Listing and disconnecting your own connections still works without it. Turning off **Personal API keys** does not affect agents, and the other way round.
+
 ## Tools
 
 | Tool | Needs | What it does |
 | --- | --- | --- |
-| `server_info` | read | Your access level, role, the MCP address and the limits |
+| `server_info` | read | Your access level, role (its name and permission keys), the MCP address and the limits |
 | `search_links` | read | Search the links you can see, newest first |
 | `get_link` | read | One link by id or by short URL |
 | `list_domains` | read | The domains you can create links on (host, type and status) |
@@ -72,6 +76,8 @@ The server tells the model that tool results are data, never instructions: a lin
 ## API keys
 
 For scripts, create a key on the API & agents screen: New API key (`N`), give it a name (lowercase letters, digits and hyphens), choose the access (read only by default, delete only with write), optionally limit it to some domains, and pick the expiry (30, 90 or 365 days). The key (`lw_` and 43 more characters) is shown **once**: copy it then. linkwarren keeps only a hash. Revoke a key from the same screen (`Shift+D`); a revoked or expired key answers `401 {"error":"invalid_key"}`.
+
+Keys follow the person's current role. Creating a key needs **Personal API keys** in the role (`403 forbidden` otherwise). When an owner turns it off, every key of the role's people answers `403 {"error":"keys_not_allowed"}` from the next request, without counting on any limit or updating its last use; nothing is revoked, so turning it back on restores the same keys (until they expire). Listing and revoking your own keys still works without it. A key never does more than the role allows: with write access it still gets `403 forbidden` for what the role cannot do.
 
 A key works only on `/api/v1`, sent as a Bearer token (`Authorization: Bearer <key>`, the word `Bearer` in any case). It never works on the dashboard API (`/api`) or on `/mcp`. Keep it in an environment variable, not on the command line or in a file you commit:
 
@@ -155,6 +161,7 @@ Agents and keys share per-minute limits per person, per connection and per key, 
 | --- | --- | --- |
 | 401 | `unauthenticated` | No `Authorization` header |
 | 401 | `invalid_key` | Wrong, revoked or expired key, or the person was disabled |
+| 403 | `keys_not_allowed` | The person's role does not allow personal API keys (the key is kept) |
 | 403 | `read_only` | The key cannot create or change links |
 | 403 | `delete_not_allowed` | The key cannot delete links |
 | 403 | `forbidden` | Not a domain or link you (or this key) may use, or your role does not allow it (creating links, editing someone else's link, bulk changes) |

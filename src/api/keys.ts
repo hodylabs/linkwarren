@@ -36,6 +36,7 @@ keys.get("/", async (c) => {
 
 keys.post("/", async (c) => {
   const u = c.var.user;
+  if (!can(u, "keys")) return c.json({ error: "forbidden" }, 403); // S8 R7, before the body is read
   const body = createBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const b = body.data;
@@ -49,18 +50,22 @@ keys.post("/", async (c) => {
   }
   const { secret, prefix } = newKey();
   const id = crypto.randomUUID(), now = Math.floor(Date.now() / 1000), expiresAt = now + b.expiresInDays * 86400;
+  const ok = actorCan(u.id, "keys");
   try {
-    // The cap is checked inside the insert, so parallel creates cannot pass it together.
+    // The cap and the role's keys are checked inside the insert, so parallel creates or a role edit cannot pass them together.
     const res = await c.env.DB.batch([
       c.env.DB.prepare(
         `INSERT INTO api_keys (id,user_id,name,prefix,hash,can_write,can_delete,domain_ids,expires_at,created_at)
-         SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND revoked_at IS NULL) < ?`,
-      ).bind(id, u.id, b.name, prefix, await hashKey(secret), b.write ? 1 : 0, b.del ? 1 : 0, JSON.stringify(domainIds), expiresAt, now, u.id, MAX_ACTIVE),
+         SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND revoked_at IS NULL) < ? AND ${ok.sql}`,
+      ).bind(id, u.id, b.name, prefix, await hashKey(secret), b.write ? 1 : 0, b.del ? 1 : 0, JSON.stringify(domainIds), expiresAt, now, u.id, MAX_ACTIVE, ...ok.binds),
       auditStmt(c.env, { ...actor(c), action: "key.create", targetType: "api_key", targetId: id,
         detail: { name: b.name, prefix, write: b.write, del: b.del, domainIds } },
         { sql: "EXISTS (SELECT 1 FROM api_keys WHERE id = ?)", binds: [id] }),
     ]);
-    if (!res[0]!.meta.changes) return c.json({ error: "too_many_keys" }, 409);
+    if (!res[0]!.meta.changes) {
+      const w = await c.env.DB.prepare(`SELECT ${ok.sql} ok`).bind(...ok.binds).first<{ ok: number }>();
+      return w?.ok ? c.json({ error: "too_many_keys" }, 409) : c.json({ error: "forbidden" }, 403);
+    }
   } catch (e) {
     if (/UNIQUE/.test(String(e))) return c.json({ error: "name_taken" }, 409);
     throw e;
