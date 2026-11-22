@@ -90,3 +90,19 @@ describe("sign-in schema", () => {
     expect(await msg(passkey("sp4", "c3", "su3"))).toContain("UNIQUE");
   });
 });
+
+describe("analytics schema", () => {
+  it("has the three rollup tables", async () => {
+    const r = await db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('clicks_daily','clicks_daily_dim','analytics_state') ORDER BY name")
+      .all<{ name: string }>();
+    expect(r.results.map((x) => x.name)).toEqual(["analytics_state", "clicks_daily", "clicks_daily_dim"]);
+  });
+
+  it("rejects dim 'os'", async () => {
+    const dim = (d: string) =>
+      run("INSERT INTO clicks_daily_dim (day,link_id,domain_id,dim,value,clicks) VALUES ('2026-11-19','l1','d1',?,'x',1)", d);
+    expect(await msg(dim("os"))).toContain("CHECK");
+    await dim("country");
+  });
+});

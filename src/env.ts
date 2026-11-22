@@ -21,8 +21,12 @@ export type Env = {
   CF_WORKER_NAME?: string;
   CF_SAAS_ZONE_ID?: string;
   CF_CNAME_TARGET?: string;
-  /** Analytics Engine dataset for click points; nothing is recorded when unset. */
+  /** Click analytics (all optional). CLICKS is the Analytics Engine dataset binding; no binding, nothing recorded. */
   CLICKS?: AnalyticsEngineDataset;
-  /** Secret salt for the daily visitor code; the visitor blob is empty when unset. */
+  /** Secret: API token with only Account Analytics Read on CF_ACCOUNT_ID. Never logged or returned. */
+  AE_READ_TOKEN?: string;
+  /** Dataset name, default "linkwarren_clicks", must match ^[A-Za-z0-9_]{1,64}$. */
+  AE_DATASET?: string;
+  /** Secret: daily visitor hash salt; unset leaves the visitor blob empty. */
   VISITOR_SALT?: string;
 };
