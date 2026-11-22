@@ -96,7 +96,7 @@ A bare domain such as `example.com` (or `example.co.uk`) has `instructions.apex:
 
 ## Cloudflare for SaaS limits
 
-The first 100 custom hostnames on the SaaS zone are free; Cloudflare bills each one after that. Every outside domain uses one, including pending ones, until the domain is rejected. linkwarren refuses with `hostname_limit` from the 95th on, so it never causes a charge.
+The first 100 custom hostnames on the SaaS zone are free; Cloudflare bills each one after that. Every outside domain uses one, including pending ones, until the domain is rejected. linkwarren refuses with `hostname_limit` from the 95th on, so it never adds a billed custom hostname; other Cloudflare charges depend on the account's own plan and settings.
 
 ## Case-sensitive slugs
 
