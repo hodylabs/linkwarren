@@ -148,7 +148,8 @@ export const TOOLS: Record<string, ToolDef> = {
   },
   bulk_links: {
     description: "Change up to 100 links in one call with the same rules as one at a time: delete, schedule, move to another domain, "
-      + "redirect type or password. delete and move refuse without confirm: true; show the person the summary and ask first. "
+      + "redirect type or password. It refuses without confirm: true to delete, move, take links offline (endNow, a past expiry or a "
+      + "future start) or remove a password; show the person the summary and ask first. "
       + "move also needs oldAddress (forward or copy): ask the person, never choose for them. Results are per link, with a reason "
       + "when refused; a password is set on one link per call and the rest come back in `pending` to send again." + DATA,
     input: z.strictObject({
@@ -170,17 +171,24 @@ export const TOOLS: Record<string, ToolDef> = {
       if (!p.grant.write) throw new ApiError("read_only", 403);
       if (action === "delete" && !p.grant.del) throw new ApiError("delete_not_allowed", 403);
       if ((action === "move") !== (domain !== undefined)) throw new ApiError("bad_input", 400);
-      const n = new Set(ids as string[]).size;
+      const c = new Set(ids as string[]).size, n = c === 1 ? "1 link" : `${c} links`;
       const target = action === "move" ? await domainOf(api, domain) : undefined;
       if (target && rest.oldAddress === undefined) return {
         refused: true,
-        summary: `Moving ${n} links to ${target.host}: ask the person whether each old address should forward to the new one (oldAddress: forward) or stay as an independent link with a copy on ${target.host} (oldAddress: copy).`,
+        summary: `Moving ${n} to ${target.host}: ask the person whether each old address should forward to the new one (oldAddress: forward) or stay as an independent link with a copy on ${target.host} (oldAddress: copy).`,
       };
-      if (confirm !== true && (action === "delete" || target)) return {
+      const now = Math.floor(Date.now() / 1000);
+      // Gate by effect, not by flag: a past expiry or a future start takes a live link offline just like endNow.
+      const offline = action === "schedule" && (rest.endNow === true
+        || (rest.expiresAt != null && rest.expiresAt <= now) || (rest.startsAt != null && rest.startsAt > now));
+      const unprotect = action === "password" && rest.password === null;
+      if (confirm !== true && (action === "delete" || target || offline || unprotect)) return {
         refused: true,
-        summary: !target ? `Deleting ${n} links sends their visitors to each domain's not-found page and locks the slugs.`
-          : rest.oldAddress === "forward" ? `Moving ${n} links to ${target.host}; each old address will forward to the new one.`
-          : `Copying ${n} links to ${target.host}; the originals stay as they are.`,
+        summary: offline ? `This schedule takes ${n} offline now; visitors stop reaching the destination.`
+          : unprotect ? `Removing the password from ${n} lets anyone with the address reach the destination.`
+          : !target ? `Deleting ${n} sends their visitors to each domain's not-found page and locks the slugs.`
+          : rest.oldAddress === "forward" ? `Moving ${n} to ${target.host}; each old address will forward to the new one.`
+          : `Copying ${n} to ${target.host}; the originals stay as they are.`,
       };
       const r = (await api("POST", "/links/bulk", { action, ids, ...rest, ...(target ? { domainId: target.id } : {}) })) as
         { results: BulkResult[]; pending: string[] };
