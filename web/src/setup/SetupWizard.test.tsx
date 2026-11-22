@@ -295,6 +295,29 @@ describe("import results", () => {
     expect(writes(api).map((c) => c.path)).toEqual(["/api/import?dryRun=1", "/api/import", "/api/import"]);
   });
 
+  it("a main domain changed after choosing the file rebuilds the import for the new domain", async () => {
+    const ALT = { ...MAIN, id: "d2", host: "alt.test" };
+    const { api, user } = boot({ steps: ALL, settings: { name: "N", mainDomainId: "d0" }, domains: [MAIN, ALT] });
+    await heading("Bring your links");
+    await user.upload(screen.getByLabelText("Links file"), CSV());
+    await user.click(await screen.findByLabelText(NO_PW));
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    await heading("Email");
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    await heading("Main domain");
+    await user.click(screen.getByRole("radio", { name: "alt.test" }));
+    await user.click(screen.getByRole("button", { name: /^Continue/ }));
+    await heading("Email");
+    await user.click(screen.getByRole("button", { name: /^Continue/ }));
+    await heading("Bring your links");
+    await waitFor(() => expect(writes(api).filter((c) => c.path === "/api/import?dryRun=1")).toHaveLength(2));
+    await user.click(await screen.findByLabelText(NO_PW));
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    expect(await screen.findByText(/^Imported 2/)).toBeTruthy();
+    const imports = writes(api).filter((c) => c.path.startsWith("/api/import"));
+    expect(imports.map((c) => (c.body as { mainHost: string }).mainHost)).toEqual(["go.test", "alt.test", "alt.test"]);
+  });
+
   it("shows progress while a part is on its way", async () => {
     let release = () => undefined as void;
     const { user } = boot({ ...MAIN_ONLY, routes: { "POST /api/import": () => new Promise((r) => (release = () => r({ body: REPORT }))) } });

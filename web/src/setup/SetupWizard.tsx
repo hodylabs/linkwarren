@@ -242,23 +242,20 @@ export function SetupWizard() {
   useEffect(() => void (takeover && takeoverEl.current?.focus()), [takeover]);
 
   const onPart = (verb: string) => (i: number, n: number) => setPart(`${verb} part ${i} of ${n}`);
-  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const g = ++fileGen.current;
-    const f = e.target.files?.[0];
-    e.target.value = ""; // choosing the same file again fires change again
+  // The chosen file and the main domain its chunks were built for: a later main domain change rebuilds them (links with no
+  // host go to the main domain, so stale chunks would import to the old one).
+  const source = useRef<{ name: string; text: string; host: string } | null>(null);
+  const reset = () => {
     setFileErrors([]);
     setChunks(null);
     setPreview(null);
     setResult(null);
     setPwUnknown(false);
     setNoPw(false);
-    if (!f) return;
-    setFileName(f.name);
-    // Checked here for a quick answer; the server checks every request again.
-    if (f.size > MAX_FILE) return setFileErrors([{ line: 0, reason: "The file is larger than 10 MB" }]);
-    const text = await f.text();
-    if (g !== fileGen.current) return;
-    const p = parseLinksFile(f.name, text, mainHost);
+  };
+  const prepare = async (g: number, name: string, text: string) => {
+    source.current = { name, text, host: mainHost };
+    const p = parseLinksFile(name, text, mainHost);
     if (!p.body || p.errors.length) return setFileErrors(p.errors);
     if (!p.body.mainHost) return setFileErrors([{ line: 0, reason: "Pick a main domain first (Main domain step)" }]);
     let c: ImportBody[];
@@ -274,6 +271,27 @@ export function SetupWizard() {
     setPart(null);
     setPreview(r);
   };
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const g = ++fileGen.current;
+    const f = e.target.files?.[0];
+    e.target.value = ""; // choosing the same file again fires change again
+    reset();
+    source.current = null;
+    if (!f) return;
+    setFileName(f.name);
+    // Checked here for a quick answer; the server checks every request again.
+    if (f.size > MAX_FILE) return setFileErrors([{ line: 0, reason: "The file is larger than 10 MB" }]);
+    const text = await f.text();
+    if (g !== fileGen.current) return;
+    await prepare(g, f.name, text);
+  };
+  useEffect(() => {
+    const src = source.current;
+    if (!src || src.host === mainHost) return;
+    const g = ++fileGen.current;
+    reset();
+    void prepare(g, src.name, src.text);
+  }, [mainHost]);
   /** Import, or Retry from the part that failed (the server skips what an earlier try already wrote). */
   const doImport = (dry: boolean, from?: ImportRun) =>
     chunks &&
