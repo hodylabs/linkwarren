@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { ORIGIN, dash } from "./helpers/access";
+import { beforeBatch } from "./helpers/race";
 import { fakeResend } from "./helpers/resend";
 import { signedIn, withCookie } from "./helpers/session";
 
@@ -88,8 +89,8 @@ describe("POST /api/users/invite", () => {
     expect(await userBy("new@example.com")).toMatchObject({ status: "invited" });
     expect(fake.sent).toHaveLength(0);
   });
-  it("the instance email budget at its cap: 201 emailed false too_many", async () => {
-    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('inst', ?, 50)", Math.floor(Date.now() / 1000));
+  it("the invite email budget at its cap: 201 emailed false too_many", async () => {
+    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('invite:hour', ?, 20)", Math.floor(Date.now() / 1000));
     const fake = fakeResend();
     const r = await invite({ email: "new@example.com", role: "member" });
     expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "too_many" }]);
@@ -167,7 +168,7 @@ describe("POST /api/users/:id/resend", () => {
     const nc = await call(owner, "POST", `/api/users/${id}/resend`);
     expect([nc.status, await nc.json()]).toEqual([409, { error: "email_not_configured" }]);
     e.RESEND_API_KEY = "re_testkey12345";
-    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('inst', ?, 50)", Math.floor(Date.now() / 1000));
+    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('invite:hour', ?, 20)", Math.floor(Date.now() / 1000));
     const tm = await call(owner, "POST", `/api/users/${id}/resend`);
     expect([tm.status, await tm.json()]).toEqual([429, { error: "too_many" }]);
     expect(fake.sent).toHaveLength(0);
@@ -211,5 +212,80 @@ describe("DELETE /api/users/:id/invite", () => {
     await waitOnExecutionContext(ctx);
     expect(ask.status).toBe(202);
     expect(fake.sent).toHaveLength(0);
+  });
+});
+
+describe("hardening (Task 11)", () => {
+  it("invites have their own hourly budget: a full sign-in budget does not stop them and they never spend it", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('inst', ?, 50)", now);
+    const fake = fakeResend();
+    const r = await invite({ email: "new@example.com", role: "member" });
+    expect([r.status, await r.json()]).toMatchObject([201, { emailed: true }]);
+    expect(fake.sent).toHaveLength(1);
+    await run("DELETE FROM auth_limits WHERE key = 'inst'");
+    expect((await invite({ email: "two@example.com", role: "member" })).status).toBe(201);
+    expect(await all("SELECT key FROM auth_limits WHERE key = 'inst'")).toEqual([]);
+  });
+
+  it("the per-invitee minute is keyed by address: revoke and re-invite within 60 s does not mail again", async () => {
+    const fake = fakeResend();
+    const a = (await (await invite({ email: "new@example.com", role: "member" })).json()) as { user: { id: string } };
+    expect((await call(owner, "DELETE", `/api/users/${a.user.id}/invite`)).status).toBe(200);
+    const b = await invite({ email: "NEW@example.com", role: "member" });
+    expect([b.status, await b.json()]).toMatchObject([201, { emailed: false, emailReason: "too_many" }]);
+    expect(fake.sent).toHaveLength(1);
+  });
+
+  it("an actor demoted between read and batch cannot invite: 403 and nothing written", async () => {
+    const o = await userBy("owner@example.com");
+    const restore = beforeBatch(1, () => run("UPDATE users SET role = 'member' WHERE id = ?", o!.id));
+    let r: Response;
+    try { r = await invite({ email: "new@example.com", role: "owner" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await userBy("new@example.com")).toBeNull();
+    expect(await audits("user.invite")).toEqual([]);
+  });
+
+  it("a domain made private between read and batch: 400 bad_domain and nothing written", async () => {
+    const restore = beforeBatch(1, () => run("UPDATE domains SET type = 'private' WHERE id = 'ds1'"));
+    let r: Response;
+    try { r = await invite({ email: "new@example.com", role: "member", domainIds: ["ds1"] }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([400, { error: "bad_domain" }]);
+    expect(await userBy("new@example.com")).toBeNull();
+    expect(await all("SELECT * FROM domain_members")).toEqual([]);
+    expect(await audits("user.invite")).toEqual([]);
+  });
+
+  it("an actor disabled between read and batch cannot revoke: 403 and nothing deleted", async () => {
+    await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('ui','new@example.com','member','invited',1)");
+    const o = await userBy("owner@example.com");
+    const restore = beforeBatch(1, () => run("UPDATE users SET status = 'disabled' WHERE id = ?", o!.id));
+    let r: Response;
+    try { r = await call(owner, "DELETE", "/api/users/ui/invite"); } finally { restore(); }
+    expect(r.status).toBe(403);
+    expect(await userBy("new@example.com")).toMatchObject({ status: "invited" });
+    expect(await audits("user.revoke")).toEqual([]);
+  });
+
+  it("a settings read failure after the invite is committed answers 201 emailed false settings", async () => {
+    fakeResend();
+    const settings = await import("../src/settings");
+    vi.spyOn(settings, "getSettings").mockRejectedValue(new Error("d1 down"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await invite({ email: "new@example.com", role: "member" });
+    expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "settings" }]);
+  });
+
+  it("a resend whose invitee activates during the send is still audited (the mail went out)", async () => {
+    await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('ui','new@example.com','member','invited',1)");
+    const fake = fakeResend();
+    fake.hold();
+    const pending = call(owner, "POST", "/api/users/ui/resend");
+    await vi.waitFor(() => expect(fake.sent).toHaveLength(1));
+    await run("UPDATE users SET status = 'active' WHERE id = 'ui'");
+    fake.release();
+    expect((await pending).status).toBe(200);
+    expect(await audits("user.invite_resend")).toHaveLength(1);
   });
 });

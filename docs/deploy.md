@@ -167,7 +167,7 @@ Sign-in links are sent through [Resend](https://resend.com) only.
 5. Set the var `EMAIL_FROM` to an address on that verified domain, e.g. `links@example.com`. Mail is sent as `<instance name> <EMAIL_FROM>`.
 6. In Settings, use **Send test email**: it mails the signed-in owner only, at most once a minute, and counts against the hourly instance cap.
 
-Invites and sign-in links use the instance name in the subject and sender. The invite says who invited the person, links only to the dashboard host over https, and adds an owner line for owners.
+Invite emails have their own budget: at most 1 per address per minute and 20 per hour for the instance, separate from the 50 sign-in emails per hour, so a burst of invites never stops people from signing in. Invites and sign-in links use the instance name in the subject and sender. The invite says who invited the person, links only to the dashboard host over https, and adds an owner line for owners.
 
 How the link works: a person enters their email, and if it can sign in here (an active or invited person, or `OWNER_EMAIL` while there are no users yet) they get a link to `https://<dashboard host>/sign-in#token=...`. The token is in the URL fragment, so it never reaches server logs or a `Referer`. It works once and expires after 15 minutes. The answer is always the same `202`, whether or not a mail goes out, so the form never tells which addresses have accounts.
 

@@ -10,6 +10,7 @@ import type { Grant } from "../principal";
 import { getSettings } from "../settings";
 import type { UserListItem, UserRow } from "../types";
 import { parse } from "./signin";
+import { ACTOR_OK } from "./users";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 /** Mounted at /api/users next to the user list (R1: no invite tokens; the invitee signs in by email link). */
@@ -31,13 +32,22 @@ const inviteBody = z.strictObject({
 
 type Invitee = { id: string; email: string; role: "owner" | "member" };
 
-/** R12: the per-invitee minute and the instance hour, charged together or not at all. */
-const charge = (env: Env, id: string) => hitAll(env, [{ key: limitKey.invite(id), limit: LIMITS.inviteResend }, { key: limitKey.inst, limit: LIMITS.instance }]);
+/** R12: the per-address minute and the invite hour, charged together or not at all. Invites have their own hourly
+ * budget (not the sign-in links' LIMITS.instance), so a burst of invites never locks people out of signing in. */
+const charge = async (env: Env, email: string) =>
+  hitAll(env, [{ key: await limitKey.invite(email), limit: LIMITS.inviteResend }, { key: limitKey.inviteHour, limit: LIMITS.inviteHour }]);
 
 /** The invite mail; the only link is https://<DASHBOARD_HOST>/. Never throws. */
 async function deliver(env: Env, inviter: UserRow, u: Invitee): Promise<InviteResult> {
-  const m = inviteEmail({ instanceName: (await getSettings(env)).name ?? "linkwarren", inviter: inviter.name || inviter.email, dashboardHost: normalizeHost(env.DASHBOARD_HOST), role: u.role });
-  const r = await sendEmail(env, { to: u.email, ...m });
+  let name: string | null;
+  try {
+    name = (await getSettings(env)).name;
+  } catch {
+    console.warn("settings_read_failed");
+    return { emailed: false, emailReason: "settings" };
+  }
+  const m = inviteEmail({ instanceName: name ?? "linkwarren", inviter: inviter.name || inviter.email, dashboardHost: normalizeHost(env.DASHBOARD_HOST), role: u.role });
+  const r = await sendEmail(env, { to: u.email, name, ...m });
   return r.ok ? { emailed: true } : { emailed: false, emailReason: r.reason };
 }
 
@@ -53,15 +63,26 @@ invites.post("/invite", owner, async (c) => {
 
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
+  const me = c.var.user.id;
+  // The user row carries every re-check (the actor is still an active owner, every granted domain is still shared);
+  // grants and audit follow it, so either all of the invite commits or none.
+  const made = { sql: "EXISTS (SELECT 1 FROM users WHERE id = ?)", binds: [id] };
+  let done: D1Result[];
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare("INSERT INTO users (id, email, name, role, status, created_at) VALUES (?, ?, NULL, ?, 'invited', ?)").bind(id, b.email, b.role, now),
-      ...doms.map((d) => c.env.DB.prepare("INSERT INTO domain_members (domain_id, user_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM users WHERE id = ?)").bind(d.id, id, id)),
-      auditStmt(c.env, { actorId: c.var.user.id, action: "user.invite", targetType: "user", targetId: id, detail: { email: b.email, role: b.role, domains: doms.map((d) => d.host) } }),
+    done = await c.env.DB.batch([
+      c.env.DB.prepare(`INSERT INTO users (id, email, name, role, status, created_at) SELECT ?, ?, NULL, ?, 'invited', ?
+        WHERE ${ACTOR_OK} AND (SELECT COUNT(*) FROM domains WHERE type = 'shared' AND id IN (SELECT value FROM json_each(?))) = ?`)
+        .bind(id, b.email, b.role, now, me, JSON.stringify(doms.map((d) => d.id)), doms.length),
+      ...doms.map((d) => c.env.DB.prepare(`INSERT INTO domain_members (domain_id, user_id) SELECT ?, ? WHERE ${made.sql}`).bind(d.id, id, ...made.binds)),
+      auditStmt(c.env, { actorId: me, action: "user.invite", targetType: "user", targetId: id, detail: { email: b.email, role: b.role, domains: doms.map((d) => d.host) } }, made),
     ]);
   } catch (e) {
     if (String(e).includes("UNIQUE")) return c.json({ error: "email_taken" }, 409);
     throw e;
+  }
+  if (!done[0]!.meta.changes) {
+    const ok = await c.env.DB.prepare(`SELECT ${ACTOR_OK} a`).bind(me).first<{ a: number }>();
+    return ok?.a ? c.json({ error: "bad_domain" }, 400) : c.json({ error: "forbidden" }, 403);
   }
   const user: UserListItem = {
     id, email: b.email, name: null, role: b.role, status: "invited", createdAt: now, linkCount: 0, agentCount: 0,
@@ -70,7 +91,7 @@ invites.post("/invite", owner, async (c) => {
   const u = { id, email: b.email, role: b.role };
   // The invite stands whatever happens to the mail.
   const res: InviteResult = !(await emailConfigured(c.env)) ? { emailed: false, emailReason: "not_configured" }
-    : !(await charge(c.env, id)).ok ? { emailed: false, emailReason: "too_many" }
+    : !(await charge(c.env, b.email)).ok ? { emailed: false, emailReason: "too_many" }
     : await deliver(c.env, c.var.user, u);
   return c.json({ user, ...res }, 201);
 });
@@ -90,10 +111,12 @@ invites.post("/:id/resend", owner, async (c) => {
   if (!f.ok) return c.json({ error: f.error }, f.status);
   const { u } = f;
   if (!(await emailConfigured(c.env))) return c.json({ error: "email_not_configured" }, 409);
-  const hit = await charge(c.env, u.id);
-  if (!hit.ok) return c.json({ error: hit.key === limitKey.inst ? "too_many" : "too_soon" }, 429);
+  const hit = await charge(c.env, u.email);
+  if (!hit.ok) return c.json({ error: hit.key === limitKey.inviteHour ? "too_many" : "too_soon" }, 429);
   const res = await deliver(c.env, c.var.user, u);
-  await auditStmt(c.env, { actorId: c.var.user.id, action: "user.invite_resend", targetType: "user", targetId: u.id, detail: { email: u.email, emailed: res.emailed } }, stillInvited(u.id)).run();
+  // Guarded on the row existing, not on still being invited: a mail that went out is audited even if they signed in meanwhile.
+  await auditStmt(c.env, { actorId: c.var.user.id, action: "user.invite_resend", targetType: "user", targetId: u.id, detail: { email: u.email, emailed: res.emailed } },
+    { sql: "EXISTS (SELECT 1 FROM users WHERE id = ?)", binds: [u.id] }).run();
   return c.json(res);
 });
 
@@ -101,16 +124,19 @@ invites.delete("/:id/invite", owner, async (c) => {
   const f = await invitedUser(c.env, c.req.param("id"));
   if (!f.ok) return c.json({ error: f.error }, f.status);
   const { u } = f;
-  const g = stillInvited(u.id);
-  // Every statement is guarded on still being invited: a sign-in that activates them in between wins and nothing is deleted.
+  const me = c.var.user.id;
+  const g = { sql: `${stillInvited(u.id).sql} AND ${ACTOR_OK}`, binds: [u.id, me] };
+  // Every statement is guarded on still being invited (a sign-in that activates them in between wins and nothing is
+  // deleted) and on the actor still being an active owner.
   const res = await c.env.DB.batch([
     auditStmt(c.env, { actorId: c.var.user.id, action: "user.revoke", targetType: "user", targetId: u.id, detail: { email: u.email } }, g),
     c.env.DB.prepare(`DELETE FROM domain_members WHERE user_id = ? AND ${g.sql}`).bind(u.id, ...g.binds),
     // login_tokens keeps the address as typed at sign-in, so match it without case.
     c.env.DB.prepare(`DELETE FROM login_tokens WHERE email = ? COLLATE NOCASE AND ${g.sql}`).bind(u.email, ...g.binds),
-    c.env.DB.prepare("DELETE FROM users WHERE id = ? AND status = 'invited'").bind(u.id),
+    c.env.DB.prepare(`DELETE FROM users WHERE id = ? AND ${g.sql}`).bind(u.id, ...g.binds),
   ]);
   if (!res[3]!.meta.changes) {
+    if (!(await c.env.DB.prepare(`SELECT ${ACTOR_OK} a`).bind(me).first<{ a: number }>())?.a) return c.json({ error: "forbidden" }, 403);
     const again = await invitedUser(c.env, u.id);
     return again.ok ? c.json({ error: "not_invited_state" }, 409) : c.json({ error: again.error }, again.status);
   }
