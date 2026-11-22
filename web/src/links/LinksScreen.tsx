@@ -1,19 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { api, ApiError, type Link, type LinkStats, type Page } from "../api";
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
-import { Sheet } from "../shell/Sheet";
+import { Sheet, useOpenSheets } from "../shell/Sheet";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
-import { BackBar, useDetailView } from "../shell/narrow";
+import { BackBar, PHONE, useDetailView, useMedia } from "../shell/narrow";
+import { BULK_KEYS, BulkBar, type BulkAction } from "./BulkBar";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { Sparkline } from "./Sparkline";
-import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
+import { creatorLabel, linkState, linksQuery, shortUrl, type LinksFilter, type StatsLive } from "./linkView";
+import { all, EMPTY_SEL, extend, keepOnly, range, toggle, type Sel } from "./selection";
 
 const STATS_CHUNK = 50; // the server takes at most 50 ids per request
 
 const STATUSES = ["all", "active", "scheduled", "expired"] as const;
+const LONG_PRESS_MS = 500;
+const PRESS_SLOP_PX = 10; // more movement than this is a scroll, not a press
 
 /** Links screen hotkeys and their text on the shortcuts sheet. */
 export const LINKS_KEYS = {
@@ -24,7 +28,11 @@ export const LINKS_KEYS = {
   c: "Copy the short link",
   q: "Focus the QR code download",
   "shift+d": "Delete the selected link",
-  escape: "Clear the selection",
+  x: "Select or unselect the link",
+  "shift+j": "Extend the selection down",
+  "shift+k": "Extend the selection up",
+  "mod+a": "Select every loaded link",
+  escape: "Clear the selection, then close the link",
 } as const;
 
 export function LinksScreen() {
@@ -51,6 +59,13 @@ export function LinksScreen() {
   const detailRef = useRef<DetailHandle>(null);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const focusRow = useRef(false);
+  const phone = useMedia(PHONE);
+  const sheets = useOpenSheets();
+  // Many-link selection (R12: loaded rows only, cleared on a scope change). Separate from `sel`, the row the detail shows.
+  const [picked, setPicked] = useState<Sel>(EMPTY_SEL);
+  const [bulk, setBulk] = useState<BulkAction | null>(null);
+  const press = useRef<{ x: number; y: number; t: number } | null>(null); // a touch held on a row
+  const pressed = useRef(false); // a long-press just fired: swallow the click that ends it
 
   const scope = useMemo(() => ({ domain: currentDomainId, q, status, mine }), [currentDomainId, q, status, mine]);
   const domainOf = (id: string) => domains.find((d) => d.id === id);
@@ -82,6 +97,7 @@ export function LinksScreen() {
     setNext(null);
     setStats({}); // a reload (same scope too) may change clicks, expiry or the live state: never show the old numbers
     if (lastScope.current !== scope) {
+      setPicked(EMPTY_SEL);
       setItems([]);
       setLoaded(false); // no "No links here yet." flash while the new scope loads
     }
@@ -91,6 +107,7 @@ export function LinksScreen() {
       (p) => {
         if (g !== generation.current) return;
         setItems(p.items);
+        setPicked((s) => keepOnly(s, new Set(p.items.map((l) => l.id))));
         setNext(p.next);
         setLoaded(true);
         void loadStats(g, p.items.map((l) => l.id));
@@ -190,8 +207,68 @@ export function LinksScreen() {
     app.reloadDomains().catch(() => undefined); // link counts
   };
 
-  useHotkeys(
-    {
+  const order = items.map((l) => l.id);
+  const pickedLinks = items.filter((l) => picked.ids.has(l.id));
+  const picking = pickedLinks.length > 0;
+  const allPicked = picking && pickedLinks.length === items.length;
+  // The row X and Shift+J/K act on: the focused row, else the detail's row.
+  const cursor = () => [...rowRefs.current].find(([, el]) => el.contains(document.activeElement))?.[0] ?? selectedId;
+  const extendBy = (step: 1 | -1) => {
+    const r = extend(picked, order, cursor() ?? "", step);
+    setPicked(r.sel);
+    select(r.cursor, true);
+  };
+
+  const onAction = (a: BulkAction) => {
+    if (a !== "copy") return setBulk(a);
+    const urls = pickedLinks.flatMap((l) => {
+      const h = domainOf(l.domainId)?.host;
+      return h ? [shortUrl(h, l.slug)] : [];
+    });
+    navigator.clipboard.writeText(urls.join("\n")).then(
+      () => app.announce(`Copied ${plural(urls.length, "short link")}`),
+      () => app.announce("Could not copy"),
+    );
+  };
+
+  const endPress = () => {
+    if (press.current) clearTimeout(press.current.t);
+    press.current = null;
+  };
+  useEffect(() => endPress, []);
+  // Phones: a still 500 ms press starts selection mode with that row.
+  const startPress = (id: string, e: PointerEvent) => {
+    pressed.current = false;
+    endPress();
+    if (!phone) return;
+    const t = window.setTimeout(() => {
+      press.current = null;
+      pressed.current = true;
+      setPicked((s) => (s.ids.has(id) ? s : toggle(s, id)));
+    }, LONG_PRESS_MS);
+    press.current = { x: e.clientX, y: e.clientY, t };
+  };
+  const movePress = (e: PointerEvent) => {
+    const p = press.current;
+    if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > PRESS_SLOP_PX) endPress();
+  };
+  const rowClick = (id: string, e: MouseEvent) => {
+    if (pressed.current) return void (pressed.current = false);
+    if (e.shiftKey) return setPicked(range(picked, order, id));
+    if (phone && picking) return setPicked(toggle(picked, id));
+    show(id) || select(id);
+  };
+
+  const bulkKeys = {
+    "shift+d": () => onAction("delete"),
+    s: () => onAction("schedule"),
+    m: () => onAction("move"),
+    r: () => onAction("redirect"),
+    p: () => onAction("password"),
+    c: () => onAction("copy"),
+    "shift+e": () => onAction("export"),
+  } satisfies Bindings<typeof BULK_KEYS>;
+  const linkKeys = {
       j: () => void move(1),
       k: () => void move(-1),
       c: () => detailRef.current?.copy(),
@@ -204,12 +281,21 @@ export function LinksScreen() {
         }
       },
       n: () => app.open({ kind: "newLink" }),
-      escape: (e) => {
-        if (!isTypingTarget(e.target) && sel) closeDetail();
+      x: () => {
+        const id = cursor();
+        if (id) setPicked(toggle(picked, id));
       },
-    } satisfies Bindings<typeof LINKS_KEYS>,
-    overlay === null && !confirming,
-  );
+      "shift+j": () => extendBy(1),
+      "shift+k": () => extendBy(-1),
+      "mod+a": () => setPicked(all(order)),
+      escape: (e) => {
+        if (isTypingTarget(e.target)) return;
+        if (picking) setPicked(EMPTY_SEL);
+        else if (sel) closeDetail();
+      },
+    } satisfies Bindings<typeof LINKS_KEYS>;
+  // While links are selected C and Shift+D act on all of them.
+  useHotkeys(picking ? { ...linkKeys, ...bulkKeys } : linkKeys, overlay === null && sheets === 0);
 
   const total = (currentDomainId ? domains.filter((d) => d.id === currentDomainId) : domains).reduce((n, d) => n + d.linkCount, 0);
   const unfiltered = status === "all" && !mine && q === "";
@@ -240,8 +326,11 @@ export function LinksScreen() {
         )}
         <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />
       </ScreenHeader>
+      {picking && !open && (
+        <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l)).length} onAction={onAction} onClear={() => setPicked(EMPTY_SEL)} />
+      )}
       <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
-        <section className="list" aria-label="Links">
+        <section className={`list${picking ? " picking" : ""}`} aria-label="Links">
           {loadError && (
             <p className="err pad" role="alert">
               {loadError}
@@ -250,6 +339,17 @@ export function LinksScreen() {
           <table>
             <thead>
               <tr>
+                {(!phone || picking) && (
+                  <th className="pick">
+                    <input
+                      type="checkbox"
+                      aria-label="Select every loaded link"
+                      checked={allPicked}
+                      ref={(el) => void (el && (el.indeterminate = picking && !allPicked))}
+                      onChange={() => setPicked(allPicked ? EMPTY_SEL : all(order))}
+                    />
+                  </th>
+                )}
                 <th>Short link</th>
                 <th>Goes to</th>
                 <th>Rules</th>
@@ -268,9 +368,25 @@ export function LinksScreen() {
                     ref={(el) => void (el ? rowRefs.current.set(l.id, el) : rowRefs.current.delete(l.id))}
                     aria-selected={isSel}
                     tabIndex={isSel || (!selected && i === 0) ? 0 : -1}
-                    onClick={() => show(l.id) || select(l.id)}
+                    onClick={(e) => rowClick(l.id, e)}
                     onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), show(l.id) || select(l.id))}
+                    onPointerDown={(e) => startPress(l.id, e)}
+                    onPointerMove={movePress}
+                    onPointerUp={endPress}
+                    onPointerCancel={endPress}
+                    onContextMenu={(e) => phone && e.preventDefault()}
                   >
+                    {(!phone || picking) && (
+                      <td className="pick">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${domainOf(l.domainId)?.host}/${l.slug}`}
+                          checked={picked.ids.has(l.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setPicked((s) => ((e.nativeEvent as globalThis.MouseEvent).shiftKey ? range(s, order, l.id) : toggle(s, l.id)))}
+                        />
+                      </td>
+                    )}
                     <td className="short">
                       <span className={`dot2 ${st.tone}`} aria-hidden="true" />
                       <span className="mchip">
@@ -350,6 +466,22 @@ export function LinksScreen() {
           />
         )}
       </div>
+      {bulk && (
+        // Placeholder until the bulk action sheets land (S6b Task 9).
+        <Sheet label="Bulk action" onClose={() => setBulk(null)}>
+          <div className="sh-head">
+            <h2>{plural(pickedLinks.length, "link")} selected</h2>
+          </div>
+          <div className="sh-body">
+            <p>This action is not available yet.</p>
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => setBulk(null)}>
+                Close <kbd>Esc</kbd>
+              </button>
+            </div>
+          </div>
+        </Sheet>
+      )}
       {confirming && selected && (
         <Sheet label="Delete link" onClose={() => setConfirming(false)}>
           <div className="sh-head">

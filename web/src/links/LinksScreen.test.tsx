@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -717,8 +717,8 @@ describe("Link detail rules", () => {
     expect(within(rows()[0]!).getByLabelText("Password")).toBeTruthy();
     expect(within(rows()[0]!).getByLabelText("Country and device routing")).toBeTruthy();
     expect(within(rows()[1]!).queryByLabelText("Password")).toBeNull();
-    // The Rules column is the third cell: empty on the plain row, holding the icons on the protected one.
-    const rulesCell = (r: HTMLElement) => r.querySelectorAll("td")[2]!;
+    // The Rules column is the fourth cell (after the pick checkbox): empty on the plain row, holding the icons on the protected one.
+    const rulesCell = (r: HTMLElement) => r.querySelectorAll("td")[3]!;
     expect(rulesCell(rows()[1]!).childNodes.length).toBe(0);
     expect(rulesCell(rows()[0]!).querySelector("svg[aria-label='Password']")).toBeTruthy();
   });
@@ -729,5 +729,194 @@ describe("Link detail rules", () => {
     const sw = within(detail()).getByRole("switch", { name: "Password" }) as HTMLButtonElement;
     expect(sw.matches(":disabled")).toBe(true);
     expect((within(detail()).getByRole("switch", { name: "Country and device routing" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
+  });
+});
+
+describe("Links selection", () => {
+  const bar = () => screen.queryByRole("region", { name: "Selected links" });
+  const boxes = () => screen.queryAllByRole("checkbox") as HTMLInputElement[];
+  const header = () => screen.getByRole("checkbox", { name: "Select every loaded link" }) as HTMLInputElement;
+  const box = (name: string) => screen.getByRole("checkbox", { name: `Select go.test/${name}` }) as HTMLInputElement;
+
+  it("X toggles the focused row and the bar shows 1 selected", async () => {
+    const { user } = boot();
+    await ready();
+    await user.keyboard("j");
+    await user.keyboard("x");
+    expect(within(bar()!).getByText("1 selected")).toBeTruthy();
+    expect(box("spring").checked).toBe(true);
+    await user.keyboard("x");
+    expect(bar()).toBeNull();
+  });
+
+  it("Shift+J twice selects three rows", async () => {
+    const { user } = boot();
+    await ready();
+    await user.keyboard("j");
+    await user.keyboard("{Shift>}JJ{/Shift}");
+    expect(within(bar()!).getByText("3 selected")).toBeTruthy();
+    expect(rows()[2]!.getAttribute("aria-selected")).toBe("true"); // the cursor moved with it
+    expect(document.activeElement).toBe(rows()[2]);
+  });
+
+  it("Ctrl+A selects every loaded row, and after Load more only what is loaded", async () => {
+    let n = 0;
+    const { user } = boot({ page: () => ({ body: ++n === 1 ? { items: [L1, L2], next: "100.l2" } : { items: [L3], next: null } }) });
+    await ready();
+    await user.keyboard("{Control>}a{/Control}");
+    expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    await user.keyboard("{Control>}a{/Control}");
+    expect(within(bar()!).getByText("3 selected")).toBeTruthy();
+  });
+
+  it("Esc first clears the selection, a second Esc closes the detail", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.keyboard("x");
+    expect(bar()).not.toBeNull();
+    await user.keyboard("{Escape}");
+    expect(bar()).toBeNull();
+    expect(location.search).toContain("sel=l1");
+    await user.keyboard("{Escape}");
+    expect(location.search).not.toContain("sel=");
+  });
+
+  it("X inside the search input types and selects nothing", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.keyboard("{Control>}k{/Control}");
+    const box = await screen.findByRole("dialog");
+    await user.keyboard("x");
+    expect((within(box).getByRole("combobox") as HTMLInputElement).value).toBe("x");
+    await user.keyboard("{Escape}");
+    expect(bar()).toBeNull();
+  });
+
+  it("Shift+click selects a range from the anchor", async () => {
+    const { user } = boot();
+    await ready();
+    await user.click(box("spring"));
+    await user.keyboard("{Shift>}");
+    await user.click(rows()[2]!);
+    await user.keyboard("{/Shift}");
+    expect(within(bar()!).getByText("3 selected")).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Selected link" })).toBeNull(); // a range click is not an open
+  });
+
+  it("the header checkbox goes indeterminate with some, selects all, then clears", async () => {
+    const { user } = boot();
+    await ready();
+    expect(header().checked).toBe(false);
+    await user.click(box("menu"));
+    expect(header().indeterminate).toBe(true);
+    await user.click(header());
+    expect(header().checked).toBe(true);
+    expect(header().indeterminate).toBe(false);
+    expect(boxes().filter((b) => b.checked)).toHaveLength(4);
+    await user.click(header());
+    expect(bar()).toBeNull();
+  });
+
+  it("with a selection C copies every short URL, one per line; without one it copies the single link", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { user } = boot({ path: "/links?sel=l1" });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await ready();
+    await user.keyboard("{Control>}a{/Control}");
+    await user.keyboard("c");
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://go.test/spring\nhttps://go.test/menu\nhttps://go.test/app"));
+    await waitFor(() => expect(screen.getByText("Copied 3 short links")).toBeTruthy());
+    await user.keyboard("{Escape}");
+    await user.keyboard("c");
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("https://go.test/spring"));
+  });
+
+  it("with a selection Shift+D is the bulk delete, not the single delete confirm", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.keyboard("x");
+    await user.keyboard("{Shift>}D{/Shift}");
+    expect(screen.queryByRole("dialog", { name: "Delete link" })).toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("changing the status chip clears the selection", async () => {
+    const { user } = boot();
+    await ready();
+    await user.keyboard("{Control>}a{/Control}");
+    expect(bar()).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Active" }));
+    expect(bar()).toBeNull();
+  });
+
+  it("a member selecting someone else's link sees how many they cannot change", async () => {
+    const own = mk("l1", "spring", { createdBy: "um" });
+    const { user } = boot({ me: member, page: () => ({ body: { items: [own, L2], next: null } }) });
+    await ready();
+    await user.keyboard("{Control>}a{/Control}");
+    expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    expect(within(bar()!).getByText("1 you cannot change")).toBeTruthy();
+  });
+
+  it("the bar shows every action with its shortcut and Clear Esc", async () => {
+    const { user } = boot();
+    await ready();
+    await user.click(box("spring"));
+    const b = within(bar()!);
+    for (const [name, k] of [["Delete", "Shift D"], ["Schedule", "S"], ["Move", "M"], ["Redirect", "R"], ["Password", "P"], ["Copy", "C"], ["Export", "Shift E"], ["Clear", "Esc"]])
+      expect(b.getByRole("button", { name: new RegExp(`^${name}`) }).textContent).toContain(k);
+    await user.click(b.getByRole("button", { name: /^Clear/ }));
+    expect(bar()).toBeNull();
+  });
+
+  describe("at 360 px", () => {
+    const phone = () =>
+      vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("760px") || q.includes("1080px"), media: q, addEventListener() {}, removeEventListener() {} }));
+    afterEach(() => vi.useRealTimers());
+
+    it("the pick column is hidden until a long-press starts selection mode, then a tap toggles", async () => {
+      phone();
+      boot();
+      await ready();
+      expect(boxes()).toHaveLength(0);
+      vi.useFakeTimers();
+      // moving more than 10 px cancels the press
+      fireEvent.pointerDown(rows()[1]!, { clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(rows()[1]!, { clientX: 10, clientY: 30 });
+      act(() => void vi.advanceTimersByTime(600));
+      expect(boxes()).toHaveLength(0);
+      // a still 500 ms press starts selection mode with that row, and its own click is swallowed
+      expect(fireEvent.contextMenu(rows()[0]!)).toBe(false);
+      fireEvent.pointerDown(rows()[0]!, { clientX: 10, clientY: 10 });
+      act(() => void vi.advanceTimersByTime(500));
+      fireEvent.pointerUp(rows()[0]!);
+      fireEvent.click(rows()[0]!);
+      vi.useRealTimers();
+      expect(box("spring").checked).toBe(true);
+      expect(within(bar()!).getByText("1 selected")).toBeTruthy();
+      expect(location.search).not.toContain("view=detail");
+      fireEvent.click(rows()[1]!);
+      expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+      expect(location.search).not.toContain("view=detail");
+    });
+
+    it("the phone bar has Delete, Schedule, Move and More; More holds the rest", async () => {
+      phone();
+      const { user } = boot();
+      await ready();
+      vi.useFakeTimers();
+      fireEvent.pointerDown(rows()[0]!, { clientX: 1, clientY: 1 });
+      act(() => void vi.advanceTimersByTime(500));
+      vi.useRealTimers();
+      const b = within(bar()!);
+      for (const name of ["Delete", "Schedule", "Move", "More", "Clear"]) expect(b.getByRole("button", { name: new RegExp(`^${name}`) })).toBeTruthy();
+      for (const name of ["Redirect", "Password", "Copy", "Export"]) expect(b.queryByRole("button", { name: new RegExp(`^${name}`) })).toBeNull();
+      await user.click(b.getByRole("button", { name: "More" }));
+      const more = screen.getByRole("dialog", { name: "More actions" });
+      expect(within(more).getAllByRole("button").map((x) => x.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/^Redirect/), expect.stringMatching(/^Password/), expect.stringMatching(/^Copy/), expect.stringMatching(/^Export/)]));
+    });
   });
 });
