@@ -2,6 +2,9 @@ import { expect, vi } from "vitest";
 
 type Json = Record<string, unknown>;
 export type FakeZone = { id: string; name: string; accountName?: string };
+export type FakePerm = "zone_read" | "dns_edit" | "routes_edit" | "ssl_edit";
+/** With `tokens`, only listed bearer values are valid and each write/zone read needs its permission. Without it any bearer has every permission. */
+export type FakeToken = { perms: FakePerm[]; status?: string; userOwned?: boolean };
 
 /**
  * In-memory Cloudflare API + DoH. Install with `vi.spyOn(globalThis, "fetch").mockImplementation((i, init) => fake.handle(new Request(i, init)))`
@@ -9,7 +12,7 @@ export type FakeZone = { id: string; name: string; accountName?: string };
  * Error shapes mirror measured live behaviour: 403 code 10000 for a missing permission (POST workers/routes: 403 with no code),
  * 401 code 10000 for a bad token, duplicates rejected (DNS name+type 400 81058, route pattern 409 10020, custom hostname 409 1406), 400 for validation, 404 code 10003 for a missing ruleset entrypoint, 404 code 1551 for an unset fallback origin.
  */
-export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, string[]> } = {}) {
+export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, string[]>; tokens?: Record<string, FakeToken> } = {}) {
   let seq = 0;
   const nid = (p: string) => `${p}${++seq}`;
   const state = {
@@ -18,13 +21,14 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
     routes: [] as { id: string; zoneId: string; pattern: string; script: string }[],
     hostnames: [] as { id: string; hostname: string; status: string; ssl: { status: string; validation_errors?: { message: string }[] }; verification_errors?: string[] }[],
     fallbackOrigin: null as string | null,
+    fallbackStatus: "active",
     rulesets: {} as Record<string, unknown>, // `${zoneId}/${phase}` -> ruleset
     /** DoH answers keyed `TYPE:name`, e.g. "CNAME:go.example.com" -> ["edge.test"]. */
     doh: { ...(opts.doh ?? {}) } as Record<string, string[]>,
   };
   /** Every fetch the fake did not recognise (it also throws). Assert empty with assertNoUnexpected(). */
   const unexpected: string[] = [];
-  const calls: { method: string; path: string; body: unknown }[] = [];
+  const calls: { method: string; path: string; body: unknown; auth: string | null }[] = [];
   const failures: { re: RegExp; status: number; body?: unknown }[] = [];
 
   const ok = (result: unknown, info?: Json) => json(200, { success: true, errors: [], messages: [], result, ...(info ? { result_info: info } : {}) });
@@ -47,22 +51,47 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
     const path = url.pathname.slice("/client/v4".length);
     const text = await req.text();
     const body: unknown = text ? JSON.parse(text) : undefined;
-    calls.push({ method: req.method, path: path + url.search, body });
+    const auth = req.headers.get("authorization");
+    calls.push({ method: req.method, path: path + url.search, body, auth });
     const fi = failures.findIndex((f) => f.re.test(path + url.search));
     if (fi >= 0) {
       const f = failures.splice(fi, 1)[0]!;
       return json(f.status, f.body ?? { success: false, errors: [{ code: 10000, message: "error" }], messages: [], result: null });
     }
-    if (!req.headers.get("authorization")?.startsWith("Bearer ")) return err(401, 10000);
+    if (!auth?.startsWith("Bearer ")) return err(401, 10000);
     const m = req.method;
     const b = (body ?? {}) as Json;
+    const tok = opts.tokens ? opts.tokens[auth.slice(7)] : { perms: ["zone_read", "dns_edit", "routes_edit", "ssl_edit"] as FakePerm[] };
+    let r: RegExpMatchArray | null;
+
+    // Measured live: an account verify for a user-owned (or unknown) token answers 401 code 1000.
+    if (m === "GET" && (r = path.match(/^\/(?:accounts\/[^/]+|user)\/tokens\/verify$/))) {
+      if (!tok || (path.startsWith("/user") !== !!tok.userOwned)) return err(401, 1000);
+      return ok({ id: "tok1", status: tok.status ?? "active" });
+    }
+    if (!tok) return err(401, 10000);
+    // Live shapes: 403 code 10000 for a missing permission; POST workers/routes 403 carries no code.
+    const need = (p: FakePerm) => (tok.perms.includes(p) ? null : p === "routes_edit" ? err(403) : err(403, p === "zone_read" ? 9109 : 10000));
+    const zoneOut = (z: FakeZone) => ({ id: z.id, name: z.name, account: { name: z.accountName ?? null } });
 
     if (m === "GET" && path === "/zones") {
+      const denied = need("zone_read");
+      if (denied) return denied;
       const name = url.searchParams.get("name");
-      const hit = state.zones.filter((z) => z.name === name).map((z) => ({ id: z.id, name: z.name, account: { name: z.accountName ?? null } }));
-      return ok(hit, { total_count: hit.length });
+      const hit = state.zones.filter((z) => name === null || z.name === name).map(zoneOut);
+      return ok(hit.slice(0, Number(url.searchParams.get("per_page") ?? 50)), { total_count: hit.length });
     }
-    let r: RegExpMatchArray | null;
+    if (m === "GET" && (r = path.match(/^\/zones\/([^/]+)$/))) {
+      const denied = need("zone_read");
+      if (denied) return denied;
+      const z = state.zones.find((x) => x.id === r![1]);
+      return z ? ok(zoneOut(z)) : err(404, 7003);
+    }
+    if (m === "POST") {
+      const p: FakePerm | null = /\/dns_records$/.test(path) ? "dns_edit" : /\/workers\/routes$/.test(path) ? "routes_edit" : /\/custom_hostnames$/.test(path) ? "ssl_edit" : null;
+      const denied = p && need(p);
+      if (denied) return denied;
+    }
     if ((r = path.match(/^\/zones\/([^/]+)\/dns_records(?:\/([^/]+))?$/))) {
       const [, zoneId, id] = r;
       if (m === "GET") return ok(state.dns.filter((d) => d.zoneId === zoneId && d.name === url.searchParams.get("name")));
@@ -79,7 +108,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       const [, zoneId, id] = r;
       if (m === "GET") return ok(state.routes.filter((x) => x.zoneId === zoneId));
       if (m === "POST") {
-        if (typeof b.pattern !== "string" || typeof b.script !== "string") return err(400, 10022);
+        if (typeof b.pattern !== "string" || !b.pattern || typeof b.script !== "string") return err(400, 10022);
         if (state.routes.some((x) => x.zoneId === zoneId && x.pattern === b.pattern)) return err(409, 10020);
         const rec = { id: nid("route"), zoneId: zoneId!, pattern: b.pattern, script: b.script };
         state.routes.push(rec);
@@ -88,7 +117,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       if (m === "DELETE") return remove(state.routes, (x) => x.id === id && x.zoneId === zoneId);
     }
     if ((r = path.match(/^\/zones\/([^/]+)\/custom_hostnames\/fallback_origin$/))) {
-      if (m === "GET") return state.fallbackOrigin ? ok({ origin: state.fallbackOrigin, status: "active" }) : err(404, 1551);
+      if (m === "GET") return state.fallbackOrigin ? ok({ origin: state.fallbackOrigin, status: state.fallbackStatus }) : err(404, 1551);
       if (m === "PUT") {
         if (typeof b.origin !== "string") return err(400, 1407);
         state.fallbackOrigin = b.origin;
@@ -103,7 +132,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
         return ok(url.searchParams.get("per_page") === "1" ? rows.slice(0, 1) : rows, { total_count: rows.length });
       }
       if (m === "POST") {
-        if (typeof b.hostname !== "string") return err(400, 1407);
+        if (typeof b.hostname !== "string" || !b.hostname) return err(400, 1407);
         if (state.hostnames.some((x) => x.hostname === b.hostname)) return err(409, 1406);
         const rec = { id: nid("ch"), hostname: b.hostname, status: "pending", ssl: { status: "pending_validation" } };
         state.hostnames.push(rec);

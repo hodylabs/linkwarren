@@ -50,6 +50,48 @@ Without the binding, dashboard paths answer `503 {"error":"no_assets"}`. Unknown
 3. Build the dashboard (`npm run build:web`), then deploy: `npx wrangler deploy -c wrangler.instance.jsonc`.
 4. Add one route per short domain plus the dashboard host (custom domains in the config).
 
+## Cloudflare domains (optional)
+
+With these set, linkwarren attaches domains in Cloudflare itself: same-account domains get a proxied DNS record and a per-host Worker route, outside domains get a Cloudflare for SaaS custom hostname. Without them every domain stays manual (add DNS and routes yourself, as above).
+
+Vars (in `wrangler.instance.jsonc`):
+
+- `CF_ACCOUNT_ID`: the Cloudflare account that holds your zones.
+- `CF_WORKER_NAME`: the deployed Worker script name (the `name` in your instance config).
+- `CF_SAAS_ZONE_ID`: the zone that serves outside domains through Cloudflare for SaaS (only needed for outside domains).
+- `CF_CNAME_TARGET`: a host inside that zone, for example `edge.example.com`. Outside domains add a CNAME to it.
+
+Secret: `CF_API_TOKEN`, set only with `npx wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc` (never in `vars`). Cloudflare features are on only when the token, `CF_ACCOUNT_ID` and `CF_WORKER_NAME` are all set; outside domains also need `CF_SAAS_ZONE_ID` and `CF_CNAME_TARGET`. The token is never shown again, never stored in D1 or KV and never written to logs or the audit log.
+
+### API token
+
+Create a custom API token (My Profile or Manage Account, API Tokens, Create Custom Token) with these permissions, limited to the zones linkwarren may use:
+
+| Group | Permission | Why |
+| --- | --- | --- |
+| core | Zone, Zone, Read | See which domains are in this account |
+| core | Zone, DNS, Edit | Point your domains at linkwarren |
+| core | Zone, Workers Routes, Edit | Send each domain's traffic to the app |
+| outside | Zone, SSL and Certificates, Edit | Add outside domains with a CNAME (Cloudflare for SaaS) |
+| controls | Zone, Config Rules, Edit | Security level per domain |
+| controls | Zone, Zone WAF, Edit | Rate limit per domain |
+
+In the token UI the Config Rules permission is listed under the name "Config Settings". The controls group is only needed when the "Cloudflare controls" switch in Settings is on. Never grant Workers Scripts, Account settings, API Tokens or Access: linkwarren does not need them, and Workers Scripts would let a leaked token replace the app's own code.
+
+Check the token from Settings, Cloudflare (`Check token`), or with `POST /api/settings/cloudflare/check`. The check never writes: it verifies the token, then sends requests Cloudflare must reject (empty name, pattern or hostname) and reads the answer. The two controls permissions show "unknown" until first use, because no safe test request exists for them.
+
+### Outside domains (Cloudflare for SaaS)
+
+1. Enable Cloudflare for SaaS (custom hostnames) on the zone you chose for `CF_SAAS_ZONE_ID`.
+2. Create the fallback origin, either with Settings, Cloudflare, `Set up outside domains` (`POST /api/settings/cloudflare/setup`), or by hand: add a proxied `AAAA` record `CF_CNAME_TARGET` to `100::`, then set `CF_CNAME_TARGET` as the fallback origin under SSL/TLS, Custom Hostnames. The setup endpoint refuses (`target_in_use`) when a record it did not create already exists at the target; it never changes that record.
+3. Wait until the fallback origin shows active. Outside domains can then be added: each one adds a CNAME from its host to `CF_CNAME_TARGET` at its own DNS provider.
+
+A bare domain (for example `example.com` rather than `go.example.com`) cannot carry a plain CNAME. Its DNS provider must support CNAME flattening or an ALIAS/ANAME record pointing at `CF_CNAME_TARGET`.
+
+### Resync
+
+Worker routes created through the API survive `wrangler deploy`, so there is nothing to redo after a deploy. `Resync domains` in Settings (`POST /api/settings/cloudflare/resync`) is a repair tool: run it after someone changed or removed linkwarren's records, routes or custom hostnames in the Cloudflare dashboard, or after a write was lost. It re-creates only what linkwarren created itself, never takes over a record or route someone else made, and lists the domains it could not repair.
+
 ## Access
 
 Create a Cloudflare Access application on the dashboard host only. Short domains must stay public. Take its audience tag for `ACCESS_AUD`.

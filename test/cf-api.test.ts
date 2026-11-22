@@ -133,7 +133,7 @@ describe("helpers", () => {
     installFakeCloudflare();
     expect(await getFallbackOrigin(cfg)).toBeNull();
     await setFallbackOrigin(cfg);
-    expect(await getFallbackOrigin(cfg)).toBe("edge.test");
+    expect(await getFallbackOrigin(cfg)).toEqual({ origin: "edge.test", status: "active" });
   });
 });
 

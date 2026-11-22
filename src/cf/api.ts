@@ -132,10 +132,11 @@ export const createHostname = async (cfg: CfConfig, host: string) =>
 export const deleteHostname = async (cfg: CfConfig, id: string) => del(cfg, `${saas(cfg)}/${q(id)}`);
 export const hostnameCount = async (cfg: CfConfig): Promise<number> => (await cf(cfg, "GET", `${saas(cfg)}?per_page=1`)).info.total_count ?? 0;
 
-const originS = z.object({ origin: z.string().nullish() });
-export async function getFallbackOrigin(cfg: CfConfig): Promise<string | null> {
+const originS = z.object({ origin: z.string().nullish(), status: z.string().nullish() });
+export async function getFallbackOrigin(cfg: CfConfig): Promise<{ origin: string; status: string | null } | null> {
   try {
-    return parse(originS, (await cf(cfg, "GET", `${saas(cfg)}/fallback_origin`)).result).origin ?? null;
+    const o = parse(originS, (await cf(cfg, "GET", `${saas(cfg)}/fallback_origin`)).result);
+    return o.origin ? { origin: o.origin, status: o.status ?? null } : null;
   } catch (e) {
     if (e instanceof CfError && e.status === 404) return null; // unset answers 404 code 1551
     throw e;

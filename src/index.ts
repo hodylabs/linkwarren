@@ -11,6 +11,7 @@ import { domains } from "./api/domains";
 import { importApi } from "./api/import";
 import { users } from "./api/users";
 import { audit } from "./api/audit";
+import { settings } from "./api/settings";
 import { serveDashboard } from "./assets";
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
@@ -58,6 +59,7 @@ app.route("/api/locks", locks);
 app.route("/api/import", importApi);
 app.route("/api/users", users);
 app.route("/api/audit", audit);
+app.route("/api/settings", settings);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 
