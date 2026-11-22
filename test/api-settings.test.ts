@@ -288,7 +288,11 @@ describe("POST /api/settings/cloudflare/resync", () => {
     expect(fake.state.hostnames.map((h) => h.hostname)).toEqual(["e.out.test"]);
     expect(fake.state.routes.map((x) => x.pattern).sort()).toEqual(["b.example.com/*", "e.out.test/*"]);
     expect(fake.state.dns.map((d) => d.name)).toEqual(["b.example.com"]);
-    expect(fake.calls.some((c) => c.path.includes("c.example.com") || c.path.includes("d.manual.test"))).toBe(false);
+    // Every host a call names (query values, body fields, route patterns), compared by exact equality.
+    const named = (c: { path: string; body: unknown }) => [...new URL(c.path, "https://api.test").searchParams.values(),
+      ...Object.values((c.body ?? {}) as Record<string, unknown>).map(String)].map((v) => v.replace(/^\*\./, "").replace(/\/\*$/, ""));
+    expect(fake.calls.flatMap(named)).toContain("e.out.test"); // the helper does see the hosts that were synced
+    expect(fake.calls.flatMap(named).filter((h) => h === "c.example.com" || h === "d.manual.test")).toEqual([]);
     expect(await all("SELECT action, detail FROM audit_log")).toEqual([{ action: "cloudflare.resync", detail: JSON.stringify({ ok: 2, failed: 1, next: null }) }]);
   });
   it("7 domains take 3 calls of at most 3, in domain id order", async () => {
