@@ -335,6 +335,21 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 
 /* app: the detail panel exists only with a selection; without one the list takes the full width */
 .body.solo{grid-template-columns:minmax(0,1fr)}
+/* API & agents (mockup #s-agents) */
+.body.agents{grid-template-columns:minmax(0,1fr) 400px}
+.body.agents.solo{grid-template-columns:minmax(0,1fr)}
+.connect{margin:14px 20px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);display:grid;gap:10px}
+.connect h3{margin:0 0 4px;font-size:13.5px}.connect p{margin:0;color:var(--muted);max-width:72ch}
+.connect .callout{color:#6A4708}
+.mcp{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px 6px 6px 12px;background:var(--bg);max-width:520px}
+.mcp .mono{flex:1;min-width:0;overflow-wrap:anywhere}
+.howto{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap}
+.sub-h{font-weight:600;font-size:inherit;margin:0;padding:16px 20px 8px}
+.btn.bad{color:var(--bad)}
+.chk{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12.5px}
+.chk:has(input:disabled){color:var(--faint)}
+.facts{display:grid;grid-template-columns:96px minmax(0,1fr);gap:6px 12px;margin:0}
+.facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
 .d-head{position:relative}
 .d-head>.short{padding-right:40px}
 .x-btn{position:absolute;top:10px;right:10px;width:34px;padding:0;justify-content:center}
@@ -350,7 +365,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 /* app: responsive. Keep the widths in step with NARROW and PHONE in shell/narrow.tsx. */
 /* Tablets and phones: list and detail share one column; the detail is a pushed view with a Back bar. */
 @media (max-width:1080px){
-  .body,.body.people,.body.solo{display:block;overflow:auto}
+  .body,.body.people,.body.solo,.body.agents{display:block;overflow:auto}
   .list,.detail{overflow:visible}
   .detail{border-left:0}
   .body.people>.detail{border-top:1px solid var(--line)}
@@ -418,6 +433,10 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .sw.on::after{left:20px}
   input,select,textarea,.input,.ctl input,.ctl select,.ctl .pre,.p-in input,.sched input,.utm .ctl input,.pw input,.rt input{font-size:16px}
   .rules button.rule{min-height:44px}
+  .chk{min-height:44px}
+  .connect,.sub-h{margin-left:16px;margin-right:16px}
+  .sub-h{padding-left:0;padding-right:0}
+  .mcp{flex-wrap:wrap}
   .input,.ctl{min-height:44px}
   .utm,.sched{grid-template-columns:minmax(0,1fr)}
   .sh-foot{flex-wrap:wrap}

@@ -4,13 +4,15 @@ import { ComingSoon } from "./shell/ComingSoon";
 import { Gate } from "./shell/Gate";
 import { DomainSwitcher } from "./shell/DomainSwitcher";
 import { Palette } from "./shell/Palette";
-import { OWNER_ONLY, Rail, SCREEN_TITLES } from "./shell/Rail";
+import { OWNER_ONLY, Rail } from "./shell/Rail";
 import { useOpenSheets } from "./shell/Sheet";
 import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
 import { AnalyticsScreen } from "./analytics/AnalyticsScreen";
 import { AccountSheet } from "./account/AccountSheet";
+import { AgentsScreen } from "./agents/AgentsScreen";
+import { NewKeySheet } from "./agents/NewKeySheet";
 import { AddDomainSheet } from "./domains/AddDomainSheet";
 import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
@@ -18,20 +20,15 @@ import { NewLinkSheet } from "./links/NewLinkSheet";
 import { PeopleScreen } from "./people/PeopleScreen";
 import { SettingsScreen } from "./settings/SettingsScreen";
 
-const SOON: Partial<Record<Screen, string>> = {
-  agents: "Agent connections and API keys arrive in a later version.",
-};
-
 function ScreenView({ screen }: { screen: Screen }) {
   const { me } = useApp();
   if (OWNER_ONLY.has(screen) && me.role !== "owner")
     return <ComingSoon title="Owner only" text="Only the owner of this linkwarren can open this page." />;
-  const soon = SOON[screen];
-  if (soon) return <ComingSoon title={SCREEN_TITLES[screen]} text={soon} />;
   if (screen === "links") return <LinksScreen />;
   if (screen === "domains") return <DomainsScreen />;
   if (screen === "settings") return <SettingsScreen />;
   if (screen === "analytics") return <AnalyticsScreen />;
+  if (screen === "agents") return <AgentsScreen />;
   return <PeopleScreen />;
 }
 
@@ -80,6 +77,7 @@ function Shell() {
       {overlay?.kind === "account" && <AccountSheet />}
       {overlay?.kind === "addDomain" && <AddDomainSheet />}
       {overlay?.kind === "newLink" && <NewLinkSheet slug={overlay.slug} />}
+      {overlay?.kind === "newKey" && <NewKeySheet />}
     </div>
   );
 }

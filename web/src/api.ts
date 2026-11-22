@@ -1,6 +1,11 @@
-import type { AuditItem as ServerAuditItem, ApiLink, CfView, DomainRow, UserListItem, UserRow } from "../../src/types";
+import type { AuditItem as ServerAuditItem, ApiLink, CfView, DomainRow, KeyItem, UserListItem, UserRow } from "../../src/types";
 
-export type { CfView };
+export type { CfView, KeyItem };
+/** One item of GET /api/agents/connections (src/api/agents.ts); `userEmail` only in the owner's ?all=1 view of someone else's. */
+export type ConnectionItem = {
+  id: string; userId: string; userEmail: string | null; clientName: string; redirectHost: string;
+  write: boolean; del: boolean; createdAt: number; lastUsedAt: number | null; calls7d: number;
+};
 /** `authMode` and `passkeys` come from /api/me; optional so a Me built without them reads as access mode. */
 export type Me = Pick<UserRow, "id" | "email" | "name" | "role"> & { authMode?: "app" | "access"; passkeys?: number };
 export type { PasskeyItem, Route, RouteDevice, SessionItem } from "../../src/types";

@@ -1,0 +1,189 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import App from "../App";
+import type { ConnectionItem, Domain, KeyItem, Me, UserItem } from "../api";
+import { errorText } from "../copy";
+import { fakeApi, type FakeRoutes } from "../test/fakeApi";
+import { canText } from "./AgentsScreen";
+import { HOWTO } from "./howto";
+
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const member: Me = { id: "um", email: "m@example.com", name: "Mia", role: "member" };
+const DAY = 86400;
+const now = Math.floor(Date.now() / 1000);
+const MAIN: Domain = {
+  id: "d1", host: "go.test", type: "main", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
+  caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: false,
+};
+const conn = (o: Partial<ConnectionItem>): ConnectionItem => ({
+  id: "c1", userId: "um", userEmail: null, clientName: "Claude", redirectHost: "claude.ai", write: false, del: false,
+  createdAt: now - 3 * DAY, lastUsedAt: null, calls7d: 3, ...o,
+});
+const key = (o: Partial<KeyItem>): KeyItem => ({
+  id: "k1", userId: "um", userEmail: null, name: "zapier", prefix: "lw_abcdefg", write: false, del: false, domainIds: [],
+  createdAt: now - 50 * DAY, lastUsedAt: null, expiresAt: now + 40 * DAY, ...o,
+});
+const dana: UserItem = { id: "ud", email: "dana@example.com", name: "Dana R.", role: "member", status: "active", createdAt: 1, linkCount: 0, agentCount: 1, domains: [] };
+const mcpUrl = () => `https://${location.host}/mcp`;
+
+function boot(me: Me, routes: FakeRoutes = {}) {
+  history.replaceState(null, "", "/agents");
+  const api = fakeApi({
+    "GET /api/me": () => ({ body: me }),
+    "GET /api/domains": () => ({ body: [MAIN] }),
+    "GET /api/users": () => ({ body: { items: [dana] } }),
+    "GET /mcp": () => ({ status: 401, body: { error: "invalid_token" } }),
+    "GET /api/agents/connections": () => ({ body: { items: [conn({})] } }),
+    "GET /api/keys": () => ({ body: { items: [key({})] } }),
+    "GET /api/agents/connections/c1/calls": () => ({ body: { items: [{ at: now, tool: "search_links", status: "ok" }, { at: now, tool: "delete_link", status: "refused" }] } }),
+    ...routes,
+  });
+  const user = userEvent.setup();
+  render(<App />);
+  return { api, user };
+}
+const loaded = () => screen.findByRole("cell", { name: "zapier" });
+afterEach(() => vi.unstubAllGlobals());
+
+describe("API & agents screen", () => {
+  it("a member sees only their own rows, all marked You", async () => {
+    const { api } = boot(member);
+    await loaded();
+    expect(api.calls.some((c) => c.path === "/api/agents/connections")).toBe(true);
+    expect(api.calls.some((c) => c.path === "/api/keys")).toBe(true);
+    expect(api.calls.some((c) => c.path.includes("all=1"))).toBe(false);
+    const rows = screen.getAllByRole("row").slice(1).filter((r) => within(r).queryAllByRole("cell").length > 0);
+    for (const r of rows) expect(within(r).getAllByRole("cell")[1]!.textContent).toMatch(/You$/);
+    expect(screen.getByRole("heading", { name: "API & agents" })).toBeTruthy();
+  });
+
+  it("the owner loads everyone with ?all=1 and sees the person", async () => {
+    const { api } = boot(owner, {
+      "GET /api/agents/connections": () => ({ body: { items: [conn({ userId: "ud", userEmail: "dana@example.com" }), conn({ id: "c2", userId: "uo", clientName: "Codex" })] } }),
+    });
+    await loaded();
+    expect(api.calls.some((c) => c.path === "/api/agents/connections?all=1")).toBe(true);
+    expect(api.calls.some((c) => c.path === "/api/keys?all=1")).toBe(true);
+    expect(screen.getAllByText("Dana R.").length).toBeGreaterThan(0);
+  });
+
+  it("C copies the MCP address and announces it, but not inside an input", async () => {
+    const { user } = boot(member);
+    await loaded();
+    expect(await screen.findByText(mcpUrl())).toBeTruthy();
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    await user.keyboard("c");
+    expect(writeText).not.toHaveBeenCalled();
+    input.remove();
+    await user.keyboard("c");
+    expect(writeText).toHaveBeenCalledWith(mcpUrl());
+    expect(await screen.findByText("Copied")).toBeTruthy();
+  });
+
+  it("arrow keys on the client chips switch the how-to text", async () => {
+    const { user } = boot(member);
+    await loaded();
+    const claude = screen.getByRole("button", { name: "Claude" });
+    expect(claude.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(HOWTO.claude(mcpUrl()))).toBeTruthy();
+    claude.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("button", { name: "ChatGPT" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Settings, Connectors, add a custom connector, paste the address")).toBeTruthy();
+    await user.keyboard("{ArrowRight}");
+    expect(await screen.findByText(`claude mcp add --transport http linkwarren ${mcpUrl()}`)).toBeTruthy();
+    await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+    expect(screen.getByText(`codex mcp add linkwarren --url ${mcpUrl()}`)).toBeTruthy();
+  });
+
+  it("shows the off copy when /mcp answers 404", async () => {
+    boot(member, { "GET /mcp": () => ({ status: 404, body: { error: "not_found" } }) });
+    expect(await screen.findByText("Agent connections are turned off on this instance. The owner turns them on with MCP_ENABLED.")).toBeTruthy();
+    expect(screen.queryByText(mcpUrl())).toBeNull();
+  });
+
+  it("J then Shift+D asks, and Enter disconnects", async () => {
+    const { api, user } = boot(member, { "DELETE /api/agents/connections/c1": () => ({ status: 204 }) });
+    await loaded();
+    await user.keyboard("j");
+    expect(await screen.findByText("Claude, for You")).toBeTruthy();
+    await user.keyboard("{Shift>}D{/Shift}");
+    const dlg = await screen.findByRole("dialog", { name: "Disconnect Claude" });
+    expect(within(dlg).getByText("Disconnect Claude? It stops working at once.")).toBeTruthy();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.calls.some((c) => c.method === "DELETE" && c.path === "/api/agents/connections/c1")).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("cell", { name: "Claude" })).toBeNull());
+  });
+
+  it("the detail shows read as always on (not a switch) and recent calls", async () => {
+    const { user } = boot(member);
+    await loaded();
+    await user.keyboard("j");
+    expect(await screen.findByText("Always on")).toBeTruthy();
+    expect(screen.getByText("Read links, domains and clicks")).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: /Read/ })).toBeNull();
+    expect(screen.getAllByRole("switch")).toHaveLength(2);
+    expect(await screen.findByText("search_links")).toBeTruthy();
+    expect(screen.getByText(/refused/)).toBeTruthy();
+    expect(screen.getByText("Shown in the audit log as Mia via Claude")).toBeTruthy();
+  });
+
+  it("Delete links turns on write; Change access sends both", async () => {
+    const { api, user } = boot(member, { "PATCH /api/agents/connections/c1": ({ body }) => ({ body: { ...conn({}), ...(body as object) } }) });
+    await loaded();
+    await user.keyboard("j");
+    const change = await screen.findByRole("button", { name: "Change access" });
+    expect((change as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("switch", { name: "Delete links" }));
+    expect(screen.getByRole("switch", { name: "Create and edit links" }).getAttribute("aria-checked")).toBe("true");
+    await user.click(change);
+    await waitFor(() => expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ write: true, del: true }));
+    await user.click(screen.getByRole("switch", { name: "Create and edit links" }));
+    expect(screen.getByRole("switch", { name: "Delete links" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("a 403 owner_cannot_raise shows its message and keeps the switches", async () => {
+    boot(owner, {
+      "GET /api/agents/connections": () => ({ body: { items: [conn({ userId: "ud", userEmail: "dana@example.com" })] } }),
+      "PATCH /api/agents/connections/c1": () => ({ status: 403, body: { error: "owner_cannot_raise" } }),
+    });
+    const user = userEvent.setup();
+    await loaded();
+    await user.keyboard("j");
+    expect(await screen.findByText("Claude, for Dana R.")).toBeTruthy();
+    await user.click(screen.getByRole("switch", { name: "Create and edit links" }));
+    await user.click(screen.getByRole("button", { name: "Change access" }));
+    expect(await screen.findByText(errorText("owner_cannot_raise"))).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Create and edit links" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("keys show Unused 6 weeks or Expired, and Revoke asks first", async () => {
+    const { api, user } = boot(member, {
+      "GET /api/keys": () => ({ body: { items: [key({}), key({ id: "k2", name: "old", createdAt: now - 100 * DAY, lastUsedAt: now - DAY, expiresAt: now - DAY })] } }),
+      "DELETE /api/keys/k2": () => ({ status: 204 }),
+    });
+    await loaded();
+    expect(screen.getByText("Unused 6 weeks")).toBeTruthy();
+    expect(screen.getByText("Expired")).toBeTruthy();
+    await user.click(screen.getByRole("cell", { name: "old" }));
+    await user.click(await screen.findByRole("button", { name: /^Revoke/ }));
+    await screen.findByRole("dialog", { name: "Revoke old" });
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.calls.some((c) => c.method === "DELETE" && c.path === "/api/keys/k2")).toBe(true));
+  });
+});
+
+describe("canText", () => {
+  const hosts = new Map([["d1", "go.test"], ["d2", "qr.test"]]);
+  it("names what the key can do and where", () => {
+    expect(canText(key({}), hosts)).toBe("Read links");
+    expect(canText(key({ write: true }), hosts)).toBe("Create links");
+    expect(canText(key({ write: true, del: true, domainIds: ["d1"] }), hosts)).toBe("Create and delete links on go.test");
+    expect(canText(key({ domainIds: ["d1", "d2"] }), hosts)).toBe("Read links on 2 domains");
+  });
+});

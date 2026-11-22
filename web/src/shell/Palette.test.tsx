@@ -170,12 +170,12 @@ describe("Ctrl+K palette", () => {
     expect(location.pathname + location.search).toBe("/links?q=spring&sel=l9");
   });
 
-  it("members never see gp, gi or gs", async () => {
+  it("members never see gp or gs, but get gi (R9)", async () => {
     const { user } = await boot(member);
     await user.keyboard("{Control>}k{/Control}");
     const list = screen.getByRole("listbox");
     expect(within(list).queryByText(/People/)).toBeNull();
-    expect(within(list).queryByText(/API/)).toBeNull();
+    expect(within(list).getByText("API & agents")).toBeTruthy();
     expect(within(list).queryByText(/Settings/)).toBeNull();
     await user.keyboard("gp");
     expect(location.pathname).toBe("/links");

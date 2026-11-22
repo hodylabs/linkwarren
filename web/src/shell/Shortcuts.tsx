@@ -2,6 +2,8 @@ import { useApp } from "../state";
 import { keyLabels } from "../keys";
 import type { Screen } from "../router";
 import { ACCOUNT_KEYS } from "../account/AccountPanel";
+import { AGENT_DETAIL_KEYS, AGENTS_KEYS } from "../agents/AgentsScreen";
+import { NEW_KEY_KEYS } from "../agents/NewKeySheet";
 import { ANALYTICS_KEYS } from "../analytics/AnalyticsScreen";
 import { CHART_KEYS } from "../analytics/ClicksChart";
 import { ADD_DOMAIN_KEYS } from "../domains/AddDomainSheet";
@@ -73,6 +75,17 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
       ...rows(CHART_KEYS),
     ],
   },
+  {
+    title: "API & agents",
+    rows: [
+      ...rows(AGENTS_KEYS),
+      ...rows(AGENT_DETAIL_KEYS),
+      OPEN_ROW,
+      [["←", "→"], "Pick an agent to see how to connect it"], // AgentsScreen chip onKeyDown
+      [["Enter"], "Confirm"], // confirm sheets
+    ],
+  },
+  { title: "New API key", rows: rows(NEW_KEY_KEYS) },
   { title: "Settings", rows: rows(SETTINGS_KEYS) },
   { title: "Sign-in and security", rows: [...rows(ACCOUNT_KEYS), [["Enter"], "Confirm"], [["Esc"], "Cancel or close"]] },
 ];

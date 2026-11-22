@@ -185,6 +185,7 @@ export function PeopleScreen() {
                 <th>Role</th>
                 <th>Domains</th>
                 <th className="num">Links</th>
+                <th className="num">Agents connected</th>
               </tr>
             </thead>
             <tbody>
@@ -215,6 +216,7 @@ export function PeopleScreen() {
                   </td>
                   <td data-label="Domains">{domainsCell(u, domains.length)}</td>
                   <td className="num" data-label="Links">{u.linkCount}</td>
+                  <td className="num" data-label="Agents connected">{u.agentCount}</td>
                 </tr>
               ))}
             </tbody>

@@ -87,3 +87,22 @@ describe("describeAudit system actor", () => {
     expect(r.suffix).toBe(" (12)");
   });
 });
+
+describe("describeAudit agents and keys", () => {
+  const t = (o: Partial<AuditItem>) => d({ targetType: "agent_connection", targetId: "c1", ...o });
+  it("agent.connect names the client, shown as the person via the client", () => {
+    const r = t({ action: "agent.connect", via: "Claude", detail: { clientId: "x", redirectHost: "claude.ai", write: false, del: false } });
+    expect(r).toMatchObject({ who: "Dana R.", via: "via Claude", text: "connected an agent", code: "Claude" });
+  });
+  it("agent.access and agent.disconnect", () => {
+    expect(t({ action: "agent.access", detail: { write: true, del: false } }).text).toBe("changed what an agent can do");
+    expect(t({ action: "agent.disconnect", detail: { userId: "u1", clientName: "Codex" } })).toMatchObject({ text: "disconnected an agent", code: "Codex" });
+  });
+  it("a failed approval reads failed to connect", () => {
+    expect(t({ action: "agent.disconnect", via: "Claude", detail: { reason: "failed" } })).toMatchObject({ via: "via Claude", text: "failed to connect", code: null });
+  });
+  it("key.create and key.revoke", () => {
+    expect(d({ action: "key.create", targetType: "api_key", detail: { name: "zapier", prefix: "lw_abc" } })).toMatchObject({ text: "created the API key", code: "zapier" });
+    expect(d({ action: "key.revoke", targetType: "api_key", detail: { name: "zapier" } })).toMatchObject({ text: "revoked an API key", code: null });
+  });
+});

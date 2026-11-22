@@ -42,7 +42,7 @@ const ICONS: Record<Screen, ReactNode> = {
   ),
 };
 
-export const OWNER_ONLY: ReadonlySet<Screen> = new Set<Screen>(["people", "agents", "settings"]);
+export const OWNER_ONLY: ReadonlySet<Screen> = new Set<Screen>(["people", "settings"]);
 
 export const SCREEN_TITLES: Record<Screen, string> = {
   links: "Links",
@@ -109,6 +109,8 @@ export function Rail() {
         <Item screen="links" current={screen} />
         <Item screen="domains" current={screen} />
         <Item screen="analytics" current={screen} />
+        {/* R9: members manage their own keys and agents; the owner keeps the entry under Owner as in the mockup. */}
+        {!isOwner && <Item screen="agents" current={screen} />}
         {isOwner && (
           <>
             <div className="nav-sep">Owner</div>

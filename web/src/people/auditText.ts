@@ -47,6 +47,12 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
       return done("imported links", null, p !== null && s !== null ? ` (${p} planned, ${s} skipped)` : "");
     }
     case "import.chunk": return done("imported a batch of links");
+    case "agent.connect": return done("connected an agent", str(a.detail.clientName) ?? str(a.via));
+    case "agent.access": return done("changed what an agent can do");
+    // A failed approval is written as a disconnect with { reason: "failed" }; the client is in via.
+    case "agent.disconnect": return a.detail.reason === "failed" ? done("failed to connect") : done("disconnected an agent", str(a.detail.clientName));
+    case "key.create": return done("created the API key", str(a.detail.name));
+    case "key.revoke": return done("revoked an API key");
     default: return done(a.action, `${a.targetType} ${a.targetId}`);
   }
 }

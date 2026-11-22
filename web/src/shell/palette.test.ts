@@ -76,3 +76,20 @@ describe("buildCommands: analytics domain filter", () => {
     expect(location.pathname + location.search).toBe("/analytics?pick=1");
   });
 });
+
+describe("buildCommands: API & agents", () => {
+  const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
+  it("gi and ck exist for a member as well as the owner", () => {
+    for (const isOwner of [false, true]) {
+      const cmds = buildCommands(ctx, isOwner);
+      expect(cmds.find((c) => c.keys === "gi")).toMatchObject({ section: "Go to", label: "API & agents" });
+      expect(cmds.find((c) => c.keys === "ck")).toMatchObject({ section: "Create", label: "New API key" });
+    }
+    expect(buildCommands(ctx, false).some((c) => c.keys === "gp" || c.keys === "gs")).toBe(false);
+  });
+  it("ck opens the New API key sheet", () => {
+    let opened: unknown = null;
+    buildCommands({ ...ctx, open: (o) => (opened = o) }, false).find((c) => c.keys === "ck")!.run();
+    expect(opened).toEqual({ kind: "newKey" });
+  });
+});

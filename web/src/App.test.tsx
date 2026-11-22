@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import App from "./App";
 import type { Domain, Me } from "./api";
@@ -64,11 +65,27 @@ describe("App shell", () => {
     expect(screen.getByRole("link", { name: /Analytics/ }).getAttribute("aria-current")).toBe("page");
   });
 
-  it.each([
-    ["/agents", "Agent connections and API keys arrive in a later version."],
-  ])("owner at %s sees its coming-soon text", async (path, text) => {
-    boot(owner, {}, path);
-    expect(await screen.findByText(text)).toBeTruthy();
+  it("a member gets API & agents in the top group, and G I opens it", async () => {
+    boot(member, { "GET /api/agents/connections": () => ({ body: { items: [] } }), "GET /api/keys": () => ({ body: { items: [] } }) });
+    const nav = await screen.findByRole("navigation");
+    const item = within(nav).getByRole("link", { name: /API & agents/ });
+    expect(within(nav).queryByText("Owner")).toBeNull();
+    await screen.findByRole("heading", { name: "Links" });
+    const user = userEvent.setup();
+    await user.keyboard("gi");
+    expect(location.pathname).toBe("/agents");
+    expect(await screen.findByRole("heading", { name: "API & agents" })).toBeTruthy();
+    expect(screen.queryByText("Owner only")).toBeNull();
+    expect(item.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("the owner keeps API & agents under the Owner section", async () => {
+    boot(owner);
+    const nav = await screen.findByRole("navigation");
+    const sep = within(nav).getByText("Owner");
+    const item = within(nav).getByRole("link", { name: /API & agents/ });
+    expect(sep.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(nav).getAllByRole("link", { name: /API & agents/ })).toHaveLength(1);
   });
 
   it.each(["/nope", "/"])("%s lands on Links", async (path) => {

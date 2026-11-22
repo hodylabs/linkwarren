@@ -71,6 +71,11 @@ const ERRORS: Record<string, string> = {
   passkey_add_cancelled: "Adding a passkey was cancelled.",
   passkey_exists: "This device already has a passkey for this account.",
   link_incomplete: "This sign-in link is incomplete. Copy the whole link from the email, or ask for a new one.",
+  owner_cannot_raise: "Only the person who connected this agent can give it more access. You can lower it or disconnect it.",
+  del_needs_write: "Deleting links also needs create and edit.",
+  name_taken: "You already have a key with this name. Pick another.",
+  too_many_keys: "You can have at most 20 API keys, expired ones included. Revoke one first.",
+  key_name: "Use 1 to 40 lowercase letters, digits or hyphens.",
   email_not_configured: "Sign-in email is not set up on this instance. Use a passkey or ask the owner.",
 };
 
