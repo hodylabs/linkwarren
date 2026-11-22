@@ -48,6 +48,11 @@ const EXPIRED = () => msg(400, "Approval expired", "Approval expired, start agai
 type Ctx = { Bindings: Env };
 export const authorize = new Hono<Ctx>();
 
+// The wrapper's MCP_ENABLED gate sees the raw path, Hono routes on the decoded one (/%61uthorize): gate here too, and
+// serve only the canonical path.
+authorize.use("*", (c, next) =>
+  c.env.MCP_ENABLED === "1" && new URL(c.req.url).pathname === "/authorize" ? next() : Promise.resolve(c.json({ error: "not_found" }, 404)));
+
 /** Who is signed in right now, or the refusal page (same status as the API would give). */
 async function who(req: Request, env: Env) {
   if (!authMode(env)) return { fail: msg(500, "Misconfigured", "This linkwarren is misconfigured.") };

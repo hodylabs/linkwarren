@@ -305,3 +305,24 @@ describe("fix round 1", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ? AND revoked_at IS NULL").bind(p.clientId).first("n")).toBe(1);
   });
 });
+
+describe("final fix wave", () => {
+  const setMcp = (v: string) => ((env as { MCP_ENABLED?: string }).MCP_ENABLED = v);
+  afterEach(() => setMcp("1"));
+
+  it("serves consent only on the canonical /authorize path, and never while MCP is off", async () => {
+    const p = await ready("encoded@example.com");
+    const { path } = await request();
+    const alt = path.replace("/authorize", "/%61uthorize");
+    for (const mcp of ["0", "1"]) {
+      setMcp(mcp);
+      const g = await openConsent(alt, p.auth);
+      expect([mcp, "GET", g.res.status, g.handle]).toEqual([mcp, "GET", 404, ""]);
+      const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" }, undefined, "/%61uthorize");
+      expect([mcp, "POST", r.status]).toEqual([mcp, "POST", 404]);
+    }
+    setMcp("0");
+    expect((await openConsent(path, p.auth)).res.status).toBe(404);
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("n")).toBe(0);
+  });
+});

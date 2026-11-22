@@ -59,12 +59,12 @@ export async function openConsent(path: string, auth: Record<string, string>) {
 }
 
 /** POST /authorize from the dashboard origin with the consent form fields. */
-export function postConsent(auth: Record<string, string>, binding: string, form: Record<string, string>, origin: string | null = ORIGIN) {
+export function postConsent(auth: Record<string, string>, binding: string, form: Record<string, string>, origin: string | null = ORIGIN, path = "/authorize") {
   const cookie = [auth.cookie, binding].filter(Boolean).join("; ");
   const headers: Record<string, string> = { ...auth, "content-type": "application/x-www-form-urlencoded" };
   if (cookie) headers.cookie = cookie;
   if (origin !== null) headers.origin = origin;
-  return fetchW("/authorize", { method: "POST", headers, body: new URLSearchParams(form).toString(), redirect: "manual" });
+  return fetchW(path, { method: "POST", headers, body: new URLSearchParams(form).toString(), redirect: "manual" });
 }
 
 export const token = (form: Record<string, string>) =>
