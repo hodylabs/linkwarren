@@ -21,7 +21,7 @@ import { ROLES_KEYS } from "../people/RolesView";
 import { SETTINGS_KEYS } from "../settings/CloudflareSection";
 import { EXPORT_KEYS } from "../settings/sections";
 import type { Me } from "../api";
-import { can, canSee, isOwner, type Perm } from "../perms";
+import { can, canSee, isOwner, seesRoles, type Perm } from "../perms";
 import { buildCommands } from "./palette";
 import { SCREEN_TITLES } from "./Rail";
 import { Kbd } from "./ui";
@@ -59,6 +59,7 @@ const GROUPS: { title: string; rows: Row[]; need?: Need }[] = [
       ...rows(GLOBAL_KEYS),
       [["Esc"], "Close the open panel"], // Sheet
       ...Object.entries(GO_KEYS).map(([k, s]): Row => [["G", k.toUpperCase()], `Go to ${SCREEN_TITLES[s]}`, (me) => canSee(me, s)]),
+      [["G", "R"], "Go to Roles", seesRoles], // App useChord
     ],
   },
   // "In search and go" rows come from the palette's own commands for the role (groupsFor).

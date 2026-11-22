@@ -190,13 +190,14 @@ function PeopleView() {
 
   return (
     <>
+      {/* An audit-only role (no people.manage) reads only the log, so the header speaks of the log alone. */}
       <ScreenHeader
-        title="People & audit log"
+        title={manage ? "People & audit log" : "Audit log"}
         count={manage ? `${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending` : undefined}
-        text="Who can sign in, what they can reach, and every change made by a person or an agent."
+        text={manage ? "Who can sign in, what they can reach, and every change made by a person or an agent." : "Every change made by a person or an agent, across every domain."}
       >
         {seesRoles(me) && <PeopleTabs at="people" />}
-        <SearchButton q={q} placeholder="Search people and activity" onOpen={() => app.open({ kind: "palette" })} />
+        <SearchButton q={q} placeholder={manage ? "Search people and activity" : "Search and go"} onOpen={() => app.open({ kind: "palette" })} />
         {manage && <div className="chips" role="group" aria-label="Filter people">
           {FILTERS.map((f) => (
             <Chip key={f} pressed={filter === f} onClick={() => setFilter(f)}>

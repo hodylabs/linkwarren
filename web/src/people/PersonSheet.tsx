@@ -8,7 +8,7 @@ import { useDetailView } from "../shell/narrow";
 import { Confirm, Sheet } from "../shell/Sheet";
 import { Tag } from "../shell/ui";
 import { isOwner, mayAssign } from "../perms";
-import { RolePicker, useRoles } from "./RolePicker";
+import { RolePicker, RolesLoadError, useRoles } from "./RolePicker";
 import { useApp } from "../state";
 import { shortDate } from "../time";
 
@@ -47,7 +47,7 @@ export function PersonSheet({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [to, setTo] = useState(me.id);
   const [pick, setPick] = useState("member"); // the role chosen in the picker, until confirmed
-  const { roles } = useRoles();
+  const { roles, error: rolesError, reload: reloadRoles } = useRoles();
   const busy = useRef(false);
   const { show } = useDetailView("/people");
 
@@ -161,6 +161,7 @@ export function PersonSheet({ id }: { id: string }) {
           ) : (
             <p>{u.role === "owner" ? "Owner" : u.roleName}{self ? " (you)" : ""}</p>
           )}
+          {reach && !roles && rolesError && <RolesLoadError onRetry={() => void reloadRoles()} />}
         </div>
         <div className="f">
           <h3 className="lbl">Domains</h3>

@@ -8,6 +8,8 @@ import { useApp } from "../state";
 import { RoleSheet } from "./RoleSheet";
 import { useRoles } from "./RolePicker";
 
+const MAX_CUSTOM = 20; // src/api/roles.ts
+
 /** Roles view hotkeys and their text on the shortcuts sheet. */
 export const ROLES_KEYS = {
   j: "Next role",
@@ -38,6 +40,8 @@ export function RolesView() {
   const list = roles ?? [];
   const at = list.findIndex((r) => r.id === sel);
   const custom = list.filter((r) => !r.builtin).length;
+  const full = custom >= MAX_CUSTOM; // the server refuses a 21st (too_many_roles): say so before any typing
+  const newRole = () => (full ? app.announce(errorText("too_many_roles")) : setOpen(""));
 
   const move = (step: 1 | -1) => {
     const to = at < 0 ? list[step === 1 ? 0 : list.length - 1] : list[at + step];
@@ -49,7 +53,7 @@ export function RolesView() {
     {
       j: () => move(1),
       k: () => move(-1),
-      n: (e) => void (!e.shiftKey && owner && setOpen("")),
+      n: (e) => void (!e.shiftKey && owner && newRole()),
       p: (e) => void (!e.shiftKey && navigate("/people")),
     } satisfies Bindings<typeof ROLES_KEYS>,
     overlay === null && open === null,
@@ -64,7 +68,8 @@ export function RolesView() {
         text={owner ? "What each role can do. Who can use which domain is set per person and domain." : "What each role can do. Only an owner can change roles."}
       >
         <PeopleTabs at="roles" />
-        {owner && <PrimaryButton label="New role" shortcut="N" onClick={() => setOpen("")} />}
+        {owner && full && <span className="hint">{errorText("too_many_roles")}</span>}
+        {owner && <PrimaryButton label="New role" shortcut="N" disabled={full} onClick={newRole} />}
       </ScreenHeader>
       <div className="body solo">
         <section className="list" aria-label="Roles list">
@@ -104,6 +109,7 @@ export function RolesView() {
           roles={list}
           me={me}
           onClose={() => setOpen(null)}
+          onReload={reload}
           onDone={(msg) => {
             setOpen(null);
             app.announce(msg);

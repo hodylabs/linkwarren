@@ -4,7 +4,8 @@ import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
 import { Switch } from "../shell/ui";
-import { RolePicker, useRoles } from "./RolePicker";
+import { can, mayAssign } from "../perms";
+import { RolePicker, RolesLoadError, useRoles } from "./RolePicker";
 import { useApp } from "../state";
 
 /** Invite sheet hotkeys and their text on the shortcuts sheet. */
@@ -25,10 +26,13 @@ const inviteError = (code: string) => errorText({ invalid_body: "invite_email", 
 export function InviteSheet() {
   const app = useApp();
   const main = app.domains.filter((d) => d.type === "main");
-  const shared = app.domains.filter((d) => d.type === "shared");
+  // Only owners and domain managers may give access to shared domains here; the server refuses the rest (src/api/invites.ts).
+  const shared = can(app.me, "domains.manage") ? app.domains.filter((d) => d.type === "shared") : [];
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("member"); // a role id
-  const { roles } = useRoles();
+  const [chosen, setRole] = useState<string | null>(null); // a role id, once picked
+  const { roles, error: rolesError, reload: reloadRoles } = useRoles();
+  // Until one is picked: Member, or the first role a people manager below Member may give (R4). None at all: no invite.
+  const role = chosen ?? roles?.find((r) => r.id !== "owner" && mayAssign(app.me, r))?.id ?? null;
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mail, setMail] = useState<Mail | null>(null);
@@ -43,7 +47,7 @@ export function InviteSheet() {
   }, []);
 
   const submit = async () => {
-    if (busy.current || address !== null) return;
+    if (busy.current || address !== null || role === null) return;
     const e = email.trim();
     if (!EMAIL.test(e)) return setError("invite_email");
     busy.current = true;
@@ -113,7 +117,9 @@ export function InviteSheet() {
             <div className="f">
               <h3 className="lbl">Role</h3>
               {/* Owner only for owners; a people manager picks among roles within their own permissions (R4). */}
-              {roles ? <RolePicker value={role} onChange={setRole} roles={roles} me={app.me} allowOwner /> : <p>Member</p>}
+              {roles && role !== null && <RolePicker value={role} onChange={setRole} roles={roles} me={app.me} allowOwner />}
+              {roles && role === null && <p className="err" role="alert">Every role has permissions you do not have, so you cannot invite anyone. Ask an owner.</p>}
+              {!roles && rolesError && <RolesLoadError onRetry={() => void reloadRoles()} />}
             </div>
             {role !== "owner" && (
               <div className="f">

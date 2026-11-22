@@ -298,20 +298,23 @@ describe("G chords from the shell", () => {
   });
 
   it("times out and ignores other keys in between", async () => {
-    await boot(owner, {}, "/analytics");
+    // API & agents binds neither D nor X, so a stray letter cannot open a screen panel and change who owns the keys.
+    await boot(owner, { "GET /api/keys": () => ({ body: [] }), "GET /api/agents/connections": () => ({ body: [] }), "GET /api/agents/mcp": () => ({ body: { on: true, locked: false } }) }, "/agents");
+    await screen.findByRole("heading", { level: 1 });
     vi.useFakeTimers({ toFake: ["Date"] });
-    const press = (key: string) => fireEvent.keyDown(document.body, { key });
+    vi.setSystemTime(1_700_000_000_000);
+    const press = (key: string) => act(() => void fireEvent.keyDown(document.body, { key }));
     press("g");
-    vi.setSystemTime(Date.now() + 5000);
+    vi.setSystemTime(1_700_000_005_000); // past the 1.5 s chord window
     press("d");
-    expect(location.pathname).toBe("/analytics");
+    expect(location.pathname).toBe("/agents");
     press("g");
     press("x");
     press("d");
-    expect(location.pathname).toBe("/analytics");
+    expect(location.pathname).toBe("/agents");
     press("g");
     press("d");
-    expect(location.pathname).toBe("/domains");
+    await waitFor(() => expect(location.pathname).toBe("/domains"));
   });
 
   it("is off while an overlay is open", async () => {

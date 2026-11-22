@@ -22,8 +22,16 @@ export function useRoles(): { roles: RoleItem[] | null; error: string | null; re
   return { roles, error, reload };
 }
 
+/** The role list did not load: say so, with a Retry. */
+export const RolesLoadError = ({ onRetry }: { onRetry: () => void }) => (
+  <p className="err" role="alert">
+    Could not load the roles.{" "}
+    <button type="button" className="btn" onClick={onRetry}>Retry</button>
+  </p>
+);
+
 /**
- * One tab stop listing roles: arrows (and Home, End, a first letter) move, Enter or Space picks. Owner is listed only for an
+ * One tab stop listing roles: arrows, Home and End move, Enter or Space picks. No type-ahead: letters stay the sheet's hotkeys. Owner is listed only for an
  * owner and only with `allowOwner`; a role with a permission `me` lacks is shown but cannot be picked (the server refuses it, R4).
  */
 export function RolePicker({ value, onChange, roles, me, allowOwner = false, label = "Role" }: {
@@ -54,13 +62,6 @@ export function RolePicker({ value, onChange, roles, me, allowOwner = false, lab
     } else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       pick(shown[cur]);
-    } else if (e.key.length === 1 && !e.shiftKey) {
-      // Type-ahead: the next role after this one starting with the letter; a letter that matches none stays a hotkey.
-      const k = e.key.toLowerCase();
-      const i = [...shown.keys()].map((j) => (cur + 1 + j) % n).find((j) => shown[j]!.name.toLowerCase().startsWith(k));
-      if (i === undefined) return;
-      e.preventDefault();
-      setAt(i);
     }
   };
 

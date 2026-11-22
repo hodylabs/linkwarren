@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Me, type RoleItem } from "../api";
 import { errorText, plural } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
@@ -24,12 +24,14 @@ const cleanName = (raw: string): string | null => {
 type Step = null | "delete" | "move";
 
 /** `role` null: a new role. Owners edit every role but Owner; anyone else (people managers) reads it (S8 R4, R15). */
-export function RoleSheet({ role, roles, me, onClose, onDone }: {
+export function RoleSheet({ role, roles, me, onClose, onDone, onReload }: {
   role: RoleItem | null;
   roles: RoleItem[];
   me: Pick<Me, "role" | "perms">;
   onClose: () => void;
   onDone: (msg: string) => void;
+  /** Reloads the role list; the sheet then starts over from the fresh role. */
+  onReload: () => Promise<void>;
 }) {
   const fixed = role?.id === "owner";
   const editable = isOwner(me) && !fixed;
@@ -41,6 +43,18 @@ export function RoleSheet({ role, roles, me, onClose, onDone }: {
   const [count, setCount] = useState(role?.people ?? 0);
   const [moveTo, setMoveTo] = useState("member");
   const busy = useRef(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+  // A reload hands in a fresh role object: start over from it (edits made against the old one are dropped).
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) return void (first.current = false);
+    setName(role?.name ?? "");
+    setPerms(role?.perms ?? []);
+    setCount(role?.people ?? 0);
+    setStep(null);
+    setError(null);
+    nameRef.current?.focus();
+  }, [role]);
 
   const run = async (call: () => Promise<string>) => {
     if (busy.current) return;
@@ -90,6 +104,13 @@ export function RoleSheet({ role, roles, me, onClose, onDone }: {
   const targets = roles.filter((r) => r.id !== "owner" && r.id !== role?.id);
   const target = targets.find((r) => r.id === moveTo)?.name ?? "Member";
   const close = () => (busy.current ? undefined : onClose());
+  // A conflict offers a reload in place, so the person never has to close and reopen to see the latest.
+  const errorLine = error && (
+    <>
+      <p className="err" role="alert">{roleError(error)}</p>
+      {error === "changed" && <button type="button" className="btn" onClick={() => void onReload()}>Reload</button>}
+    </>
+  );
 
   return (
     <Sheet label={title} onClose={close}>
@@ -102,7 +123,7 @@ export function RoleSheet({ role, roles, me, onClose, onDone }: {
           <div className="f">
             <label htmlFor="rl-name">Name</label>
             <div className={error === "bad_name" || error === "name_taken" ? "ctl bad" : "ctl"}>
-              <input id="rl-name" autoFocus value={name} spellCheck={false} autoComplete="off" onChange={(e) => setName(e.target.value)} />
+              <input id="rl-name" ref={nameRef} autoFocus value={name} spellCheck={false} autoComplete="off" onChange={(e) => setName(e.target.value)} />
             </div>
           </div>
         )}
@@ -122,7 +143,7 @@ export function RoleSheet({ role, roles, me, onClose, onDone }: {
             ))}
           </ul>
         </div>
-        {error && step === null && <p className="err" role="alert">{roleError(error)}</p>}
+        {error && step === null && errorLine}
       </div>
       {editable && (
         <div className="sh-foot">
@@ -138,13 +159,15 @@ export function RoleSheet({ role, roles, me, onClose, onDone }: {
         </div>
       )}
       {step === "delete" && role && (
-        <Confirm key="delete" title={`Delete the role ${role.name}`} text={`Delete the role ${role.name}? This cannot be undone.`} ok="Delete" onOk={() => remove()} onCancel={() => setStep(null)} />
+        <Confirm key="delete" title={`Delete the role ${role.name}`} text={`Delete the role ${role.name}? This cannot be undone.`} ok="Delete" onOk={() => remove()} onCancel={() => (setStep(null), setError(null))}>
+          {error && errorLine}
+        </Confirm>
       )}
       {step === "move" && role && (
         <Confirm key="move" title={`Delete the role ${role.name}`} text={`Its people move to ${target}. This cannot be undone.`} ok="Delete" onOk={() => remove(moveTo)} onCancel={() => (setStep(null), setError(null))}>
           <p className="lbl">Move its {plural(count, "person", "people")} to</p>
           <RolePicker value={moveTo} onChange={setMoveTo} roles={targets} me={me} label={`Move its ${plural(count, "person", "people")} to`} />
-          {error && <p className="err" role="alert">{roleError(error)}</p>}
+          {error && errorLine}
         </Confirm>
       )}
     </Sheet>

@@ -62,6 +62,8 @@ export function AnalyticsScreen() {
   const [loaded, setLoaded] = useState<{ key: string; report: AnalyticsReport } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
+  // R10: every domain any report named this session, so a narrower report never drops one from the picker or its host.
+  const seen = useRef(new Map<string, string>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
@@ -102,7 +104,9 @@ export function AnalyticsScreen() {
     setError(null);
     api<AnalyticsReport>("GET", `/api/analytics${key ? `?${key}` : ""}`, undefined, ac.signal).then(
       (r) => {
-        if (g === seq.current) setLoaded({ key, report: r });
+        if (g !== seq.current) return;
+        for (const d of r.domains) seen.current.set(d.domainId, d.host);
+        setLoaded({ key, report: r });
       },
       (e: unknown) => {
         if (g === seq.current && !ac.signal.aborted) setError(errorText(e instanceof ApiError ? e.code : "internal"));
@@ -140,9 +144,9 @@ export function AnalyticsScreen() {
     overlay === null && sheets === 0 && !picker,
   );
 
-  // R10: analytics.all reaches domains /api/domains does not list; the report names them, so they can be picked too.
+  // R10: analytics.all reaches domains /api/domains does not list; the reports name them, so they can be picked too.
   const extra = can(me, "analytics.all")
-    ? (loaded?.report.domains ?? []).filter((r) => !domains.some((d) => d.id === r.domainId)).map((r) => ({ id: r.domainId, host: r.host }))
+    ? [...seen.current].filter(([id]) => !domains.some((d) => d.id === id)).map(([id, host]) => ({ id, host }))
     : [];
   const pickable = [...switcherDomains(domains), ...extra.sort((a, b) => a.host.localeCompare(b.host))];
   const hostOf = (id: string) => pickable.find((d) => d.id === id)?.host ?? id;

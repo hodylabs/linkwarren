@@ -199,6 +199,89 @@ describe("Roles view", () => {
   });
 });
 
+describe("Roles view errors and limits", () => {
+  it("a failed delete shows its copy inside the confirm; changed offers Reload, which reloads the list in place", async () => {
+    let lists = 0;
+    const { api, user } = boot({ path: "/people/roles", routes: {
+      "GET /api/roles": () => (lists++ ? { body: ROLES.map((r) => (r.id === "zd" ? { ...r, name: "Zeta" } : r)) } : { body: ROLES }),
+      "DELETE /api/roles/zd": () => ({ status: 409, body: { error: "changed" } }),
+    } });
+    await ready();
+    await user.keyboard("jjjj{Enter}");
+    await screen.findByRole("dialog", { name: "Zed" });
+    await user.tab();
+    await user.keyboard("{Shift>}X{/Shift}");
+    const c = await screen.findByRole("dialog", { name: "Delete the role Zed" });
+    await user.keyboard("{Enter}");
+    expect((await within(c).findByRole("alert")).textContent).toBe("Someone else changed this at the same time. Reload and try again.");
+    await user.click(within(c).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(api.calls.filter((x) => x.path === "/api/roles")).toHaveLength(2));
+    const fresh = await screen.findByRole("dialog", { name: "Zeta" });
+    expect((within(fresh).getByLabelText("Name") as HTMLInputElement).value).toBe("Zeta");
+    expect(screen.queryByRole("dialog", { name: /Delete the role/ })).toBeNull();
+  });
+
+  it("a failed delete for another reason (403) also shows inside the confirm", async () => {
+    const { user } = boot({ path: "/people/roles", routes: { "DELETE /api/roles/zd": () => ({ status: 403, body: { error: "forbidden" } }) } });
+    await ready();
+    await user.keyboard("jjjj{Enter}");
+    await screen.findByRole("dialog", { name: "Zed" });
+    await user.tab();
+    await user.keyboard("{Shift>}X{/Shift}");
+    const c = await screen.findByRole("dialog", { name: "Delete the role Zed" });
+    await user.keyboard("{Enter}");
+    expect((await within(c).findByRole("alert")).textContent).toBe("You do not have permission to do that.");
+    expect(within(c).queryByRole("button", { name: "Reload" })).toBeNull();
+  });
+
+  it("a save answered 409 changed offers Reload in the sheet, which re-seeds it from the fresh role", async () => {
+    let lists = 0;
+    const { user } = boot({ path: "/people/roles", routes: {
+      "GET /api/roles": () => (lists++ ? { body: ROLES.map((r) => (r.id === "hl" ? { ...r, perms: ["audit"] } : r)) } : { body: ROLES }),
+      "PATCH /api/roles/hl": () => ({ status: 409, body: { error: "changed" } }),
+    } });
+    await ready();
+    await user.keyboard("jjj{Enter}");
+    const dlg = await screen.findByRole("dialog", { name: "Helper" });
+    await user.keyboard("2{Control>}{Enter}{/Control}");
+    expect((await within(dlg).findByRole("alert")).textContent).toBe("Someone else changed this at the same time. Reload and try again.");
+    await user.click(within(dlg).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect((within(dlg).getAllByRole("checkbox") as HTMLInputElement[]).filter((b) => b.checked).map((b) => b.value)).toEqual(["audit"]));
+    expect((within(dlg).getByLabelText("Name") as HTMLInputElement).value).toBe("Helper");
+    expect(within(dlg).queryByRole("alert")).toBeNull();
+  });
+
+  it("at 20 custom roles New role is disabled with the reason, and N opens nothing", async () => {
+    const many = [ROLES[3]!, ROLES[1]!, ...Array.from({ length: 20 }, (_, i): RoleItem => ({ id: `c${i}`, name: `Role ${String(i).padStart(2, "0")}`, perms: [], builtin: null, people: 0 }))];
+    const { user } = boot({ path: "/people/roles", routes: { "GET /api/roles": () => ({ body: many }) } });
+    await waitFor(() => expect(roleRows()).toHaveLength(22));
+    const btn = screen.getByRole("button", { name: /New role/ }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(screen.getByText("You can have up to 20 custom roles.")).toBeTruthy();
+    await user.keyboard("n");
+    expect(screen.queryByRole("dialog", { name: "New role" })).toBeNull();
+  });
+});
+
+describe("G R chord", () => {
+  it("G then R goes to Roles from any screen for owners and people managers; the shortcuts sheet lists it", async () => {
+    const { user } = boot({ path: "/links", routes: { "GET /api/links": () => ({ body: { items: [], next: null } }) } });
+    await screen.findByRole("heading", { level: 1 });
+    await user.keyboard("gr");
+    await ready();
+    expect(location.pathname).toBe("/people/roles");
+    await user.keyboard("?");
+    const help = await screen.findByRole("dialog", { name: /keyboard shortcuts/i });
+    expect(help.textContent).toContain("Go to Roles");
+  });
+  it("does nothing for a role that cannot see roles", async () => {
+    const { user } = boot({ me: member, path: "/links", routes: { "GET /api/links": () => ({ body: { items: [], next: null } }) } });
+    await screen.findByRole("heading", { level: 1 });
+    await user.keyboard("gr");
+    expect(location.pathname).toBe("/links");
+  });
+});
+
 describe("palette gr", () => {
   const ctx = { domains: [], open: vi.fn(), setCurrentDomain: () => {} };
   it("Roles for owners and people managers only", () => {

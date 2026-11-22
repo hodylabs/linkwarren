@@ -6,7 +6,7 @@ import { Gate } from "./shell/Gate";
 import { DomainSwitcher } from "./shell/DomainSwitcher";
 import { Palette } from "./shell/Palette";
 import { Rail } from "./shell/Rail";
-import { canSee, isOwner } from "./perms";
+import { canSee, isOwner, seesRoles } from "./perms";
 import { useOpenSheets } from "./shell/Sheet";
 import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
@@ -48,6 +48,7 @@ function Shell() {
     "?": () => (free ? open({ kind: "shortcuts" }) : undefined),
   } satisfies Bindings<typeof GLOBAL_KEYS>);
   useChord((letter) => {
+    if (letter === "r") return seesRoles(me) && (navigate("/people/roles"), true); // G R: the Roles view of People (S8 R15)
     const to = Object.hasOwn(GO_KEYS, letter) ? GO_KEYS[letter as keyof typeof GO_KEYS] : undefined;
     if (!to || !canSee(me, to)) return false;
     navigate(`/${to}`);

@@ -57,14 +57,22 @@ describe("RolePicker", () => {
     expect(onPick).toHaveBeenCalledWith("hl");
   });
 
-  it("type-ahead by first letter moves to the role", async () => {
+  it("letters are not type-ahead: they reach the sheet's hotkeys; Home and End move", async () => {
     const onPick = vi.fn();
+    const seen: string[] = [];
+    const onKey = (e: KeyboardEvent) => void (!e.defaultPrevented && seen.push(e.key));
+    window.addEventListener("keydown", onKey);
     render(<Picker me={owner} onPick={onPick} />);
     const user = userEvent.setup();
     screen.getByRole("listbox").focus();
-    await user.keyboard("h{Enter}");
-    expect(onPick).toHaveBeenCalledWith("hl");
-    await user.keyboard("o{Enter}");
+    await user.keyboard("hae");
+    expect(seen).toEqual(["h", "a", "e"]);
+    await user.keyboard("{Enter}");
+    expect(onPick).not.toHaveBeenCalled(); // still on Member, the current value
+    await user.keyboard("{End}{Enter}");
+    expect(onPick).toHaveBeenLastCalledWith("hl");
+    await user.keyboard("{Home}{Enter}");
     expect(onPick).toHaveBeenLastCalledWith("owner");
+    window.removeEventListener("keydown", onKey);
   });
 });

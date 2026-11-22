@@ -213,6 +213,60 @@ describe("Invite sheet for a people manager", () => {
   });
 });
 
+describe("Invite sheet role default and load errors", () => {
+  const open = async (me: Me, routes?: FakeRoutes) => {
+    const t = boot({ me, routes });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("tbody tr")).toHaveLength(1));
+    await t.user.keyboard("n");
+    await screen.findByRole("dialog", { name: "Invite a person" });
+    return t;
+  };
+
+  it("a people manager below Member starts on the first role they may give, and sends it", async () => {
+    const { api, user } = await open({ ...member, ...customRole(["people.manage"]) });
+    const pick = await within(sheet()).findByRole("listbox", { name: "Role" });
+    expect(within(pick).getByRole("option", { name: "Helper" }).getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(posts(api)[0]!.body).toMatchObject({ roleId: "hl" });
+  });
+
+  it("with no role they may give it says so and sends nothing", async () => {
+    const { api, user } = await open({ ...member, ...customRole(["people.manage"]) }, {
+      "GET /api/roles": () => ({ body: [{ id: "owner", name: "Owner", perms: [], builtin: "owner", people: 1 }, { id: "member", name: "Member", perms: [...MEMBER_ROLE.perms], builtin: "member", people: 0 }] }),
+    });
+    expect((await within(sheet()).findByRole("alert")).textContent).toBe("Every role has permissions you do not have, so you cannot invite anyone. Ask an owner.");
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posts(api)).toHaveLength(0);
+  });
+
+  it("a failed role list shows the error with Retry and blocks sending until it loads", async () => {
+    let n = 0;
+    const { api, user } = await open(owner, { "GET /api/roles": () => (n++ ? { body: [{ id: "owner", name: "Owner", perms: [], builtin: "owner", people: 1 }, { id: "member", name: "Member", perms: [], builtin: "member", people: 0 }] } : { status: 500, body: { error: "internal_error" } }) });
+    expect((await within(sheet()).findByRole("alert")).textContent).toContain("Could not load the roles.");
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posts(api)).toHaveLength(0);
+    await user.click(within(sheet()).getByRole("button", { name: "Retry" }));
+    await within(sheet()).findByRole("listbox", { name: "Role" });
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(posts(api)[0]!.body).toMatchObject({ roleId: "member" });
+  });
+
+  it("a people manager without domains.manage gets no shared-domain switches (the server refuses them); with it they do", async () => {
+    await open({ ...member, ...customRole(["people.manage"]) });
+    expect(within(sheet()).getByText("Main, always included")).toBeTruthy();
+    expect(within(sheet()).queryAllByRole("switch")).toHaveLength(0);
+  });
+  it("a people manager with domains.manage gets the shared-domain switches", async () => {
+    await open({ ...member, ...customRole(["people.manage", "domains.manage"]) });
+    expect(within(sheet()).getAllByRole("switch")).toHaveLength(2);
+  });
+});
+
 describe("palette cp", () => {
   const ctx = { domains: [], open: vi.fn(), setCurrentDomain: () => {} };
   it("Invite a person, people.manage only", () => {

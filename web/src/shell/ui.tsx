@@ -3,9 +3,9 @@ import { useRef, type KeyboardEvent, type ReactNode } from "react";
 export const Kbd = ({ children }: { children: ReactNode }) => <kbd>{children}</kbd>;
 
 /** A screen's page action: orange button, graphite circled plus and text (7.5:1 on the orange), shortcut letter. */
-export function PrimaryButton({ label, shortcut, onClick }: { label: string; shortcut?: string; onClick: () => void }) {
+export function PrimaryButton({ label, shortcut, onClick, disabled }: { label: string; shortcut?: string; onClick: () => void; disabled?: boolean }) {
   return (
-    <button type="button" className="btn primary act" onClick={onClick} aria-keyshortcuts={shortcut}>
+    <button type="button" className="btn primary act" onClick={onClick} aria-keyshortcuts={shortcut} disabled={disabled}>
       <svg className="plus" viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="12" cy="12" r="9" />
         <path d="M12 8v8M8 12h8" />

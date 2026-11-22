@@ -89,12 +89,30 @@ describe("Person sheet role", () => {
   it("picking a custom role confirms, then sends { roleId } and names the role", async () => {
     const { api, user, dlg } = await openPerson("Dana");
     within(dlg).getByRole("listbox", { name: "Role" }).focus();
-    await user.keyboard("h{Enter}");
+    await user.keyboard("{End}{Enter}");
     const c = await screen.findByRole("dialog", { name: "Give ud@example.com the role Helper" });
     expect(c.textContent).toContain("They can do what Helper allows from their next request.");
     await user.keyboard("{Enter}");
     await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/ud", body: { roleId: "hl" } })]));
     expect(document.querySelector("[aria-live]")!.textContent).toBe("Gave ud@example.com the role Helper");
+  });
+
+  it("with the picker focused, A still shows their activity (no type-ahead), even with a role starting with A", async () => {
+    const roles = [...ROLES, { id: "au", name: "Auditor", perms: ["audit"], builtin: null, people: 0 }];
+    const { api, user, dlg } = await openPerson("Dana", { "GET /api/roles": () => ({ body: roles }) });
+    within(dlg).getByRole("listbox", { name: "Role" }).focus();
+    await user.keyboard("a");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(api.calls.map((c) => c.path)).toContain("/api/audit?actor=ud"));
+  });
+
+  it("a failed role list shows the error with Retry, which loads the picker", async () => {
+    let n = 0;
+    const { user, dlg } = await openPerson("Dana", { "GET /api/roles": () => (n++ ? { body: ROLES } : { status: 500, body: { error: "internal_error" } }) });
+    const alert = await within(dlg).findByRole("alert");
+    expect(alert.textContent).toContain("Could not load the roles.");
+    await user.click(within(dlg).getByRole("button", { name: "Retry" }));
+    expect(await within(dlg).findByRole("listbox", { name: "Role" })).toBeTruthy();
   });
 
   it("a people manager picks only roles within their own permissions, never Owner; an owner's role is plain text", async () => {

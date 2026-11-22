@@ -360,6 +360,8 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 
 /* app: the detail panel exists only with a selection; without one the list takes the full width */
 .body.solo{grid-template-columns:minmax(0,1fr)}
+.body.people.solo{grid-template-columns:minmax(0,1fr)} /* the audit-only People view: the log takes the full width */
+.body.people.solo>.detail{border-left:0}
 /* API & agents (mockup #s-agents) */
 .body.agents{grid-template-columns:minmax(0,1fr) 400px}
 .body.agents.solo{grid-template-columns:minmax(0,1fr)}

@@ -50,7 +50,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
   // A disabled domain is never rechecked by the server, so there is nothing to poll for.
   const poll = useCfPoll(showCf ? domain.id : null, domain.status !== "disabled" && view !== null && !cfSettled(view));
   useEffect(() => void (poll.view && setView(poll.view)), [poll.view]);
-  // Controls need the owner's "controls on" switch; members never ask (the endpoint is owner only). Errors mean off.
+  // Controls need the instance's "controls on" switch; only admins ask (the endpoint needs settings or domains.manage). Errors mean off.
   const [controlsEnabled, setControlsEnabled] = useState(false);
   const accountKind = view?.kind === "account";
   useEffect(() => {
