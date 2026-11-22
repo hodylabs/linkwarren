@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { LIMITS, blocked, hit, limitKey } from "../src/limits";
+import { pruneExpired, RUN_WRITE_BUDGET } from "../src/cron";
+import { LIMITS, blocked, fits, hit, hitBy, hitCount, limitKey } from "../src/limits";
 import { sha256Hex } from "../src/session";
 
 beforeEach(async () => { await env.DB.prepare("DELETE FROM auth_limits").run(); });
@@ -44,5 +45,58 @@ describe("limitKey", () => {
     expect(limitKey.ip(null)).toBe("ip:none");
     expect(limitKey.fail(null)).toBe("fail:none");
     expect(limitKey.inst).toBe("inst");
+  });
+});
+
+describe("hitBy and fits", () => {
+  const L = { n: 10, s: 900 };
+  const rows = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM auth_limits").first<{ n: number }>())!.n;
+
+  it("adds n in one upsert: 5 on a new key, then 5 more", async () => {
+    expect(await hitBy(env, "b", L, 5)).toBe(5);
+    expect(await hitBy(env, "b", L, 5)).toBe(10);
+    expect(await hitCount(env, "b", L)).toBe(11);
+  });
+
+  it("restarts a window older than s at n", async () => {
+    await hitBy(env, "w", L, 7);
+    await env.DB.prepare("UPDATE auth_limits SET window_start = window_start - 900 WHERE key = 'w'").run();
+    expect(await hitBy(env, "w", L, 3)).toBe(3);
+  });
+
+  it("throws on n outside 1..1000 or not an integer, writing nothing", async () => {
+    for (const n of [0, 1001, 1.5, -1]) await expect(hitBy(env, "x", L, n)).rejects.toThrow();
+    expect(await rows()).toBe(0);
+  });
+
+  it("fits is read only and false once count + n would pass the limit", async () => {
+    expect(await fits(env, "f", L, 10)).toBe(true);
+    expect(await fits(env, "f", L, 11)).toBe(false);
+    expect(await rows()).toBe(0);
+    await hitBy(env, "f", L, 6);
+    const before = await rowOf("f");
+    expect(await fits(env, "f", L, 4)).toBe(true);
+    expect(await fits(env, "f", L, 5)).toBe(false);
+    expect(await rowOf("f")).toEqual(before);
+    expect(await rows()).toBe(1);
+  });
+
+  it("bulk:kv is a 500 per UTC day key", () => {
+    expect(LIMITS.bulkKvDay).toEqual({ n: 500, s: 86400, utc: true });
+    expect(limitKey.bulkKv).toBe("bulk:kv");
+  });
+
+  it("the hourly prune keeps bulk:kv for a day", async () => {
+    const T = 1_800_000_000;
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES ('bulk:kv', ?, 3)").bind(T - 3700),
+      env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES ('ip:old', ?, 1)").bind(T - 3700),
+    ]);
+    await pruneExpired(env, T, RUN_WRITE_BUDGET);
+    expect((await rowOf("bulk:kv"))?.count).toBe(3);
+    expect(await rowOf("ip:old")).toBeNull();
+    await env.DB.prepare("UPDATE auth_limits SET window_start = ? WHERE key = 'bulk:kv'").bind(T - 86401).run();
+    await pruneExpired(env, T, RUN_WRITE_BUDGET);
+    expect(await rowOf("bulk:kv")).toBeNull();
   });
 });
