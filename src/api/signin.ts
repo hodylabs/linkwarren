@@ -149,6 +149,8 @@ signin.post("/email/verify", async (c) => {
 
 signin.post("/passkey/options", async (c) => {
   if (!(await parse(c, z.strictObject({})))) return c.json(invalid, 400);
+  // Anonymous callers write a challenge row per call: the same per-prefix budget as sign-in emails bounds that.
+  if (!(await hit(c.env, limitKey.ip(ipPrefix(c.req.header("cf-connecting-ip") ?? null)), LIMITS.ip))) return c.json(tooMany, 429);
   await c.env.DB.batch(prunes(c.env, nowS()));
   return c.json(await authenticationOptions(c.env));
 });
@@ -171,11 +173,16 @@ signin.post("/passkey/verify", async (c) => {
     return c.json(passkeyFailed, 400); // one answer for every cause (R10); nothing logged, library text can quote client data
   }
   if (v.user.status !== "active") return c.json({ error: "disabled" }, 403);
+  // Counters only move forward (0 = an authenticator without one). Of two racing assertions at the same counter only one
+  // gets the row; the other is a concurrent or replayed assertion and gets no session.
+  const moved = await env.DB.prepare("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ? AND (counter < ? OR ? = 0)")
+    .bind(v.newCounter, nowS(), v.passkeyId, v.newCounter, v.newCounter).run();
+  if (!moved.meta.changes) {
+    await hit(env, failKey, LIMITS.failIp);
+    return c.json(passkeyFailed, 400);
+  }
   const s = await createSession(env, c.req.raw, v.user, "passkey");
-  await env.DB.batch([
-    env.DB.prepare("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?").bind(v.newCounter, nowS(), v.passkeyId),
-    ...s.stmts,
-  ]);
+  await env.DB.batch(s.stmts);
   c.header("Set-Cookie", s.setCookie);
   return c.json({ next: safeNext(b.next, origin(env)) });
 });

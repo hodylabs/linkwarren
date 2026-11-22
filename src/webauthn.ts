@@ -45,11 +45,14 @@ function challengeOf(response: unknown): string {
   }
 }
 
-const store = (env: Env, challenge: string, purpose: "register" | "login", userId: string | null) =>
-  env.DB.prepare("INSERT INTO auth_challenges (challenge, purpose, user_id, expires_at) VALUES (?, ?, ?, ?)")
-    .bind(challenge, purpose, userId, nowS() + CHALLENGE_TTL).run();
+const storeLogin = (env: Env, challenge: string) =>
+  env.DB.prepare("INSERT INTO auth_challenges (challenge, purpose, user_id, expires_at) VALUES (?, 'login', NULL, ?)")
+    .bind(challenge, nowS() + CHALLENGE_TTL).run();
+/** Open (unexpired) registration challenges one person may hold, so a session cannot flood auth_challenges. */
+const MAX_OPEN_REGISTRATIONS = 10;
 
-export async function registrationOptions(env: Env, user: UserRow): Promise<PublicKeyCredentialCreationOptionsJSON> {
+/** Creation options with a stored challenge, or null when the person already holds MAX_OPEN_REGISTRATIONS open ones. */
+export async function registrationOptions(env: Env, user: UserRow): Promise<PublicKeyCredentialCreationOptionsJSON | null> {
   const mine = await env.DB.prepare("SELECT credential_id, transports FROM passkeys WHERE user_id = ?").bind(user.id)
     .all<{ credential_id: string; transports: string }>();
   const o = await generateRegistrationOptions({
@@ -58,8 +61,11 @@ export async function registrationOptions(env: Env, user: UserRow): Promise<Publ
     authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
     excludeCredentials: mine.results.map((r) => ({ id: r.credential_id, transports: JSON.parse(r.transports) as AuthenticatorTransport[] })),
   });
-  await store(env, o.challenge, "register", user.id);
-  return o;
+  const now = nowS();
+  const r = await env.DB.prepare(
+    "INSERT INTO auth_challenges (challenge, purpose, user_id, expires_at) SELECT ?, 'register', ?, ? WHERE (SELECT COUNT(*) FROM auth_challenges WHERE purpose = 'register' AND user_id = ? AND expires_at > ?) < ?",
+  ).bind(o.challenge, user.id, now + CHALLENGE_TTL, user.id, now, MAX_OPEN_REGISTRATIONS).run();
+  return r.meta.changes ? o : null;
 }
 
 export async function verifyRegistration(env: Env, user: UserRow, response: unknown): Promise<{
@@ -93,7 +99,7 @@ export async function verifyRegistration(env: Env, user: UserRow, response: unkn
 
 export async function authenticationOptions(env: Env): Promise<PublicKeyCredentialRequestOptionsJSON> {
   const o = await generateAuthenticationOptions({ rpID: rp(env).rpID, allowCredentials: [], userVerification: "preferred" });
-  await store(env, o.challenge, "login", null);
+  await storeLogin(env, o.challenge);
   return o;
 }
 

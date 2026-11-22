@@ -17,12 +17,14 @@ const passkeyFailed = { error: "passkey_failed" } as const;
 account.post("/passkeys/options", async (c) => {
   const n = await c.env.DB.prepare("SELECT COUNT(*) n FROM passkeys WHERE user_id = ?").bind(c.var.user.id).first<{ n: number }>();
   if ((n?.n ?? 0) >= MAX_PASSKEYS) return c.json(limit, 409);
-  return c.json(await registrationOptions(c.env, c.var.user));
+  const o = await registrationOptions(c.env, c.var.user);
+  return o ? c.json(o) : c.json({ error: "too_many_attempts" }, 429);
 });
 
 const addBody = z.strictObject({
   response: z.unknown(),
-  name: z.string().trim().max(40).regex(/^[^\u0000-\u001f\u007f]*$/).optional(),
+  // No control, line-separator or bidi characters: a name like "evil\u202Eexe" would display reversed.
+  name: z.string().trim().max(40).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]*$/).optional(),
 });
 
 account.post("/passkeys", async (c) => {

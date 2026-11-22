@@ -144,6 +144,24 @@ describe("passkey registration", () => {
     expect(await all("SELECT COUNT(*) n FROM audit_log WHERE action = 'passkey.add'")).toEqual([{ n: 10 }]);
   });
 
+  it("refuses bidi and control characters in the name", async () => {
+    const cookie = await signInApp("a@example.com");
+    for (const name of ["evil\u202Eexe", "a\u2066b", "a\nb"]) {
+      const r = await register(cookie, {}, name);
+      expect([r.status, await r.text()]).toEqual([400, '{"error":"invalid_body"}']);
+    }
+  });
+
+  it("holds at most 10 open registration challenges per person", async () => {
+    const cookie = await signInApp("a@example.com");
+    for (let i = 0; i < 10; i++) expect((await regOptions(cookie)).r.status).toBe(200);
+    const { r } = await regOptions(cookie);
+    expect([r.status, await r.text()]).toEqual([429, '{"error":"too_many_attempts"}']);
+    // Expired ones do not count.
+    await env.DB.prepare("UPDATE auth_challenges SET expires_at = 1").run();
+    expect((await regOptions(cookie)).r.status).toBe(200);
+  });
+
   it("needs a session", async () => {
     const r = await post("/api/account/passkeys/options", {});
     expect(r.status).toBe(401);
@@ -186,6 +204,30 @@ describe("passkey sign-in", () => {
 
     const replay = await signIn(resp);
     expect([replay.status, await replay.text()]).toEqual([400, FAILED]);
+  });
+
+  it("lets only one of two racing assertions with the same counter make a session", async () => {
+    const { dev, id } = await enrolled();
+    const [o1, o2] = [await loginOptions(), await loginOptions()];
+    const [a1, a2] = [await dev.authenticate(o1, { counter: 1 }), await dev.authenticate(o2, { counter: 1 })];
+    const rs = await Promise.all([signIn(a1), signIn(a2)]);
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 400]);
+    expect(await all("SELECT COUNT(*) n FROM sessions WHERE user_id = ? AND method = 'passkey'", id)).toEqual([{ n: 1 }]);
+    expect(await all("SELECT counter FROM passkeys")).toEqual([{ counter: 1 }]);
+  });
+
+  it("accepts an authenticator that always reports counter 0", async () => {
+    const { dev } = await enrolled();
+    expect((await signIn(await dev.authenticate(await loginOptions(), { counter: 0 }))).status).toBe(200);
+    expect((await signIn(await dev.authenticate(await loginOptions(), { counter: 0 }))).status).toBe(200);
+  });
+
+  it("rate limits options per IP prefix", async () => {
+    const h = { "cf-connecting-ip": "192.0.2.50" };
+    for (let i = 0; i < 20; i++) expect((await post("/auth/passkey/options", {}, { headers: h })).status).toBe(200);
+    const r = await post("/auth/passkey/options", {}, { headers: { "cf-connecting-ip": "192.0.2.51" } });
+    expect([r.status, await r.text()]).toEqual([429, '{"error":"too_many_attempts"}']);
+    expect(await all("SELECT COUNT(*) n FROM auth_challenges")).toEqual([{ n: 20 }]);
   });
 
   it("signs in without a userHandle", async () => {
