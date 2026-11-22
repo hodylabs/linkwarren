@@ -2,7 +2,7 @@
 
 linkwarren has two ways in for software: **agents** (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) connect to the built-in MCP server with OAuth, and **scripts** use a personal API key on `/api/v1`. Both act as you: they can never see or change more than you can in the dashboard, and every change they make is in the audit log as "you via <agent or key>".
 
-The instance owner turns agents on and off with a switch on the API & agents screen (`G I`); only the owner sees it enabled. The operator can lock agents off for the whole instance with `MCP_ENABLED="0"` (see [deploy.md](deploy.md#mcp_enabled)), and then the switch is disabled. The screen shows the MCP address only while agents are on; API keys work either way. Turning agents off disconnects nobody and revokes nothing: agents just get a `404` until it is turned back on.
+People with the Settings permission (owners always) turn agents on and off with a switch on the API & agents screen (`G I`); only they see it enabled. The operator can lock agents off for the whole instance with `MCP_ENABLED="0"` (see [deploy.md](deploy.md#mcp_enabled)), and then the switch is disabled. The screen shows the MCP address only while agents are on; API keys work either way. Turning agents off disconnects nobody and revokes nothing: agents just get a `404` until it is turned back on.
 
 ## Connect an agent
 

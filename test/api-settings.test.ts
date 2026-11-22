@@ -689,6 +689,25 @@ describe("settings by permission (S8 R5)", () => {
     expect(await by("us")).toEqual([]);
   });
 
+  it("a domains.manage holder without settings reads the Cloudflare page (same shape, no secret), every write stays settings", async () => {
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('dmr','Domains','[\"domains.manage\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('ud','d@example.com','member','dmr','active',1)");
+    EMAIL.d = "d@example.com";
+    const fake = installFakeCloudflare({ zones });
+    const own = await call("owner", "GET", S);
+    const g = await call("d", "GET", S);
+    expect(g.status).toBe(200);
+    const text = await g.text();
+    expect(text).not.toContain(STORED);
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(Object.keys((await own.json()) as object).sort());
+    for (const [m, p, b] of [["GET", "/api/settings"], ["GET", "/api/settings/secrets"], ["PATCH", S, { controlsEnabled: true }], ["POST", `${S}/setup`], ["POST", `${S}/resync`]] as const) {
+      const r = await call("d", m, p, b);
+      expect([m, p, r.status, await r.json()]).toEqual([m, p, 403, { error: "forbidden" }]);
+    }
+    expect(fake.calls.filter((x) => x.method !== "GET")).toEqual([]);
+    expect(await by("ud")).toEqual([]);
+  });
+
   it("a member gets 403 on the secret status and the test email too", async () => {
     for (const [m, p] of [["GET", "/api/settings/secrets"], ["POST", "/api/settings/email/test"]] as const) {
       const r = await call("a", m, p);
@@ -716,6 +735,76 @@ describe("settings by permission (S8 R5)", () => {
     expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
     expect(await all("SELECT key FROM settings")).toEqual([]);
     expect(await by("us")).toEqual([]);
+  });
+
+  it("settings lost before the logo batch: the served logo stays as it was, for PUT and DELETE", async () => {
+    const put = await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    const { logoVersion } = (await put.json()) as { logoVersion: number };
+    const served = async () => {
+      const r = await env.CACHE.getWithMetadata<{ v: number }>("instance:logo", "arrayBuffer");
+      return [r.value ? new Uint8Array(r.value).length : null, r.metadata?.v ?? null];
+    };
+    const before = await served();
+    expect(before).toEqual([pngBytes(4, 4).length, logoVersion]);
+    let restore = beforeBatch(1, () => setPerms([]));
+    let r: Response;
+    try { r = await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(8, 8)) }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await served()).toEqual(before);
+    await setPerms(["settings"]);
+    restore = beforeBatch(1, () => setPerms([]));
+    try { r = await call("s", "DELETE", "/api/settings/logo"); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await served()).toEqual(before);
+    expect(((await (await call("a", "GET", "/api/instance")).json()) as { logoVersion: number }).logoVersion).toBe(logoVersion);
+    expect(await by("us")).toEqual(["settings.update", "logo.update"]);
+  });
+
+  it("settings lost before the Cloudflare setup's first write: nothing reaches Cloudflare or D1, 403", async () => {
+    const fake = installFakeCloudflare({ zones });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (u, i) => {
+      const req = new Request(u as RequestInfo, i);
+      if (req.url.includes("/dns_records")) await setPerms([]);
+      return fake.handle(req);
+    });
+    const r = await call("s", "POST", `${S}/setup`);
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(fake.calls.filter((x) => x.method !== "GET")).toEqual([]);
+    expect(await all("SELECT key FROM settings")).toEqual([]);
+    expect(await by("us")).toEqual([]);
+  });
+
+  it("settings lost before the Cloudflare setup records an existing record: no record id, no audit, 403", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.fallbackOrigin = "edge.test";
+    await run("INSERT INTO settings (key,value,updated_at,updated_by) VALUES ('cf.target_record_intent','n1',1,'uo')");
+    fake.state.dns.push({ id: "r1", zoneId: "zsaas", type: "AAAA", name: "edge.test", content: "100::", proxied: true, comment: "linkwarren setup n1" });
+    const restore = beforeBatch(1, () => setPerms([]));
+    let r: Response;
+    try { r = await call("s", "POST", `${S}/setup`); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await all("SELECT key FROM settings")).toEqual([{ key: "cf.target_record_intent" }]);
+    expect(await by("us")).toEqual([]);
+    await setPerms(["settings"]);
+    expect((await call("s", "POST", `${S}/setup`)).status).toBe(200);
+    expect(await all("SELECT value FROM settings WHERE key = 'cf.target_record_id'")).toEqual([{ value: "r1" }]);
+    expect(await by("us")).toEqual(["cloudflare.setup"]);
+  });
+
+  it("an owner demoted between the check and the batch deletes no secret", async () => {
+    e.SECRETS_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    try {
+      expect((await call("owner", "PUT", "/api/settings/secrets/resend", { value: "re_abcdefghijkl" })).status).toBe(200);
+      const keys = await all("SELECT key FROM settings ORDER BY key");
+      const restore = beforeBatch(1, () => run("UPDATE users SET role = 'member' WHERE id = 'uo'"));
+      let r: Response;
+      try { r = await call("owner", "DELETE", "/api/settings/secrets/resend"); } finally { restore(); }
+      expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+      expect(await all("SELECT key FROM settings ORDER BY key")).toEqual(keys);
+      expect((await all("SELECT action FROM audit_log WHERE actor_id = 'uo' ORDER BY id")).map((x) => x.action)).not.toContain("secret.delete");
+    } finally {
+      e.SECRETS_KEY = undefined;
+    }
   });
 
   it("an owner demoted between the check and the batch stores no secret and completes no setup", async () => {

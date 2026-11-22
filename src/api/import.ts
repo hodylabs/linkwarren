@@ -238,10 +238,10 @@ importApi.post("/", async (c) => {
   }
   report.created = inserted;
 
-  // Explain the writes a guard refused: a changed case mode, or a slug that went live before its lock.
+  // Explain the writes a guard refused: the domain no longer usable (forbidden), a changed case mode, or a slug that went live before its lock.
   // Other lost races (a concurrent identical link or lock) stay uncounted, as before.
   if (lostLinks.length || lostLocks.length) {
-    const [modes, live, locked] = await db.batch<{ id?: string; case_sensitive?: number; i?: number }>([
+    const [modes, live, locked, usableNow] = await db.batch<{ id?: string; case_sensitive?: number; i?: number }>([
       db.prepare("SELECT id, case_sensitive FROM domains WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(lostLinks.map((p) => p.dom.id))),
       db.prepare(`SELECT j.key AS i FROM json_each(?) j WHERE EXISTS (SELECT 1 FROM links
         WHERE domain_id = json_extract(j.value, '$[0]') AND lower(slug_key) = lower(json_extract(j.value, '$[1]')))`)
@@ -249,14 +249,20 @@ importApi.post("/", async (c) => {
       db.prepare(`SELECT j.key AS i FROM json_each(?) j WHERE EXISTS (SELECT 1 FROM slug_locks
         WHERE domain_id = json_extract(j.value, '$[0]') AND lower(slug_key) = lower(json_extract(j.value, '$[1]')))`)
         .bind(JSON.stringify(lostLinks.map((p) => [p.dom.id, p.key]))),
+      db.prepare(usableDomainsSql).bind(user.id),
     ]);
+    const ok = new Set(usableNow!.results.map((r) => r.id!));
     const mode = new Map(modes!.results.map((r) => [r.id!, !!r.case_sensitive]));
     const lockedAt = new Set(locked!.results.map((r) => r.i!));
     lostLinks.forEach((p, i) => {
-      const reason = mode.get(p.dom.id) !== p.dom.cs ? "mode_changed" : lockedAt.has(i) ? "locked" : null;
+      const reason = !ok.has(p.dom.id) ? "forbidden" : mode.get(p.dom.id) !== p.dom.cs ? "mode_changed" : lockedAt.has(i) ? "locked" : null;
       if (reason) report.conflicts.push({ host: p.dom.host, slug: p.slug, reason });
     });
-    for (const r of live!.results) { const p = lostLocks[r.i!]!; report.conflicts.push({ host: p.dom.host, slug: p.slug, reason: "exists" }); }
+    const liveAt = new Set(live!.results.map((r) => r.i!));
+    lostLocks.forEach((p, i) => {
+      const reason = !ok.has(p.dom.id) ? "forbidden" : liveAt.has(i) ? "exists" : null;
+      if (reason) report.conflicts.push({ host: p.dom.host, slug: p.slug, reason });
+    });
   }
 
   // Clears cached misses for everything written (errors are swallowed; entries expire by TTL anyway).

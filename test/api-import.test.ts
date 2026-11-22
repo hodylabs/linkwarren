@@ -379,13 +379,21 @@ describe("import by permission (S8 R12)", () => {
     await nothing();
   });
 
-  it("membership lost before the write: no link lands on the shared domain", async () => {
+  it("membership lost before the write: no link or lock lands on the shared domain, each reported forbidden", async () => {
     await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dsh','ud')");
     const restore = beforeBatch(2, () => run("DELETE FROM domain_members"));
     let r: Response;
-    try { r = await as(body([L("shared.example", "s")])); } finally { restore(); }
+    try { r = await as(body([L("shared.example", "s"), { ...L("shared.example", "t"), enabled: false }])); } finally { restore(); }
     expect(r.status).toBe(200);
-    expect(await rep(r)).toMatchObject({ created: 0 });
-    expect(await count("links")).toBe(0);
+    expect(await rep(r)).toMatchObject({ created: 0, conflicts: [{ host: "shared.example", slug: "s", reason: "forbidden" }, { host: "shared.example", slug: "t", reason: "forbidden" }] });
+    expect([await count("links"), await count("slug_locks")]).toEqual([0, 0]);
+  });
+
+  it("domains.manage fills an empty redirect on a usable shared domain it does not own", async () => {
+    await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dsh','ud')");
+    await run("UPDATE users SET role_id = 'dd' WHERE id = 'ud'");
+    const r = await as(body([], [D("shared.example", "https://example.org/home")]));
+    expect(r.status).toBe(200);
+    expect(await all("SELECT bare_redirect FROM domains WHERE id = 'dsh'")).toEqual([{ bare_redirect: "https://example.org/home" }]);
   });
 });

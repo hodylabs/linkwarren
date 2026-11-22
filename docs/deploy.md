@@ -256,11 +256,11 @@ Agents (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) conne
 
 ### MCP_ENABLED
 
-Whether agents can connect is the owner's switch on the API & agents screen. It is stored in the D1 table `settings` (key `mcp.enabled`), changed only by the owner, and each change is written to the audit log as `settings.update`. Every signed-in person sees the state; only the owner can change it. The Worker caches the value for 10 seconds per isolate: the isolate that saved it applies it at once, others within 10 seconds.
+Whether agents can connect is a switch on the API & agents screen. It is stored in the D1 table `settings` (key `mcp.enabled`), changed only by people with the Settings permission (owners always), and each change is written to the audit log as `settings.update`. Every signed-in person sees the state; only people with Settings can change it. The Worker caches the value for 10 seconds per isolate: the isolate that saved it applies it at once, others within 10 seconds.
 
 The var `MCP_ENABLED` is the instance-wide lock:
 
-- **Unset or `"1"`:** the owner's switch decides. With no saved choice, agents are on only when the var is `"1"`, otherwise off. So a fresh instance has agents off until the owner turns them on.
+- **Unset or `"1"`:** the switch decides. With no saved choice, agents are on only when the var is `"1"`, otherwise off. So a fresh instance has agents off until the owner turns them on.
 - **Exactly `"0"`:** agents are locked off and the switch is disabled (a save answers `409 mcp_locked`). Any other value, for example `"false"`, does not lock: once a choice is saved, the switch decides.
 
 Off, `/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (with or without `/mcp`) answer `404 {"error":"not_found"}` (`/authorize` in any URL encoding): no agent can register, connect, refresh or call a tool. It revokes nothing: grants and connections stay, and turning agents back on makes them work again. If D1 cannot be read to decide, the same paths answer `503 {"error":"unavailable"}` (agents are treated as off). API keys on `/api/v1` are not affected either way.

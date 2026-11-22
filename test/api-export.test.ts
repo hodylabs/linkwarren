@@ -298,16 +298,26 @@ describe("export by permission (S8 R12)", () => {
     await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('ud','d@example.com','member','dt','active',1)");
     EMAIL.d = "d@example.com";
   });
-  it("a data role exports every table, roles and role_id included, and the run is audited as them", async () => {
+  it("a data role exports every table but the audit log, roles and role_id included, and the run is audited as them", async () => {
     const s = await start("d");
     expect(s.status).toBe(200);
     const j = (await s.json()) as { run: string; tables: { name: string; columns: string[] }[] };
-    expect(j.tables.map((t) => t.name)).toEqual(BASE_TABLES);
+    expect(j.tables.map((t) => t.name)).toEqual(BASE_TABLES.filter((t) => t !== "audit_log"));
+    const a = await page("audit_log", null, "d", j.run);
+    expect([a.status, await a.json()]).toEqual([403, { error: "forbidden" }]);
     expect(j.tables.find((t) => t.name === "users")!.columns).toContain("role_id");
     const rows = async (table: string) => ((await (await page(table, null, "d", j.run)).json()) as { rows: Record<string, unknown>[] }).rows;
     expect((await rows("users")).find((u) => u.id === "ud")).toMatchObject({ role: "member", role_id: "dt" });
     expect((await rows("roles")).map((r) => [r.id, r.perms])).toEqual(expect.arrayContaining([["dt", '["data"]'], ["member", expect.any(String)], ["owner", "[]"]]));
     expect((await env.DB.prepare("SELECT actor_id FROM audit_log WHERE action = 'export.run'").all()).results).toEqual([{ actor_id: "ud" }]);
+  });
+  it("a role with data and audit exports the audit log too", async () => {
+    await run("UPDATE roles SET perms = '[\"data\",\"audit\"]' WHERE id = 'dt'");
+    const j = (await (await start("d")).json()) as { run: string; tables: { name: string }[] };
+    expect(j.tables.map((t) => t.name)).toEqual(BASE_TABLES);
+    const a = await page("audit_log", null, "d", j.run);
+    expect(a.status).toBe(200);
+    expect(((await a.json()) as { rows: { action: string }[] }).rows.map((r) => r.action)).toContain("export.run");
   });
   it("data lost: the next page is 403; lost just before the start batch, no run and no audit", async () => {
     const s = (await (await start("d")).json()) as { run: string };

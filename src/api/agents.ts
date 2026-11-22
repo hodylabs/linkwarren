@@ -4,8 +4,7 @@ import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { MCP_KEY, mcpState, rememberMcp, resetMcpCache } from "../mcp/switch";
 import { actor, type Grant } from "../principal";
-import { ACTOR_OK } from "./users";
-import { actorCan, can, mayManage, parsePerms, personWithin, within } from "../roles";
+import { actorCan, can, mayManage, parsePerms, personWithin, requirePerm, within } from "../roles";
 import type { UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -141,7 +140,7 @@ agents.delete("/connections/:id", async (c) => {
   return c.body(null, 204);
 });
 
-/** The owner's switch for agent connections (R9, R10). Everyone signed in may read it; only the owner changes it. */
+/** The switch for agent connections (R9, R10). Everyone signed in may read it; people with `settings` change it (S8 R5). */
 agents.get("/mcp", async (c) => {
   try {
     return c.json(await mcpState(c.env));
@@ -151,9 +150,8 @@ agents.get("/mcp", async (c) => {
 });
 
 const mcpBody = z.strictObject({ on: z.boolean() });
-agents.put("/mcp", async (c) => {
+agents.put("/mcp", requirePerm("settings"), async (c) => {
   const u = c.var.user;
-  if (u.role !== "owner") return c.json({ error: "forbidden" }, 403);
   const body = mcpBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const { on } = body.data;
@@ -163,11 +161,12 @@ agents.put("/mcp", async (c) => {
   if (state.locked) return c.json({ error: "mcp_locked" }, 409);
   if (state.on === on) return c.json(state);
   const value = on ? "1" : "0";
-  // Both statements check the caller is still an active owner, so a demotion that lands first changes nothing.
+  // The upsert re-checks `settings` and the audit needs the row it wrote, so a permission lost first changes nothing.
+  const g = actorCan(u.id, "settings");
   const [set] = await c.env.DB.batch([
     c.env.DB.prepare(
-      `INSERT INTO settings (key, value, updated_at, updated_by) SELECT ?,?,?,? WHERE ${ACTOR_OK} ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
-    ).bind(MCP_KEY, value, now(), u.id, u.id),
+      `INSERT INTO settings (key, value, updated_at, updated_by) SELECT ?,?,?,? WHERE ${g.sql} ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    ).bind(MCP_KEY, value, now(), u.id, ...g.binds),
     auditStmt(c.env, { actorId: u.id, action: "settings.update", targetType: "settings", targetId: MCP_KEY, detail: { key: MCP_KEY, value } },
       { sql: `changes() > 0 AND EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)`, binds: [MCP_KEY, value] }),
   ]);
