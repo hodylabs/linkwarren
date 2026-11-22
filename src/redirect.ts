@@ -3,6 +3,7 @@ import { classifyAgent, referrerHost, splitQrMarker, utcDay, visitorHash } from 
 import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, pendingPage } from "./pages";
+import { withQuery } from "./routing";
 import type { DomainRow, LinkRow } from "./types";
 import { checkSlugShape, slugKey } from "./validate";
 
@@ -34,12 +35,7 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   }
 
   const m = splitQrMarker(url.search);
-  let dest = link.url;
-  if (link.passQuery && m.search) {
-    const d = new URL(dest);
-    d.search = d.search ? `${d.search}&${m.search.slice(1)}` : m.search; // raw bytes, no re-encoding
-    dest = d.toString();
-  }
+  const dest = withQuery(link.url, link.passQuery, m.search);
   const res = redirect(dest, link.redirectCode, domain);
   // Off the hot path: the response never waits for, or fails because of, analytics.
   if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));

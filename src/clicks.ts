@@ -11,7 +11,7 @@ const PREVIEW_RE =
 const BOT_RE =
   /bot|crawl|spider|slurp|curl\/|wget\/|python-requests|python-urllib|httpx|aiohttp|go-http-client|okhttp|java\/|libwww|headlesschrome|phantomjs|puppeteer|playwright|lighthouse|pingdom|uptimerobot|statuscake|GPTBot|ClaudeBot|anthropic-ai|PerplexityBot|Bytespider|Amazonbot|CCBot|ahrefs|semrush|MJ12bot|DotBot/i;
 
-function deviceOf(ua: string): Device {
+export function deviceOf(ua: string): Device {
   if (/iPad|Tablet|Android(?!.*Mobile)/i.test(ua)) return "tablet";
   if (/Mobi|iPhone|iPod|Android.*Mobile|Windows Phone/i.test(ua)) return "mobile";
   if (/Windows NT|Macintosh|X11|CrOS|Linux/i.test(ua)) return "desktop";
