@@ -9,13 +9,15 @@ import { apexOf, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
-import { destination, getDomain, loopField, purgeHost as purge, purgeMany } from "./shared";
+import { destination, getDomain, loopField, purgeHost as purge, purgeMany, withDomainLock } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const domains = new Hono<E>();
 
 const forbidden = { error: "forbidden" } as const;
 const notFound = { error: "not_found" } as const;
+// Another approve, reject or controls change of this domain is running: the same answer as a lost status race.
+const busy = { error: "conflict" } as const;
 export const MAX_PENDING_PER_MEMBER = 3;
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -186,71 +188,73 @@ domains.patch("/:id/cloudflare", async (c) => {
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const b = body.data;
   if (b.securityLevel === undefined && b.rateLimit === undefined) return c.json({ error: "no_changes" }, 400);
-  const d = await getDomain(c.env, c.req.param("id"));
-  if (!d) return c.json(notFound, 404);
-  const on = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'cf.controls'").first<{ value: string }>();
-  if (on?.value !== "1") return c.json({ error: "controls_off" }, 409);
-  const cf = await getCf(c.env, d.id);
-  if (!cf || cf.kind !== "account" || !cf.routeId || !cf.zoneId) return c.json({ error: "not_same_account" }, 409);
-  const cfg = cfConfig(c.env);
-  if (!cfg) return c.json(notConfigured, 409);
-  // Each step that succeeds in Cloudflare is recorded, so a later failure never leaves D1 claiming the old value.
-  const done: { securityLevel?: string | null; rateLimit?: number | null } = {};
-  const steps: [() => Promise<void>, () => void][] = [];
-  if (b.securityLevel !== undefined) {
-    const v = b.securityLevel;
-    steps.push([() => v === null ? deleteHostRule(cfg, cf.zoneId!, "http_config_settings", secRef(d.id))
-      : upsertHostRule(cfg, cf.zoneId!, "http_config_settings", securityRule(d.id, d.host, v)), () => { done.securityLevel = v; }]);
-  }
-  if (b.rateLimit !== undefined) {
-    const v = b.rateLimit;
-    steps.push([() => v === null ? deleteHostRule(cfg, cf.zoneId!, "http_ratelimit", rlRef(d.id))
-      : upsertHostRule(cfg, cf.zoneId!, "http_ratelimit", rateLimitRule(d.id, d.host, v)), () => { done.rateLimit = v; }]);
-  }
-  // A failure answers with the stored controls too, so the client knows which step landed.
-  let failure: { body: { error: string }; status: 409 | 502 } | null = null;
-  for (const [run, record] of steps) {
-    try {
-      await run();
-      record();
-    } catch (e) {
-      if (e instanceof PlanLimitError) failure = { body: { error: "cloudflare_plan_limit" }, status: 409 };
-      else if (isForbidden(e)) failure = { body: { error: "cloudflare_forbidden" }, status: 409 };
-      else if (e instanceof CfError) {
-        // Status and codes only: never Cloudflare's own text.
-        console.warn("linkwarren: Cloudflare rule change failed", JSON.stringify({ domainId: d.id, status: e.status, codes: e.codes }));
-        failure = { body: { error: e.status === 0 ? "cloudflare_unreachable" : "cloudflare_error" }, status: 502 };
-      } else {
-        logInternal(d.id, e);
-        throw e;
-      }
-      break;
+  return (await withDomainLock(c.env, c.req.param("id"), async () => {
+    const d = await getDomain(c.env, c.req.param("id"));
+    if (!d) return c.json(notFound, 404);
+    const on = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'cf.controls'").first<{ value: string }>();
+    if (on?.value !== "1") return c.json({ error: "controls_off" }, 409);
+    const cf = await getCf(c.env, d.id);
+    if (!cf || cf.kind !== "account" || !cf.routeId || !cf.zoneId) return c.json({ error: "not_same_account" }, 409);
+    const cfg = cfConfig(c.env);
+    if (!cfg) return c.json(notConfigured, 409);
+    // Each step that succeeds in Cloudflare is recorded, so a later failure never leaves D1 claiming the old value.
+    const done: { securityLevel?: string | null; rateLimit?: number | null } = {};
+    const steps: [() => Promise<void>, () => void][] = [];
+    if (b.securityLevel !== undefined) {
+      const v = b.securityLevel;
+      steps.push([() => v === null ? deleteHostRule(cfg, cf.zoneId!, "http_config_settings", secRef(d.id))
+        : upsertHostRule(cfg, cf.zoneId!, "http_config_settings", securityRule(d.id, d.host, v)), () => { done.securityLevel = v; }]);
     }
-  }
-  if (Object.keys(done).length === 0) return c.json({ ...failure!.body, securityLevel: cf.securityLevel, rateLimit: cf.rateLimit }, failure!.status);
-  const cols: [string, string | number | null][] = [];
-  if ("securityLevel" in done) cols.push(["security_level", done.securityLevel!]);
-  if ("rateLimit" in done) cols.push(["rate_limit", done.rateLimit!]);
-  // Only the keys written go to D1 and the audit, so two edits of different controls do not clobber each other.
-  const res = await c.env.DB.batch([
-    c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ? RETURNING security_level, rate_limit`)
-      .bind(...cols.map(([, v]) => v), d.id),
-    auditStmt(c.env, { actorId: user.id, action: "domain.cloudflare", targetType: "domain", targetId: d.id, detail: { host: d.host, ...done } },
-      { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?)", binds: [d.id] }),
-  ]);
-  const after = res[0]!.results[0] as { security_level: string | null; rate_limit: number | null } | undefined;
-  if (!after) {
-    // The domain was rejected while Cloudflare was being changed: remove the rules this request made (best effort).
-    const late: [Phase, string][] = [];
-    if (done.securityLevel) late.push(["http_config_settings", secRef(d.id)]);
-    if (done.rateLimit) late.push(["http_ratelimit", rlRef(d.id)]);
-    for (const [phase, ref] of late)
-      await deleteHostRule(cfg, cf.zoneId, phase, ref).catch((e) => console.warn("linkwarren: could not remove a rule of a deleted domain",
-        JSON.stringify({ domainId: d.id, zoneId: cf.zoneId, ref, error: e instanceof CfError ? e.message : "internal_error" })));
-    return c.json(notFound, 404);
-  }
-  const controls = { securityLevel: after.security_level, rateLimit: after.rate_limit };
-  return failure ? c.json({ ...failure.body, ...controls }, failure.status) : c.json(controls);
+    if (b.rateLimit !== undefined) {
+      const v = b.rateLimit;
+      steps.push([() => v === null ? deleteHostRule(cfg, cf.zoneId!, "http_ratelimit", rlRef(d.id))
+        : upsertHostRule(cfg, cf.zoneId!, "http_ratelimit", rateLimitRule(d.id, d.host, v)), () => { done.rateLimit = v; }]);
+    }
+    // A failure answers with the stored controls too, so the client knows which step landed.
+    let failure: { body: { error: string }; status: 409 | 502 } | null = null;
+    for (const [run, record] of steps) {
+      try {
+        await run();
+        record();
+      } catch (e) {
+        if (e instanceof PlanLimitError) failure = { body: { error: "cloudflare_plan_limit" }, status: 409 };
+        else if (isForbidden(e)) failure = { body: { error: "cloudflare_forbidden" }, status: 409 };
+        else if (e instanceof CfError) {
+          // Status and codes only: never Cloudflare's own text.
+          console.warn("linkwarren: Cloudflare rule change failed", JSON.stringify({ domainId: d.id, status: e.status, codes: e.codes }));
+          failure = { body: { error: e.status === 0 ? "cloudflare_unreachable" : "cloudflare_error" }, status: 502 };
+        } else {
+          logInternal(d.id, e);
+          throw e;
+        }
+        break;
+      }
+    }
+    if (Object.keys(done).length === 0) return c.json({ ...failure!.body, securityLevel: cf.securityLevel, rateLimit: cf.rateLimit }, failure!.status);
+    const cols: [string, string | number | null][] = [];
+    if ("securityLevel" in done) cols.push(["security_level", done.securityLevel!]);
+    if ("rateLimit" in done) cols.push(["rate_limit", done.rateLimit!]);
+    // Only the keys written go to D1 and the audit, so two edits of different controls do not clobber each other.
+    const res = await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ? RETURNING security_level, rate_limit`)
+        .bind(...cols.map(([, v]) => v), d.id),
+      auditStmt(c.env, { actorId: user.id, action: "domain.cloudflare", targetType: "domain", targetId: d.id, detail: { host: d.host, ...done } },
+        { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?)", binds: [d.id] }),
+    ]);
+    const after = res[0]!.results[0] as { security_level: string | null; rate_limit: number | null } | undefined;
+    if (!after) {
+      // The domain was rejected while Cloudflare was being changed: remove the rules this request made (best effort).
+      const late: [Phase, string][] = [];
+      if (done.securityLevel) late.push(["http_config_settings", secRef(d.id)]);
+      if (done.rateLimit) late.push(["http_ratelimit", rlRef(d.id)]);
+      for (const [phase, ref] of late)
+        await deleteHostRule(cfg, cf.zoneId, phase, ref).catch((e) => console.warn("linkwarren: could not remove a rule of a deleted domain",
+          JSON.stringify({ domainId: d.id, zoneId: cf.zoneId, ref, error: e instanceof CfError ? e.message : "internal_error" })));
+      return c.json(notFound, 404);
+    }
+    const controls = { securityLevel: after.security_level, rateLimit: after.rate_limit };
+    return failure ? c.json({ ...failure.body, ...controls }, failure.status) : c.json(controls);
+  })) ?? c.json(busy, 409);
 });
 
 domains.patch("/:id", async (c) => {
@@ -353,43 +357,45 @@ domains.post("/:id/approve", async (c) => {
   const raw = await c.req.json().catch(() => null);
   const body = approveBody.safeParse(raw ?? {});
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
-  const d = await getDomain(c.env, c.req.param("id"));
-  if (!d) return c.json(notFound, 404);
-  let cf = await getCf(c.env, d.id);
-  const finish = d.status === "active" && cf?.kind === "account" && cf.routeId === null;
-  // Recorded only when it was used: a takeover confirmation means something only for an account attach.
-  const confirmed = body.data.confirmTakeover === true && cf?.kind === "account" ? { confirmTakeover: true } : {};
-  if (d.status === "active" && !finish) return c.json({ ...d, ...(await loopField(c.env, d.host)) });
-  if (cf && cf.kind !== "manual") {
-    const cfg = cfConfig(c.env);
-    // Without Cloudflare settings nothing can be checked, so nothing is approved.
-    if (!cfg) return c.json(notConfigured, 409);
-    try {
-      cf = await syncDomain(c.env, cfg, d, cf, { attach: cf.kind === "account", confirmTakeover: body.data.confirmTakeover });
-    } catch (e) {
-      if (e instanceof AttachError) return c.json({ error: e.code }, 409);
-      if (e instanceof CfError) {
-        // syncDomain throws 404 when the domain was deleted under it (a racing reject).
-        if (e.status === 404 && !(await getDomain(c.env, d.id))) return c.json(notFound, 404);
-        return c.json({ error: "cloudflare_error" }, 502);
+  return (await withDomainLock(c.env, c.req.param("id"), async () => {
+    const d = await getDomain(c.env, c.req.param("id"));
+    if (!d) return c.json(notFound, 404);
+    let cf = await getCf(c.env, d.id);
+    const finish = d.status === "active" && cf?.kind === "account" && cf.routeId === null;
+    // Recorded only when it was used: a takeover confirmation means something only for an account attach.
+    const confirmed = body.data.confirmTakeover === true && cf?.kind === "account" ? { confirmTakeover: true } : {};
+    if (d.status === "active" && !finish) return c.json({ ...d, ...(await loopField(c.env, d.host)) });
+    if (cf && cf.kind !== "manual") {
+      const cfg = cfConfig(c.env);
+      // Without Cloudflare settings nothing can be checked, so nothing is approved.
+      if (!cfg) return c.json(notConfigured, 409);
+      try {
+        cf = await syncDomain(c.env, cfg, d, cf, { attach: cf.kind === "account", confirmTakeover: body.data.confirmTakeover });
+      } catch (e) {
+        if (e instanceof AttachError) return c.json({ error: e.code }, 409);
+        if (e instanceof CfError) {
+          // syncDomain throws 404 when the domain was deleted under it (a racing reject).
+          if (e.status === 404 && !(await getDomain(c.env, d.id))) return c.json(notFound, 404);
+          return c.json({ error: "cloudflare_error" }, 502);
+        }
+        throw e; // syncDomain logged it
       }
-      throw e; // syncDomain logged it
+      if (finish) {
+        // A route someone else made is never adopted, so nothing was attached: no audit.
+        if (cf.routeId === null) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
+        // The route ids are system state that syncDomain already stored; the audit is guarded on that stored route on this row.
+        await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
+          detail: { host: d.host, ...confirmed } }, { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ? AND route_id = ?)", binds: [d.id, cf.routeId] })]);
+        return c.json({ ...d, cloudflare: cfView(c.env, d, cf), ...(await loopField(c.env, d.host)) });
+      }
+      if (!isVerified(cf)) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
     }
-    if (finish) {
-      // A route someone else made is never adopted, so nothing was attached: no audit.
-      if (cf.routeId === null) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
-      // The route ids are system state that syncDomain already stored; the audit is guarded on that stored route on this row.
-      await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
-        detail: { host: d.host, ...confirmed } }, { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ? AND route_id = ?)", binds: [d.id, cf.routeId] })]);
-      return c.json({ ...d, cloudflare: cfView(c.env, d, cf), ...(await loopField(c.env, d.host)) });
-    }
-    if (!isVerified(cf)) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
-  }
-  const view = cfView(c.env, d, cf);
-  const out = await setStatus(c, d, "approve", "active", { check: { dns: view.dns, ownership: view.ownership, certificate: view.certificate }, ...confirmed });
-  if (out === "lost" || out === null) return c.json(notFound, 404);
-  const loop = out.status === "active" ? await loopField(c.env, out.host) : {};
-  return c.json({ ...out, cloudflare: cfView(c.env, out, cf), ...loop });
+    const view = cfView(c.env, d, cf);
+    const out = await setStatus(c, d, "approve", "active", { check: { dns: view.dns, ownership: view.ownership, certificate: view.certificate }, ...confirmed });
+    if (out === "lost" || out === null) return c.json(notFound, 404);
+    const loop = out.status === "active" ? await loopField(c.env, out.host) : {};
+    return c.json({ ...out, cloudflare: cfView(c.env, out, cf), ...loop });
+  })) ?? c.json(busy, 409);
 });
 
 /** disable: any -> disabled. Owner-only and idempotent. */
@@ -408,54 +414,56 @@ domains.post("/:id/disable", async (c) => {
 domains.delete("/:id", async (c) => {
   const user = c.var.user;
   if (user.role !== "owner") return c.json(forbidden, 403);
-  const d = await getDomain(c.env, c.req.param("id"));
-  if (!d) return c.json(notFound, 404);
-  if (d.status !== "pending") return c.json({ error: "not_pending" }, 409);
-  const cfg = cfConfig(c.env);
-  // Re-read right before detach, so ids a sync stored earlier in this request's lifetime are included.
-  const cf = await getCf(c.env, d.id);
-  if (cf && cfIds(cf).some((v) => v)) {
-    if (!cfg) return c.json(notConfigured, 409);
-    try {
-      await detachDomain(c.env, cfg, d, cf);
-    } catch (e) {
-      if (e instanceof CfError) return c.json({ error: "cloudflare_error" }, 502);
-      throw e;
+  return (await withDomainLock(c.env, c.req.param("id"), async () => {
+    const d = await getDomain(c.env, c.req.param("id"));
+    if (!d) return c.json(notFound, 404);
+    if (d.status !== "pending") return c.json({ error: "not_pending" }, 409);
+    const cfg = cfConfig(c.env);
+    // Re-read right before detach, so ids a sync stored earlier in this request's lifetime are included.
+    const cf = await getCf(c.env, d.id);
+    if (cf && cfIds(cf).some((v) => v)) {
+      if (!cfg) return c.json(notConfigured, 409);
+      try {
+        await detachDomain(c.env, cfg, d, cf);
+      } catch (e) {
+        if (e instanceof CfError) return c.json({ error: "cloudflare_error" }, 502);
+        throw e;
+      }
     }
-  }
-  const pending = "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = 'pending')";
-  const del = (t: string, col: string) => c.env.DB.prepare(`DELETE FROM ${t} WHERE ${col} = ? AND ${pending}`).bind(d.id, d.id);
-  const at = Math.floor(Date.now() / 1000);
-  // Reads first in the same batch, so the ids, slugs and link count are exactly what the delete removed.
-  const res = await c.env.DB.batch([
-    c.env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(d.id),
-    c.env.DB.prepare("SELECT slug FROM links WHERE domain_id = ?").bind(d.id),
-    c.env.DB.prepare(
-      `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
-       SELECT ?, ?, NULL, 'domain.reject', 'domain', ?, json_object('host', ?, 'links', (SELECT COUNT(*) FROM links WHERE domain_id = ?), 'owner', ?)
-       WHERE ${pending}`,
-    ).bind(at, user.id, d.id, d.host, d.id, d.ownerId, d.id),
-    del("links", "domain_id"), del("slug_locks", "domain_id"), del("domain_members", "domain_id"), del("domain_cf", "domain_id"),
-    c.env.DB.prepare("DELETE FROM domains WHERE id = ? AND status = 'pending'").bind(d.id),
-  ]);
-  if (res[res.length - 1]!.meta.changes === 0) {
-    // Lost to a concurrent approve after our detach: put the active domain back in Cloudflare (repair, never a takeover).
-    const cur = await getDomain(c.env, d.id);
-    const now = cur && (await getCf(c.env, d.id).catch(() => null));
-    if (cur && now && cur.status === "active") await trySync(c.env, cur, now, { attach: false });
-    return c.json({ error: "conflict" }, 409);
-  }
-  // M-4: a sync running concurrently may have stored a new id after detach read the row. Best-effort, never fails the reject.
-  const last = res[0]!.results[0] as Record<string, unknown> | undefined;
-  const atDelete = last ? rowToCf(last) : null;
-  if (cfg && atDelete && cf && cfIds(atDelete).some((v, i) => v && v !== cfIds(cf)[i])) {
-    await detachDomain(c.env, cfg, d, atDelete).catch((e) =>
-      console.warn("linkwarren: second cleanup after reject failed", JSON.stringify({ domainId: d.id, error: e instanceof CfError ? e.message : "internal_error" })));
-  }
-  const slugs = (res[1]!.results as { slug: string }[]).flatMap((r) => [r.slug, r.slug.toLowerCase()]);
-  // shortcut: one KV delete per key (subrequest cap on huge domains); the 300 s TTL covers the rest, and the host purge alone already ends serving.
-  await Promise.all([purge(c.env, d.host), purgeMany(c.env, d.id, [...new Set(slugs)])]);
-  return c.body(null, 204);
+    const pending = "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = 'pending')";
+    const del = (t: string, col: string) => c.env.DB.prepare(`DELETE FROM ${t} WHERE ${col} = ? AND ${pending}`).bind(d.id, d.id);
+    const at = Math.floor(Date.now() / 1000);
+    // Reads first in the same batch, so the ids, slugs and link count are exactly what the delete removed.
+    const res = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(d.id),
+      c.env.DB.prepare("SELECT slug FROM links WHERE domain_id = ?").bind(d.id),
+      c.env.DB.prepare(
+        `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
+         SELECT ?, ?, NULL, 'domain.reject', 'domain', ?, json_object('host', ?, 'links', (SELECT COUNT(*) FROM links WHERE domain_id = ?), 'owner', ?)
+         WHERE ${pending}`,
+      ).bind(at, user.id, d.id, d.host, d.id, d.ownerId, d.id),
+      del("links", "domain_id"), del("slug_locks", "domain_id"), del("domain_members", "domain_id"), del("domain_cf", "domain_id"),
+      c.env.DB.prepare("DELETE FROM domains WHERE id = ? AND status = 'pending'").bind(d.id),
+    ]);
+    if (res[res.length - 1]!.meta.changes === 0) {
+      // Lost to a concurrent approve after our detach: put the active domain back in Cloudflare (repair, never a takeover).
+      const cur = await getDomain(c.env, d.id);
+      const now = cur && (await getCf(c.env, d.id).catch(() => null));
+      if (cur && now && cur.status === "active") await trySync(c.env, cur, now, { attach: false });
+      return c.json({ error: "conflict" }, 409);
+    }
+    // M-4: a sync running concurrently may have stored a new id after detach read the row. Best-effort, never fails the reject.
+    const last = res[0]!.results[0] as Record<string, unknown> | undefined;
+    const atDelete = last ? rowToCf(last) : null;
+    if (cfg && atDelete && cf && cfIds(atDelete).some((v, i) => v && v !== cfIds(cf)[i])) {
+      await detachDomain(c.env, cfg, d, atDelete).catch((e) =>
+        console.warn("linkwarren: second cleanup after reject failed", JSON.stringify({ domainId: d.id, error: e instanceof CfError ? e.message : "internal_error" })));
+    }
+    const slugs = (res[1]!.results as { slug: string }[]).flatMap((r) => [r.slug, r.slug.toLowerCase()]);
+    // shortcut: one KV delete per key (subrequest cap on huge domains); the 300 s TTL covers the rest, and the host purge alone already ends serving.
+    await Promise.all([purge(c.env, d.host), purgeMany(c.env, d.id, [...new Set(slugs)])]);
+    return c.body(null, 204);
+  })) ?? c.json(busy, 409);
 });
 
 domains.put("/:id/members", async (c) => {

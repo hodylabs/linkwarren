@@ -71,6 +71,22 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     expect(list.find((d) => d.id === id)!.cloudflare).toMatchObject({ securityLevel: "high", rateLimit: 40 });
   });
 
+  it("a second edit while the first is between Cloudflare and D1 is 409 conflict, so both stores keep the same value", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("owner", "go.owned.test");
+    let inner: unknown[] | null = null;
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      const req = new Request(i as RequestInfo, init);
+      const res = await fake.handle(req);
+      if (!inner && req.method === "POST" && req.url.includes("/rulesets")) inner = await setCf(id, { securityLevel: "low" }).then(async (x) => [x.status, await x.json()]);
+      return res;
+    });
+    expect((await setCf(id, { securityLevel: "high" })).status).toBe(200);
+    expect(inner).toEqual([409, { error: "conflict" }]);
+    expect((await row(id))!.security_level).toBe("high");
+    expect(fake.state.rulesets[SEC]!.rules.map((x) => (x.action_parameters as { security_level: string }).security_level)).toEqual(["high"]);
+  });
+
   it("high creates the entrypoint with only our rule, stores it, one audit; low patches the same rule", async () => {
     const fake = installFakeCloudflare({ zones });
     const id = await create("owner", "go.owned.test");

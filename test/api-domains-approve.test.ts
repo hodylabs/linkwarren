@@ -38,7 +38,7 @@ const green = (f: Fake, host: string) => {
 
 beforeAll(setupAccess);
 beforeEach(async () => {
-  await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domain_cf", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domain_cf", "domains", "users", "locks"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   for (const [id, email, role] of [["uo", EMAIL.owner, "owner"], ["ua", EMAIL.a, "member"]])
     await run("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,?,?,1)", id, email, role, "active");
   configure();
@@ -239,47 +239,63 @@ describe("reject", () => {
 });
 
 describe("approve racing reject", () => {
-  it("approve lands first: reject is 409 conflict, one approve audit, and the domain is repaired in Cloudflare", async () => {
+  it("approve while reject is detaching: 409 conflict, reject finishes, nothing left", async () => {
     const fake = installFakeCloudflare({ zones });
     const id = await create("a", "go.outside.test");
     green(fake, "go.outside.test");
-    let inner: Response | null = null;
-    // Approve runs to completion after reject read the pending status, just before reject's first Cloudflare delete.
+    let inner: unknown[] | null = null;
     vi.mocked(fetch).mockImplementation(async (i, init) => {
       const req = new Request(i as RequestInfo, init);
-      if (!inner && req.method === "DELETE") inner = await approve(id);
+      if (!inner && req.method === "DELETE") inner = await approve(id).then(async (x) => [x.status, await x.json()]);
       return fake.handle(req);
     });
     const r = await reject(id);
-    expect(inner!.status).toBe(200);
-    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
-    expect([await audits("domain.approve"), await audits("domain.reject")]).toEqual([1, 0]);
-    expect(await statusOf(id)).toBe("active");
-    expect(fake.state.hostnames).toHaveLength(1);
-    expect(fake.state.routes).toHaveLength(1);
-  });
-  it("reject lands first: approve is 404, one reject audit, nothing left", async () => {
-    const fake = installFakeCloudflare({ zones });
-    const id = await create("a", "go.outside.test");
-    green(fake, "go.outside.test");
-    let inner: Response | null = null;
-    const restore = beforeBatch(1, async () => { inner = await reject(id); });
-    let r: Response;
-    try { r = await approve(id); } finally { restore(); }
-    expect(inner!.status).toBe(204);
-    expect(r.status).toBe(404);
+    expect(inner).toEqual([409, { error: "conflict" }]);
+    expect(r.status).toBe(204);
     expect([await audits("domain.approve"), await audits("domain.reject")]).toEqual([0, 1]);
     expect(await statusOf(id)).toBeNull();
     expect([fake.state.hostnames, fake.state.routes]).toEqual([[], []]);
   });
+  it("reject after approve's check: 409 conflict with no Cloudflare write, so the approved domain keeps its route", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("a", "go.outside.test");
+    green(fake, "go.outside.test");
+    let inner: unknown[] | null = null;
+    // Lands between approve's fresh sync and its status write; the hostname delete would fail, leaving no route behind.
+    const restore = beforeBatch(1, async () => {
+      fake.failNext(/custom_hostnames\//, 500);
+      inner = await reject(id).then(async (x) => [x.status, await x.json()]);
+    });
+    let r: Response;
+    try { r = await approve(id); } finally { restore(); }
+    expect(inner).toEqual([409, { error: "conflict" }]);
+    expect(r.status).toBe(200);
+    expect(await statusOf(id)).toBe("active");
+    expect(fake.calls.filter((c) => c.method === "DELETE")).toEqual([]);
+    expect([fake.state.hostnames, fake.state.routes].map((x) => x.length)).toEqual([1, 1]);
+  });
+  it("a held lease answers 409 conflict before any Cloudflare call; an expired one is taken over", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("a", "go.outside.test");
+    green(fake, "go.outside.test");
+    fake.calls.length = 0;
+    await run("INSERT INTO locks (key, token, until) VALUES (?, 'x', ?)", `domain:${id}`, Math.floor(Date.now() / 1000) + 60);
+    for (const r of [await approve(id), await reject(id), await call("owner", "PATCH", `/api/domains/${id}/cloudflare`, { securityLevel: "high" })])
+      expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
+    expect(fake.calls).toEqual([]);
+    await run("UPDATE locks SET until = 0 WHERE key = ?", `domain:${id}`);
+    expect((await approve(id)).status).toBe(200);
+    expect(await count("SELECT COUNT(*) n FROM locks WHERE key = ?", `domain:${id}`)).toBe(0); // released after use
+  });
 });
 
 describe("syncs clean up what they could not store", () => {
-  it("reject commits while approve's sync is between create and save: the new hostname and route are deleted, approve is 404", async () => {
+  it("reject commits while a poll's sync is between create and save: the new hostname and route are deleted", async () => {
     const fake = installFakeCloudflare({ zones });
     const id = await create("a", "go.outside.test");
     fake.state.hostnames.length = 0;
     fake.state.routes.length = 0;
+    await run("UPDATE domain_cf SET updated_at = 0, checked_at = NULL WHERE domain_id = ?", id); // past the poll throttle
     let rejected: Response | null = null;
     vi.mocked(fetch).mockImplementation(async (i, init) => {
       const req = new Request(i as RequestInfo, init);
@@ -287,11 +303,9 @@ describe("syncs clean up what they could not store", () => {
       if (!rejected && req.method === "POST" && req.url.includes("/workers/routes")) rejected = await reject(id);
       return res;
     });
-    const r = await approve(id);
+    expect((await call("owner", "GET", `/api/domains/${id}/cloudflare`)).status).toBe(200);
     expect(rejected!.status).toBe(204);
-    expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
     expect([fake.state.hostnames, fake.state.routes]).toEqual([[], []]);
-    expect(await audits("domain.approve")).toBe(0);
   });
   it("compare-and-set lost to another writer: the loser's route is deleted, the winner's id stays", async () => {
     const fake = installFakeCloudflare({ zones });

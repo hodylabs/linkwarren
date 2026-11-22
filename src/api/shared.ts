@@ -36,6 +36,26 @@ export async function loopLinks(env: Env, host: string): Promise<number> {
   return r?.n ?? 0;
 }
 
+// Longer than the slowest Cloudflare-then-D1 flow (each call times out at 10 s); a crashed request blocks the domain at most this long.
+const LEASE_S = 120;
+/**
+ * Runs `fn` holding the domain's lease, or returns null when another approve, reject or controls change holds it.
+ * These flows write Cloudflare first and D1 after, so two of them interleaving could leave the two stores disagreeing.
+ */
+export async function withDomainLock(env: Env, domainId: string, fn: () => Promise<Response>): Promise<Response | null> {
+  const key = `domain:${domainId}`, token = crypto.randomUUID(), now = Math.floor(Date.now() / 1000);
+  const got = await env.DB.prepare(
+    "INSERT INTO locks (key, token, until) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET token = excluded.token, until = excluded.until WHERE locks.until <= ?",
+  ).bind(key, token, now + LEASE_S, now).run();
+  if (!got.meta.changes) return null;
+  try {
+    return await fn();
+  } finally {
+    await env.DB.prepare("DELETE FROM locks WHERE key = ? AND token = ?").bind(key, token).run()
+      .catch((e) => console.warn("linkwarren: could not release a domain lock", JSON.stringify({ domainId, error: String(e).slice(0, 200) })));
+  }
+}
+
 /** For responses after a committed write: a failed count omits the field instead of turning the write into a 500. */
 export const loopField = (env: Env, host: string) =>
   loopLinks(env, host).then((loopLinks) => ({ loopLinks }), (e) => { console.warn("loopLinks failed", String(e)); return {}; });
