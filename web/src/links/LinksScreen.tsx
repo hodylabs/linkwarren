@@ -22,6 +22,7 @@ export const LINKS_KEYS = {
   k: "Previous link",
   e: "Edit the selected link",
   c: "Copy the short link",
+  q: "Focus the QR code download",
   "shift+d": "Delete the selected link",
   escape: "Clear the selection",
 } as const;
@@ -144,9 +145,15 @@ export function LinksScreen() {
     focusRow.current = false;
   }, [sel, items]);
 
+  const wantQr = query.get("qr") === "1"; // after create: land on the QR download
   const at = items.findIndex((l) => l.id === sel);
   const selected = at >= 0 ? items[at]! : null;
+  const selectedId = selected?.id ?? null;
   const canEdit = (l: Link) => me.role === "owner" || l.createdBy === me.id || domainOf(l.domainId)?.ownerId === me.id;
+
+  useEffect(() => {
+    if (wantQr && selectedId) detailRef.current?.focusQr();
+  }, [wantQr, selectedId]);
 
   const move = async (step: 1 | -1) => {
     if (items.length === 0) return;
@@ -183,6 +190,7 @@ export function LinksScreen() {
       j: () => void move(1),
       k: () => void move(-1),
       c: () => detailRef.current?.copy(),
+      q: () => detailRef.current?.focusQr(),
       e: () => detailRef.current?.focusUrl(),
       "shift+d": () => {
         if (selected && canEdit(selected)) {

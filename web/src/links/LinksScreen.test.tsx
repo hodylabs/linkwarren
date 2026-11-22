@@ -286,6 +286,24 @@ describe("Link detail", () => {
     expect(urlInput().value).toBe("https://example.com/springx");
   });
 
+  it("Q focuses Download SVG, but not while typing in the URL field", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.click(urlInput());
+    await user.keyboard("q");
+    expect(urlInput().value).toBe("https://example.com/springq");
+    await user.tab({ shift: true });
+    (document.activeElement as HTMLElement).blur();
+    await user.keyboard("q");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ }));
+  });
+
+  it("?qr=1 with a selection focuses Download SVG on load", async () => {
+    boot({ path: "/links?sel=l1&qr=1" });
+    await ready();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ })));
+  });
+
   it("Shift+D opens the confirm, Esc cancels without DELETE", async () => {
     const { api, user } = boot({ path: "/links?sel=l1" });
     await ready();

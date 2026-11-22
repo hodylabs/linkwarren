@@ -560,3 +560,7 @@ main>.an{flex:1;min-height:0}
   .tip{white-space:normal;width:max-content;max-width:220px}
   .hb{grid-template-columns:minmax(0,2fr) 1fr auto}
 }
+.qr{display:flex;gap:12px;align-items:center}
+.qr>svg{flex:none;width:96px;height:96px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.qr p{margin:0 0 8px;color:var(--muted)}
+.qr .row{display:flex;flex-wrap:wrap;gap:8px}

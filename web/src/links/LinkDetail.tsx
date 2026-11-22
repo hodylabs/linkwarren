@@ -5,9 +5,10 @@ import { rebase } from "../draft";
 import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
+import { QrPanel } from "./QrPanel";
 import { creatorLabel, linkState, shortUrl, type StatsLive } from "./linkView";
 
-export type DetailHandle = { focusUrl(): void; copy(): void };
+export type DetailHandle = { focusUrl(): void; copy(): void; focusQr(): void };
 
 type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean };
 const draftOf = (l: Link): Draft => ({ url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery });
@@ -33,6 +34,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     const [error, setError] = useState<{ code: string } | null>(null);
     const [busy, setBusy] = useState(false);
     const urlRef = useRef<HTMLInputElement>(null);
+    const qrRef = useRef<HTMLButtonElement>(null);
     const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
     const host = domain?.host ?? "";
 
@@ -57,7 +59,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         () => app.announce("Could not copy"),
       );
     };
-    useImperativeHandle(ref, () => ({ focusUrl: () => urlRef.current?.focus(), copy }));
+    useImperativeHandle(ref, () => ({ focusUrl: () => urlRef.current?.focus(), copy, focusQr: () => qrRef.current?.focus() }));
 
     const save = async () => {
       if (!canEdit || busy) return;
@@ -181,6 +183,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
             </div>
           </div>
         </fieldset>
+        {host && <QrPanel ref={qrRef} host={host} slug={link.slug} />}
         {canEdit && (
           <div className="actions">
             <button type="button" className="btn primary" onClick={() => void save()} disabled={busy} aria-keyshortcuts="Control+Enter">
