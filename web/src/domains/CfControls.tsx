@@ -76,7 +76,7 @@ export function CfControls({ domain, controlsEnabled }: { domain: Domain; contro
   return (
     <div className="sect" onKeyDown={onKeyDown}>
       <h3>Cloudflare</h3>
-      <div className="field">
+      <div className="field stack">
         <span id="cfc-level">Security level</span>
         <Seg options={LEVELS} value={level} label="Security level" onChange={setLevel} />
       </div>

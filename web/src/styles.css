@@ -123,7 +123,9 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 .field label{color:var(--muted)}
 .input{border:1px solid var(--line);border-radius:6px;padding:6px 9px;background:var(--panel);font-family:var(--mono);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .input.sans{font-family:var(--sans);font-size:13px}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg{display:inline-flex;flex-wrap:wrap;max-width:100%;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+/* A stacked field (label above, control full width) for controls too wide for the 1fr column of the 380 px detail panel. */
+.field.stack{grid-template-columns:1fr;gap:4px}
 /* app: .seg items and .sw are real buttons, not spans */
 .seg button{border:0;background:transparent;padding:5px 10px;font-size:12.5px;color:var(--muted);border-right:1px solid var(--line)}
 .seg button:last-child{border-right:0}
