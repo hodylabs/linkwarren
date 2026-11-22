@@ -325,4 +325,38 @@ describe("final fix wave", () => {
     expect((await openConsent(path, p.auth)).res.status).toBe(404);
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("n")).toBe(0);
   });
+
+  it("limits each person to 10 consent requests (GET or POST) per hour; a refused one writes nothing", async () => {
+    const { path } = await request();
+    const p = await ready("authz@example.com"); // registering clears the limits (test helper)
+    const uid = p.uid;
+    const lim = () => env.DB.prepare("SELECT count FROM auth_limits WHERE key = ?").bind(`authz:u:${uid}`).first("count");
+    expect(await lim()).toBe(1);
+    for (let i = 2; i <= 9; i++) expect((await openConsent(path, p.auth)).res.status).toBe(200);
+    // The POST counts too: the 10th request is allowed.
+    expect((await postConsent(p.auth, p.binding, { handle: p.handle, uid, action: "approve", access: "read" })).status).toBe(302);
+    expect(await lim()).toBe(10);
+    const g = await openConsent(path, p.auth);
+    expect(g.res.status).toBe(429);
+    expect(g.handle).toBe("");
+    expect(g.html).toContain("Too many connection attempts");
+    const p2 = await openConsent(path, await signInHeaders("authz-other@example.com"));
+    expect(p2.res.status).toBe(200); // per person
+    const r = await postConsent(p.auth, p2.binding, { handle: p2.handle, uid, action: "approve", access: "read" });
+    expect(r.status).toBe(429);
+    expect(await lim()).toBe(10);
+  });
+
+  it("fails closed with 503 when the D1 limiter is unavailable", async () => {
+    const { path } = await request();
+    const auth = await signInHeaders("authz-down@example.com");
+    const prep = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("auth_limits")) throw new Error("D1 down");
+      return prep(sql);
+    });
+    const g = await openConsent(path, auth);
+    expect(g.res.status).toBe(503);
+    expect(g.handle).toBe("");
+  });
 });

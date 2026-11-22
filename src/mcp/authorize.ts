@@ -4,6 +4,7 @@ import { auditStmt } from "../audit";
 import { authenticate, authMode } from "../auth";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
+import { blocked, hit, LIMITS, limitKey } from "../limits";
 import { safeNext } from "../session";
 import { messagePage, renderApproval } from "./approval-page";
 
@@ -68,6 +69,18 @@ const helpers = (env: Env): OAuthHelpers | null => env.OAUTH_PROVIDER ?? null;
 
 /** The library falls back to the client id when a client gave no name; that is not a name to show or audit. */
 const nameOf = (d: { clientName: string; clientId: string }) => cleanClientName(d.clientName === d.clientId ? undefined : d.clientName);
+/** I3: 10 consent requests per person per hour, read first so a refused one writes nothing; no limiter, no consent. */
+async function limitedFor(env: Env, userId: string): Promise<Response | null> {
+  const k = limitKey.authz(userId);
+  try {
+    if ((await blocked(env, k, LIMITS.authz)) || !(await hit(env, k, LIMITS.authz)))
+      return msg(429, "Too many attempts", "Too many connection attempts. Try again in an hour.");
+  } catch {
+    return msg(503, "Unavailable", "Connecting agents is unavailable right now.");
+  }
+  return null;
+}
+
 const FAILED = () => msg(500, "Something went wrong", "The connection could not be finished. Start again from your agent.");
 
 authorize.get("/", async (c) => {
@@ -85,6 +98,8 @@ authorize.get("/", async (c) => {
   }
   const oauth = helpers(c.env);
   if (!oauth) return msg(503, "Unavailable", "Connecting agents is unavailable right now.");
+  const limited = await limitedFor(c.env, w.user.id);
+  if (limited) return limited;
   let req;
   try {
     req = await oauth.parseAuthRequest(c.req.raw);
@@ -120,6 +135,8 @@ authorize.post("/", async (c) => {
   const user = w.user;
   const oauth = helpers(c.env);
   if (!oauth) return msg(503, "Unavailable", "Connecting agents is unavailable right now.");
+  const limited = await limitedFor(c.env, user.id);
+  if (limited) return limited;
   let form: Record<string, unknown>;
   try {
     form = await c.req.parseBody();

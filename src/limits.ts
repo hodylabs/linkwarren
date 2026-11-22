@@ -14,6 +14,7 @@ export const LIMITS = {
   apiConn: { n: 60, s: 60 },
   apiDay: { n: 1000, s: 86400, utc: true },
   apiInstanceDay: { n: 3000, s: 86400, utc: true },
+  authz: { n: 10, s: 3600 },
 } as const;
 /** utc: the window is aligned to multiples of s since the epoch (s = 86400 is the UTC day) instead of starting at the first event. */
 type Limit = { n: number; s: number; utc?: boolean };
@@ -38,6 +39,8 @@ export const limitKey = {
   apiDay: (userId: string) => `api:ud:${userId}`,
   /** Every /mcp tool call and /api/v1 request of the instance, per UTC day. */
   apiInstanceDay: "api:day",
+  /** GET and POST /authorize per person: each consent page and approval spends KV writes. */
+  authz: (userId: string) => `authz:u:${userId}`,
 } as const;
 
 /** Counts one event in one atomic upsert (a window older than s restarts at 1); true when still within the limit. */

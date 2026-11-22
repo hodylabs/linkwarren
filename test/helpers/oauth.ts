@@ -14,9 +14,9 @@ export async function pkce(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge: b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))) };
 }
 
-/** DCR like Claude Code; a random IP and cleared registration limits so suites never hit the /register caps. */
+/** DCR like Claude Code; a random IP and cleared registration and approval limits so suites never hit the /register caps. */
 export async function registerClient(redirect = CLAUDE_CB, o: { name?: string | null; auth?: string } = {}): Promise<{ clientId: string; clientSecret?: string }> {
-  await env.DB.prepare("DELETE FROM auth_limits WHERE key LIKE 'reg:%'").run();
+  await env.DB.prepare("DELETE FROM auth_limits WHERE key LIKE 'reg:%' OR key LIKE 'authz:%'").run();
   const ip = `10.${(Math.random() * 255) | 0}.${(Math.random() * 255) | 0}.1`;
   const r = await fetchW("/register", {
     method: "POST",
