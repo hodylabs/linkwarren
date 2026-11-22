@@ -39,8 +39,8 @@ function fail(status: number, code: string, data?: unknown): never {
 
 /** Same-origin JSON call. Status 0 / "network" when fetch throws, which is what an expired Access session (login redirect) looks like. */
 export async function api<T>(method: Method, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  // Programming error, not a user error: only same-origin API paths, never a full URL.
-  if (!path.startsWith("/api/")) throw new Error(`api(): path must start with /api/, got ${path}`);
+  // Programming error, not a user error: only same-origin API and sign-in paths, never a full URL.
+  if (!/^\/(api|auth)\//.test(path)) throw new Error(`api(): path must start with /api/ or /auth/, got ${path}`);
   const init: RequestInit = { method, credentials: "same-origin", signal };
   if (body !== undefined) {
     init.headers = { "content-type": "application/json" };

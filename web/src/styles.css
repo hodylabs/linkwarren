@@ -241,6 +241,22 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 .gate{min-height:100%;display:grid;place-content:center;justify-items:center;gap:14px;padding:24px;text-align:center;color:var(--text)}
 .gate img{width:48px;height:48px}
 .gate p{margin:0;max-width:44ch}
+/* app: sign-in screen (app mode), built from .gate, the primary action and the sheet inputs; no rail */
+.signin{min-height:100%;display:grid;place-items:center;padding:24px 16px}
+.signin-card{width:100%;max-width:380px;display:grid;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:28px 24px}
+.signin-brand{display:flex;align-items:center;gap:10px}
+.signin-brand img{width:32px;height:32px}
+.signin-brand span{font-family:var(--display);font-weight:500;font-size:18px;letter-spacing:-.03em;color:var(--graphite)}
+.signin h1{font-family:var(--display);font-weight:500;font-size:19px;letter-spacing:-.02em;margin:4px 0 0;overflow-wrap:anywhere}
+.signin p{margin:0;overflow-wrap:anywhere}
+.signin .muted{color:var(--muted);font-size:12.5px}
+.signin form{display:grid;gap:10px}
+.signin label{font-size:12.5px;color:var(--muted)}
+.signin input{font-family:var(--sans);font-size:16px;border:1px solid var(--line);border-radius:6px;padding:9px 11px;background:var(--panel);color:var(--text);min-height:44px;width:100%}
+.signin input:focus{outline:0;border-color:var(--signal-deep);box-shadow:0 0 0 3px var(--signal-wash)}
+.signin .btn{min-height:44px;justify-content:center;width:100%}
+.signin .btn[disabled]{opacity:.6}
+.signin-err{color:var(--bad);background:var(--bad-wash);border-radius:6px;padding:8px 10px;font-weight:500}
 .banner{display:flex;align-items:center;gap:12px;padding:8px 20px;background:var(--bad-wash);color:var(--bad);border-bottom:1px solid var(--line);font-weight:500}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 

@@ -59,6 +59,13 @@ const ERRORS: Record<string, string> = {
   too_many_attempts: "Too many attempts. Try again in a few minutes.",
   network: "You are signed out. Reload the page to sign in.",
   unauthenticated: "You are signed out. Reload the page to sign in.",
+  link_invalid: "This sign-in link has expired or was already used. Ask for a new one.",
+  passkey_failed: "That passkey did not work here. Try again or use an email link.",
+  passkey_cancelled: "Passkey sign-in was cancelled.",
+  passkey_limit: "You can have at most 10 passkeys. Remove one first.",
+  too_many_attempts: "Too many tries. Wait 15 minutes and try again.",
+  email_not_configured: "Sign-in email is not set up on this instance. Use a passkey or ask the owner.",
+  invalid_name: "Use 1 to 40 characters.",
 };
 
 /** "1 link", "2 links"; pass `many` for irregular plurals. */
