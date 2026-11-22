@@ -1,13 +1,13 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
-import { ACTOR_OK } from "./users";
 import { CfError, cfConfigFor, cnameTarget } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverDetail } from "../cf/attach";
 import type { Env } from "../env";
 import { apexOf, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
+import { FIRST_OWNER, actorCan, can, type Guard } from "../roles";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
 import { destination, getDomain, loopField, purgeHost as purge, purgeMany, withDomainLock, type Lease } from "./shared";
@@ -33,6 +33,26 @@ const patchBody = z.strictObject({
 const membersBody = z.strictObject({ userIds: z.array(z.string().min(1)).max(100) });
 
 const exists = (id: string) => ({ sql: "EXISTS (SELECT 1 FROM domains WHERE id = ?)", binds: [id] });
+/** One read of a write's guard, to tell a refused write apart from a lost race. */
+const holds = async (env: Env, g: Guard) => !!(await env.DB.prepare(`SELECT ${g.sql} AS ok`).bind(...g.binds).first<{ ok: number }>())?.ok;
+const manages = (user: UserRow) => actorCan(user.id, "domains.manage");
+/** The SQL re-check of canManageDomain for a write: none for an owner or the domain's own owner (baseline, as before), domains.manage otherwise. */
+const manageGuard = (user: UserRow, d: DomainRow): Guard | null => (user.role === "owner" || d.ownerId === user.id ? null : manages(user));
+
+/**
+ * withDomainLock for domain administration (S8 R8). `lease` also needs domains.manage still held, in every fenced write and in
+ * every check before a Cloudflare write; `lock` is the lease alone, for storing what Cloudflare already holds. A flow that
+ * stopped because the permission is gone answers 403.
+ */
+async function administer(c: Context<E>, id: string, fn: (lease: Lease, lock: Lease) => Promise<Response>): Promise<Response> {
+  const g = manages(c.var.user);
+  const res = await withDomainLock(c.env, id, (lock) => fn({
+    sql: `${lock.sql} AND ${g.sql}`, binds: [...lock.binds, ...g.binds],
+    held: async () => (await lock.held()) && (await holds(c.env, g)),
+  }, lock));
+  if (res && res.status !== 409) return res;
+  return (await holds(c.env, g)) ? res ?? c.json(busy, 409) : c.json(forbidden, 403);
+}
 
 /** Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars. */
 export function hostError(host: string, dashboard: string, cnameTarget?: string): string | null {
@@ -114,17 +134,19 @@ domains.get("/", (c) => listDomains(c, true));
 
 domains.post("/", async (c) => {
   const user = c.var.user;
+  // R8: domains.manage (owners have it) adds any type, active at once; domains.own adds private domains for approval.
+  const manager = can(user, "domains.manage");
+  if (!manager && !can(user, "domains.own")) return c.json(forbidden, 403);
   const body = createBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const { type, confirmTakeover } = body.data;
-  const isOwner = user.role === "owner";
-  if (!isOwner && type !== "private") return c.json(forbidden, 403);
+  if (!manager && type !== "private") return c.json(forbidden, 403);
   const host = normalizeHost(body.data.host.trim());
   const bad = hostError(host, c.env.DASHBOARD_HOST, cnameTarget(c.env) ?? undefined);
   if (bad) return c.json({ error: bad }, 400);
   // Early exits so a doomed create makes no Cloudflare calls; the INSERT below still enforces both under races.
   if (await c.env.DB.prepare("SELECT 1 FROM domains WHERE host = ?").bind(host).first()) return c.json({ error: "host_taken" }, 409);
-  if (!isOwner && (await c.env.DB.prepare("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'").bind(user.id).first<{ n: number }>())!.n >= MAX_PENDING_PER_MEMBER)
+  if (!manager && (await c.env.DB.prepare("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'").bind(user.id).first<{ n: number }>())!.n >= MAX_PENDING_PER_MEMBER)
     return c.json({ error: "pending_limit" }, 409);
   const cfg = await cfConfigFor(c.env);
   let kind: CfRow["kind"] = "manual";
@@ -133,9 +155,9 @@ domains.post("/", async (c) => {
     try {
       const k = await classify(cfg, host);
       kind = k.kind;
-      // R3: only the owner attaches at create, so only the owner is asked about a takeover. Same checks as syncDomain.
+      // R3: only a domain manager attaches at create, so only they are asked about a takeover. Same checks as syncDomain.
       const { code, records } = k.kind === "outside" ? { code: await outsideCheck(cfg, host), records: undefined }
-        : isOwner ? await takeoverDetail(cfg, host, { id: k.zoneId, name: k.zoneName }, confirmTakeover) : { code: null, records: undefined };
+        : manager ? await takeoverDetail(cfg, host, { id: k.zoneId, name: k.zoneName }, confirmTakeover) : { code: null, records: undefined };
       if (code) return c.json(records ? { error: code, records } : { error: code }, 409);
     } catch (e) {
       if (!(e instanceof CfError)) throw e;
@@ -143,36 +165,44 @@ domains.post("/", async (c) => {
     }
   }
   const d: DomainRow = {
-    id: crypto.randomUUID(), host, type, status: isOwner ? "active" : "pending", ownerId: user.id,
+    id: crypto.randomUUID(), host, type, status: manager ? "active" : "pending", ownerId: user.id,
     bareRedirect: null, notfoundRedirect: null, caseSensitive: false, noindex: true, reservedExtra: [],
     createdAt: Math.floor(Date.now() / 1000),
   };
+  // A main or shared domain a non-owner adds is owned by the first active owner (R8): a member never owns one.
+  const firstOwner = user.role !== "owner" && type !== "private";
+  const g = actorCan(user.id, manager ? "domains.manage" : "domains.own");
   let res;
   try {
-    // The cap is inside the INSERT so concurrent creates cannot both slip past it; the follow-ups key on this row's id.
+    // The permission and the cap are inside the INSERT so a role edit or concurrent creates cannot slip past them; the follow-ups key on this row's id.
     res = await c.env.DB.batch([
       c.env.DB.prepare(
-        `INSERT INTO domains (id,host,type,status,owner_id,created_at) SELECT ?,?,?,?,?,?
-         WHERE ? = 'owner' OR (SELECT COUNT(*) FROM domains WHERE owner_id = ? AND status = 'pending') < ${MAX_PENDING_PER_MEMBER}`,
-      ).bind(d.id, host, type, d.status, user.id, d.createdAt, user.role, user.id),
+        `INSERT INTO domains (id,host,type,status,owner_id,created_at) SELECT ?,?,?,?,${firstOwner ? FIRST_OWNER : "?"},?
+         WHERE ${g.sql}${firstOwner ? ` AND ${FIRST_OWNER} IS NOT NULL` : ""}
+           AND (? OR (SELECT COUNT(*) FROM domains WHERE owner_id = ? AND status = 'pending') < ${MAX_PENDING_PER_MEMBER}) RETURNING owner_id`,
+      ).bind(d.id, host, type, d.status, ...(firstOwner ? [] : [user.id]), d.createdAt, ...g.binds, manager ? 1 : 0, user.id),
       c.env.DB.prepare("INSERT INTO domain_cf (domain_id, kind, updated_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM domains WHERE id = ?)")
         .bind(d.id, kind, d.createdAt, d.id),
       auditStmt(c.env, { actorId: user.id, action: "domain.create", targetType: "domain", targetId: d.id,
-        detail: { host, type, status: d.status, ...(confirmTakeover && isOwner && kind === "account" ? { confirmTakeover: true } : {}) } }, exists(d.id)),
+        detail: { host, type, status: d.status, ...(confirmTakeover && manager && kind === "account" ? { confirmTakeover: true } : {}) } }, exists(d.id)),
     ]);
   } catch (e) {
     if (String(e).includes("UNIQUE")) return c.json({ error: "host_taken" }, 409);
     throw e;
   }
-  if (res[0]!.meta.changes === 0) return c.json({ error: "pending_limit" }, 409);
+  if (res[0]!.meta.changes === 0) {
+    if (!(await holds(c.env, g))) return c.json(forbidden, 403);
+    return c.json({ error: manager ? "conflict" : "pending_limit" }, 409); // a manager's only other refusal: no active owner left
+  }
+  d.ownerId = (res[0]!.results[0] as { owner_id: string }).owner_id;
   await purge(c.env, host); // clears a 60 s cached miss for this host
   // The row exactly as inserted, so nothing after the committed batch can turn this into a 500.
   const inserted: CfRow = { kind, zoneId: null, dnsRecordId: null, routeId: null, hostnameId: null, dns: "unknown", ownership: "unknown",
     certificate: "unknown", errors: [], lastError: null, checkedAt: null, securityLevel: null, rateLimit: null, updatedAt: d.createdAt };
-  // A member's same-account create runs read-only (attach false): R3, no Cloudflare write.
-  const cf = await trySync(c.env, d, inserted, { attach: kind === "outside" || isOwner, confirmTakeover });
+  // A domains.own create in the same account runs read-only (attach false): R3, no Cloudflare write.
+  const cf = await trySync(c.env, d, inserted, { attach: kind === "outside" || manager, confirmTakeover });
   const out = { ...d, cloudflare: cfView(c.env, d, cf) };
-  return c.json(isOwner ? { ...out, ...(await loopField(c.env, host)) } : out, 201);
+  return c.json(manager ? { ...out, ...(await loopField(c.env, host)) } : out, 201);
 });
 
 /** R9: the poll endpoint and the retry. Repair mode only (attach false), so no poll can ever take over a host. */
@@ -185,9 +215,10 @@ domains.get("/:id/cloudflare", async (c) => {
   if (cf && (d.status === "pending" || d.status === "active")) {
     // Throttled on the last attempt, failed ones included, so a failing domain cannot drain the shared API budget.
     // The claim is one UPDATE: of concurrent polls past the throttle only the one that moved updated_at checks, the rest answer the stored row.
-    const now = Math.floor(Date.now() / 1000);
-    const won = await c.env.DB.prepare("UPDATE domain_cf SET updated_at = ? WHERE domain_id = ? AND max(coalesce(checked_at, 0), updated_at) <= ? RETURNING *")
-      .bind(now, d.id, now - 10).first();
+    // The claim also re-checks domains.manage when only that allowed the check, so a lost permission makes no write and no Cloudflare call.
+    const now = Math.floor(Date.now() / 1000), mg = manageGuard(c.var.user, d);
+    const won = await c.env.DB.prepare(`UPDATE domain_cf SET updated_at = ? WHERE domain_id = ? AND max(coalesce(checked_at, 0), updated_at) <= ?${mg ? ` AND ${mg.sql}` : ""} RETURNING *`)
+      .bind(now, d.id, now - 10, ...(mg?.binds ?? [])).first();
     if (won) cf = await trySync(c.env, d, rowToCf(won), { attach: false });
   }
   return c.json(cfView(c.env, d, cf));
@@ -198,15 +229,15 @@ const controlsBody = z.strictObject({
   rateLimit: z.number().int().min(10).max(1000).nullable().optional(), // requests per 10 s
 });
 
-/** Owner only, same-account attached domains, behind the `cf.controls` setting. Cloudflare first; D1 changes only after it succeeded. */
+/** domains.manage, same-account attached domains, behind the `cf.controls` setting. Cloudflare first; D1 changes only after it succeeded. */
 domains.patch("/:id/cloudflare", async (c) => {
   const user = c.var.user;
-  if (user.role !== "owner") return c.json(forbidden, 403);
+  if (!can(user, "domains.manage")) return c.json(forbidden, 403);
   const body = controlsBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const b = body.data;
   if (b.securityLevel === undefined && b.rateLimit === undefined) return c.json({ error: "no_changes" }, 400);
-  return (await withDomainLock(c.env, c.req.param("id"), async (lease) => {
+  return administer(c, c.req.param("id"), async (lease, lock) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     const on = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'cf.controls'").first<{ value: string }>();
@@ -256,15 +287,16 @@ domains.patch("/:id/cloudflare", async (c) => {
     if ("securityLevel" in done) cols.push(["security_level", done.securityLevel!]);
     if ("rateLimit" in done) cols.push(["rate_limit", done.rateLimit!]);
     // Only the keys written go to D1 and the audit, so two edits of different controls do not clobber each other.
+    // Fenced on the lock alone: a rule already changed in Cloudflare is stored even if domains.manage was lost after it.
     const res = await c.env.DB.batch([
-      c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ? AND ${lease.sql} RETURNING security_level, rate_limit`)
-        .bind(...cols.map(([, v]) => v), d.id, ...lease.binds),
+      c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ? AND ${lock.sql} RETURNING security_level, rate_limit`)
+        .bind(...cols.map(([, v]) => v), d.id, ...lock.binds),
       auditStmt(c.env, { actorId: user.id, action: "domain.cloudflare", targetType: "domain", targetId: d.id, detail: { host: d.host, ...done } },
-        { sql: `EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?) AND ${lease.sql}`, binds: [d.id, ...lease.binds] }),
+        { sql: `EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?) AND ${lock.sql}`, binds: [d.id, ...lock.binds] }),
     ]);
     const after = res[0]!.results[0] as { security_level: string | null; rate_limit: number | null } | undefined;
     // Fenced out: the request that reclaimed the lease owns these rules now, so nothing is cleaned up.
-    if (!after && !(await lease.held())) return c.json(busy, 409);
+    if (!after && !(await lock.held())) return c.json(busy, 409);
     if (!after) {
       // The domain was rejected while Cloudflare was being changed: remove the rules this request made (best effort).
       const late: [Phase, string][] = [];
@@ -277,7 +309,7 @@ domains.patch("/:id/cloudflare", async (c) => {
     }
     const controls = { securityLevel: after.security_level, rateLimit: after.rate_limit };
     return failure ? c.json({ ...failure.body, ...controls }, failure.status) : c.json(controls);
-  })) ?? c.json(busy, 409);
+  });
 });
 
 domains.patch("/:id", async (c) => {
@@ -316,9 +348,11 @@ domains.patch("/:id", async (c) => {
   // Optimistic guard: every statement below only applies while the case mode is still the one we read.
   // Turning case-sensitivity off is also refused (same snapshot) while a lock and a live link are case twins with different keys.
   const twin = `SELECT 1 FROM slug_locks l JOIN links k ON k.domain_id = l.domain_id AND lower(k.slug) = lower(l.slug_key) AND k.slug_key != l.slug_key WHERE l.domain_id = ?`;
+  // It also re-checks domains.manage when only that allowed the edit (R8).
+  const mg = manageGuard(user, d);
   const unchanged = {
-    sql: `EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?)${flip && !next.caseSensitive ? ` AND NOT EXISTS (${twin})` : ""}`,
-    binds: [d.id, d.caseSensitive ? 1 : 0, ...(flip && !next.caseSensitive ? [d.id] : [])],
+    sql: `EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?)${flip && !next.caseSensitive ? ` AND NOT EXISTS (${twin})` : ""}${mg ? ` AND ${mg.sql}` : ""}`,
+    binds: [d.id, d.caseSensitive ? 1 : 0, ...(flip && !next.caseSensitive ? [d.id] : []), ...(mg?.binds ?? [])],
   };
   if (flip && !next.caseSensitive && (await c.env.DB.prepare(twin).bind(d.id).first())) return c.json({ error: "case_conflict" }, 409);
   const stmts = [
@@ -340,7 +374,7 @@ domains.patch("/:id", async (c) => {
     if (String(e).includes("UNIQUE")) return c.json({ error: "case_conflict" }, 409);
     throw e;
   }
-  if (res[res.length - 1]!.meta.changes === 0) return c.json({ error: "conflict" }, 409);
+  if (res[res.length - 1]!.meta.changes === 0) return mg && !(await holds(c.env, mg)) ? c.json(forbidden, 403) : c.json({ error: "conflict" }, 409);
   if (flip) {
     // Cached link entries sit under the old slug_key; drop both spellings for every link (errors swallowed).
     const slugs = (await c.env.DB.prepare("SELECT slug FROM links WHERE domain_id = ?").bind(d.id).all<{ slug: string }>()).results;
@@ -358,7 +392,7 @@ const approveBody = z.strictObject({ confirmTakeover: z.boolean().optional() });
 const cfIds = (cf: CfRow) => [cf.dnsRecordId, cf.routeId, cf.hostnameId];
 const notConfigured = { error: "cloudflare_not_configured" } as const;
 
-/** Owner-only status change, audit first and both guarded on the status we read: a racing change writes neither a phantom audit nor a stale status. */
+/** A domain manager's status change, audit first and both guarded on the status we read: a racing change writes neither a phantom audit nor a stale status. */
 async function setStatus(c: Context<E>, d: DomainRow, verb: "approve" | "disable", to: DomainRow["status"], extra: Record<string, unknown> = {}, lease?: Lease): Promise<DomainRow | null | "lost" | "fenced"> {
   if (d.status === to) return d;
   const fence = lease ? { sql: ` AND ${lease.sql}`, binds: lease.binds } : { sql: "", binds: [] };
@@ -378,11 +412,11 @@ async function setStatus(c: Context<E>, d: DomainRow, verb: "approve" | "disable
  * An active `account` domain without a route is a half-finished attach: approve finishes it ("Finish connecting").
  */
 domains.post("/:id/approve", async (c) => {
-  if (c.var.user.role !== "owner") return c.json(forbidden, 403);
+  if (!can(c.var.user, "domains.manage")) return c.json(forbidden, 403);
   const raw = await c.req.json().catch(() => null);
   const body = approveBody.safeParse(raw ?? {});
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
-  return (await withDomainLock(c.env, c.req.param("id"), async (lease) => {
+  return administer(c, c.req.param("id"), async (lease) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     let cf = await getCf(c.env, d.id);
@@ -423,26 +457,28 @@ domains.post("/:id/approve", async (c) => {
     if (out === "lost" || out === null) return c.json(notFound, 404);
     const loop = out.status === "active" ? await loopField(c.env, out.host) : {};
     return c.json({ ...out, cloudflare: cfView(c.env, out, cf), ...loop });
-  })) ?? c.json(busy, 409);
+  });
 });
 
-/** disable: any -> disabled. Owner-only and idempotent. */
+/** disable: any -> disabled. domains.manage, idempotent; the write is fenced on the permission. */
 domains.post("/:id/disable", async (c) => {
-  if (c.var.user.role !== "owner") return c.json(forbidden, 403);
+  if (!can(c.var.user, "domains.manage")) return c.json(forbidden, 403);
   const d = await getDomain(c.env, c.req.param("id"));
   if (!d) return c.json(notFound, 404);
-  const out = await setStatus(c, d, "disable", "disabled");
+  const g = manages(c.var.user);
+  const out = await setStatus(c, d, "disable", "disabled", {}, { ...g, held: () => holds(c.env, g) });
+  if (out === "fenced") return c.json(forbidden, 403);
   return out === "lost" || out === null ? c.json(notFound, 404) : c.json(out);
 });
 
 /**
- * Reject (R7): owner only, pending only. Cloudflare cleanup first (404 counts as gone); any other Cloudflare failure
+ * Reject (R7): domains.manage, pending only. Cloudflare cleanup first (404 counts as gone); any other Cloudflare failure
  * leaves D1 untouched so the owner can retry. Then one guarded batch removes the domain and everything on it.
  */
 domains.delete("/:id", async (c) => {
   const user = c.var.user;
-  if (user.role !== "owner") return c.json(forbidden, 403);
-  return (await withDomainLock(c.env, c.req.param("id"), async (lease) => {
+  if (!can(user, "domains.manage")) return c.json(forbidden, 403);
+  return administer(c, c.req.param("id"), async (lease) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     if (d.status !== "pending") return c.json({ error: "not_pending" }, 409);
@@ -494,12 +530,13 @@ domains.delete("/:id", async (c) => {
     // shortcut: one KV delete per key (subrequest cap on huge domains); the 300 s TTL covers the rest, and the host purge alone already ends serving.
     await Promise.all([purge(c.env, d.host), purgeMany(c.env, d.id, [...new Set(slugs)])]);
     return c.body(null, 204);
-  })) ?? c.json(busy, 409);
+  });
 });
 
 domains.put("/:id/members", async (c) => {
   const user = c.var.user;
-  if (user.role !== "owner") return c.json(forbidden, 403);
+  // R8: domains.manage edits any domain's members, themselves included (audited); it does not need the domain to be usable.
+  if (!can(user, "domains.manage")) return c.json(forbidden, 403);
   const body = membersBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const d = await getDomain(c.env, c.req.param("id"));
@@ -510,10 +547,11 @@ domains.put("/:id/members", async (c) => {
     const found = (await c.env.DB.prepare(`SELECT id FROM users WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all()).results.length;
     if (found !== ids.length) return c.json({ error: "unknown_user" }, 400);
   }
-  // Every listed person still exists and the actor is still an active owner, or nothing changes: the audit lists exactly
+  // Every listed person still exists and the actor still has domains.manage, or nothing changes: the audit lists exactly
   // who was granted (a person removed after the check above would otherwise be claimed without a row).
-  const g = { sql: `EXISTS (SELECT 1 FROM domains WHERE id = ?) AND ${ACTOR_OK} AND (SELECT COUNT(*) FROM users WHERE id IN (SELECT value FROM json_each(?))) = ?`,
-    binds: [d.id, user.id, JSON.stringify(ids), ids.length] };
+  const m = manages(user);
+  const g = { sql: `EXISTS (SELECT 1 FROM domains WHERE id = ?) AND ${m.sql} AND (SELECT COUNT(*) FROM users WHERE id IN (SELECT value FROM json_each(?))) = ?`,
+    binds: [d.id, ...m.binds, JSON.stringify(ids), ids.length] };
   const res = await c.env.DB.batch([
     auditStmt(c.env, { actorId: user.id, action: "domain.members", targetType: "domain", targetId: d.id,
       detail: { host: d.host, userIds: ids } }, g),
@@ -521,7 +559,7 @@ domains.put("/:id/members", async (c) => {
     ...ids.map((u) => c.env.DB.prepare(`INSERT INTO domain_members (domain_id, user_id) SELECT ?,? WHERE ${g.sql}`).bind(d.id, u, ...g.binds)),
   ]);
   if (!res[0]!.meta.changes) {
-    const w = await c.env.DB.prepare(`SELECT ${ACTOR_OK} a, EXISTS (SELECT 1 FROM domains WHERE id = ?) d`).bind(user.id, d.id).first<{ a: number; d: number }>();
+    const w = await c.env.DB.prepare(`SELECT ${m.sql} a, EXISTS (SELECT 1 FROM domains WHERE id = ?) d`).bind(...m.binds, d.id).first<{ a: number; d: number }>();
     if (!w?.a) return c.json(forbidden, 403);
     if (!w.d) return c.json(notFound, 404);
     return c.json({ error: "unknown_user" }, 400);

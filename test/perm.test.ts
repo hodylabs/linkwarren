@@ -111,3 +111,21 @@ describe("usableDomainsSql mirrors canUseDomain", () => {
     }
   });
 });
+
+describe("canManageDomain with roles (S8 R8)", () => {
+  const custom = (perms: UserRow["perms"], status: UserRow["status"] = "active"): UserRow => ({ ...user("member", status), roleId: "c", roleName: "C", perms });
+  it("domains.manage manages every domain, not owned, any type and status", () => {
+    for (const type of ["main", "shared", "private"] as const)
+      for (const status of ["active", "pending", "disabled"] as const)
+        expect(canManageDomain(custom(["domains.manage"]), dom(type, status, false))).toBe(true);
+  });
+  it("but it does not make a domain usable: a shared domain without membership stays unusable", () => {
+    expect(canUseDomain(custom(["domains.manage"]), dom("shared", "active", false), false, null)).toBe(false);
+    expect(canUseDomain(custom(["domains.manage"]), dom("private", "active", false), false, null)).toBe(false);
+  });
+  it("domains.own alone manages only domains the person owns; nothing for a disabled person", () => {
+    expect(canManageDomain(custom(["domains.own"]), dom("shared", "active", false))).toBe(false);
+    expect(canManageDomain(custom(["domains.own"]), dom("private", "pending", true))).toBe(true);
+    expect(canManageDomain(custom(["domains.manage"], "disabled"), dom("main", "active", false))).toBe(false);
+  });
+});

@@ -1,8 +1,10 @@
+import { can } from "./roles";
 import type { DomainRow, UserRow } from "./types";
 
+/** Domain administration (S8 R8): an owner or a domains.manage holder on every domain, anyone on a domain they own (baseline). Never widens canUseDomain. */
 export function canManageDomain(user: UserRow, domain: DomainRow): boolean {
   if (user.status !== "active") return false;
-  return user.role === "owner" || domain.ownerId === user.id;
+  return can(user, "domains.manage") || domain.ownerId === user.id;
 }
 
 /** `only` (a grant's domain restriction) narrows, never widens: a domain outside it is refused, for the owner too. */

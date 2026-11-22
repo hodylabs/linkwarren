@@ -1,18 +1,24 @@
 # Domains
 
-A domain is a hostname that serves short links, for example `go.example.com`. The owner adds any type (main, shared, private) and it is active at once. A member adds private domains only; theirs start `pending` until the owner approves them, and a member has at most 3 pending domains at a time.
+A domain is a hostname that serves short links, for example `go.example.com`. Who can do what with domains follows the person's role:
+
+- **Manage domains** (`domains.manage`; owners have it) adds any type (main, shared, private), active at once and with no pending limit, and administers every domain: approve, disable, reject, domain members and the Cloudflare controls, plus the settings and live check of any domain. It does not make a domain usable: creating links on a shared domain still needs membership, and a domain manager may add themselves as a member (audited). A main or shared domain added by someone who is not an owner is owned by the earliest active owner; a private one by the person who added it.
+- **Add own domains** (`domains.own`; on for Member) adds private domains only; they start `pending` until a domain manager approves them, at most 3 pending at a time.
+- Without either, adding a domain is `403 forbidden`, answered before the body is read. Anyone keeps the settings and live check of a domain they own.
+
+Each permission is checked again in the same database step as the write, and before every Cloudflare change, so a role edited at the same moment changes nothing and answers `403 forbidden`.
 
 ## How a domain connects
 
 When Cloudflare is configured (see [deploy.md](deploy.md)), linkwarren looks the host up in your Cloudflare account before it writes anything and gives the domain one of three kinds:
 
-- **account**: the host is inside a zone in your Cloudflare account. linkwarren attaches it directly: a proxied placeholder record (`AAAA <host> 100::`, comment `linkwarren`) when the host has no record yet, plus a Worker route `<host>/*`. The owner's create attaches at once. A member's create makes no Cloudflare change at all; the owner attaches it when approving (`attachOnApproval: true`).
+- **account**: the host is inside a zone in your Cloudflare account. linkwarren attaches it directly: a proxied placeholder record (`AAAA <host> 100::`, comment `linkwarren`) when the host has no record yet, plus a Worker route `<host>/*`. A domain manager's create attaches at once. A create with `domains.own` makes no Cloudflare change at all; a domain manager attaches it when approving (`attachOnApproval: true`).
 - **outside**: the host is not in your account. linkwarren creates a Cloudflare for SaaS custom hostname and a route `<host>/*` on the SaaS zone. The person who manages the host's DNS adds one record, shown in `cloudflare.instructions`: `CNAME <name> -> <target>`, where `name` is the host without its registrable domain (`@` for the bare domain) and `target` is `CF_CNAME_TARGET`. When that DNS is itself on Cloudflare, make the record DNS only (grey cloud). The `<host>/*` route on the SaaS zone is set up for DNS-only records; a proxied record also hides the CNAME, so the DNS check shows `wrong_target` until Cloudflare has activated the hostname and issued its certificate.
 - **manual**: Cloudflare is not configured. linkwarren calls no Cloudflare API and you connect the host yourself, as before.
 
 ### Existing records (account domains)
 
-Adding an account host that already has DNS records would send its traffic to linkwarren, so the owner's create is refused with `409 dns_record_exists` until it is resent with `"confirmTakeover": true`. Then only the route is added and the existing record stays as it is. These are refused even with the confirmation, and nothing is written:
+Adding an account host that already has DNS records would send its traffic to linkwarren, so a domain manager's create is refused with `409 dns_record_exists` until it is resent with `"confirmTakeover": true`. Then only the route is added and the existing record stays as it is. These are refused even with the confirmation, and nothing is written:
 
 - `409 dns_not_proxied`: a record at the host (or the wildcard that covers it) is not proxied, or the name is delegated to other nameservers. Traffic would never reach the Worker.
 - `409 route_in_use`: a route that matches the host is bound to another Worker.
@@ -33,11 +39,11 @@ The same checks run again before every later write (approve, status check, resyn
 
 - `400 outside_not_configured`: the host is outside your account and the SaaS zone or CNAME target is not set.
 - `502 cloudflare_unreachable`: Cloudflare did not answer before anything was written. Nothing was added; try again.
-- A Cloudflare failure after the domain was saved keeps the domain and answers `201` with `cloudflare.lastError` set (for example `cloudflare_error`). For an outside domain the next status check retries. For the owner's account domain it does not: the domain stays active but not connected (`attached: false`) until the owner uses Finish connecting (below).
+- A Cloudflare failure after the domain was saved keeps the domain and answers `201` with `cloudflare.lastError` set (for example `cloudflare_error`). For an outside domain the next status check retries. For a domain manager's account domain it does not: the domain stays active but not connected (`attached: false`) until a domain manager uses Finish connecting (below).
 
 ## Status
 
-Every domain in `GET /api/domains` carries a `cloudflare` object from the last stored check. `GET /api/domains/:id/cloudflare` (owner, or the member who added the domain) is the live check: it answers the stored state when the last attempt (failed ones included) was under 10 seconds ago, otherwise it asks Cloudflare again and re-creates any missing piece linkwarren made before. It never attaches a new account domain and never takes over a record. A disabled domain is never rechecked. A Cloudflare failure during the check answers `200` with the stored state and `lastError`.
+Every domain in `GET /api/domains` carries a `cloudflare` object from the last stored check. `GET /api/domains/:id/cloudflare` (a domain manager, or the person who owns the domain) is the live check: it answers the stored state when the last attempt (failed ones included) was under 10 seconds ago, otherwise it asks Cloudflare again and re-creates any missing piece linkwarren made before. It never attaches a new account domain and never takes over a record. A disabled domain is never rechecked. A Cloudflare failure during the check answers `200` with the stored state and `lastError`.
 
 | Field | Values |
 | --- | --- |
@@ -47,7 +53,7 @@ Every domain in `GET /api/domains` carries a `cloudflare` object from the last s
 | `errors` | Cloudflare's own verification messages, at most 3 |
 | `lastError` | the code of the last failed check (list below), `null` after a good one |
 | `attached` | linkwarren holds a route for the host. An account domain is connected only when this is true |
-| `attachOnApproval` | a pending account domain: the owner's approval attaches it |
+| `attachOnApproval` | a pending account domain: a domain manager's approval attaches it |
 
 An outside domain works once `dns`, `ownership` and `certificate` are all green.
 
@@ -65,13 +71,13 @@ An outside domain works once `dns`, `ownership` and `certificate` are all green.
 
 A status check never clears an error it did not resolve: on an active account domain that is not attached, the error from the failed attach stays until Finish connecting succeeds. The dashboard stops polling on any code a retry cannot fix.
 
-Members see the `cloudflare` object only for what they need on domains they cannot manage (`kind`, `dns`, `ownership`, `certificate`, `attached`): `errors`, `lastError`, `instructions`, `securityLevel` and `rateLimit` are `null` or empty there.
+People without `domains.manage` see the `cloudflare` object only for what they need on domains they do not own (`kind`, `dns`, `ownership`, `certificate`, `attached`): `errors`, `lastError`, `instructions`, `securityLevel` and `rateLimit` are `null` or empty there.
 
 ## Approve, reject and finish connecting
 
-Owner only.
+Needs `domains.manage` (a `403 forbidden` comes before the body is read). Disable (`POST /api/domains/:id/disable`) too.
 
-- **Approve** (`POST /api/domains/:id/approve`, optional `{ "confirmTakeover": true }`) runs a fresh check first and activates only when it is green: an outside domain needs `dns`, `ownership` and `certificate` all green; an account domain is attached here (the same takeover rules as the owner's create apply, so `409 dns_record_exists` asks for `confirmTakeover`); a manual domain is approved as before. Otherwise `409 not_verified` with the current `cloudflare` view, and the domain stays pending. A Cloudflare failure is `502 cloudflare_error`; retry. Approve also enables a disabled domain.
+- **Approve** (`POST /api/domains/:id/approve`, optional `{ "confirmTakeover": true }`) runs a fresh check first and activates only when it is green: an outside domain needs `dns`, `ownership` and `certificate` all green; an account domain is attached here (the same takeover rules as a domain manager's create apply, so `409 dns_record_exists` asks for `confirmTakeover`); a manual domain is approved as before. Otherwise `409 not_verified` with the current `cloudflare` view, and the domain stays pending. A Cloudflare failure is `502 cloudflare_error`; retry. Approve also enables a disabled domain.
 - **Finish connecting** is the same call on an active account domain that is not attached. It attaches the host and records a `domain.attach` audit entry. It is the only way to finish an attach that failed; status checks never attach.
 - **Reject** (`DELETE /api/domains/:id`) works on pending domains only (`409 not_pending` otherwise). It first removes what linkwarren created in Cloudflare (a 404 counts as already gone). If Cloudflare fails, nothing is deleted and the answer is `502 cloudflare_error`: retry. Then the domain, its links, slug locks and members are deleted in one step and a `domain.reject` audit entry is written.
 
@@ -81,7 +87,7 @@ Audit entries for create, approve and attach carry `confirmTakeover: true` when 
 
 ## Cloudflare controls
 
-`PATCH /api/domains/:id/cloudflare` with `{ "securityLevel": "essentially_off" | "low" | "medium" | "high" | "under_attack" | null, "rateLimit": 10-1000 | null }` (`rateLimit` is requests per 10 seconds; `null` removes the rule or the setting). Owner only, for attached account domains, and only while "Cloudflare controls" is on in Settings. linkwarren adds or edits only its own rules, matched by their reference, and never touches other rules in the zone. Errors:
+`PATCH /api/domains/:id/cloudflare` with `{ "securityLevel": "essentially_off" | "low" | "medium" | "high" | "under_attack" | null, "rateLimit": 10-1000 | null }` (`rateLimit` is requests per 10 seconds; `null` removes the rule or the setting). Needs `domains.manage`, for attached account domains, and only while "Cloudflare controls" is on in Settings. linkwarren adds or edits only its own rules, matched by their reference, and never touches other rules in the zone. Errors:
 
 - `409 controls_off`: the Settings switch is off.
 - `409 not_same_account`: an outside domain, or an account domain that is not attached.
