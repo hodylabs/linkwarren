@@ -422,6 +422,8 @@ describe("syncDomain concurrency", () => {
     expect(fake.calls.filter((c) => c.method === "POST" && c.path.endsWith("/custom_hostnames"))).toHaveLength(2); // both raced to create
     expect(fake.state.hostnames).toHaveLength(1);
     expect(fake.state.routes).toHaveLength(1);
+    // What the two calls left stored, before any recovery sync.
+    expect((await load(d.id)).cf).toMatchObject({ hostnameId: fake.state.hostnames[0]!.id, routeId: fake.state.routes[0]!.id });
     const r = await syncDomain(e, cfg, d, (await load(d.id)).cf, { attach: true });
     expect(r).toMatchObject({ hostnameId: fake.state.hostnames[0]!.id, routeId: fake.state.routes[0]!.id, lastError: null });
   });

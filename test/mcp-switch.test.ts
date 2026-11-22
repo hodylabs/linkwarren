@@ -36,7 +36,7 @@ async function expectClosed() {
   }
   // Double encoding decodes once to /%6dcp: never the provider (no JSON metadata, no 401 challenge).
   const dbl = await fetchW(`${DASH}/%256dcp`, { method: "POST" });
-  expect([dbl.status === 200 && /json/.test(dbl.headers.get("content-type") ?? ""), dbl.headers.get("www-authenticate")]).toEqual([false, null]);
+  expect([dbl.status, await dbl.json().catch(() => "not json"), dbl.headers.get("www-authenticate")]).toEqual([404, { error: "not_found" }, null]);
 }
 async function expectOpen() {
   const res = await fetchW(`${DASH}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });

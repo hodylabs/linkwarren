@@ -8,7 +8,10 @@ const startBody = {
   tables: [{ name: "users", columns: ["id"], rows: 2 }, { name: "links", columns: ["id", "protected"], rows: 1 }],
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers(); // also when an assertion failed before the test's own reset
+});
 
 describe("runExport", () => {
   it("starts, pages each table until next is null, and assembles the file with complete last", async () => {
@@ -52,9 +55,11 @@ describe("exportEstimate", () => {
 describe("saveBlob", () => {
   it("downloads under a safe dated name and revokes the object URL", () => {
     vi.useFakeTimers();
-    const create = vi.fn(() => "blob:x");
-    const revoke = vi.fn();
-    Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke });
+    // Restorable spies (jsdom may lack these methods, so give the spies something to wrap).
+    URL.createObjectURL ??= () => "";
+    URL.revokeObjectURL ??= () => {};
+    const create = vi.spyOn(URL, "createObjectURL").mockImplementation(() => "blob:x");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     const name = exportFileName(new Date("2026-11-22T23:30:00Z"));
     expect(name).toBe("linkwarren-export-2026-11-22.json");

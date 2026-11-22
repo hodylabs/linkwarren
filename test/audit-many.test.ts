@@ -35,6 +35,9 @@ describe("auditManyStmt", () => {
     const g = { sql: "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t') AND domain_id = ?)", binds: ["d1"] };
     await auditManyStmt(env, base, [{ targetId: "l1", detail: {} }, { targetId: "nope", detail: {} }], g).run();
     expect((await audits()).map((a) => [a.target_id, a.detail])).toEqual([["l1", "{}"]]);
+    // An existing link on another domain fails the bound guard too.
+    await auditManyStmt(env, base, [{ targetId: "l1", detail: {} }], { ...g, binds: ["d2"] }).run();
+    expect(await audits()).toHaveLength(1);
   });
 
   it("writes nothing for an empty rows array", async () => {
