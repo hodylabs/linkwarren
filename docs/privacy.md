@@ -53,6 +53,18 @@ When an agent tries to register with a callback address the instance does not al
 
 `POST /register` is limited per IP range (the /24 or /48, never the full address) and `/authorize` per person; those counters live in the same rate-limit table as the password limits and are cleaned up the same way.
 
+## People and email
+
+The people who use the dashboard are stored in the instance's D1 database:
+
+- **People:** email address, name (optional), role (owner or member), status (invited, active or disabled) and when they were added.
+- **Sign-in** (when the instance runs its own sign-in, `AUTH_MODE=app`): sessions with the sign-in method, the device (a short label from the browser) and the IP range (the /24 or /48, never the full address), passkeys (the public key and a name, never a private key), and email sign-in tokens, of which only a SHA-256 hash is stored. Sessions and tokens end when they expire or when the person signs out, is disabled or is removed.
+- **Sign-in limiter:** a sign-in email request counts against the address (hashed) and against the requester's IP range (the /24 or /48, never the full address). These counters live in the same rate-limit table as the password limits and are cleaned up the same way, normally within about two hours.
+- **Removing a person** deletes their row, sessions, passkeys, keys and agent connections. Their email address stays in the audit log, in the details of entries such as an invite, a role change, a revoked invite and the removal itself, for the 3-year audit retention.
+- **The full export** (Settings, Backups and export, see [backup.md](backup.md)) contains every person's email address, name and role, the whole audit log, agent names and API key names, never secrets, password hashes or sessions. Treat the file like the database.
+
+The instance name is shown to signed-out visitors on the sign-in page and on the `/join` page an invite opens, so anyone who opens the dashboard address can see it.
+
 ## How long data is kept
 
 - Raw click points live 90 days in Cloudflare Workers Analytics Engine, then the platform removes them.
@@ -60,7 +72,7 @@ When an agent tries to register with a callback address the instance does not al
 - The audit log of dashboard changes (including changes by agents and keys) is kept for 3 years.
 - MCP tool calls are kept 90 days.
 
-Everything linkwarren stores stays in the Cloudflare account that runs the instance. linkwarren sends no data anywhere else.
+Everything linkwarren stores stays in the Cloudflare account that runs the instance. The one thing it sends elsewhere is email: sign-in links, invites and test mails go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself). See "People and email" below.
 
 ## Platform logs
 
