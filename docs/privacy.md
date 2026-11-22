@@ -41,3 +41,5 @@ Everything linkwarren stores stays in the Cloudflare account that runs the insta
 ## Platform logs
 
 Cloudflare itself can log requests, separately from linkwarren. If Workers Logs (`observability`) is on in the instance config, Cloudflare keeps an invocation log for each request the Worker handles, with the request, the response and related metadata, including headers, for the Workers Logs retention period (3 days on the Workers Free plan, 7 days on Workers Paid). Those headers can include the visitor's user agent and IP address. The example config turns Workers Logs on, with `head_sampling_rate` (0 to 1, the share of requests logged) set to 1. To keep no such logs, set `"observability": { "enabled": false }`; to keep only linkwarren's own log lines and no per-request invocation logs, add `"logs": { "invocation_logs": false }`; or lower `head_sampling_rate`. Check what your account actually keeps in the dashboard (the Worker's Observability tab).
+
+A search that matches several hundred links is read in parts; for the most recent days the visitor count is then added up per part, so a person who clicked links in two parts counts twice.
