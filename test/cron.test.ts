@@ -1,11 +1,12 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { purgeAudit, rolledThrough, rollup, watermarkStmt } from "../src/cron";
+import { PURGE_MAX, purgeAudit, rolledThrough, rollup, watermarkStmt } from "../src/cron";
 import type { Env } from "../src/env";
 import worker from "../src/index";
 
 const SQL_URL = "https://api.cloudflare.com/client/v4/analytics/sql";
 const NOW = Date.parse("2026-11-20T12:00:00Z") / 1000;
+const NOW2 = Date.parse("2026-11-21T12:00:00Z") / 1000; // rolls through 11-19
 const CUTOFF = NOW - 1096 * 86400;
 const ae: Env = { ...env, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: "tok" };
 
@@ -64,7 +65,7 @@ describe("rollup", () => {
   it("writes the days after the watermark with the AE rows; a re-run gives identical rows", async () => {
     stubAe();
     await setMark("2026-11-17");
-    expect(await rollup(ae, NOW)).toEqual(["2026-11-18", "2026-11-19"]);
+    expect(await rollup(ae, NOW2)).toEqual(["2026-11-18", "2026-11-19"]);
     expect(await rolledThrough(ae)).toBe("2026-11-19");
     const want = [
       { day: "2026-11-18", link_id: "l1", domain_id: "d1", slug: "spring", qr: 3, typed: 2, bots: 4, visitors: 2 },
@@ -79,7 +80,7 @@ describe("rollup", () => {
     expect(await dims()).toEqual(wantDims);
     // Review Focus 4: rolling the same days again replaces, never adds.
     await setMark("2026-11-17");
-    await rollup(ae, NOW);
+    await rollup(ae, NOW2);
     expect(await daily()).toEqual(want);
     expect(await dims()).toEqual(wantDims);
   });
@@ -93,16 +94,32 @@ describe("rollup", () => {
   it("a day with zero clicks advances the watermark and holds no rows", async () => {
     stubAe();
     await setMark("2026-11-18");
-    expect(await rollup(ae, Date.parse("2026-11-21T12:00:00Z") / 1000)).toEqual(["2026-11-19", "2026-11-20"]);
+    expect(await rollup(ae, Date.parse("2026-11-22T12:00:00Z") / 1000)).toEqual(["2026-11-19", "2026-11-20"]);
     expect(await rolledThrough(ae)).toBe("2026-11-20");
     expect((await daily()).map((r) => r.day)).toEqual(["2026-11-19"]);
   });
 
-  it("nothing to do when the watermark is yesterday", async () => {
+  it("nothing to do when the watermark is today-2", async () => {
     const f = stubAe();
-    await setMark("2026-11-19");
+    await setMark("2026-11-18");
     expect(await rollup(ae, NOW)).toEqual([]);
     expect(f.spy).not.toHaveBeenCalled();
+  });
+
+  it("a run at 00:15 on day D rolls through D-2, not D-1", async () => {
+    stubAe();
+    await setMark("2026-11-16");
+    expect(await rollup(ae, Date.parse("2026-11-20T00:15:00Z") / 1000)).toEqual(["2026-11-17", "2026-11-18"]);
+    expect(await rolledThrough(ae)).toBe("2026-11-18");
+  });
+
+  it("a failing rollup logs the failing day and the safe ae code, never the token", async () => {
+    stubAe(500);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await setMark("2026-11-17");
+    await expect(rollup(ae, NOW2)).rejects.toThrow("ae_500");
+    expect(err).toHaveBeenCalledWith("analytics rollup failed day=2026-11-18", "ae_500");
+    expect(JSON.stringify(err.mock.calls)).not.toContain("tok");
   });
 
   it("AE not configured: nothing written, no fetch", async () => {
@@ -127,7 +144,9 @@ describe("rollup", () => {
         batch: (s: D1PreparedStatement[]) => (++calls === 2 ? Promise.reject(new Error("d1 down")) : db.batch(s)),
       },
     } as unknown as Env;
-    await expect(rollup(e, NOW)).rejects.toThrow("d1 down");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(rollup(e, NOW2)).rejects.toThrow("d1 down");
+    expect(err).toHaveBeenCalledWith("analytics rollup failed day=2026-11-19", "Error");
     expect(await rolledThrough(ae)).toBe("2026-11-18");
     expect((await daily()).map((r) => r.day)).toEqual(["2026-11-18"]);
   });
@@ -139,7 +158,7 @@ describe("rollup", () => {
       return Response.json({ data: q.includes("blob7 AS source") || q.includes("blob4 AS value") ? rows : [] });
     });
     await setMark("2026-11-18");
-    await rollup(ae, NOW);
+    await rollup(ae, NOW2);
     expect(await daily()).toHaveLength(30);
     expect(await dims()).toHaveLength(30);
   });
@@ -160,6 +179,19 @@ describe("purgeAudit", () => {
     expect(p).toHaveLength(1);
     expect(p[0]).toMatchObject({ actor_id: "system", target_type: "audit", target_id: "audit_log" });
     expect(JSON.parse(String(p[0].detail))).toEqual({ deleted: 1, before: CUTOFF });
+  });
+
+  it("deletes at most PURGE_MAX oldest rows per run; the next run continues; deleted is the real count", async () => {
+    const n = PURGE_MAX + 3;
+    await env.DB.prepare(
+      "WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < ?) INSERT INTO audit_log (at, actor_id, action, target_type, target_id, detail) SELECT ?, 'u1', 'link.create', 'link', 'x', '{}' FROM s",
+    ).bind(n, CUTOFF - 1).run();
+    expect(await purgeAudit(env, NOW)).toBe(PURGE_MAX);
+    const left = (await all("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'link.create'")) as { n: number }[];
+    expect(left[0].n).toBe(3);
+    expect(await purgeAudit(env, NOW)).toBe(3);
+    const d = (await all("SELECT detail FROM audit_log WHERE action = 'audit.purge' ORDER BY id")) as { detail: string }[];
+    expect(d.map((r) => JSON.parse(r.detail).deleted)).toEqual([PURGE_MAX, 3]);
   });
 
   it("nothing old: no delete, no audit row", async () => {

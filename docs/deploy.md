@@ -115,10 +115,10 @@ Never put `VISITOR_SALT` or `AE_READ_TOKEN` in `vars`. Neither is ever logged, r
 
 A Cron Trigger runs once a day: `"triggers": { "crons": ["15 0 * * *"] }` (00:15 UTC) in `wrangler.instance.jsonc`. Cron Triggers are free on the Workers Free plan. Each run does two independent things; one failing never stops the other.
 
-- **Rollup.** Analytics Engine keeps raw clicks for 90 days, so the job copies each finished UTC day into the D1 tables `clicks_daily` and `clicks_daily_dim` and records the last day written in `analytics_state` (`rolled_through`). Reports read days up to that mark from D1 and later days live from Analytics Engine, so no day is lost or counted twice. A run writes at most 31 days, oldest first, starting no earlier than 89 days ago, with 5 Analytics Engine queries in total, so it stays inside the Free plan limits; a backlog catches up over a few runs. Re-running a day replaces it, never adds to it. Without `CF_ACCOUNT_ID` and `AE_READ_TOKEN` the rollup is skipped.
-- **Audit purge.** Audit rows older than 3 years (1096 days) are deleted, and the deletion itself is written to the audit log as `audit.purge` by the actor `system`.
+- **Rollup.** Analytics Engine keeps raw clicks for 90 days, so the job copies each UTC day once it is at least 2 full days old (through today-2, so late Analytics Engine points for yesterday are not lost; reports read the days after the mark live from Analytics Engine) into the D1 tables `clicks_daily` and `clicks_daily_dim` and records the last day written in `analytics_state` (`rolled_through`). Reports read days up to that mark from D1 and later days live from Analytics Engine, so no day is lost or counted twice. A run writes at most 31 days, oldest first, starting no earlier than 89 days ago, with 5 Analytics Engine queries in total, so it stays inside the Free plan limits; a backlog catches up over a few runs. Re-running a day replaces it, never adds to it. Without `CF_ACCOUNT_ID` and `AE_READ_TOKEN` the rollup is skipped.
+- **Audit purge.** Audit rows older than 3 years (1096 days) are deleted, at most 5000 per run, oldest first (the next run continues), and the deletion itself is written to the audit log as `audit.purge` by the actor `system`.
 
-Logs show `analytics rollup: <days>` and `audit purge: <count>`; errors are logged by name only. To run the job locally:
+Logs show `analytics rollup: <days>` and `audit purge: <count>`; errors are logged by name (a failed rollup also logs the failing day and the safe `ae_<code>`, never the token or a response body). To run the job locally:
 
 ```sh
 npx wrangler dev --test-scheduled -c wrangler.instance.jsonc
