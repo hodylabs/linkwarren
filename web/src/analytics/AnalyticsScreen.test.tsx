@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -214,6 +214,17 @@ describe("Analytics screen", () => {
     fireEvent.blur(from);
     await waitFor(() => expect(reports().at(-1)).toBe("/api/analytics?range=custom&from=2026-11-03&to=2026-11-10"));
     expect(reports()).toHaveLength(2);
+  });
+
+  it("back or forward changes the custom date inputs with the URL", async () => {
+    boot("/analytics?range=custom&from=2026-11-01&to=2026-11-10");
+    await ready();
+    act(() => {
+      history.replaceState(null, "", "/analytics?range=custom&from=2026-11-03&to=2026-11-08");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect((screen.getByLabelText("From") as HTMLInputElement).value).toBe("2026-11-03"));
+    expect((screen.getByLabelText("To") as HTMLInputElement).value).toBe("2026-11-08");
   });
 
   it("the 24 hour view with live off explains why there are no clicks", async () => {

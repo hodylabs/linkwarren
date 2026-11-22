@@ -66,7 +66,7 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
   };
   const onKey = (e: KeyboardEvent) => {
     const last = g.bars.length - 1;
-    const cur = active?.i ?? 0;
+    const cur = Math.min(active?.i ?? 0, last); // the series may have shrunk under the tip
     const k = e.key.toLowerCase();
     if (!(k in CHART_KEYS) || e.altKey || e.ctrlKey || e.metaKey) return;
     const moves: Record<Exclude<keyof typeof CHART_KEYS, "escape">, number> = { arrowright: Math.min(last, cur + 1), arrowleft: Math.max(0, cur - 1), home: 0, end: last };

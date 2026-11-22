@@ -12,7 +12,6 @@ import { Sparkline } from "./Sparkline";
 import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
 
 const STATS_CHUNK = 50; // the server takes at most 50 ids per request
-const WORST: StatsLive[] = ["ok", "off", "unavailable"];
 
 const STATUSES = ["all", "active", "scheduled", "expired"] as const;
 
@@ -42,8 +41,8 @@ export function LinksScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [stats, setStats] = useState<Record<string, LinkStats>>({});
-  const [live, setLive] = useState<StatsLive>("ok");
+  // Each link keeps the live state of the response that carried it, so one page never changes another page's cells.
+  const [stats, setStats] = useState<Record<string, LinkStats & { live: StatsLive }>>({});
   const generation = useRef(0);
   const loading = useRef(false); // a next-page request is in flight
   const deleting = useRef(false);
@@ -62,8 +61,7 @@ export function LinksScreen() {
   }, [scope]);
 
   // 7-day stats for a page of ids. An answer from an older generation (the list changed meanwhile) is dropped; a failure leaves the cells empty.
-  // `fresh` (first page of a load) starts the live state over, so old "off" data never draws solid while new stats load.
-  const loadStats = useCallback(async (g: number, ids: string[], fresh = false) => {
+  const loadStats = useCallback(async (g: number, ids: string[]) => {
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += STATS_CHUNK) chunks.push(ids.slice(i, i + STATS_CHUNK));
     const done = await Promise.allSettled(
@@ -72,8 +70,7 @@ export function LinksScreen() {
     if (g !== generation.current) return;
     const ok = done.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     if (ok.length === 0) return;
-    setStats((cur) => ({ ...cur, ...Object.fromEntries(ok.flatMap((r) => r.items.map((s) => [s.linkId, s] as const))) }));
-    setLive((cur) => ok.reduce((w, r) => (WORST.indexOf(r.live) > WORST.indexOf(w) ? r.live : w), fresh ? "ok" : cur));
+    setStats((cur) => ({ ...cur, ...Object.fromEntries(ok.flatMap((r) => r.items.map((s) => [s.linkId, { ...s, live: r.live }] as const))) }));
   }, []);
 
   // New scope or an explicit reload: start over. A stale answer (older generation) is dropped.
@@ -82,9 +79,9 @@ export function LinksScreen() {
     loading.current = false;
     // The cursor belongs to the old scope: drop it now, and the rows too when the scope itself changed.
     setNext(null);
+    setStats({}); // a reload (same scope too) may change clicks, expiry or the live state: never show the old numbers
     if (lastScope.current !== scope) {
       setItems([]);
-      setStats({});
       setLoaded(false); // no "No links here yet." flash while the new scope loads
     }
     lastScope.current = scope;
@@ -95,7 +92,7 @@ export function LinksScreen() {
         setItems(p.items);
         setNext(p.next);
         setLoaded(true);
-        void loadStats(g, p.items.map((l) => l.id), true);
+        void loadStats(g, p.items.map((l) => l.id));
       },
       (e: unknown) => {
         if (g !== generation.current) return;
@@ -283,7 +280,7 @@ export function LinksScreen() {
                       <Tag tone={st.tone}>{st.label}</Tag>
                     </td>
                     <td className="num spk" data-label="7 days">
-                      {stats[l.id] && <Sparkline days={stats[l.id]!.days} clicks={stats[l.id]!.clicks} active={st.tone === "ok"} live={live} />}
+                      {stats[l.id] && <Sparkline days={stats[l.id]!.days} clicks={stats[l.id]!.clicks} active={st.tone === "ok"} live={stats[l.id]!.live} />}
                     </td>
                     <td data-label="By">{creatorLabel(l.createdBy, me, users)}</td>
                   </tr>
@@ -316,7 +313,7 @@ export function LinksScreen() {
             ref={detailRef}
             link={selected}
             stats={stats[selected.id]}
-            live={live}
+            live={stats[selected.id]?.live ?? "ok"}
             domain={domainOf(selected.domainId)}
             canEdit={canEdit(selected)}
             onSaved={(l) => setItems((cur) => cur.map((x) => (x.id === l.id ? l : x)))}

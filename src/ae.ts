@@ -106,7 +106,9 @@ const SQL_OVERHEAD = 1100; // select, group by, limit and fixed where terms of t
  * Split ids so each statement stays under MAX_SQL. Chunks partition the ids, so rows from different chunks never
  * overlap and sum correctly. R5's 500 link ids (17-18 bytes per term) make 2 chunks.
  */
-function chunkIds(ids: string[], col: string, prefix: string): string[][] {
+function chunkIds(all: string[], col: string, prefix: string): string[][] {
+  const ids = [...new Set(all)]; // a repeated id would be counted once per copy
+  ids.forEach(sqlId); // every id checked before any chunk is sent: a bad one never leaves a partial send
   const budget = MAX_SQL - SQL_OVERHEAD;
   const chunks: string[][] = [];
   let cur: string[] = [];

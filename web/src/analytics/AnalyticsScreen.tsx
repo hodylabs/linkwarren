@@ -180,6 +180,11 @@ export function AnalyticsScreen() {
     });
     return () => offs.forEach((off) => off());
   }, [custom]);
+  // Back/forward changes the URL dates under uncontrolled inputs: copy them in (a no-op while typing, as the value already matches).
+  useEffect(() => {
+    if (fromRef.current && fromRef.current.value !== f.from) fromRef.current.value = f.from;
+    if (toRef.current && toRef.current.value !== f.to) toRef.current.value = f.to;
+  }, [f.from, f.to, custom]);
   const anyFilter = n > 0 || f.q !== "" || f.range === "custom";
   // Invalid filters or a failed request show no numbers; a newer request in flight dims the older ones (aria-busy).
   const report = !invalid && !error ? loaded?.report ?? null : null;

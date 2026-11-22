@@ -424,6 +424,60 @@ describe("Links screen stats", () => {
     expect(within(rows()[0]!).getByText(/Recent days not available/)).toBeTruthy();
   });
 
+  it("live is kept per page: an off page 2 never marks page 1 as incomplete", async () => {
+    const hint = "These counts leave out yesterday and today.";
+    let n = 0;
+    const { user } = boot({
+      page: () => ({ body: ++n === 1 ? { items: [L1, L2], next: "c" } : { items: [L3], next: null } }),
+      routes: {
+        "GET /api/analytics/links": (r: { url: URL }) => {
+          const ids = r.url.searchParams.get("ids") ?? "";
+          return { body: { items: ids.split(",").map((i) => stat(i)), live: ids === "l3" ? "off" : "ok" } };
+        },
+      },
+    });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(2));
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
+    expect(rows().map((r) => r.querySelector("svg.spark line[stroke-dasharray]") !== null)).toEqual([false, false, true]);
+    await user.click(rows()[0]!);
+    expect(within(detail()).queryByText(new RegExp(hint))).toBeNull();
+  });
+
+  it("a reload of the same scope drops the old stats until the new ones arrive", async () => {
+    let n = 0;
+    let release: (r: FakeRes) => void = () => undefined;
+    const { user } = boot({
+      path: "/links?sel=l1",
+      routes: {
+        "PATCH /api/links/l1": () => ({ status: 409, body: { error: "conflict" } }),
+        "GET /api/analytics/links": () => (++n === 1 ? { body: { items: [stat("l1"), stat("l2"), stat("l3")], live: "ok" } } : new Promise<FakeRes>((r) => (release = r))),
+      },
+    });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
+    await user.type(urlInput(), "x");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.click(await within(detail()).findByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(n).toBe(2));
+    expect(document.querySelectorAll("svg.spark")).toHaveLength(0);
+    release({ body: { items: [stat("l1")], live: "ok" } });
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(1));
+  });
+
+  it("with live off the unknown last two days continue dashed from the last known point, never as zeros", async () => {
+    boot({ routes: { "GET /api/analytics/links": (r: { url: URL }) => ({ body: { items: (r.url.searchParams.get("ids") ?? "").split(",").map((i) => stat(i, { days: [1, 2, 3, 4, 5, 0, 0] })), live: "off" } }) } });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
+    const svg = document.querySelector("svg.spark")!;
+    const pts = svg.querySelector("polyline")!.getAttribute("points")!.split(" ");
+    expect(pts).toHaveLength(5);
+    const [lx, ly] = pts.at(-1)!.split(",");
+    const dash = svg.querySelector("line[stroke-dasharray]")!;
+    expect([dash.getAttribute("x1"), dash.getAttribute("y1"), dash.getAttribute("x2"), dash.getAttribute("y2")]).toEqual([lx, ly, "72", ly]);
+  });
+
   it("the detail shows Last 7 days from the loaded stats without refetching", async () => {
     const seen: string[] = [];
     const { user } = boot({ routes: statsRoute(seen) });

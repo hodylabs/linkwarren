@@ -241,6 +241,19 @@ describe("statement size limit", () => {
     expect(out.days).toEqual([{ bucket: "2026-11-18", qr: 0, typed: 2, bots: 0, visitors: 0 }]);
   });
 
+  it("a repeated id is sent once", async () => {
+    const f = fake();
+    await aeReport(env, from, cur, to, "day", { domainIds: null, linkIds: ["a", "b", "a", "b"] });
+    expect(new Set(f.sent.map((s) => linkOf(s.body.params).join(",")))).toEqual(new Set(["a,b"]));
+  });
+
+  it("a bad id in a later chunk sends nothing at all", async () => {
+    const f = fake();
+    await expect(aeReport(env, from, cur, to, "day", { domainIds: null, linkIds: [...ids, "bad id"] })).rejects.toThrow("bad_sql_id");
+    await expect(aeLinkDays(env, from, to, [...ids, "bad id"])).rejects.toThrow("bad_sql_id");
+    expect(f.spy).not.toHaveBeenCalled();
+  });
+
   it("a member's 1000 usable domains are chunked too (M2)", async () => {
     const doms = Array.from({ length: 1000 }, (_, i) => `dom${String(i).padStart(4, "0")}`);
     const f = fake();

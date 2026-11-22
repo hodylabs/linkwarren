@@ -55,6 +55,17 @@ describe("ClicksChart", () => {
     expect(tipBox().classList.contains("on")).toBe(false);
   });
 
+  it("ArrowLeft after the series shrank moves from the last bar, not from a bar that is gone", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ClicksChart series={series} unit="day" table={false} onToggle={() => {}} />);
+    await user.tab();
+    await user.tab();
+    await user.keyboard("{End}");
+    rerender(<ClicksChart series={series.slice(0, 2)} unit="day" table={false} onToggle={() => {}} />);
+    await user.keyboard("{ArrowLeft}");
+    expect(tip()).toBe("Nov 18: 3 clicks, 1 from QR, 2 typed or clicked");
+  });
+
   it("the announced tip is a separate, always rendered status (the visual tip is hidden from the tree)", () => {
     render(<ClicksChart series={series} unit="day" table={false} onToggle={() => {}} />);
     const status = screen.getByRole("status");
