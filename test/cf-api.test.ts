@@ -24,6 +24,15 @@ describe("cfConfig", () => {
 });
 
 describe("fetch seam", () => {
+  it("the fake refuses deletes and the fallback PUT without their edit permission, as it does creates", async () => {
+    const fake = installFakeCloudflare({ zones: [{ id: "z1", name: "owned.test" }], tokens: { [cfg.token]: { perms: ["zone_read"] } } });
+    fake.state.dns.push({ id: "d1", zoneId: "z1", type: "AAAA", name: "go.owned.test", content: "100::", proxied: true, comment: null });
+    fake.state.routes.push({ id: "r1", zoneId: "z1", pattern: "go.owned.test/*", script: "lw" });
+    fake.state.hostnames.push({ id: "h1", hostname: "go.outside.test", status: "active", ssl: { status: "active" } });
+    for (const p of [cf(cfg, "DELETE", "/zones/z1/dns_records/d1"), deleteRoute(cfg, "z1", "r1"), deleteHostname(cfg, "h1"), setFallbackOrigin(cfg)])
+      await expect(p).rejects.toMatchObject({ status: 403 });
+    expect([fake.state.dns.length, fake.state.routes.length, fake.state.hostnames.length, fake.state.fallbackOrigin]).toEqual([1, 1, 1, null]);
+  });
   it("unknown URLs throw in the fake", async () => {
     const fake = installFakeCloudflare();
     await expect(fetch("https://example.org/")).rejects.toThrow(/unexpected fetch/);

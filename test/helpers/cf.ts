@@ -94,8 +94,10 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       const z = state.zones.find((x) => x.id === r![1]);
       return z ? ok(zoneOut(z)) : err(404, 7003);
     }
-    if (m === "POST") {
-      const p: FakePerm | null = /\/dns_records$/.test(path) ? "dns_edit" : /\/workers\/routes$/.test(path) ? "routes_edit" : /\/custom_hostnames$/.test(path) ? "ssl_edit" : null;
+    // Every write (create, delete, the fallback origin PUT) needs its permission; reads need only zone_read above.
+    if (m !== "GET") {
+      const p: FakePerm | null = /\/dns_records(\/[^/]+)?$/.test(path) ? "dns_edit" : /\/workers\/routes(\/[^/]+)?$/.test(path) ? "routes_edit"
+        : /\/custom_hostnames(\/[^/]+)?$/.test(path) ? "ssl_edit" : null;
       const denied = p && need(p);
       if (denied) return denied;
     }
