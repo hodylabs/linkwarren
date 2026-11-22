@@ -148,7 +148,8 @@ async function syncOutside(cfg: CfConfig, host: string, cf: CfRow, made: Made): 
   let h = f.hostname;
   if (!h) made.hostname_id = (h = await createHostname(cfg, host)).id;
   if (!f.route) made.route_id = (await createRoute(cfg, cfg.saasZoneId, `${host}/*`)).id;
-  return { dns: await dnsPointsAt(host, cfg.cnameTarget), ownership: ownershipOf(h.status), certificate: certificateOf(h.sslStatus), errors: h.errors };
+  const ownership = ownershipOf(h.status), certificate = certificateOf(h.sslStatus);
+  return { dns: await dnsPointsAt(host, cfg.cnameTarget, ownership === "verified" && certificate === "issued"), ownership, certificate, errors: h.errors };
 }
 
 type AccountFacts = { records: DnsRecord[]; covering: DnsRecord[]; delegated: boolean; routes: Route[]; route: Route | null };

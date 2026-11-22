@@ -22,7 +22,12 @@ export async function dohLookup(name: string, type: "CNAME" | "A" | "AAAA"): Pro
   return (p.data.Answer ?? []).filter((a) => a.type === TYPE_NUM[type]).map((a) => clean(a.data));
 }
 
-export async function dnsPointsAt(host: string, target: string): Promise<"found" | "missing" | "wrong_target" | "unknown"> {
+/**
+ * `served`: Cloudflare reports the custom hostname active with its certificate issued. A host proxied by its own Cloudflare zone
+ * hides its CNAME and answers with that zone's edge IPs, which need not match the target's; HTTP validation passing means its
+ * requests do reach the SaaS zone, so such a host reads found instead of wrong_target. A visible CNAME elsewhere stays wrong_target.
+ */
+export async function dnsPointsAt(host: string, target: string, served = false): Promise<"found" | "missing" | "wrong_target" | "unknown"> {
   try {
     const t = clean(target);
     const cname = await dohLookup(host, "CNAME");
@@ -30,7 +35,8 @@ export async function dnsPointsAt(host: string, target: string): Promise<"found"
     const [a, aaaa, ta, taaaa] = await Promise.all([dohLookup(host, "A"), dohLookup(host, "AAAA"), dohLookup(t, "A"), dohLookup(t, "AAAA")]);
     const theirs = new Set([...ta, ...taaaa]);
     if ([...a, ...aaaa].some((ip) => theirs.has(ip))) return "found"; // flattened apex
-    return cname.length + a.length + aaaa.length === 0 ? "missing" : "wrong_target";
+    if (cname.length + a.length + aaaa.length === 0) return "missing";
+    return served && cname.length === 0 ? "found" : "wrong_target";
   } catch (e) {
     if (e instanceof CfError) return "unknown";
     throw e;
