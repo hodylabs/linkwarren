@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
-import { endSessionStmt } from "../session";
+import { clearCookie, endSessionStmt } from "../session";
 import { rowToUser, type UserListItem, type UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
@@ -41,8 +41,9 @@ users.delete("/:id/sessions", async (c) => {
   const n = await c.env.DB.prepare("SELECT COUNT(*) n FROM sessions WHERE user_id = ?").bind(id).first<{ n: number }>();
   await c.env.DB.batch([
     auditStmt(c.env, { actorId: c.var.user.id, action: "session.end_all", targetType: "user", targetId: id, detail: { count: n?.n ?? 0 } },
-      { sql: "EXISTS (SELECT 1 FROM users WHERE id = ?)", binds: [id] }),
+      { sql: "EXISTS (SELECT 1 FROM sessions WHERE user_id = ?)", binds: [id] }),
     endSessionStmt(c.env, { userId: id }),
   ]);
+  if (id === c.var.user.id) c.header("Set-Cookie", clearCookie());
   return c.body(null, 204);
 });

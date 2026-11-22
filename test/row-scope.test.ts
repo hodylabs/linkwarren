@@ -123,3 +123,26 @@ describe("sign-in tables: deletes and renames touch only the target", () => {
     }
   });
 });
+
+describe("owner end-all", () => {
+  it("ends one person's sessions and leaves a third person's alone", async () => {
+    const { signedIn, withCookie } = await import("./helpers/session");
+    const mode = env as { AUTH_MODE?: string };
+    const prev = mode.AUTH_MODE;
+    mode.AUTH_MODE = "app";
+    try {
+      await env.DB.batch(["passkeys", "sessions", "audit_log"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+      const o = await signedIn("so@example.com", { role: "owner" }), b = await signedIn("sb2@example.com"), c = await signedIn("sc@example.com");
+      await run("INSERT INTO sessions (id,token_hash,user_id,method,created_at,last_seen_at,expires_at) VALUES ('c2','hc2',?, 'email',1,1,9999999999)", c.user.id);
+      const third = await rows("SELECT * FROM sessions WHERE user_id = ?", c.user.id);
+      const mine = await rows("SELECT * FROM sessions WHERE user_id = ?", o.user.id);
+      const r = await dash(`/api/users/${b.user.id}/sessions`, withCookie(o.cookie, { method: "DELETE" }));
+      expect(r.status).toBe(204);
+      expect(await rows("SELECT * FROM sessions WHERE user_id = ?", b.user.id)).toEqual([]);
+      expect(await rows("SELECT * FROM sessions WHERE user_id = ?", c.user.id)).toEqual(third);
+      expect(await rows("SELECT * FROM sessions WHERE user_id = ?", o.user.id)).toEqual(mine);
+    } finally {
+      mode.AUTH_MODE = prev;
+    }
+  });
+});

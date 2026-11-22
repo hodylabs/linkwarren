@@ -145,11 +145,20 @@ describe("passkey registration", () => {
     expect(await all("SELECT COUNT(*) n FROM audit_log WHERE action = 'passkey.add'")).toEqual([{ n: 10 }]);
   });
 
-  it("refuses bidi and control characters in the name", async () => {
+  it("sanitizes the name like a rename: strips hidden characters, collapses whitespace", async () => {
     const cookie = await signInApp("a@example.com");
-    for (const name of ["evil\u202Eexe", "a\u2066b", "a\nb", "a\u061Cb", "a\u200Bb", "a\u200Cb", "a\u200Db", "a\uFEFFb"]) {
+    for (const [raw, want] of [["evil\u202Eexe", "evilexe"], ["a\u2060\u2064b", "ab"], ["a\nb", "ab"], ["  a    b\u200B ", "a b"], ["a\u061Cb\uFEFFc", "abc"]] as const) {
+      const { o } = await regOptions(cookie);
+      const r = await register(cookie, await softAuthenticator().register(o!), raw);
+      expect([raw, r.status, ((await r.json()) as { name: string }).name]).toEqual([raw, 201, want]);
+    }
+  });
+
+  it("refuses a name that is empty after sanitizing or over 40 characters with invalid_name", async () => {
+    const cookie = await signInApp("a@example.com");
+    for (const name of ["", "\u200B\u2060", "   ", "x".repeat(41)]) {
       const r = await register(cookie, {}, name);
-      expect([r.status, await r.text()]).toEqual([400, '{"error":"invalid_body"}']);
+      expect([name, r.status, await r.text()]).toEqual([name, 400, '{"error":"invalid_name"}']);
     }
   });
 

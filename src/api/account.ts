@@ -21,19 +21,22 @@ account.post("/passkeys/options", async (c) => {
   return o ? c.json(o) : c.json({ error: "too_many_attempts" }, 429);
 });
 
-// Control, zero-width, line-separator and bidi characters (ALM, ZWSP/ZWNJ/ZWJ, LRM/RLM, embeddings, isolates, BOM).
-const HIDDEN = "\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b-\\u200f\\u2028-\\u202e\\u2066-\\u2069\\ufeff";
+// Control, zero-width, line-separator and bidi characters (ALM, ZWSP/ZWNJ/ZWJ, LRM/RLM, embeddings, word joiner and invisibles, isolates, BOM).
+const HIDDEN = "\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2064\\u2066-\\u2069\\ufeff";
 const renameBody = z.strictObject({ name: z.string() });
 const nowS = () => Math.floor(Date.now() / 1000);
-const addBody = z.strictObject({
-  response: z.unknown(),
-  // No control, line-separator or bidi characters: a name like "evil\u202Eexe" would display reversed.
-  name: z.string().trim().max(40).regex(new RegExp(`^[^${HIDDEN}]*$`)).optional(),
-});
+/** The one name sanitizer (registration and rename): strips hidden characters (a name like "evil\u202Eexe" would display reversed), collapses whitespace, 1-40 characters or null. */
+const cleanName = (raw: string): string | null => {
+  const n = raw.replace(new RegExp(`[${HIDDEN}]`, "g"), "").replace(/\s+/g, " ").trim();
+  return n && n.length <= 40 ? n : null;
+};
+const addBody = z.strictObject({ response: z.unknown(), name: z.string().optional() });
 
 account.post("/passkeys", async (c) => {
   const b = await parse(c, addBody);
   if (!b) return c.json({ error: "invalid_body" }, 400);
+  const given = b.name === undefined ? undefined : cleanName(b.name);
+  if (given === null) return c.json({ error: "invalid_name" }, 400);
   const env = c.env, user = c.var.user;
   let k;
   try {
@@ -43,7 +46,7 @@ account.post("/passkeys", async (c) => {
     return c.json(passkeyFailed, 400);
   }
   const label = deviceLabel(c.req.header("user-agent") ?? null);
-  const name = b.name || (label ? `Passkey on ${label}`.slice(0, 40) : "Passkey");
+  const name = given ?? (label ? `Passkey on ${label}`.slice(0, 40) : "Passkey");
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   // The limit is re-checked inside the INSERT (two option fetches at 9 cannot make 11); a known credential id is skipped, not thrown.
@@ -84,8 +87,8 @@ account.get("/", async (c) => {
 
 account.patch("/passkeys/:id", async (c) => {
   const b = await parse(c, renameBody);
-  const name = b?.name.replace(new RegExp(`[${HIDDEN}]`, "g"), "").replace(/\s+/g, " ").trim();
-  if (!name || name.length > 40) return c.json({ error: "invalid_name" }, 400);
+  const name = b && cleanName(b.name);
+  if (!name) return c.json({ error: "invalid_name" }, 400);
   const id = c.req.param("id"), uid = c.var.user.id;
   const own = { sql: "EXISTS (SELECT 1 FROM passkeys WHERE id = ? AND user_id = ?)", binds: [id, uid] };
   const [, upd] = await c.env.DB.batch<Record<string, unknown>>([

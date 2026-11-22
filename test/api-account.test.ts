@@ -51,6 +51,15 @@ describe("GET /api/account", () => {
     expect(body.sessions.map((s) => s.id)).toEqual([mine, other]); // newest first
   });
 
+  it("hides a session older than the absolute lifetime even when its expiry is still ahead", async () => {
+    const a = await signedIn("a@example.com");
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare("INSERT INTO sessions (id,token_hash,user_id,method,created_at,last_seen_at,expires_at) VALUES ('stale','hstale',?, 'email',?,?,?)")
+      .bind(a.user.id, now - 7_776_001, now, now + 1000).run();
+    const r = await call(a.cookie, "GET", "/api/account");
+    expect(((await r.json()) as { sessions: { id: string }[] }).sessions.map((s) => s.id)).not.toContain("stale");
+  });
+
   it("needs a session and answers 404 in access mode", async () => {
     expect((await dash("/api/account")).status).toBe(401);
     const a = await signedIn("a@example.com");
@@ -68,7 +77,7 @@ describe("rename and remove passkeys", () => {
     expect(await all("SELECT action, target_id, detail FROM audit_log WHERE action != 'auth.sign_in'")).toEqual([{ action: "passkey.rename", target_id: pk, detail: '{"name":"Work laptop"}' }]);
   });
 
-  it.each([["x".repeat(41)], ["   "], ["‮​"]])("refuses %j with invalid_name", async (name) => {
+  it.each([["x".repeat(41)], ["   "], ["‮​"], ["⁠⁤"]])("refuses %j with invalid_name", async (name) => {
     const a = await signedIn("a@example.com");
     const pk = await addKey(a.user.id);
     const r = await call(a.cookie, "PATCH", `/api/account/passkeys/${pk}`, { name });
@@ -159,6 +168,21 @@ describe("owner ends someone's sessions", () => {
     expect(await all("SELECT actor_id, action, target_type, target_id, detail FROM audit_log WHERE action != 'auth.sign_in'")).toEqual([
       { actor_id: o.user.id, action: "session.end_all", target_type: "user", target_id: b.user.id, detail: '{"count":2}' },
     ]);
+  });
+
+  it("a person with no sessions: 204 and no audit row", async () => {
+    const o = await signedIn("o@example.com", { role: "owner" }), b = await signedIn("b@example.com");
+    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(b.user.id).run();
+    expect((await call(o.cookie, "DELETE", `/api/users/${b.user.id}/sessions`)).status).toBe(204);
+    expect(await all("SELECT * FROM audit_log WHERE action = 'session.end_all'")).toEqual([]);
+  });
+
+  it("the owner ending their own sessions clears their cookie; another person's does not", async () => {
+    const o = await signedIn("o@example.com", { role: "owner" }), b = await signedIn("b@example.com");
+    const other = await call(o.cookie, "DELETE", `/api/users/${b.user.id}/sessions`);
+    expect(other.headers.get("set-cookie")).toBeNull();
+    const own = await call(o.cookie, "DELETE", `/api/users/${o.user.id}/sessions`);
+    expect([own.status, own.headers.get("set-cookie")]).toEqual([204, expect.stringContaining("Max-Age=0")]);
   });
 
   it("member gets 403, unknown person 404", async () => {
