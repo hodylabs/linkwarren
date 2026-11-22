@@ -8,6 +8,7 @@ const get = async (path: string, email = "owner@example.com") =>
 const json = async (path: string, email?: string) => (await get(path, email)).json() as Promise<any>;
 
 const DAY = 86_400_000;
+const NOW = Date.parse("2026-11-20T12:00:00Z"); // fixed clock: no 00:00 UTC flake
 const dayAt = (n: number) => new Date(Date.now() + n * DAY).toISOString().slice(0, 10);
 const roll = (day: string, link: string, dom: string, qr: number, typed: number) =>
   run("INSERT INTO clicks_daily (day,link_id,domain_id,slug,qr,typed) VALUES (?,?,?,?,?,?)", day, link, dom, link, qr, typed);
@@ -15,6 +16,8 @@ const roll = (day: string, link: string, dom: string, qr: number, typed: number)
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 beforeAll(setupAccess);
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   await env.DB.batch(
     ["clicks_daily", "clicks_daily_dim", "analytics_state", "links", "slug_locks", "domain_members", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)),
   );
@@ -32,7 +35,21 @@ beforeEach(async () => {
   await run("INSERT INTO clicks_daily_dim (day,link_id,domain_id,dim,value,clicks) VALUES (?, 'lM','dM','country','US',5),(?, 'lM','dM','country','DE',2)", dayAt(-3), dayAt(-4));
   fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("unexpected fetch"); });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+/** Configure AE for one test and restore the original env values afterwards. */
+async function withAe<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = { CF_ACCOUNT_ID: env.CF_ACCOUNT_ID, AE_READ_TOKEN: env.AE_READ_TOKEN };
+  Object.assign(env, { CF_ACCOUNT_ID: "acc", AE_READ_TOKEN: "tok" });
+  try {
+    return await fn();
+  } finally {
+    Object.assign(env, prev);
+  }
+}
 
 describe("GET /api/analytics", () => {
   it("unauthenticated is 401", async () => {
@@ -65,47 +82,87 @@ describe("GET /api/analytics", () => {
     expect((await get("?domains=dM,dS", "a@example.com")).status).toBe(200);
   });
   it("bad input is 400 and never reaches AE", async () => {
-    const bad = await get("?range=custom&from=2026-11-10&to=2026-11-01");
-    expect([bad.status, await bad.json()]).toEqual([400, { error: "bad_range" }]);
-    expect((await get("?range=5")).status).toBe(400);
-    const long = await get(`?q=${"a".repeat(49)}`);
-    expect([long.status, await long.json()]).toEqual([400, { error: "q_too_long" }]);
-    const q = await get("?domains=a%27b");
-    expect([q.status, await q.json()]).toEqual([400, { error: "bad_query" }]);
-    expect((await get("?bogus=1")).status).toBe(400);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    await withAe(async () => {
+      const bad = await get("?range=custom&from=2026-11-10&to=2026-11-01");
+      expect([bad.status, await bad.json()]).toEqual([400, { error: "bad_range" }]);
+      expect((await get("?range=5")).status).toBe(400);
+      const long = await get(`?q=${"a".repeat(49)}`);
+      expect([long.status, await long.json()]).toEqual([400, { error: "q_too_long" }]);
+      const q = await get("?domains=a%27b");
+      expect([q.status, await q.json()]).toEqual([400, { error: "bad_query" }]);
+      expect((await get("?bogus=1")).status).toBe(400);
+      expect((await get("?domains=dB", "a@example.com")).status).toBe(403);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
   });
   it("a failing Analytics Engine degrades to live unavailable, not 500", async () => {
-    Object.assign(env, { CF_ACCOUNT_ID: "acc", AE_READ_TOKEN: "tok" });
     fetchSpy.mockImplementation(async () => new Response("no", { status: 500 }));
-    try {
+    await withAe(async () => {
       const res = await get("?range=7");
       expect(res.status).toBe(200);
-      expect(((await res.json()) as any).live).toBe("unavailable");
-    } finally {
-      Object.assign(env, { CF_ACCOUNT_ID: undefined, AE_READ_TOKEN: undefined });
-    }
+      const r = (await res.json()) as any;
+      expect(r.live).toBe("unavailable");
+      expect(r.totals.clicks).toBe(9);
+    });
   });
 });
 
 describe("GET /api/analytics/links", () => {
   it("returns 7 values oldest first and the top country", async () => {
+    await roll(dayAt(-5), "lM", "dM", 3, 4);
     const r = await json("/links?ids=lM,lS");
     expect(r.items).toHaveLength(2);
     const m = r.items.find((i: any) => i.linkId === "lM");
-    expect(m.days).toEqual([0, 0, 0, 3, 0, 0, 0]);
-    expect(m).toMatchObject({ clicks: 3, qr: 1, topCountry: "US" });
+    expect(m.days).toEqual([0, 7, 0, 3, 0, 0, 0]); // today-5 = 7, today-3 = 3, so a reversed array differs
+    expect(m).toMatchObject({ clicks: 10, qr: 4, topCountry: "US" });
     expect(r.items.find((i: any) => i.linkId === "lS").topCountry).toBeNull();
+    expect(r.live).toBe("off");
   });
   it("an id on a domain the caller cannot use is 403; unknown ids are dropped", async () => {
     expect((await get("/links?ids=lM,lB", "a@example.com")).status).toBe(403);
     expect((await json("/links?ids=lM,ghost", "a@example.com")).items.map((i: any) => i.linkId)).toEqual(["lM"]);
   });
   it("0, 51 or malformed ids are 400", async () => {
-    expect((await get("/links")).status).toBe(400);
-    expect((await get("/links?ids=")).status).toBe(400);
-    expect((await get(`/links?ids=${Array.from({ length: 51 }, (_, i) => `l${i}`).join(",")}`)).status).toBe(400);
-    expect((await get("/links?ids=a%27b")).status).toBe(400);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    await withAe(async () => {
+      expect((await get("/links")).status).toBe(400);
+      expect((await get("/links?ids=")).status).toBe(400);
+      expect((await get(`/links?ids=${Array.from({ length: 51 }, (_, i) => `l${i}`).join(",")}`)).status).toBe(400);
+      expect((await get("/links?ids=a%27b")).status).toBe(400);
+      expect((await get("/links?ids=lB", "a@example.com")).status).toBe(403);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+  it("merges Analytics Engine clicks for yesterday and today onto the right sparkline points", async () => {
+    fetchSpy.mockImplementation(async () =>
+      Response.json({
+        data: [
+          { bucket: `${dayAt(-1)} 00:00:00`, linkId: "lM", source: "qr", n: 4 },
+          { bucket: `${dayAt(-1)} 00:00:00`, linkId: "lM", source: "typed", n: 1 },
+          { bucket: `${dayAt(0)} 00:00:00`, linkId: "lM", source: "typed", n: 6 },
+          { bucket: `${dayAt(0)} 00:00:00`, linkId: "ghost", source: "typed", n: 9 },
+        ],
+      }),
+    );
+    await withAe(async () => {
+      const r = await json("/links?ids=lM,lS");
+      const m = r.items.find((i: any) => i.linkId === "lM");
+      expect(m.days).toEqual([0, 0, 0, 3, 0, 5, 6]); // D1 day today-3, AE today-1 and today
+      expect(m).toMatchObject({ clicks: 14, qr: 5 });
+      expect(r.items.find((i: any) => i.linkId === "lS").days).toEqual([0, 0, 0, 3, 0, 0, 0]);
+      expect(r.live).toBe("on");
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // one AE query, not the five-query aggregate
+    const sent = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body));
+    expect(sent.params.from).toBe(`${dayAt(-1)}T00:00:00Z`); // AE starts after the D1 watermark (today-2)
+  });
+  it("Analytics Engine answering 500 keeps the D1 points and reports live unavailable", async () => {
+    fetchSpy.mockImplementation(async () => new Response("no", { status: 500 }));
+    await withAe(async () => {
+      const res = await get("/links?ids=lM");
+      expect(res.status).toBe(200);
+      const r = (await res.json()) as any;
+      expect(r.live).toBe("unavailable");
+      expect(r.items[0]).toMatchObject({ days: [0, 0, 0, 3, 0, 0, 0], clicks: 3, topCountry: "US" });
+    });
   });
 });

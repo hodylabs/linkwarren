@@ -139,3 +139,18 @@ export async function aeAggregate(env: Env, from: Date, to: Date, unit: Unit, sc
   const sorted = [...tot.values()].sort((a, c) => (a.bucket === c.bucket ? (a.linkId < c.linkId ? -1 : 1) : a.bucket < c.bucket ? -1 : 1));
   return { tot: sorted, dims };
 }
+
+/** Human clicks per link and UTC day for the Links sparkline: one query, ids validated and bound. */
+export async function aeLinkDays(env: Env, from: Date, to: Date, linkIds: string[]): Promise<{ bucket: string; linkId: string; qr: number; typed: number }[]> {
+  if (linkIds.length === 0) return [];
+  const params: Params = { account: trim(env.CF_ACCOUNT_ID) ?? "", from: iso(from), to: iso(to), human: "human" };
+  const where = "WHERE accountTag = $account AND timestamp >= $from AND timestamp < $to AND blob8 = $human" + idClause("blob2", "l", linkIds, params);
+  const ds = `events.analyticsEngine.${dataset(env)}`; // validated by aeConfigured inside aeQuery
+  const rows = await aeQuery(env, `SELECT toStartOfDay(timestamp) AS bucket, blob2 AS linkId, blob7 AS source, COUNT(*) AS n FROM ${ds} ${where} GROUP BY toStartOfDay(timestamp), blob2, blob7`, params);
+  return rows.map((r) => ({
+    bucket: bucketOf(r.bucket, "day"),
+    linkId: str(r.linkId),
+    qr: r.source === "qr" ? num(r.n) : 0,
+    typed: r.source === "typed" ? num(r.n) : 0,
+  }));
+}

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { aeAggregate, aeConfigured } from "../ae";
+import { aeConfigured, aeLinkDays } from "../ae";
 import { buildReport, loadRows, resolveRange, resolveScope, type RangeQuery } from "../analytics";
 import { utcDay } from "../clicks";
 import { rolledThrough } from "../cron";
@@ -75,22 +75,28 @@ analytics.get("/links", async (c) => {
   const w = await rolledThrough(env);
   if (w && w >= days[0]) {
     const last = w < today ? w : today;
+    const dl = JSON.stringify(days.filter((d) => d <= last));
     const b = JSON.stringify(linkIds);
+    // Point lookups, not a day range (a range scans every clicked link of the window). Measured with EXPLAIN QUERY PLAN:
+    // SEARCH clicks_daily USING INDEX sqlite_autoindex_clicks_daily_1 (day=? AND link_id=?);
+    // SEARCH clicks_daily_dim USING INDEX sqlite_autoindex_clicks_daily_dim_1 (day=? AND link_id=? AND dim=?).
+    // Only the country dim is read (topCountry); device and referrer rows are never touched.
     const [t, d] = await env.DB.batch([
-      env.DB.prepare("SELECT day, link_id AS id, qr, typed FROM clicks_daily WHERE day >= ? AND day <= ? AND link_id IN (SELECT value FROM json_each(?))").bind(days[0], last, b),
-      env.DB.prepare("SELECT link_id AS id, value, SUM(clicks) AS n FROM clicks_daily_dim WHERE dim = 'country' AND day >= ? AND day <= ? AND link_id IN (SELECT value FROM json_each(?)) GROUP BY link_id, value").bind(days[0], last, b),
+      env.DB.prepare("SELECT day, link_id AS id, qr, typed FROM clicks_daily WHERE day IN (SELECT value FROM json_each(?)) AND link_id IN (SELECT value FROM json_each(?))").bind(dl, b),
+      env.DB.prepare("SELECT link_id AS id, value, SUM(clicks) AS n FROM clicks_daily_dim WHERE dim = 'country' AND day IN (SELECT value FROM json_each(?)) AND link_id IN (SELECT value FROM json_each(?)) GROUP BY link_id, value").bind(dl, b),
     ]);
     for (const r of t.results as { day: string; id: string; qr: number; typed: number }[]) add(r.id, r.day, r.qr, r.typed);
     for (const r of d.results as { id: string; value: string; n: number }[]) addCountry(r.id, r.value, r.n);
     aeFrom = new Date(Date.parse(`${w}T00:00:00Z`) + DAY_MS);
   }
   const end = new Date(Date.parse(`${today}T00:00:00Z`) + DAY_MS);
-  if (aeFrom < end && linkIds.length && aeConfigured(env)) {
+  let live: "on" | "off" | "unavailable" = aeConfigured(env) ? "on" : "off";
+  if (aeFrom < end && linkIds.length && live === "on") {
     try {
-      const live = await aeAggregate(env, aeFrom, end, "day", { domainIds: null, linkIds });
-      for (const r of live.tot) add(r.linkId, r.bucket, r.qr, r.typed);
-      for (const r of live.dims) if (r.dim === "country") addCountry(r.linkId, r.value, r.clicks);
+      // One AE query (clicks per link and day). topCountry comes from D1 days only; the AE days add no country.
+      for (const r of await aeLinkDays(env, aeFrom, end, linkIds)) add(r.linkId, r.bucket, r.qr, r.typed);
     } catch (e) {
+      live = "unavailable";
       console.error("analytics links live read failed", e instanceof Error ? e.name : "unknown"); // degrade to D1 only
     }
   }
@@ -99,5 +105,5 @@ analytics.get("/links", async (c) => {
     const top = [...a.countries].filter(([v]) => v).sort((x, y) => y[1] - x[1])[0];
     return { linkId, days: a.days, clicks: a.days.reduce((x, y) => x + y, 0), qr: a.qr, topCountry: top ? top[0] : null };
   });
-  return c.json({ items });
+  return c.json({ items, live });
 });
