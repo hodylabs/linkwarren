@@ -392,6 +392,30 @@ describe("Links screen stats", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("the cell has no content (so the phone card hides it) until stats load, then holds the sparkline", async () => {
+    let release: (r: FakeRes) => void = () => undefined;
+    boot({ routes: { "GET /api/analytics/links": () => new Promise<FakeRes>((r) => (release = r)) } });
+    await ready();
+    const cell = () => rows()[0]!.querySelector('td[data-label="7 days"]')!;
+    expect(cell().childNodes).toHaveLength(0);
+    expect(cell().textContent).toBe("");
+    release({ body: { items: [stat("l1")], live: "on" } });
+    await waitFor(() => expect(cell().querySelector("svg.spark")).not.toBeNull());
+  });
+
+  it.each([
+    ["off", "Live clicks are off on this instance."],
+    ["unavailable", "Recent clicks could not be loaded."],
+  ] as const)("live %s: dashed recent days in the sparkline and its own hint in the detail", async (live, hint) => {
+    const { user } = boot({ routes: statsRoute([], live) });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
+    expect(rows()[0]!.querySelector("svg.spark line[stroke-dasharray]")).not.toBeNull();
+    expect(within(rows()[0]!).getByText(/Recent days not available/)).toBeTruthy();
+    await user.click(rows()[0]!);
+    expect(within(detail()).getByText(`${hint} These counts leave out yesterday and today.`)).toBeTruthy();
+  });
+
   it("unknown recent days are shown as unknown when live is off", async () => {
     boot({ routes: statsRoute([], "off") });
     await ready();

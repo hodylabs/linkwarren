@@ -386,7 +386,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .list .mchip{min-width:0;word-break:break-all}
   .list td.dest{flex:1 0 100%;max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .list td.num{text-align:left}
-  .list td.spk{display:flex;align-items:center;gap:6px}
+  .list td.spk:not(:empty){display:flex;align-items:center;gap:6px}
   .list td[data-label]::before{content:attr(data-label) " ";font-size:12px}
 
   /* detail panel */

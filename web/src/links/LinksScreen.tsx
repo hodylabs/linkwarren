@@ -62,7 +62,8 @@ export function LinksScreen() {
   }, [scope]);
 
   // 7-day stats for a page of ids. An answer from an older generation (the list changed meanwhile) is dropped; a failure leaves the cells empty.
-  const loadStats = useCallback(async (g: number, ids: string[]) => {
+  // `fresh` (first page of a load) starts the live state over, so old "off" data never draws solid while new stats load.
+  const loadStats = useCallback(async (g: number, ids: string[], fresh = false) => {
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += STATS_CHUNK) chunks.push(ids.slice(i, i + STATS_CHUNK));
     const done = await Promise.allSettled(
@@ -72,7 +73,7 @@ export function LinksScreen() {
     const ok = done.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     if (ok.length === 0) return;
     setStats((cur) => ({ ...cur, ...Object.fromEntries(ok.flatMap((r) => r.items.map((s) => [s.linkId, s] as const))) }));
-    setLive((cur) => ok.reduce((w, r) => (WORST.indexOf(r.live) > WORST.indexOf(w) ? r.live : w), cur === "on" ? "on" : cur));
+    setLive((cur) => ok.reduce((w, r) => (WORST.indexOf(r.live) > WORST.indexOf(w) ? r.live : w), fresh ? "on" : cur));
   }, []);
 
   // New scope or an explicit reload: start over. A stale answer (older generation) is dropped.
@@ -94,8 +95,7 @@ export function LinksScreen() {
         setItems(p.items);
         setNext(p.next);
         setLoaded(true);
-        setLive("on");
-        void loadStats(g, p.items.map((l) => l.id));
+        void loadStats(g, p.items.map((l) => l.id), true);
       },
       (e: unknown) => {
         if (g !== generation.current) return;

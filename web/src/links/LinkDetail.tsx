@@ -24,6 +24,8 @@ function diff(l: Link, d: Draft): Record<string, unknown> {
   return out;
 }
 
+const LIVE_HINT = { off: "Live clicks are off on this instance.", unavailable: "Recent clicks could not be loaded." } as const;
+
 export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStats | undefined; live: StatsLive; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void; onClose(): void }>(
   function LinkDetail({ link, stats, live, domain, canEdit, onSaved, onDelete, onClose }, ref) {
     const app = useApp();
@@ -131,7 +133,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               <div className="stat"><b>{stats.clicks > 0 ? Math.round((100 * stats.qr) / stats.clicks) : 0}%</b><small>from QR</small></div>
               <div className="stat"><b>{stats.topCountry ?? "None"}</b><small>top country</small></div>
             </div>
-            {live !== "on" && <p className="hint">Yesterday and today are not available yet, so these counts leave them out.</p>}
+            {live !== "on" && <p className="hint">{LIVE_HINT[live]} These counts leave out yesterday and today.</p>}
           </div>
         )}
         <fieldset className="plain" disabled={!canEdit}>

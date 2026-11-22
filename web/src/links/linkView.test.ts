@@ -64,5 +64,7 @@ describe("sparkPoints", () => {
     expect(sparkPoints([0, 0, 0])).toBe("0,18 36,18 72,18");
     expect(sparkPoints([1, 2])).toBe("0,10 72,2");
     expect(sparkPoints([1, 2, 3], 5)).toBe("0,12.7 18,7.3 36,2");
+    // live off: 5 known days of 7 end at x 48, leaving the last two slots for the dashed segment
+    expect(sparkPoints([0, 1, 2, 3, 4], 7)).toBe("0,18 12,14 24,10 36,6 48,2");
   });
 });
