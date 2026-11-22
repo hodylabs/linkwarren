@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash } from "./helpers/access";
+import { fakeResend } from "./helpers/resend";
 import { signInApp, withCookie } from "./helpers/session";
 import { b64uText, softAuthenticator } from "./helpers/webauthn";
 
@@ -146,7 +147,7 @@ describe("passkey registration", () => {
 
   it("refuses bidi and control characters in the name", async () => {
     const cookie = await signInApp("a@example.com");
-    for (const name of ["evil\u202Eexe", "a\u2066b", "a\nb"]) {
+    for (const name of ["evil\u202Eexe", "a\u2066b", "a\nb", "a\u061Cb", "a\u200Bb", "a\u200Cb", "a\u200Db", "a\uFEFFb"]) {
       const r = await register(cookie, {}, name);
       expect([r.status, await r.text()]).toEqual([400, '{"error":"invalid_body"}']);
     }
@@ -228,6 +229,49 @@ describe("passkey sign-in", () => {
     const r = await post("/auth/passkey/options", {}, { headers: { "cf-connecting-ip": "192.0.2.51" } });
     expect([r.status, await r.text()]).toEqual([429, '{"error":"too_many_attempts"}']);
     expect(await all("SELECT COUNT(*) n FROM auth_challenges")).toEqual([{ n: 20 }]);
+  });
+
+  it("keeps the options budget apart from the sign-in email budget", async () => {
+    const h = { "cf-connecting-ip": "192.0.2.60" };
+    for (let i = 0; i < 20; i++) expect((await post("/auth/passkey/options", {}, { headers: h })).status).toBe(200);
+    expect((await all("SELECT key FROM auth_limits WHERE key LIKE 'opts:%'")).length).toBe(1);
+    await env.DB.prepare("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,'member','active',1)").bind(crypto.randomUUID(), "z@example.com").run();
+    fakeResend();
+    const r = await post("/auth/email", { email: "z@example.com" }, { headers: { "cf-connecting-ip": "192.0.2.61" } });
+    expect(r.status).toBe(202);
+  });
+
+  it("refuses a registration challenge at sign-in and a sign-in challenge at registration", async () => {
+    const cookie = await signInApp("a@example.com");
+    const { dev } = await addPasskey(cookie);
+    const { o } = await regOptions(cookie);
+    const asLogin = await signIn(await dev.authenticate({ ...o!, rpId: "dash.test", allowCredentials: [] } as unknown as PublicKeyCredentialRequestOptionsJSON));
+    expect([asLogin.status, await asLogin.text()]).toEqual([400, FAILED]);
+    const login = await loginOptions();
+    const asReg = await register(cookie, await softAuthenticator().register({ ...login, rp: { id: "dash.test", name: "x" } } as unknown as PublicKeyCredentialCreationOptionsJSON));
+    expect([asReg.status, await asReg.text()]).toEqual([400, FAILED]);
+    expect(await all("SELECT COUNT(*) n FROM passkeys")).toEqual([{ n: 1 }]);
+  });
+
+  it("deletes another session's row when sign-in carries its cookie and issues a different cookie", async () => {
+    const cookie = await signInApp("a@example.com");
+    const { dev } = await addPasskey(cookie);
+    const before = (await all("SELECT id FROM sessions")).map((r) => r.id);
+    const r = await signIn(await dev.authenticate(await loginOptions()), {}, { cookie });
+    expect(r.status).toBe(200);
+    const fresh = /^([^;]*)/.exec(r.headers.get("set-cookie")!)![1]!;
+    expect(fresh).not.toBe(cookie);
+    const after = (await all("SELECT id FROM sessions")).map((x) => x.id);
+    expect(after.length).toBe(1);
+    expect(after).not.toContain(before[0]);
+  });
+
+  it("caps the default name at 40 characters", async () => {
+    const cookie = await signInApp("a@example.com");
+    const { o } = await regOptions(cookie);
+    const ua = { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36" };
+    const r = await post("/api/account/passkeys", { response: await softAuthenticator().register(o!) }, withCookie(cookie, { headers: ua }));
+    expect(((await r.json()) as { name: string }).name.length).toBeLessThanOrEqual(40);
   });
 
   it("signs in without a userHandle", async () => {

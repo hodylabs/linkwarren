@@ -13,6 +13,7 @@ type Limit = { n: number; s: number };
 export const limitKey = {
   addr: async (email: string) => `addr:${await sha256Hex(email.toLowerCase())}`,
   ip: (prefix: string | null) => `ip:${prefix ?? "none"}`,
+  opts: (prefix: string | null) => `opts:${prefix ?? "none"}`,
   fail: (prefix: string | null) => `fail:${prefix ?? "none"}`,
   inst: "inst",
 } as const;

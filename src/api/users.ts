@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import { auditStmt } from "../audit";
 import type { Env } from "../env";
+import { endSessionStmt } from "../session";
 import { rowToUser, type UserListItem, type UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
@@ -30,4 +32,17 @@ users.get("/", async (c) => {
     return { ...x, linkCount: n.get(x.id) ?? 0, domains: doms.get(x.id) ?? [] };
   });
   return c.json({ items });
+});
+
+users.delete("/:id/sessions", async (c) => {
+  if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  if (!(await c.env.DB.prepare("SELECT 1 FROM users WHERE id = ?").bind(id).first())) return c.json({ error: "not_found" }, 404);
+  const n = await c.env.DB.prepare("SELECT COUNT(*) n FROM sessions WHERE user_id = ?").bind(id).first<{ n: number }>();
+  await c.env.DB.batch([
+    auditStmt(c.env, { actorId: c.var.user.id, action: "session.end_all", targetType: "user", targetId: id, detail: { count: n?.n ?? 0 } },
+      { sql: "EXISTS (SELECT 1 FROM users WHERE id = ?)", binds: [id] }),
+    endSessionStmt(c.env, { userId: id }),
+  ]);
+  return c.body(null, 204);
 });

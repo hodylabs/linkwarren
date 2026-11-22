@@ -66,7 +66,13 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 app.use("/api/*", requireUser);
-app.get("/api/me", (c) => c.json({ id: c.var.user.id, email: c.var.user.email, name: c.var.user.name, role: c.var.user.role }));
+app.get("/api/me", async (c) => {
+  const mode = authMode(c.env); // non-null: requireUser refused a bad mode already
+  const me = { id: c.var.user.id, email: c.var.user.email, name: c.var.user.name, role: c.var.user.role, authMode: mode };
+  if (mode !== "app") return c.json(me);
+  const n = await c.env.DB.prepare("SELECT COUNT(*) n FROM passkeys WHERE user_id = ?").bind(c.var.user.id).first<{ n: number }>();
+  return c.json({ ...me, passkeys: n?.n ?? 0 });
+});
 
 app.route("/api/domains", domains);
 app.route("/api/links", links);

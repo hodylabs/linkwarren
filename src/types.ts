@@ -67,3 +67,6 @@ export const rowToCf = (r: R): CfRow => ({
 
 /** What the API shows about a passkey (never the credential id, public key or counter). */
 export type PasskeyItem = { id: string; name: string; createdAt: number; lastUsedAt: number | null; backedUp: boolean };
+
+/** One live session of the signed-in person (never the cookie secret or its hash). */
+export type SessionItem = { id: string; current: boolean; method: "email" | "passkey"; createdAt: number; lastSeenAt: number; device: string | null; ipPrefix: string | null };

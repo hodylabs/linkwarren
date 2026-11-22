@@ -67,7 +67,7 @@ describe("readSession through /api/me (app mode)", () => {
     const s = await signedIn();
     const r = await me(s.cookie);
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ id: s.user.id, email: "a@example.com", name: null, role: "member" });
+    expect(await r.json()).toEqual({ id: s.user.id, email: "a@example.com", name: null, role: "member", authMode: "app", passkeys: 0 });
     expect(r.headers.get("set-cookie")).toBeNull();
   });
 

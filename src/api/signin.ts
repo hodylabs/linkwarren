@@ -149,8 +149,8 @@ signin.post("/email/verify", async (c) => {
 
 signin.post("/passkey/options", async (c) => {
   if (!(await parse(c, z.strictObject({})))) return c.json(invalid, 400);
-  // Anonymous callers write a challenge row per call: the same per-prefix budget as sign-in emails bounds that.
-  if (!(await hit(c.env, limitKey.ip(ipPrefix(c.req.header("cf-connecting-ip") ?? null)), LIMITS.ip))) return c.json(tooMany, 429);
+  // Anonymous callers write a challenge row per call: a per-prefix budget (own key, so sign-in emails keep theirs) bounds that.
+  if (!(await hit(c.env, limitKey.opts(ipPrefix(c.req.header("cf-connecting-ip") ?? null)), LIMITS.ip))) return c.json(tooMany, 429);
   await c.env.DB.batch(prunes(c.env, nowS()));
   return c.json(await authenticationOptions(c.env));
 });
