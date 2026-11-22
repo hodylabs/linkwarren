@@ -42,6 +42,12 @@ const open = async (user: ReturnType<typeof userEvent.setup>) => {
   return screen.findByRole("dialog", { name: "Add a domain" });
 };
 const posts = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.method === "POST");
+// The clock moves only when a test advances it, so load on the machine never adds or drops a poll. Only setTimeout is
+// faked; the `jest` shim lets Testing Library's findBy/waitFor advance that fake clock in fixed steps instead of waiting on wall time.
+const fakeClock = () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.stubGlobal("jest", { advanceTimersByTime: (ms: number) => vi.advanceTimersByTime(ms) });
+};
 let hidden = false;
 Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
 afterEach(() => {
@@ -223,7 +229,7 @@ describe("Add a domain sheet", () => {
     const activeMade = () => ({ status: 201, body: { ...made(HALF).body, status: "active" as const } });
 
     it("stops polling and offers Finish connecting; F sends the approve call", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
+      fakeClock();
       const { api, user } = boot(owner, {
         "POST /api/domains": activeMade,
         "POST /api/domains/d9/approve": () => ({ body: { ...activeMade().body, cloudflare: CONNECTED } }),
@@ -244,7 +250,7 @@ describe("Add a domain sheet", () => {
     });
 
     it("an unsettled view from Finish connecting is polled until a newer poll result settles it", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
+      fakeClock();
       const WAITING: CfView = { ...HALF, attached: true, lastError: null, dns: "missing", ownership: "verified" };
       const { api, user } = boot(owner, {
         "POST /api/domains": activeMade,
@@ -256,6 +262,8 @@ describe("Add a domain sheet", () => {
       await done();
       await user.keyboard("f");
       await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/domains/d9/approve")).toHaveLength(1));
+      // The answer has landed (and polling started from it) once the button is gone.
+      await waitFor(() => expect(screen.queryByRole("button", { name: /Finish connecting/ })).toBeNull());
       await vi.advanceTimersByTimeAsync(5000);
       expect(polls(api)).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(20000);
@@ -284,7 +292,7 @@ describe("Add a domain sheet", () => {
   });
 
   it("polls every 5 s, one at a time, and stops when all green", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeClock();
     let n = 0;
     const { api, user } = boot(owner, {
       "POST /api/domains": () => made(OUT),
@@ -304,7 +312,7 @@ describe("Add a domain sheet", () => {
   });
 
   it("a slow poll is never stacked: the next one waits for the answer", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeClock();
     let release!: () => void;
     const { api, user } = boot(owner, {
       "POST /api/domains": () => made(OUT),
@@ -326,7 +334,7 @@ describe("Add a domain sheet", () => {
   });
 
   it("Esc closes the status view and no poll is sent after it", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeClock();
     const { api, user } = boot(owner, { "POST /api/domains": () => made(OUT), "GET /api/domains/d9/cloudflare": () => ({ body: OUT }) }, true);
     await open(user);
     await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
@@ -340,7 +348,7 @@ describe("Add a domain sheet", () => {
   });
 
   it("a hidden tab pauses polling and a visible one resumes it", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeClock();
     const { api, user } = boot(owner, { "POST /api/domains": () => made(OUT), "GET /api/domains/d9/cloudflare": () => ({ body: OUT }) }, true);
     await open(user);
     await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");

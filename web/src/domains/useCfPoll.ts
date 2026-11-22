@@ -45,6 +45,7 @@ export function useCfPoll(domainId: string | null, enabled: boolean, since: unkn
       try {
         const view = await api<CfView>("GET", `/api/domains/${encodeURIComponent(id)}/cloudflare`, undefined, ctl.signal);
         setGot({ id, view, error: null });
+        retry = !cfSettled(view); // stop here, not only once the re-render turns polling off
       } catch (e) {
         if (ctl.signal.aborted) return;
         const status = e instanceof ApiError ? e.status : 500;
