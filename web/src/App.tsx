@@ -91,7 +91,7 @@ function Shell() {
 /** R10: an owner of an instance that is not set up yet gets the first-run wizard in place of the shell; members never do. */
 const SLOW_MS = 10_000;
 function Root() {
-  const { me, instance } = useApp();
+  const { me, instance, reloadInstance } = useApp();
   const pending = me.role === "owner" && instance === undefined;
   const [slow, setSlow] = useState(false);
   useEffect(() => {
@@ -108,6 +108,15 @@ function Root() {
         <button type="button" className="btn" onClick={() => location.reload()}>Reload</button>
       </div>
     ) : null;
+  // An owner cannot tell set up from not set up without /api/instance, so neither the shell nor the wizard is safe to show.
+  if (me.role === "owner" && instance === null)
+    return (
+      <div className="gate" role="alert">
+        <img src="/linkwarren-mark.svg" alt="" />
+        <p>Could not load this instance.</p>
+        <button type="button" className="btn" onClick={() => void reloadInstance().catch(() => undefined)}>Retry</button>
+      </div>
+    );
   if (me.role === "owner" && instance?.configured === false) return <SetupWizard />;
   return <Shell />;
 }
