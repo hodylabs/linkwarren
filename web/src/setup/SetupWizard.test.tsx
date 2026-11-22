@@ -130,7 +130,7 @@ describe("setup wizard steps", () => {
 
   it("Cloudflare missing without paste shows the wrangler command", async () => {
     boot({ steps: { ...NONE, name: true }, settings: { secrets: { pasteAvailable: false, cf: "missing", resend: "secret" } } });
-    expect(await screen.findByText("npx wrangler secret put CF_API_TOKEN")).toBeTruthy();
+    expect(await screen.findByText("npx wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc")).toBeTruthy();
     expect(screen.queryByLabelText("Cloudflare API token")).toBeNull();
   });
 

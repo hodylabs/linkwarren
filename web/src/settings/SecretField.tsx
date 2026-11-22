@@ -86,7 +86,7 @@ export function SecretField({ name, status, pasteAvailable, onSaved, hint }: {
         ) : status !== "secret" ? (
           <div>
             <p className="muted hint">Pasting here needs the SECRETS_KEY Worker secret. Without it, set this as a Worker secret from the project folder:</p>
-            <code className="cmd">{`npx wrangler secret put ${env}`}</code>
+            <code className="cmd">{`npx wrangler secret put ${env} -c wrangler.instance.jsonc`}</code>
             {removeBtn && <div className="row-actions">{removeBtn}</div>}
           </div>
         ) : null}

@@ -17,7 +17,7 @@ describe("SecretField", () => {
   it("missing without pasteAvailable: the wrangler command, no input", () => {
     render(<SecretField name="resend" status="missing" pasteAvailable={false} onSaved={() => {}} />);
     expect(screen.getByText("Missing")).toBeTruthy();
-    expect(screen.getByText("npx wrangler secret put RESEND_API_KEY")).toBeTruthy();
+    expect(screen.getByText("npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc")).toBeTruthy();
     expect(screen.getByText(/Pasting here needs the SECRETS_KEY Worker secret/)).toBeTruthy();
     expect(document.querySelector("input")).toBeNull();
   });
@@ -86,7 +86,7 @@ describe("SecretField", () => {
   it("a dashboard value without pasteAvailable can still be removed, and shows the command", async () => {
     fakeApi({});
     render(<SecretField name="cf" status="dashboard" pasteAvailable={false} onSaved={() => {}} />);
-    expect(screen.getByText("npx wrangler secret put CF_API_TOKEN")).toBeTruthy();
+    expect(screen.getByText("npx wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
   });
 

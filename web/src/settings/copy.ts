@@ -25,7 +25,7 @@ const EXTRA: Record<string, string> = {
   too_large: "The logo must be at most 1024 px and 64 KB.",
   token_invalid: "Cloudflare does not accept this token. Copy the whole token and check that it is active.",
   bad_key: "That does not look like a Resend API key. It starts with re_.",
-  set_by_secret: "A Worker secret already sets this, and it always wins. Change it with npx wrangler secret put.",
+  set_by_secret: "A Worker secret already sets this, and it always wins. Change it with npx wrangler secret put <NAME> -c wrangler.instance.jsonc.",
   secrets_key_missing: "Pasting needs the SECRETS_KEY Worker secret. Set it, or set this value as a Worker secret instead.",
   email_not_configured: "Email is not set up yet. Set EMAIL_FROM and the Resend API key first.",
   too_soon: "A test email was just sent. Wait a minute before sending another.",

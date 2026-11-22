@@ -149,7 +149,7 @@ describe("Settings sections", () => {
     });
     expect(await screen.findByText(/Cloudflare is not connected/)).toBeTruthy();
     expect(screen.getByText("Missing")).toBeTruthy();
-    expect(screen.getByText("npx wrangler secret put CF_API_TOKEN")).toBeTruthy();
+    expect(screen.getByText("npx wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc")).toBeTruthy();
   });
 
   it("Data and retention shows the server's retention as rows", async () => {
