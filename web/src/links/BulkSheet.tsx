@@ -24,7 +24,7 @@ type Phase =
   | { k: "form" }
   | { k: "confirm"; op: BulkOp; text: string }
   | { k: "running"; done: number; total: number }
-  | { k: "results"; op: BulkOp; ok: number; failed: [string, string][] };
+  | { k: "results"; op: BulkOp; ok: number; failed: [string, string][]; whole: Set<string>; stop: string | null };
 
 /** One sheet per bulk action: the form, a confirm for anything that takes links offline or removes passwords, progress, results. */
 export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; links: Link[]; onRun(op: BulkOp, r: BulkRun): void; onClose(): void }) {
@@ -34,6 +34,9 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
   const [names] = useState(() => new Map(links.map((l) => [l.id, `${domains.find((d) => d.id === l.domainId)?.host ?? ""}/${l.slug}`])));
   const [phase, setPhase] = useState<Phase>({ k: "form" });
   const ctl = useRef<AbortController | null>(null);
+  // The op Retry failed sends again: the only place a typed password stays after a run starts, and only while some link failed.
+  const retryOp = useRef<BulkOp | null>(null);
+  const forwarders = mode === "delete" ? 0 : links.filter((l) => l.forwardTo).length;
 
   const [starts, setStarts] = useState<"keep" | "set" | "none">("keep");
   const [startsAt, setStartsAt] = useState("");
@@ -49,8 +52,9 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
     [domains, me],
   );
   const [target, setTarget] = useState(() => {
+    // A target that holds none of the selected links, so none of them comes back same_domain.
     const from = new Set(links.map((l) => l.domainId));
-    return (targets.find((d) => !(from.size === 1 && from.has(d.id))) ?? targets[0])?.id ?? "";
+    return (targets.find((d) => !from.has(d.id)) ?? targets[0])?.id ?? "";
   });
   const [oldAddress, setOldAddress] = useState<"forward" | "copy" | null>(null);
   const targetHost = targets.find((d) => d.id === target)?.host ?? "";
@@ -79,6 +83,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
     }
     if (mode === "password") {
       if (pwMode === "remove") return { op: { action: "password", password: null } };
+      if (password === "") return { hint: "Enter a password" };
       return pwProblem ? { hint: errorText(pwProblem) } : { op: { action: "password", password } };
     }
     if (!target) return { hint: "There is no other active domain to move to" };
@@ -100,10 +105,14 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
     const c = new AbortController();
     ctl.current = c;
     setPhase({ k: "running", done: 0, total: ids.length });
+    setPassword("");
+    retryOp.current = null;
     const r = await runBulk(op, ids, { onProgress: (done, total) => setPhase({ k: "running", done, total }), signal: c.signal });
     ctl.current = null;
     onRun(op, r);
-    setPhase({ k: "results", op, ok: r.ok.size, failed: [...r.failed] });
+    if (r.failed.size) retryOp.current = op;
+    const shown = op.action === "password" && op.password !== null ? { ...op, password: "" } : op;
+    setPhase({ k: "results", op: shown, ok: r.ok.size, failed: [...r.failed], whole: r.whole, stop: r.stop });
   };
   const submit = () => {
     if (phase.k !== "form" || !("op" in built)) return;
@@ -115,6 +124,11 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
 
   // Esc while running cancels after the request in flight; the results then show what was done.
   const close = () => (phase.k === "running" ? ctl.current?.abort() : onClose());
+  // Whole-request codes once each with their count (in the order they happened), per-link reasons as a list.
+  const perLink = phase.k === "results" ? phase.failed.filter(([id]) => !phase.whole.has(id)) : [];
+  const wholeCodes = phase.k === "results"
+    ? [...phase.failed.filter(([id]) => phase.whole.has(id)).reduce((m, [, c]) => m.set(c, (m.get(c) ?? 0) + 1), new Map<string, number>())]
+    : [];
   const reason = (op: BulkOp, code: string) => (code === "bad_window" && op.action === "schedule" && op.endNow ? "Starts later: clear its start first" : errorText(code));
 
   return (
@@ -184,11 +198,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
               <>
                 <div className="field">
                   <label>Move to</label>
-                  {targets.length ? (
-                    <Seg wrap label="Move to" value={target} onChange={setTarget} options={targets.map((d) => ({ value: d.id, label: d.host }))} />
-                  ) : (
-                    <p className="hint">There is no other active domain to move to.</p>
-                  )}
+                  {targets.length > 0 && <Seg wrap label="Move to" value={target} onChange={setTarget} options={targets.map((d) => ({ value: d.id, label: d.host }))} />}
                 </div>
                 <fieldset className="plain bk-old">
                   <legend>What happens to the old addresses?</legend>
@@ -209,7 +219,9 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
                 </fieldset>
               </>
             )}
-            {"hint" in built && mode !== "password" && <p className="hint">{built.hint}</p>}
+            {forwarders > 0 && <p className="hint">Forwarding addresses can only be deleted: {forwarders} will not change.</p>}
+            {/* The password's rule error already shows under its field. */}
+            {"hint" in built && !(mode === "password" && password !== "") && <p className="hint">{built.hint}</p>}
             <div className="actions">
               <button type="button" className="btn primary" autoFocus={mode === "delete"} disabled={!("op" in built)} onClick={submit} aria-keyshortcuts={mode === "delete" ? "Enter" : "Control+Enter"}>
                 {RUN[mode]} <span className="k">{mode === "delete" ? "Enter" : "Ctrl Enter"}</span>
@@ -240,7 +252,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
             </p>
             <progress className="bk-prog" value={phase.done} max={phase.total} aria-label="Progress" />
             <div className="actions">
-              <button type="button" className="btn" onClick={() => ctl.current?.abort()}>
+              <button type="button" className="btn" autoFocus onClick={() => ctl.current?.abort()}>
                 Cancel <kbd>Esc</kbd>
               </button>
             </div>
@@ -251,9 +263,18 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
             <p role="status">
               {phase.ok} changed, {phase.failed.length} not changed
             </p>
-            {phase.failed.length > 0 && (
+            {wholeCodes.length > 0 && (
+              <div role="alert">
+                {wholeCodes.map(([c, count]) => (
+                  <p key={c} className="err">
+                    <b>{count} not changed:</b> <span>{reason(phase.op, c)}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+            {perLink.length > 0 && (
               <ul className="bk-list" aria-label="Not changed">
-                {phase.failed.slice(0, SHOWN_FAILURES).map(([id, c]) => (
+                {perLink.slice(0, SHOWN_FAILURES).map(([id, c]) => (
                   <li key={id}>
                     <span className="mchip">{names.get(id) ?? id}</span>
                     <span>{reason(phase.op, c)}</span>
@@ -261,10 +282,10 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
                 ))}
               </ul>
             )}
-            {phase.failed.length > SHOWN_FAILURES && <p className="hint">and {phase.failed.length - SHOWN_FAILURES} more</p>}
+            {perLink.length > SHOWN_FAILURES && <p className="hint">and {perLink.length - SHOWN_FAILURES} more</p>}
             <div className="actions">
               {phase.failed.length > 0 && (
-                <button type="button" className="btn primary" autoFocus onClick={() => void go(phase.op, phase.failed.map(([id]) => id))}>
+                <button type="button" className="btn primary" autoFocus onClick={() => retryOp.current && void go(retryOp.current, phase.failed.map(([id]) => id))}>
                   Retry failed <span className="k">Enter</span>
                 </button>
               )}

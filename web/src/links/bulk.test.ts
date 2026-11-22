@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Link } from "../api";
 import { fakeApi, type FakeReq } from "../test/fakeApi";
-import { CHUNK, runBulk, shortUrls, toCsv } from "./bulk";
+import { CHUNK, csvName, downloadCsv, runBulk, shortUrls, toCsv } from "./bulk";
 
 const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
   id, domainId: "d1", slug, slugKey: slug, url: `https://example.com/${slug}`, redirectCode: 302, startsAt: null, expiresAt: null,
@@ -50,6 +50,8 @@ describe("runBulk", () => {
     expect(api.calls).toHaveLength(1);
     expect(r.ok.size).toBe(100);
     expect(r.failed.get("l120")).toBe("not_run");
+    expect(r.stop).toBe("not_run");
+    expect(r.whole.has("l120")).toBe(true);
   });
 
   it("a 429 on chunk 2 marks only its ids with the code and sends nothing after it", async () => {
@@ -61,6 +63,25 @@ describe("runBulk", () => {
     expect(r.failed.get("l150")).toBe("rate_limited");
     expect([...r.failed.values()].filter((c) => c === "rate_limited")).toHaveLength(100);
     expect(r.failed.get("l220")).toBe("not_run");
+    expect(r.stop).toBe("rate_limited");
+    expect(r.whole.size).toBe(150);
+    expect(r.whole.has("l50")).toBe(false);
+  });
+
+  it("per-link refusals are not whole-request failures", async () => {
+    fakeApi({ "POST /api/links/bulk": () => ({ body: { results: [{ id: "a", ok: false, error: "taken" }], pending: [] } }) });
+    const r = await runBulk({ action: "delete" }, ["a"], { onProgress: () => undefined, signal: new AbortController().signal });
+    expect(r.whole.size).toBe(0);
+    expect(r.stop).toBeNull();
+  });
+
+  it("a dropped connection stops the run with lost_connection", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const r = await runBulk({ action: "delete" }, ["a", "b"], { onProgress: () => undefined, signal: new AbortController().signal });
+    expect(r.stop).toBe("lost_connection");
+    expect(r.failed.get("a")).toBe("lost_connection");
   });
 
   it("a 409 conflict marks its chunk and carries on with the next", async () => {
@@ -105,6 +126,29 @@ describe("shortUrls and toCsv", () => {
     expect(csv).toContain("https://go.test/-1,'@x,go.test,'-1,");
     expect(csv).toContain(",https://b.test/old,You,");
     expect(csv.endsWith("\r\n")).toBe(true);
+  });
+
+  it("guards a formula after leading whitespace, leaves forwards_to empty for a normal link, and never builds https:///slug", () => {
+    const csv = toCsv([mk("a", "x", { url: " =1+1" }), mk("b", "y", { domainId: "gone" })], (id) => (id === "d1" ? "go.test" : ""), () => "You");
+    const [, a, b] = csv.slice(1).split("\r\n");
+    expect(a).toContain(",' =1+1,");
+    expect(a!.split(",")[11]).toBe(""); // forwards_to
+    expect(b!.startsWith(",https://example.com/y,,y,")).toBe(true);
+    expect(csv).not.toContain("https:///");
+  });
+
+  it("downloadCsv saves through an object URL it then revokes, under a dated name", async () => {
+    const create = vi.fn(() => "blob:x"), revoke = vi.fn();
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    downloadCsv("a,b\r\n", "f.csv");
+    expect(create).toHaveBeenCalledOnce();
+    expect(click).toHaveBeenCalledOnce();
+    expect(document.querySelector("a[download]")).toBeNull();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(revoke).toHaveBeenCalledWith("blob:x");
+    expect(csvName(new Date("2026-11-22T10:00:00Z"))).toBe("linkwarren-links-2026-11-22.csv");
+    click.mockRestore();
   });
 
   it("guards tab and CR at the start of a cell", () => {

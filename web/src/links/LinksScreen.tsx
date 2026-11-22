@@ -264,6 +264,9 @@ export function LinksScreen() {
     const loadedIds = new Set(left.map((l) => l.id));
     setPicked({ ids: new Set([...r.failed.keys()].filter((id) => loadedIds.has(id))), anchor: null });
     app.reloadDomains().catch(() => undefined); // link counts
+    // A move adds rows the list does not hold (copies, forwarders) or takes them out of this scope; a dropped connection leaves
+    // the outcome unknown. Reload the current scope; the reload keeps the selection to loaded ids.
+    if ((op.action === "move" && r.ok.size > 0) || r.stop === "lost_connection") app.bumpLinks();
     app.announce(`${plural(r.ok.size, "link")} changed, ${r.failed.size} not changed`);
   };
 
@@ -366,7 +369,7 @@ export function LinksScreen() {
         <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />
       </ScreenHeader>
       {picking && !open && (
-        <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l) || l.forwardTo).length} onAction={onAction} onClear={clearPick} />
+        <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l)).length} onAction={onAction} onClear={clearPick} />
       )}
       <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className={`list${picking ? " picking" : ""}`} aria-label="Links">

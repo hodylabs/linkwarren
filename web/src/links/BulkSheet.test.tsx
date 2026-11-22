@@ -11,7 +11,7 @@ const dom = (id: string, host: string, o: Partial<Domain> = {}): Domain => ({
   id, host, type: "shared", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 1, isMember: false, ...o,
 });
-const D1 = dom("d1", "go.test", { type: "main" }), D2 = dom("d2", "b.test"), D3 = dom("d3", "c.test", { status: "pending" });
+const D1 = dom("d1", "go.test", { type: "main" }), D2 = dom("d2", "b.test"), D3 = dom("d3", "c.test", { status: "pending" }), D4 = dom("d4", "e.test");
 const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
   id, domainId: "d1", slug, slugKey: slug, url: `https://example.com/${slug}`, redirectCode: 302, startsAt: null, expiresAt: null,
   passQuery: true, hasPassword: false, routes: [], forwardTo: null, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
@@ -19,13 +19,13 @@ const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
 const L = [mk("l1", "spring"), mk("l2", "menu"), mk("l3", "app")];
 const okAll = (req: FakeReq): FakeRes => ({ body: { results: (req.body as { ids: string[] }).ids.map((id) => ({ id, ok: true })), pending: [] } });
 
-function boot(o: { items?: Link[]; bulk?: (req: FakeReq) => FakeRes | Promise<FakeRes> } = {}) {
+function boot(o: { items?: Link[]; page?: () => FakeRes; bulk?: (req: FakeReq) => FakeRes | Promise<FakeRes> } = {}) {
   history.replaceState(null, "", "/links");
   const api = fakeApi({
     "GET /api/me": () => ({ body: owner }),
-    "GET /api/domains": () => ({ body: [D1, D2, D3] }),
+    "GET /api/domains": () => ({ body: [D1, D2, D3, D4] }),
     "GET /api/users": () => ({ body: { items: [] } }),
-    "GET /api/links": () => ({ body: { items: o.items ?? L, next: null } }),
+    "GET /api/links": o.page ?? (() => ({ body: { items: o.items ?? L, next: null } })),
     "POST /api/links/bulk": o.bulk ?? okAll,
   });
   const user = userEvent.setup();
@@ -134,7 +134,10 @@ describe("bulk move", () => {
     await user.keyboard("m");
     await user.click(screen.getByRole("radio", { name: /^Keep them working/ }));
     await user.keyboard("{Control>}{Enter}{/Control}");
-    await waitFor(() => expect(screen.getAllByText(errorText("target_not_active")).length).toBeGreaterThan(0));
+    const sheet = await screen.findByRole("dialog", { name: "Move links" });
+    await waitFor(() => expect(within(sheet).getAllByText(errorText("target_not_active"))).toHaveLength(1));
+    expect(within(sheet).queryByRole("listitem")).toBeNull();
+    expect(within(sheet).getByRole("button", { name: /^Retry failed/ })).toBeTruthy();
     expect(errorText("target_not_active")).toBe("Pick a domain that is active. Links cannot move to a domain that is waiting for approval or turned off.");
   });
 });
@@ -156,10 +159,15 @@ describe("forwarder rows", () => {
     await waitFor(() => expect(location.search).toContain("q=old"));
   });
 
-  it("count as cannot change in a selection", async () => {
+  it("can be deleted, so the bar does not count them, but the edit sheets say they will not change", async () => {
     const { user } = boot({ items: [fwd, L[0]!] });
     await selectAll(user);
-    expect(within(bar()!).getByText("1 you cannot change")).toBeTruthy();
+    expect(within(bar()!).queryByText(/you cannot change/)).toBeNull();
+    await user.keyboard("s");
+    expect(screen.getByText("Forwarding addresses can only be deleted: 1 will not change.")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await user.keyboard("{Shift>}D{/Shift}");
+    expect(screen.queryByText(/Forwarding addresses can only be deleted/)).toBeNull();
   });
 });
 
@@ -181,7 +189,9 @@ describe("bulk redirect and password", () => {
     await user.keyboard("p");
     const sheet = screen.getByRole("dialog", { name: "Password" });
     expect(within(sheet).getByText("Each link gets its own hash, so setting one takes a moment per link.")).toBeTruthy();
+    expect(within(sheet).getByText("Enter a password")).toBeTruthy();
     await user.type(within(sheet).getByLabelText("New password"), "short");
+    expect(within(sheet).queryByText("Enter a password")).toBeNull();
     expect(within(sheet).getByText(errorText("password_short"))).toBeTruthy();
     await user.keyboard("{Control>}{Enter}{/Control}");
     expect(posts(api)).toHaveLength(0);
@@ -215,7 +225,100 @@ describe("bulk redirect and password", () => {
   });
 });
 
+describe("bulk move reload and targets", () => {
+  it("a successful copy reloads the list and the new link shows", async () => {
+    let n = 0;
+    const copyRow = mk("c1", "spring", { domainId: "d2" });
+    const { api, user } = boot({ page: () => ({ body: { items: ++n === 1 ? L : [...L, copyRow], next: null } }) });
+    await selectAll(user);
+    await user.keyboard("m");
+    await user.click(screen.getByRole("radio", { name: /^Keep a copy on both domains/ }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "GET" && c.path.startsWith("/api/links?") || c.path === "/api/links").length).toBe(2));
+    await user.click(screen.getByRole("button", { name: /^Done/ }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select b.test/spring" })).toBeTruthy());
+  });
+
+  it("the default target is never one of the source domains", async () => {
+    const { user } = boot({ items: [L[0]!, mk("l9", "other", { domainId: "d2" })] });
+    await selectAll(user);
+    await user.keyboard("m");
+    expect(screen.getByRole("radio", { name: "e.test" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
 describe("bulk results", () => {
+  it("a 429 on chunk 2 of 250 shows its text once, and Retry failed resends the 150 ids", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => mk(`m${i}`, `s${i}`));
+    let n = 0;
+    const { api, user } = boot({ items: many, bulk: (req) => (++n === 2 ? { status: 429, body: { error: "rate_limited" } } : okAll(req)) });
+    await selectAll(user);
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}");
+    const sheet = await screen.findByRole("dialog", { name: "Delete links" });
+    await waitFor(() => expect(within(sheet).getByText("100 changed, 150 not changed")).toBeTruthy());
+    expect(within(sheet).getAllByText(errorText("rate_limited"))).toHaveLength(1);
+    expect(within(sheet).queryByRole("listitem")).toBeNull();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(posts(api)).toHaveLength(4));
+    expect((posts(api)[2] as { ids: string[] }).ids[0]).toBe("m100");
+    expect(posts(api).slice(2).flatMap((b) => (b as { ids: string[] }).ids)).toHaveLength(150);
+  });
+
+  it("a dropped connection says to reload and check, not signed out", async () => {
+    const { user } = boot({ bulk: () => { throw new TypeError("Failed to fetch"); } });
+    await selectAll(user);
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}");
+    const sheet = await screen.findByRole("dialog", { name: "Delete links" });
+    await waitFor(() => expect(within(sheet).getByText("Lost the connection. Some links may have changed: reload to check.")).toBeTruthy());
+  });
+
+  it("Esc while running focuses nothing new, cancels after the request in flight and lists the rest once as not run", async () => {
+    const many = Array.from({ length: 150 }, (_, i) => mk(`m${i}`, `s${i}`));
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const { api, user } = boot({ items: many, bulk: async (req) => (await gate, okAll(req)) });
+    await selectAll(user);
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}");
+    const sheet = await screen.findByRole("dialog", { name: "Delete links" });
+    await waitFor(() => expect(within(sheet).getByText("Working, 0 of 150")).toBeTruthy());
+    expect(document.activeElement?.textContent).toMatch(/^Cancel/);
+    await user.keyboard("{Escape}");
+    release!();
+    await waitFor(() => expect(within(sheet).getByText("100 changed, 50 not changed")).toBeTruthy());
+    expect(posts(api)).toHaveLength(1);
+    expect(within(sheet).getAllByText(errorText("not_run"))).toHaveLength(1);
+  });
+
+  it("500 selected links run as 5 sequential requests with progress, and the failed ones stay selected", async () => {
+    const many = Array.from({ length: 500 }, (_, i) => mk(`m${i}`, `s${i}`));
+    let inFlight = 0, maxInFlight = 0;
+    const { api, user } = boot({
+      items: many,
+      bulk: async (req) => {
+        maxInFlight = Math.max(maxInFlight, ++inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        const ids = (req.body as { ids: string[] }).ids;
+        return { body: { results: ids.map((id, i) => (i === 0 ? { id, ok: false, error: "conflict" } : { id, ok: true })), pending: [] } };
+      },
+    });
+    await selectAll(user);
+    await user.keyboard("r");
+    await user.click(screen.getByRole("radio", { name: "302" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    const sheet = await screen.findByRole("dialog", { name: "Redirect type" });
+    await waitFor(() => expect(within(sheet).getByText(/^Working, \d+ of 500$/)).toBeTruthy());
+    await waitFor(() => expect(within(sheet).getByText("495 changed, 5 not changed")).toBeTruthy(), { timeout: 5000 });
+    expect(posts(api).map((b) => (b as { ids: string[] }).ids.length)).toEqual([100, 100, 100, 100, 100]);
+    expect(maxInFlight).toBe(1);
+    expect(within(sheet).getAllByRole("listitem")).toHaveLength(5);
+    await user.click(within(sheet).getByRole("button", { name: /^Done/ }));
+    expect(within(bar()!).getByText("5 selected")).toBeTruthy();
+  });
+
   const many = Array.from({ length: 60 }, (_, i) => mk(`m${i}`, `s${i}`));
   it("list per-link reasons, cap at 50 rows with the rest counted, Retry failed resends only the failed ids, and they stay selected", async () => {
     let n = 0;

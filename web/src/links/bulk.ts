@@ -4,16 +4,22 @@ import { shortUrl } from "./linkView";
 /** Ids per request: the server's cap (BULK_MAX). */
 export const CHUNK = 100;
 
-type Run = { ok: Map<string, Link | null>; failed: Map<string, string> };
+/**
+ * `whole`: failed ids that carry a whole-request code (an error answer for the request, or `not_run`) rather than their own
+ * reason, so the sheet shows that code once. `stop`: the code that ended the run, or the last whole-request code, else null.
+ */
+type Run = { ok: Map<string, Link | null>; failed: Map<string, string>; whole: Set<string>; stop: string | null };
 
 /**
  * Sends `ids` in sequential requests of up to CHUNK. A password set comes back with `pending` ids (one hash per request) and
  * is sent again until none are left, or until a request makes no progress (the rest then fail `pending`). A whole-request
  * error marks that request's ids with its code; only `conflict` goes on with the next chunk. Abort stops after the request in
- * flight. Ids never sent fail `not_run`, so every id ends in `ok` or `failed`.
+ * flight. Ids never sent fail `not_run`, so every id ends in `ok` or `failed`. A dropped connection is `lost_connection`: the
+ * request may have been applied, so the caller reloads.
  */
 export async function runBulk(body: BulkOp, ids: string[], o: { onProgress(done: number, total: number): void; signal: AbortSignal }): Promise<Run> {
-  const ok = new Map<string, Link | null>(), failed = new Map<string, string>();
+  const ok = new Map<string, Link | null>(), failed = new Map<string, string>(), whole = new Set<string>();
+  let stop: string | null = null;
   const total = ids.length;
   const report = () => o.onProgress(ok.size + failed.size, total);
   let stopped = false;
@@ -25,8 +31,10 @@ export async function runBulk(body: BulkOp, ids: string[], o: { onProgress(done:
         // No signal on the request itself: one that reached the server finishes, so its results are known.
         res = await api<BulkResponse>("POST", "/api/links/bulk", { ...body, ids: chunk });
       } catch (e) {
-        const code = e instanceof ApiError ? e.code : "network";
-        for (const id of chunk) failed.set(id, code);
+        const raw = e instanceof ApiError ? e.code : "network";
+        const code = raw === "network" ? "lost_connection" : raw;
+        for (const id of chunk) (failed.set(id, code), whole.add(id));
+        stop = code;
         if (code !== "conflict") stopped = true;
         report();
         break;
@@ -42,8 +50,13 @@ export async function runBulk(body: BulkOp, ids: string[], o: { onProgress(done:
     }
     if (o.signal.aborted) break;
   }
-  for (const id of ids) if (!ok.has(id) && !failed.has(id)) failed.set(id, "not_run");
-  return { ok, failed };
+  for (const id of ids) {
+    if (ok.has(id) || failed.has(id)) continue;
+    failed.set(id, "not_run");
+    whole.add(id);
+    if (!stopped) stop = "not_run"; // cancelled: nothing else ended the run
+  }
+  return { ok, failed, whole, stop };
 }
 
 /** One short URL per line; links whose domain is unknown are left out. */
@@ -53,9 +66,9 @@ export function shortUrls(links: Link[], host: (domainId: string) => string): st
 
 const COLUMNS = ["short_url", "destination", "domain", "slug", "status", "redirect_code", "pass_query", "has_password", "starts_at", "expires_at", "routes", "forwards_to", "created_by", "created_at"];
 
-/** Formula guard (a leading = + - @ tab or CR gets a quote), then RFC 4180 quoting. */
+/** Formula guard (= + - @ after optional leading whitespace, or a leading tab or CR, gets a quote), then RFC 4180 quoting. */
 function cell(v: string): string {
-  const s = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  const s = /^\s*[=+\-@]|^[\t\r]/.test(v) ? `'${v}` : v;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 const iso = (sec: number | null) => (sec === null ? "" : new Date(sec * 1000).toISOString());
@@ -71,10 +84,10 @@ function status(l: Link, now: number): string {
 export function toCsv(links: Link[], host: (domainId: string) => string, people: (userId: string) => string): string {
   const now = Math.floor(Date.now() / 1000);
   const rows = links.map((l) => [
-    shortUrl(host(l.domainId), l.slug), l.url, host(l.domainId), l.slug, status(l, now), String(l.redirectCode), String(l.passQuery), String(l.hasPassword),
+    host(l.domainId) ? shortUrl(host(l.domainId), l.slug) : "", l.url, host(l.domainId), l.slug, status(l, now), String(l.redirectCode), String(l.passQuery), String(l.hasPassword),
     iso(l.startsAt), iso(l.expiresAt), l.routes.length ? JSON.stringify(l.routes) : "", l.forwardTo ? l.url : "", people(l.createdBy), iso(l.createdAt),
   ]);
-  return "﻿" + [COLUMNS, ...rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
+  return "\uFEFF" + [COLUMNS, ...rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
 }
 
 /** Saves `text` as a file through a Blob URL (no data: URL, nothing inline: the CSP stays strict). */

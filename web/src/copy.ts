@@ -64,6 +64,7 @@ const ERRORS: Record<string, string> = {
   pending: "The password was not set yet. Retry to continue.",
   rate_limited: "Too many requests. Wait a minute and try again.",
   unavailable: "linkwarren could not answer right now. Try again in a minute.",
+  lost_connection: "Lost the connection. Some links may have changed: reload to check.",
   not_run: "Not changed: the run stopped before this link.",
   bad_cursor: "That page of results expired. Reload the list.",
   invalid_body: "The request was not understood. Reload and try again.",
