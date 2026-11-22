@@ -286,6 +286,8 @@ export function LinksScreen() {
     const t = window.setTimeout(() => {
       press.current = null;
       pressed.current = true;
+      // Rows stay text-selectable outside selection mode (copying a destination): drop any text the hold selected.
+      window.getSelection()?.removeAllRanges();
       const s = latest.current.picked;
       if (!s.ids.has(id)) pick(toggle(s, id));
     }, LONG_PRESS_MS);

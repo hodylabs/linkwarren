@@ -984,8 +984,11 @@ describe("Links selection", () => {
       expect(boxes()).toHaveLength(0);
       // a still 500 ms press starts selection mode with that row, and its own click is swallowed
       expect(fireEvent.contextMenu(rows()[0]!)).toBe(false);
+      // rows stay text-selectable outside selection mode, so the press clears any text selection it began
+      const clear = vi.spyOn(Selection.prototype, "removeAllRanges");
       fireEvent.pointerDown(rows()[0]!, { clientX: 10, clientY: 10 });
       act(() => void vi.advanceTimersByTime(500));
+      expect(clear).toHaveBeenCalled();
       fireEvent.pointerUp(rows()[0]!);
       fireEvent.click(rows()[0]!);
       vi.useRealTimers();
