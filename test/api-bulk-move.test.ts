@@ -398,15 +398,15 @@ describe("fix round 1", () => {
     // Each r<i> lives on b.test, came from a.test (its forwarder there is reclaimed) and earlier from go.test (repointed).
     await run(`${s100} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
       SELECT 'r' || i, 'db', 'r' || i, 'r' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
-    await ins(`${s100} SELECT 'fa' || i, 'da', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
-    await ins(`${s100} SELECT 'fm' || i, 'dm', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
+    await ins(`${s100} SELECT 'm2fa' || i, 'da', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
+    await ins(`${s100} SELECT 'm2fm' || i, 'dm', 'r' || i, 'r' || i, 'https://b.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
     const ids = Array.from({ length: 100 }, (_, i) => `r${i}`);
     const m = meter();
     let r;
     try { r = await answer(await move("owner", ids, "da", "forward")); } finally { m.restore(); }
     expect(r.results.every((x) => x.ok)).toBe(true);
-    expect(await count("links WHERE id LIKE 'fa%'")).toBe(0);
-    expect(await count("links WHERE id LIKE 'fm%' AND url LIKE 'https://a.test/r%'")).toBe(100);
+    expect(await count("links WHERE id LIKE 'm2fa%'")).toBe(0);
+    expect(await count("links WHERE id LIKE 'm2fm%' AND url LIKE 'https://a.test/r%'")).toBe(100);
     expect(await count("links WHERE domain_id = 'db' AND forward_to IS NOT NULL")).toBe(100);
     console.log(`bulk move forward x100 with reclaim and repoint: rows_read ${m.rows}`);
     // Measures 3306: link read 200, domains 6, target checks 599 (two forwarders counted per link), reclaim DELETE 700,
