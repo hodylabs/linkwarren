@@ -306,6 +306,28 @@ describe("syncDomain account: wildcards and delegations (I1)", () => {
     await expect(syncDomain(e, cfg, d, cf, { attach: true, confirmTakeover: true })).rejects.toMatchObject({ code: "dns_not_proxied" });
     expect(writes(fake.calls)).toEqual([]);
   });
+  it("a wildcard two labels up covers a deeper host (no closer name exists)", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push(wild(true));
+    const { d, cf } = await mk("a.b.owned.test", "account", { zone_id: "zo" });
+    await expect(syncDomain(e, cfg, d, cf, { attach: true })).rejects.toMatchObject({ code: "dns_record_exists" });
+    expect(writes(fake.calls)).toEqual([]);
+  });
+  it("the closest wildcard wins", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push(wild(false), { id: "rec-wb", zoneId: "zo", type: "A", name: "*.b.owned.test", content: "192.0.2.8", proxied: true, comment: null });
+    const { d, cf } = await mk("a.b.owned.test", "account", { zone_id: "zo" });
+    const r = await syncDomain(e, cfg, d, cf, { attach: true, confirmTakeover: true });
+    expect(writes(fake.calls).map((c) => c.method + " " + c.path)).toEqual(["POST /zones/zo/workers/routes"]);
+    expect(r.dns).toBe("found");
+  });
+  it("an NS record at an ancestor label (delegated subzone) is refused even with confirmTakeover, zero writes", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push({ id: "rec-ns", zoneId: "zo", type: "NS", name: "b.owned.test", content: "ns1.elsewhere.test", proxied: false, comment: null });
+    const { d, cf } = await mk("a.b.owned.test", "account", { zone_id: "zo" });
+    await expect(syncDomain(e, cfg, d, cf, { attach: true, confirmTakeover: true })).rejects.toMatchObject({ code: "dns_not_proxied" });
+    expect(writes(fake.calls)).toEqual([]);
+  });
   it("the apex has no parent wildcard to look up", async () => {
     const fake = installFakeCloudflare({ zones });
     const { d, cf } = await mk("owned.test", "account", { zone_id: "zo" });

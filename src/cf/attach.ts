@@ -84,11 +84,17 @@ async function syncAccount(cfg: CfConfig, host: string, cf: CfRow, opts: { attac
   const pattern = `${host}/*`;
   const atHost = await listDns(cfg, zoneId, host);
   const records = atHost.filter((r) => ADDRESS.has(r.type));
-  const delegated = atHost.some((r) => r.type === "NS");
-  // A wildcard one label up answers for the host when nothing exists at the host itself.
-  const parent = host.slice(host.indexOf(".") + 1);
-  const inZone = host !== z.name && (parent === z.name || parent.endsWith("." + z.name));
-  const wild = inZone ? (await listDns(cfg, zoneId, `*.${parent}`)).filter((r) => ADDRESS.has(r.type)) : [];
+  // Ancestors inside the zone, closest first, ending at the apex: a.b.owned.test -> b.owned.test, owned.test.
+  const ancestors: string[] = [];
+  for (let p = host; p !== z.name && p.endsWith("." + z.name); ancestors.push(p)) p = p.slice(p.indexOf(".") + 1);
+  // shortcut: the closest wildcard counts even when a closer non-wildcard name exists (DNS would not use it then); errs toward asking.
+  const [wilds, mids] = await Promise.all([
+    Promise.all(ancestors.map((p) => listDns(cfg, zoneId, `*.${p}`))),
+    Promise.all(ancestors.slice(0, -1).map((p) => listDns(cfg, zoneId, p))), // NS at the apex is the zone's own
+  ]);
+  const wild = wilds.map((l) => l.filter((r) => ADDRESS.has(r.type))).find((l) => l.length) ?? [];
+  // NS at the host or any label below the apex delegates the name to other nameservers.
+  const delegated = [atHost, ...mids].some((l) => l.some((r) => r.type === "NS"));
   const covering = records.length ? records : wild;
   const routes = await listRoutes(cfg, zoneId);
   const route = routes.find((r) => r.pattern === pattern) ?? null;
