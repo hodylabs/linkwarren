@@ -24,11 +24,14 @@ const CALLBACKS: readonly string[] = [
   "https://claude.ai/api/mcp/auth_callback",
   "https://claude.com/api/mcp/auth_callback",
   "https://chatgpt.com/connector_platform_oauth_redirect",
+  "https://vertexaisearch.cloud.google.com/oauth-redirect", // Gemini Enterprise
+  "https://antigravity.google/oauth-callback", // Google Antigravity
 ];
-// /callback, or /callback/<id> as Codex sends it (one segment of the id alphabet: no dots, slashes or escapes).
-const LOOPBACK_CALLBACK = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9]\d{0,4})\/callback(?:\/[A-Za-z0-9_-]{1,64})?$/;
+// /callback, /callback/<id> as Codex sends it (one segment of the id alphabet: no dots, slashes or escapes), or
+// /oauth/callback (Gemini CLI).
+const LOOPBACK_CALLBACK = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9]\d{0,4})\/(?:callback(?:\/[A-Za-z0-9_-]{1,64})?|oauth\/callback)$/;
 
-/** The only redirect URIs a client may register: one of CALLBACKS exactly, or a loopback /callback[/<id>] on port 1-65535. */
+/** The only redirect URIs a client may register: one of CALLBACKS exactly, or a loopback callback path on port 1-65535. */
 export function allowedRedirect(u: unknown): boolean {
   if (typeof u !== "string") return false;
   if (CALLBACKS.includes(u)) return true;
@@ -37,10 +40,19 @@ export function allowedRedirect(u: unknown): boolean {
 }
 
 /** Runs before the library stores the client, so a refusal writes nothing to KV. RFC 7591 error shape, 400. */
+/** One log line for a refused redirect, so a live attempt by an unlisted client shows what to allow: origin and path only. */
+export function logRefused(u: unknown): void {
+  const raw = typeof u === "string" ? u.replace(/[\p{Cc}\p{Cf}]/gu, "") : "";
+  const p = URL.parse(raw);
+  console.error(`redirect refused origin=${p ? `${p.protocol}//${p.host}` : "invalid"} path=${p?.pathname ?? ""}`.slice(0, 200));
+}
+
 const checkRegistration = ({ clientMetadata }: { clientMetadata: Record<string, unknown> }) => {
   const uris = clientMetadata.redirect_uris;
-  if (!Array.isArray(uris) || uris.length === 0 || !uris.every(allowedRedirect))
-    return { code: "invalid_redirect_uri", description: `Only ${CALLBACKS.join(", ")} and http://localhost|127.0.0.1:<port>/callback[/<id>] are accepted` };
+  const bad = Array.isArray(uris) ? uris.find((u) => !allowedRedirect(u)) : undefined;
+  if (bad !== undefined) logRefused(bad);
+  if (!Array.isArray(uris) || uris.length === 0 || bad !== undefined)
+    return { code: "invalid_redirect_uri", description: `Only ${CALLBACKS.join(", ")} and http://localhost|127.0.0.1:<port>/callback[/<id>] or /oauth/callback are accepted` };
 };
 
 /**

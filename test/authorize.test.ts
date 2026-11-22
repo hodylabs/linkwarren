@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanClientName } from "../src/mcp/authorize";
 import { setupAccess, tokenFor } from "./helpers/access";
@@ -371,6 +371,10 @@ describe("final fix wave", () => {
     const to = new URL(r.headers.get("location")!);
     expect(to.searchParams.get("code")).toBeTruthy();
     expect(to.searchParams.get("iss")).toBe("https://dash.test");
+    // Equal to the metadata issuer exactly, URL-encoded in the query.
+    const meta = await (await exports.default.fetch("https://dash.test/.well-known/oauth-authorization-server")).json<{ issuer: string }>();
+    expect(to.searchParams.get("iss")).toBe(meta.issuer);
+    expect(r.headers.get("location")).toContain(`iss=${encodeURIComponent(meta.issuer)}`);
   });
 
   it("keeps errors local when the client or its redirect is not validated", async () => {

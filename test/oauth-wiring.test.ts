@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
-import { OAUTH_PATHS } from "../src/oauth";
+import { logRefused, OAUTH_PATHS } from "../src/oauth";
 
 const DASH = "https://dash.test";
 const SHORT = "https://short.test";
@@ -144,10 +144,10 @@ describe("oauth front door on the dashboard host", () => {
     expect(keys.sort()).toEqual(["api:day", "api:ud:u1", "reg:day"]);
   });
 
-  it("accepts only the Claude and ChatGPT callbacks and loopback /callback redirect URIs at registration", async () => {
+  it("accepts only the Claude, ChatGPT and Google callbacks and loopback /callback redirect URIs at registration", async () => {
     let n = 0;
     const ip = () => `10.${++n}.0.1`; // a fresh IP range each, so the per-range limit never interferes
-    for (const ok of [[CLAUDE_CB], ["https://claude.com/api/mcp/auth_callback"], ["https://chatgpt.com/connector_platform_oauth_redirect"], ["http://localhost:33418/callback"], ["http://localhost:1455/callback/AbC123_-xyz0"], ["http://127.0.0.1:1455/callback/AbC123_-xyz0"], [`http://127.0.0.1:2/callback/${"a".repeat(64)}`], ["http://127.0.0.1:1/callback", "http://localhost:65535/callback"]])
+    for (const ok of [[CLAUDE_CB], ["https://claude.com/api/mcp/auth_callback"], ["https://chatgpt.com/connector_platform_oauth_redirect"], ["https://vertexaisearch.cloud.google.com/oauth-redirect"], ["https://antigravity.google/oauth-callback"], ["http://localhost:7777/oauth/callback"], ["http://127.0.0.1:65535/oauth/callback"], ["http://localhost:33418/callback"], ["http://localhost:1455/callback/AbC123_-xyz0"], ["http://127.0.0.1:1455/callback/AbC123_-xyz0"], [`http://127.0.0.1:2/callback/${"a".repeat(64)}`], ["http://127.0.0.1:1/callback", "http://localhost:65535/callback"]])
       expect([ok, (await register(ip(), ok)).status]).toEqual([ok, 201]);
     const kvBefore = (await env.OAUTH_KV.list()).keys.length;
     for (const bad of [
@@ -179,12 +179,22 @@ describe("oauth front door on the dashboard host", () => {
       `http://localhost:8080/callback/${"a".repeat(65)}`,
       "http://localhost:8080/callback/abc?x=1",
       "http://localhost:8080/callbackx",
+      "https://vertexaisearch.cloud.google.com.evil.example/oauth-redirect",
+      "http://vertexaisearch.cloud.google.com/oauth-redirect",
+      "https://vertexaisearch.cloud.google.com/oauth-redirect/",
+      "http://antigravity.google/oauth-callback",
+      "https://antigravity.google.evil.example/oauth-callback",
+      "http://localhost:8080/oauth/callback/x",
+      "http://localhost:8080/oauth/callback/",
+      "https://localhost:8080/oauth/callback",
+      "http://localhost/oauth/callback",
       "http://localhost.evil.example:8080/callback",
       "http://user@localhost:8080/callback",
       "https://localhost:8080/callback",
       "http://[::1]:8080/callback",
       "http://127.0.0.2:8080/callback",
     ]) {
+      await env.DB.prepare("DELETE FROM auth_limits").run(); // this test is about the allowlist, not the reg:day cap
       const res = await register(ip(), [CLAUDE_CB, bad]);
       expect([bad, res.status]).toEqual([bad, 400]);
       // The library refuses a fragment, userinfo or an out-of-range port itself, before the callback, with its own RFC 7591 code.
@@ -193,6 +203,24 @@ describe("oauth front door on the dashboard host", () => {
     }
     for (const bad of ["x", [], [42], null]) expect((await register(ip(), bad)).status).toBe(400);
     expect((await env.OAUTH_KV.list()).keys.length).toBe(kvBefore); // refused registrations write nothing
+  });
+
+  it("logs one line for a refused redirect: origin and path only, no query, client name or secrets", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await register("10.210.0.1", [CLAUDE_CB, "https://gemini.example:8443/cb/" + "p".repeat(300) + "?code=secret1"]);
+    expect(res.status).toBe(400);
+    const lines = err.mock.calls.map((c) => c.join(" ")).filter((l) => l.startsWith("redirect refused"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.startsWith("redirect refused origin=https://gemini.example:8443 path=/cb/ppp")).toBe(true);
+    expect(lines[0]!.length).toBe(200);
+    expect(lines[0]).not.toMatch(/secret1|Test client/);
+  });
+
+  it("strips control and format characters from the refusal line", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    logRefused("https://x.example/a\u0007b\u202ec\n?q=1");
+    logRefused(42);
+    expect(err.mock.calls.map((c) => c.join(" "))).toEqual(["redirect refused origin=https://x.example path=/abc", "redirect refused origin=invalid path="]);
   });
 
   it("refuses an authorization request whose redirect_uri the client did not register", async () => {
