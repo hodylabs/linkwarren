@@ -72,21 +72,27 @@ signin.post("/email", async (c) => {
   const canReceive = row.status === "active" || row.status === "invited" ||
     (!row.any_user && b.email.toLowerCase() === (env.OWNER_EMAIL ?? "").trim().toLowerCase());
 
-  if (canReceive) {
-    // R14: the instance cap answers the same 202, so it never tells which addresses can sign in.
-    if (!(await hit(env, limitKey.inst, LIMITS.instance))) {
-      console.warn("email_cap");
-    } else {
-      const secret = newSecret();
-      await env.DB.prepare("INSERT INTO login_tokens (token_hash, email, next, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
-        .bind(await sha256Hex(secret), b.email, safeNext(b.next, origin(env)), now, now + TOKEN_TTL).run();
-      // R4: the token rides in the fragment. R5: sent after the response, so timing does not depend on the mail.
-      const host = normalizeHost(env.DASHBOARD_HOST);
-      c.executionCtx.waitUntil(sendEmail(env, { to: b.email, ...signInEmail({ host, url: `${origin(env)}/sign-in#token=${secret}` }) }));
-    }
-  }
+  // R5: every write that only a receiving address needs runs after the response, so the response path does the same
+  // D1 work for every address. R14: the instance cap still answers the same 202 and sends nothing.
+  if (canReceive) c.executionCtx.waitUntil(mailLink(env, b.email, b.next, now));
   return c.json({ ok: true }, 202);
 });
+
+/** Background: instance cap, then the token row (hash only), then the mail. R4: the token rides in the URL fragment. */
+async function mailLink(env: Env, email: string, next: string | undefined, now: number): Promise<void> {
+  try {
+    if (!(await hit(env, limitKey.inst, LIMITS.instance))) {
+      console.warn("email_cap");
+      return;
+    }
+    const secret = newSecret();
+    await env.DB.prepare("INSERT INTO login_tokens (token_hash, email, next, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(await sha256Hex(secret), email, safeNext(next, origin(env)), now, now + TOKEN_TTL).run();
+    await sendEmail(env, { to: email, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}` }) });
+  } catch {
+    console.warn("sign_in_mail_failed"); // codes only: a D1 error text could carry bound values
+  }
+}
 
 const verifyBody = z.strictObject({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
 

@@ -1,3 +1,4 @@
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { limitKey } from "../src/limits";
@@ -5,6 +6,7 @@ import { SESSION_COOKIE, sha256Hex } from "../src/session";
 import { ORIGIN, dash } from "./helpers/access";
 import { fakeResend } from "./helpers/resend";
 import { signedIn } from "./helpers/session";
+import worker from "../src/index";
 
 const e = env as { AUTH_MODE?: string; RESEND_API_KEY?: string };
 const orig = { mode: e.AUTH_MODE, key: e.RESEND_API_KEY };
@@ -24,7 +26,20 @@ afterEach(() => {
 const IP = "203.0.113.5";
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
   dash(path, { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": IP, ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
-const ask = (email: string, extra: Record<string, unknown> = {}, headers?: Record<string, string>) => post("/auth/email", { email, ...extra }, headers);
+/** POST /auth/email with its own execution context; the response comes back before the waitUntil work. */
+const askRaw = async (email: string, extra: Record<string, unknown> = {}, headers: Record<string, string> = {}) => {
+  const ctx = createExecutionContext();
+  const req = new Request(`${ORIGIN}/auth/email`, {
+    method: "POST", headers: { origin: ORIGIN, "content-type": "application/json", "cf-connecting-ip": IP, ...headers }, body: JSON.stringify({ email, ...extra }),
+  });
+  return { res: await worker.fetch(req, env, ctx), ctx };
+};
+/** Like askRaw, then waits for the background mail work (cap, token row, send) to finish. */
+const ask = async (email: string, extra: Record<string, unknown> = {}, headers?: Record<string, string>) => {
+  const { res, ctx } = await askRaw(email, extra, headers);
+  await waitOnExecutionContext(ctx);
+  return res;
+};
 const verify = (token: string, headers?: Record<string, string>) => post("/auth/email/verify", { token }, headers);
 const addUser = async (email: string, status: string, role = "member") => {
   const id = crypto.randomUUID();
@@ -94,13 +109,38 @@ describe("POST /auth/email: no account enumeration (Review Focus 3)", () => {
     expect(got[0]!.status).toBe(202);
     expect(fake.sent).toHaveLength(2);
   });
-  it("responds before the Resend call resolves", async () => {
+  it("answers before the instance cap, token row and Resend call run", async () => {
     await addUser("a@example.com", "active");
-    fake.hold();
-    const r = await ask("a@example.com");
-    expect(r.status).toBe(202);
-    expect(fake.sent).toHaveLength(1);
-    fake.release();
+    // Holds the token INSERT so the check below cannot race it, and Resend so the send stays pending too.
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const real = env.DB;
+    (env as { DB: D1Database }).DB = new Proxy(real, {
+      get(t, p) {
+        if (p === "prepare") return (sql: string) => {
+          const st = t.prepare(sql);
+          if (!sql.startsWith("INSERT INTO login_tokens")) return st;
+          return { bind: (...a: unknown[]) => ({ run: async () => { await gate; return st.bind(...a).run(); } }) };
+        };
+        const v = Reflect.get(t, p);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    try {
+      fake.hold();
+      const { res, ctx } = await askRaw("a@example.com");
+      expect(res.status).toBe(202);
+      expect(await res.text()).toBe('{"ok":true}');
+      expect(await count("login_tokens")).toBe(0);
+      expect(fake.sent).toHaveLength(0);
+      open();
+      fake.release();
+      await waitOnExecutionContext(ctx);
+      expect(await count("login_tokens")).toBe(1);
+      expect(fake.sent).toHaveLength(1);
+    } finally {
+      (env as { DB: D1Database }).DB = real;
+    }
   });
   it("refuses the 6th request for an unknown address within 15 minutes", async () => {
     for (let i = 0; i < 5; i++) expect((await ask("nobody@example.com")).status).toBe(202);
