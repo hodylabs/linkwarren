@@ -81,7 +81,8 @@ async function trySync(env: Env, d: DomainRow, cf: CfRow, opts: { attach: boolea
   }
 }
 
-domains.get("/", async (c) => {
+/** The domain list as a bare array. `withCf` false (the machine API) leaves out the Cloudflare view entirely. */
+export async function listDomains(c: Context<E>, withCf: boolean) {
   const user = c.var.user;
   const members = new Set(
     (await c.env.DB.prepare("SELECT domain_id FROM domain_members WHERE user_id = ?").bind(user.id).all<{ domain_id: string }>())
@@ -91,13 +92,15 @@ domains.get("/", async (c) => {
     (await c.env.DB.prepare("SELECT domain_id, COUNT(*) n FROM links GROUP BY domain_id").all<{ domain_id: string; n: number }>())
       .results.map((r) => [r.domain_id, r.n]),
   );
-  const cfs = new Map((await c.env.DB.prepare("SELECT * FROM domain_cf").all()).results.map((r) => [r.domain_id as string, rowToCf(r)]));
+  const cfs = withCf ? new Map((await c.env.DB.prepare("SELECT * FROM domain_cf").all()).results.map((r) => [r.domain_id as string, rowToCf(r)])) : null;
   // shortcut: no pagination, the domain list is small; add a cursor if an instance ever hosts thousands.
   const items = (await c.env.DB.prepare("SELECT * FROM domains ORDER BY host").all()).results.map(rowToDomain)
     .filter((d) => canUseDomain(user, d, members.has(d.id), c.var.grant.domains))
-    .map((d) => ({ ...d, linkCount: counts.get(d.id) ?? 0, isMember: members.has(d.id), cloudflare: cfView(c.env, d, cfs.get(d.id) ?? null, canManageDomain(user, d)) }));
+    .map((d) => ({ ...d, linkCount: counts.get(d.id) ?? 0, isMember: members.has(d.id),
+      ...(cfs ? { cloudflare: cfView(c.env, d, cfs.get(d.id) ?? null, canManageDomain(user, d)) } : {}) }));
   return c.json(items);
-});
+}
+domains.get("/", (c) => listDomains(c, true));
 
 domains.post("/", async (c) => {
   const user = c.var.user;

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { aeConfigured, aeLinkDays } from "../ae";
 import { buildReport, loadRows, resolveRange, resolveScope, type RangeQuery } from "../analytics";
@@ -45,7 +45,7 @@ analytics.get("/", async (c) => {
 const linksQuery = z.strictObject({ ids: idList(50, 1) });
 
 /** Per-link 7-day counts for the Links sparkline: D1 rollups up to the watermark, Analytics Engine after it. */
-analytics.get("/links", async (c) => {
+export const linkStats = async (c: Context<E>) => {
   const p = linksQuery.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
   if (!p.success) return c.json({ error: "bad_query" }, 400);
   const asked = [...new Set(p.data.ids)];
@@ -108,4 +108,5 @@ analytics.get("/links", async (c) => {
     return { linkId, days: a.days, clicks: a.days.reduce((x, y) => x + y, 0), qr: a.qr, topCountry: top ? top[0] : null };
   });
   return c.json({ items, live });
-});
+};
+analytics.get("/links", linkStats);

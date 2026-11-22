@@ -100,6 +100,9 @@ describe("restricted grant: domains", () => {
     expect(await resolveScope(env, owner, null, "", ["dA"])).toEqual({ scope: { domainIds: ["dA"], linkIds: null }, truncated: false });
     expect(await resolveScope(env, owner, ["dB"], "", ["dA"])).toEqual({ error: "forbidden" });
     expect(await resolveScope(env, owner, null, "", null)).toEqual({ scope: { domainIds: null, linkIds: null }, truncated: false });
+    // A text search stays inside the restriction: "l" matches every slug, only A's link comes back.
+    expect(await resolveScope(env, owner, null, "l", ["dA"])).toEqual({ scope: { domainIds: ["dA"], linkIds: ["la"] }, truncated: false });
+    expect(await resolveScope(env, owner, null, "b.test", ["dA"])).toEqual({ scope: { domainIds: ["dA"], linkIds: [] }, truncated: false });
   });
 
   it("POST on a disallowed domain 403; PATCH and DELETE of a link there 403", async () => {

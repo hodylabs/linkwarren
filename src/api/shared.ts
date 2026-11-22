@@ -4,6 +4,15 @@ import type { Env } from "../env";
 import { rowToDomain, type DomainRow } from "../types";
 import { checkDestination } from "../validate";
 
+/**
+ * The JSON-only 415 guard (best effort). "Has a body" is decided from headers: browsers send content-length: 0 on bodyless
+ * DELETE/POST, and Workers then expose a non-null empty stream.
+ */
+export function nonJsonBody(req: { header(name: string): string | undefined }): boolean {
+  const hasBody = Number(req.header("content-length") ?? 0) > 0 || req.header("transfer-encoding") !== undefined;
+  return hasBody && !/^application\/json\s*(;|$)/i.test(req.header("content-type") ?? "");
+}
+
 export const getDomain = async (env: Env, id: string): Promise<DomainRow | null> => {
   const r = await env.DB.prepare("SELECT * FROM domains WHERE id = ?").bind(id).first();
   return r ? rowToDomain(r) : null;

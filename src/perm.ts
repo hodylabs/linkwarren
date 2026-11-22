@@ -6,7 +6,8 @@ export function canManageDomain(user: UserRow, domain: DomainRow): boolean {
 }
 
 /** `only` (a grant's domain restriction) narrows, never widens: a domain outside it is refused, for the owner too. */
-export function canUseDomain(user: UserRow, domain: DomainRow, isMember: boolean, only?: readonly string[] | null): boolean {
+/** `only` is required so a forgotten restriction is a type error; the dashboard passes its grant's null. */
+export function canUseDomain(user: UserRow, domain: DomainRow, isMember: boolean, only: readonly string[] | null): boolean {
   if (user.status !== "active") return false;
   if (only && !only.includes(domain.id)) return false;
   if (user.role === "owner") return true;

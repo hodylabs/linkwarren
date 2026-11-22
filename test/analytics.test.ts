@@ -88,38 +88,38 @@ describe("resolveScope", () => {
   });
 
   it("owner, no filter: every domain (null)", async () => {
-    expect(await resolveScope(env, user("uo", "owner"), null, "")).toEqual({ scope: { domainIds: null, linkIds: null }, truncated: false });
+    expect(await resolveScope(env, user("uo", "owner"), null, "", null)).toEqual({ scope: { domainIds: null, linkIds: null }, truncated: false });
   });
   it("member, no filter: exactly their usable ids", async () => {
-    const r = await resolveScope(env, user("ua", "member"), null, "");
+    const r = await resolveScope(env, user("ua", "member"), null, "", null);
     if ("error" in r) throw new Error(r.error);
     expect([...(r.scope.domainIds ?? [])].sort()).toEqual(["dM", "dS"]);
   });
   it("member filtering on a shared domain they lost: forbidden; unknown id: forbidden", async () => {
-    expect(await resolveScope(env, user("ua", "member"), ["dS"], "")).toEqual({ scope: { domainIds: ["dS"], linkIds: null }, truncated: false });
+    expect(await resolveScope(env, user("ua", "member"), ["dS"], "", null)).toEqual({ scope: { domainIds: ["dS"], linkIds: null }, truncated: false });
     await run("DELETE FROM domain_members WHERE domain_id = 'dS' AND user_id = 'ua'");
-    expect(await resolveScope(env, user("ua", "member"), ["dS"], "")).toEqual({ error: "forbidden" });
-    expect(await resolveScope(env, user("ua", "member"), ["dM", "dB"], "")).toEqual({ error: "forbidden" });
-    expect(await resolveScope(env, user("uo", "owner"), ["nope"], "")).toEqual({ error: "forbidden" });
+    expect(await resolveScope(env, user("ua", "member"), ["dS"], "", null)).toEqual({ error: "forbidden" });
+    expect(await resolveScope(env, user("ua", "member"), ["dM", "dB"], "", null)).toEqual({ error: "forbidden" });
+    expect(await resolveScope(env, user("uo", "owner"), ["nope"], "", null)).toEqual({ error: "forbidden" });
   });
   it("q matches host/slug inside the member's domains only", async () => {
-    const r = await resolveScope(env, user("ua", "member"), null, "spring");
+    const r = await resolveScope(env, user("ua", "member"), null, "spring", null);
     if ("error" in r) throw new Error(r.error);
     expect(r.scope.linkIds).toEqual(["l1"]);
-    const o = await resolveScope(env, user("uo", "owner"), null, "spring");
+    const o = await resolveScope(env, user("uo", "owner"), null, "spring", null);
     if ("error" in o) throw new Error(o.error);
     expect([...(o.scope.linkIds ?? [])].sort()).toEqual(["l1", "l2"]);
     expect(o.scope.domainIds).toBeNull();
   });
   it("LIKE wildcards in q are literal", async () => {
-    const pct = await resolveScope(env, user("uo", "owner"), null, "%");
-    const und = await resolveScope(env, user("uo", "owner"), null, "fall_");
+    const pct = await resolveScope(env, user("uo", "owner"), null, "%", null);
+    const und = await resolveScope(env, user("uo", "owner"), null, "fall_", null);
     if ("error" in pct || "error" in und) throw new Error("forbidden");
     expect(pct.scope.linkIds).toEqual(["l3"]);
     expect(und.scope.linkIds).toEqual(["l3"]);
   });
   it("an injection attempt in q is only a LIKE bind (Review Focus 1)", async () => {
-    const r = await resolveScope(env, user("uo", "owner"), null, "') OR 1=1 --");
+    const r = await resolveScope(env, user("uo", "owner"), null, "') OR 1=1 --", null);
     expect(r).toEqual({ scope: { domainIds: null, linkIds: [] }, truncated: false });
   });
   it("501 matches: 500 ids and truncated", async () => {
@@ -129,7 +129,7 @@ describe("resolveScope", () => {
       ),
     );
     await env.DB.batch(stmts);
-    const r = await resolveScope(env, user("uo", "owner"), null, "many");
+    const r = await resolveScope(env, user("uo", "owner"), null, "many", null);
     if ("error" in r) throw new Error(r.error);
     expect(r.scope.linkIds).toHaveLength(500);
     expect(r.truncated).toBe(true);

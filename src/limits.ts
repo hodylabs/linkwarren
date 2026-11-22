@@ -9,12 +9,16 @@ export const LIMITS = {
   failIp: { n: 20, s: 900 },
   reg: { n: 5, s: 3600 },
   regDay: { n: 50, s: 86400, utc: true },
+  apiUser: { n: 120, s: 60 },
+  apiKey: { n: 60, s: 60 },
+  apiConn: { n: 60, s: 60 },
+  apiDay: { n: 1000, s: 86400, utc: true },
 } as const;
 /** utc: the window is aligned to multiples of s since the epoch (s = 86400 is the UTC day) instead of starting at the first event. */
 type Limit = { n: number; s: number; utc?: boolean };
 
 /** Windows longer than an hour: the hourly prunes keep these keys for a day (SQL on auth_limits.key). */
-export const DAY_KEYS_SQL = "key = 'reg:day'";
+export const DAY_KEYS_SQL = "(key = 'reg:day' OR key LIKE 'api:ud:%')";
 
 /** A window_start at or below this is outside the current window. */
 const since = (l: Limit, now: number) => (l.utc ? now - (now % l.s) - 1 : now - l.s);
@@ -27,6 +31,10 @@ export const limitKey = {
   inst: "inst",
   reg: (prefix: string | null) => `reg:${prefix ?? "none"}`,
   regDay: "reg:day",
+  apiUser: (userId: string) => `api:u:${userId}`,
+  apiKey: (keyId: string) => `api:k:${keyId}`,
+  apiConn: (connId: string) => `api:c:${connId}`,
+  apiDay: (userId: string) => `api:ud:${userId}`,
 } as const;
 
 /** Counts one event in one atomic upsert (a window older than s restarts at 1); true when still within the limit. */

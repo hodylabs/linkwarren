@@ -24,26 +24,26 @@ for (const role of ["owner", "member"] as const)
 
 describe("canUseDomain truth table", () => {
   it.each(rows)("%s / %s / %s / member=%s / owns=%s -> %s", (role, type, status, member, owned, expected) => {
-    expect(canUseDomain(user(role), dom(type, status, owned), member)).toBe(expected);
+    expect(canUseDomain(user(role), dom(type, status, owned), member, null)).toBe(expected);
   });
 
   it("member cannot use a shared domain without a grant", () => {
-    expect(canUseDomain(user("member"), dom("shared", "active", false), false)).toBe(false);
+    expect(canUseDomain(user("member"), dom("shared", "active", false), false, null)).toBe(false);
   });
   it("member on someone else's private domain without membership is denied", () => {
-    expect(canUseDomain(user("member"), dom("private", "active", false), false)).toBe(false);
+    expect(canUseDomain(user("member"), dom("private", "active", false), false, null)).toBe(false);
   });
   it("member with membership on a disabled domain is denied", () => {
-    expect(canUseDomain(user("member"), dom("shared", "disabled", false), true)).toBe(false);
-    expect(canUseDomain(user("member"), dom("private", "disabled", false), true)).toBe(false);
+    expect(canUseDomain(user("member"), dom("shared", "disabled", false), true, null)).toBe(false);
+    expect(canUseDomain(user("member"), dom("private", "disabled", false), true, null)).toBe(false);
   });
   it("member can use their own pending private domain", () => {
-    expect(canUseDomain(user("member"), dom("private", "pending", true), false)).toBe(true);
+    expect(canUseDomain(user("member"), dom("private", "pending", true), false, null)).toBe(true);
   });
   it.each(["invited", "disabled"] as const)("%s user is denied everywhere, even the owner role", (status) => {
     for (const role of ["owner", "member"] as const)
       for (const type of ["main", "shared", "private"] as const) {
-        expect(canUseDomain(user(role, status), dom(type, "active", true), true)).toBe(false);
+        expect(canUseDomain(user(role, status), dom(type, "active", true), true, null)).toBe(false);
         expect(canManageDomain(user(role, status), dom(type, "active", true))).toBe(false);
       }
   });
@@ -55,9 +55,8 @@ describe("canUseDomain with a domain restriction (only)", () => {
     expect(canUseDomain(user("owner"), dom("main", "active", false), false, ["d1"])).toBe(true);
     expect(canUseDomain(user("owner"), d2, false, ["d1"])).toBe(false);
   });
-  it("null and undefined mean unrestricted; [] allows nothing", () => {
+  it("null means unrestricted; [] allows nothing", () => {
     expect(canUseDomain(user("owner"), d2, false, null)).toBe(true);
-    expect(canUseDomain(user("owner"), d2, false, undefined)).toBe(true);
     expect(canUseDomain(user("owner"), d2, false, [])).toBe(false);
   });
   it.each(rows)("restriction never widens: %s / %s / %s / member=%s / owns=%s -> %s", (role, type, status, member, owned, expected) => {
@@ -99,7 +98,7 @@ describe("usableDomainsSql mirrors canUseDomain", () => {
     for (const [uid] of users) {
       const u = rowToUser((await db.prepare("SELECT * FROM users WHERE id = ?").bind(uid).first())!);
       const mem = new Set((await db.prepare("SELECT domain_id FROM domain_members WHERE user_id = ?").bind(uid).all<{ domain_id: string }>()).results.map((r) => r.domain_id));
-      const expected = domains.filter((d) => canUseDomain(u, d, mem.has(d.id))).map((d) => d.id).sort();
+      const expected = domains.filter((d) => canUseDomain(u, d, mem.has(d.id), null)).map((d) => d.id).sort();
       const got = (await db.prepare(`SELECT id FROM domains WHERE id IN (${usableDomainsSql})`).bind(uid).all<{ id: string }>()).results.map((r) => r.id).sort();
       expect([uid, got]).toEqual([uid, expected]);
       // usableDomainsSqlOnly agrees with canUseDomain(..., only) for several restrictions.

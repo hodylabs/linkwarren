@@ -69,7 +69,7 @@ export function resolveRange(q: RangeQuery, nowSec: number): Range | { error: "b
 const ids = (r: { results: Record<string, unknown>[] }) => r.results.map((x) => String(x.id));
 
 export async function resolveScope(
-  env: Env, user: UserRow, domainIds: string[] | null, q: string, only: readonly string[] | null = null,
+  env: Env, user: UserRow, domainIds: string[] | null, q: string, only: readonly string[] | null,
 ): Promise<{ scope: Scope; truncated: boolean } | { error: "forbidden" }> {
   let scopeDomains: string[] | null = null;
   // `only` is a grant's domain restriction: it narrows the owner too.

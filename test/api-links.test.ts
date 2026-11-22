@@ -654,3 +654,41 @@ describe("password and routes", () => {
     expect((await exports.default.fetch("https://go.test/junk", { redirect: "manual" })).status).toBe(302);
   });
 });
+
+describe("R12 read routes: GET /:id and /by-slug", () => {
+  it("GET /:id returns the link; 404 unknown; 403 on an unusable domain", async () => {
+    const { id } = await mk("a", "one");
+    const r = await call("b", "GET", `/api/links/${id}`);
+    expect([r.status, await r.json()]).toEqual([200, expect.objectContaining({ id, slug: "one", domainId: "dm", hasPassword: false })]);
+    expect((await call("a", "GET", "/api/links/nope")).status).toBe(404);
+    const p = await mk("a", "mine", {}, "dp");
+    expect([(await call("b", "GET", `/api/links/${p.id}`)).status, (await call("a", "GET", `/api/links/${p.id}`)).status]).toEqual([403, 200]);
+  });
+
+  it("by-slug matches by the domain's slug key: Spring finds spring on a case-insensitive domain, not on a case-sensitive one", async () => {
+    const { id } = await mk("a", "spring");
+    const r = await call("b", "GET", "/api/links/by-slug?domain=dm&slug=Spring");
+    expect([r.status, ((await r.json()) as { id: string }).id]).toEqual([200, id]);
+    await mk("a", "spring", {}, "dc");
+    expect((await call("a", "GET", "/api/links/by-slug?domain=dc&slug=Spring")).status).toBe(404);
+    expect((await call("a", "GET", "/api/links/by-slug?domain=dc&slug=spring")).status).toBe(200);
+    expect((await call("a", "GET", "/api/links/by-slug?domain=dm&slug=none")).status).toBe(404);
+    expect((await call("a", "GET", "/api/links/by-slug?domain=nope&slug=spring")).status).toBe(404);
+    expect((await call("a", "GET", "/api/links/by-slug?domain=dm")).status).toBe(404);
+    await mk("a", "hidden", {}, "dp");
+    expect((await call("b", "GET", "/api/links/by-slug?domain=dp&slug=hidden")).status).toBe(403);
+  });
+
+  it("/check still answers (route order)", async () => {
+    const r = await call("a", "GET", "/api/links/check?domain=dm&slug=free");
+    expect([r.status, await r.json()]).toEqual([200, { status: "available" }]);
+  });
+
+  it("a protected link: both routes say hasPassword true and carry no pbkdf2", async () => {
+    const { id } = await mk("a", "pw", { password: "spring-27" });
+    for (const p of [`/api/links/${id}`, "/api/links/by-slug?domain=dm&slug=pw"]) {
+      const text = await (await call("a", "GET", p)).text();
+      expect([p, JSON.parse(text).hasPassword, text.includes("pbkdf2"), text.includes("spring-27")]).toEqual([p, true, false, false]);
+    }
+  });
+});

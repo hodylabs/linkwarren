@@ -18,6 +18,8 @@ import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
 import { keys } from "./api/keys";
+import { nonJsonBody } from "./api/shared";
+import { isV1, v1 } from "./api/v1";
 
 export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>();
 
@@ -56,19 +58,19 @@ app.use("/api/*", async (c, next) => {
 // CSRF: the Origin check plus the credential's own scope are the defence (app mode: the host-only SameSite=Lax session
 // cookie; access mode: the Access JWT); the JSON-only 415 guard is best-effort.
 // A missing Origin is allowed for non-browser clients.
+// The machine API (R3, R4) is mounted first and answers every /api/v1 path itself (unknown ones 404); these dashboard
+// middlewares skip it anyway, so a Bearer request can never pick up the session user or FULL_GRANT.
+app.route("/api/v1", v1);
 const dashboardOrigin = (host: string) => `https://${normalizeHost(host)}`;
-app.use("/api/*", (c, next) => csrf({ origin: dashboardOrigin(c.env.DASHBOARD_HOST) })(c, next));
+app.use("/api/*", (c, next) => (isV1(c.req.path) ? next() : csrf({ origin: dashboardOrigin(c.env.DASHBOARD_HOST) })(c, next)));
 app.use("/api/*", async (c, next) => {
-  if (/^(GET|HEAD|OPTIONS)$/.test(c.req.method)) return next();
+  if (isV1(c.req.path) || /^(GET|HEAD|OPTIONS)$/.test(c.req.method)) return next();
   const origin = c.req.header("origin");
   if (origin !== undefined && origin !== dashboardOrigin(c.env.DASHBOARD_HOST)) return c.json({ error: "forbidden_origin" }, 403);
-  // Decide "has a body" from headers: browsers send content-length: 0 on bodyless DELETE/POST, and Workers then expose a non-null empty stream.
-  const hasBody = Number(c.req.header("content-length") ?? 0) > 0 || c.req.header("transfer-encoding") !== undefined;
-  if (hasBody && !/^application\/json\s*(;|$)/i.test(c.req.header("content-type") ?? ""))
-    return c.json({ error: "unsupported_media_type" }, 415);
+  if (nonJsonBody(c.req)) return c.json({ error: "unsupported_media_type" }, 415);
   await next();
 });
-app.use("/api/*", requireUser);
+app.use("/api/*", (c, next) => (isV1(c.req.path) ? next() : requireUser(c, next)));
 app.get("/api/me", async (c) => {
   const mode = authMode(c.env); // non-null: requireUser refused a bad mode already
   const me = { id: c.var.user.id, email: c.var.user.email, name: c.var.user.name, role: c.var.user.role, authMode: mode };

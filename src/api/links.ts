@@ -94,6 +94,29 @@ links.get("/check", async (c) => {
   return c.json({ status: taken ? "taken" : "available" });
 });
 
+// R12 read routes, after /check (Hono matches in registration order) and by-slug before /:id.
+links.get("/by-slug", async (c) => {
+  const user = c.var.user;
+  const domain = await getDomain(c.env, c.req.query("domain") ?? "");
+  if (!domain) return c.json({ error: "not_found" }, 404);
+  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
+  const slug = c.req.query("slug") ?? "";
+  if (!slug) return c.json({ error: "not_found" }, 404);
+  const row = await c.env.DB.prepare("SELECT * FROM links WHERE domain_id = ? AND slug_key = ?").bind(domain.id, slugKey(slug, domain.caseSensitive)).first();
+  return row ? c.json(toApiLink(rowToLink(row))) : c.json({ error: "not_found" }, 404);
+});
+
+links.get("/:id", async (c) => {
+  const user = c.var.user;
+  const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(c.req.param("id")).first();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  const link = rowToLink(row);
+  const domain = await getDomain(c.env, link.domainId);
+  if (!domain) return c.json({ error: "not_found" }, 404);
+  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
+  return c.json(toApiLink(link));
+});
+
 links.get("/", async (c) => {
   const user = c.var.user;
   const where: string[] = [], binds: unknown[] = [];
