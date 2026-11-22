@@ -48,7 +48,8 @@ export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>, enab
       for (const name of names(e)) {
         const fn = bound.get(name);
         if (!fn) continue;
-        if (typing && !WHILE_TYPING.has(name) && !name.startsWith("alt+")) return;
+        // Alt+letter works while typing; Alt+arrows stay with the field (word jumps on macOS).
+        if (typing && !WHILE_TYPING.has(name) && (!name.startsWith("alt+") || name.startsWith("alt+arrow"))) return;
         e.preventDefault();
         fn(e);
         return;

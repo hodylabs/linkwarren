@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { api, ApiError, type Domain } from "../api";
+import { api, ApiError, type CfView, type Domain } from "../api";
+import { MANUAL_NOTE, outsideNote } from "../domains/AddDomainSheet";
+import { CfStatus } from "../domains/CfStatus";
 import { errorText, plural } from "../copy";
 import { downloadCsv } from "../links/bulk";
 import { useHotkeys, type Bindings } from "../keys";
-import { normalizeHost } from "../../../src/host";
+import { apexOf, normalizeHost } from "../../../src/host";
 import { navigate } from "../router";
 import { PermList } from "../settings/CloudflareSection";
 import { checkCloudflare, getSettings, logoUrl, patchSettings, sendTestEmail, type CheckResult, type SecretStatus, type SettingsBody } from "../settings/api";
@@ -80,6 +82,8 @@ export function SetupWizard() {
   const [host, setHost] = useState("");
   const [takeover, setTakeover] = useState<{ host: string; records: Record_[] } | null>(null);
   const [choice, setChoice] = useState<string | null>(null);
+  // M7: a new main domain Cloudflare cannot attach directly (outside the account, or no Cloudflare): its next step stays on screen.
+  const [dns, setDns] = useState<{ host: string; view: CfView } | null>(null);
   const [mail, setMail] = useState<{ text: string; error: boolean } | null>(null);
   const [fileErrors, setFileErrors] = useState<LineError[]>([]);
   const [chunks, setChunks] = useState<ImportBody[] | null>(null);
@@ -161,7 +165,7 @@ export function SetupWizard() {
       const h = normalizeHost(host.trim()); // display only: the server stays the authority
       setHost(h);
       if (!h) throw new ApiError(400, "invalid_host");
-      let d: Domain;
+      let d: Domain & { cloudflare?: CfView };
       try {
         d = await api<Domain>("POST", "/api/domains", { host: h, type: "main", ...(confirm ? { confirmTakeover: true } : {}) });
       } catch (e) {
@@ -177,6 +181,7 @@ export function SetupWizard() {
       const s = await patchSettings({ mainDomainId: d.id });
       setSettings(s);
       done("mainDomain");
+      if (d.cloudflare && d.cloudflare.kind !== "account") return setDns({ host: d.host, view: d.cloudflare });
       go(4);
     });
 
@@ -203,6 +208,10 @@ export function SetupWizard() {
       });
     }
     if (step === 3) {
+      if (dns) {
+        setDns(null);
+        return go(4);
+      }
       if (!mains.length && app.loadError) return setError(app.loadError);
       if (!mains.length) return void addMain(false);
       return void run(async () => {
@@ -339,7 +348,14 @@ export function SetupWizard() {
     );
   } else if (step === 3) {
     lead = "Short links live on the main domain unless you pick another one. You can add more domains later.";
-    content = !mains.length && app.loadError ? (
+    content = dns ? (
+      <>
+        <p className="slug">{dns.host}</p>
+        <div className="callout wait" role="status">{dns.view.kind === "manual" ? MANUAL_NOTE : outsideNote(apexOf(dns.host))}</div>
+        {dns.view.kind !== "manual" && <CfStatus view={dns.view} />}
+        <p className="muted">Links on it start working once this is done. Continue when you are ready; the domain stays in Domains.</p>
+      </>
+    ) : !mains.length && app.loadError ? (
       <p className="muted">The domain list did not load. Retry above before adding a main domain, so an existing one is not added twice.</p>
     ) : mains.length ? (
       <fieldset className="choices">

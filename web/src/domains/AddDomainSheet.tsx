@@ -25,7 +25,9 @@ const TYPES: { value: Type; label: string }[] = [
   { value: "shared", label: "Shared" },
   { value: "private", label: "Private" },
 ];
-const MANUAL_NOTE = "Cloudflare is not connected on this linkwarren, so it cannot attach domains itself. Add this host as a custom domain of the Worker in your Cloudflare dashboard so visits reach it.";
+export const MANUAL_NOTE = "Cloudflare is not connected on this linkwarren, so it cannot attach domains itself. Add this host as a custom domain of the Worker in your Cloudflare dashboard so visits reach it.";
+export const outsideNote = (apex: string) =>
+  `${apex} isn't in your Cloudflare account, so it connects with one DNS record at its DNS provider. Cloudflare then checks ownership and issues the certificate.`;
 const APPROVAL_LINE = "You can create links on it straight away. They start working once the owner approves the domain.";
 
 export function AddDomainSheet() {
@@ -109,7 +111,7 @@ export function AddDomainSheet() {
   const callout = !view || view.kind === "manual"
     ? <div className="callout wait">{MANUAL_NOTE}</div>
     : view.kind === "outside"
-      ? <div className="callout wait">{`${apex} isn't in your Cloudflare account, so it connects with one DNS record at its DNS provider. Cloudflare then checks ownership and issues the certificate.`}</div>
+      ? <div className="callout wait">{outsideNote(apex)}</div>
       : <div className="callout ok">{`${apex} is in your Cloudflare account, so linkwarren attaches it directly.${isOwner ? "" : " The owner attaches it when they approve the domain."}`}</div>;
 
   return (

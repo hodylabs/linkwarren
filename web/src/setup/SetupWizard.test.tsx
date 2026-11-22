@@ -432,3 +432,42 @@ describe("N2: a file that does not say which links had a password", () => {
     expect((writes(api)[1]!.body as { confirmNoPasswords?: boolean }).confirmNoPasswords).toBeUndefined();
   });
 });
+
+describe("M7: a main domain outside the Cloudflare account", () => {
+  const cf = (kind: "outside" | "manual") => ({
+    kind, dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, securityLevel: null, rateLimit: null,
+    instructions: kind === "outside" ? { type: "CNAME", name: "go.new.test", target: "links.example.com", apex: false } : null, attachOnApproval: false, attached: false,
+  });
+  for (const kind of ["outside", "manual"] as const)
+    it(`${kind}: the step stays with the DNS next step, then Ctrl+Enter continues`, async () => {
+      const domains: object[] = [];
+      const { user } = boot({
+        steps: { ...NONE, name: true, cloudflare: true }, domains,
+        routes: { "POST /api/domains": () => {
+          const d = { ...MAIN, id: "dn", host: "go.new.test", cloudflare: cf(kind) };
+          domains.push(d);
+          return { status: 201, body: d };
+        } },
+      });
+      await heading("Main domain");
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Domain")));
+      await user.keyboard(`go.new.test${ctrlEnter}`);
+      expect(await screen.findByText(kind === "outside" ? /new\.test isn't in your Cloudflare account/ : /Cloudflare is not connected on this linkwarren/)).toBeTruthy();
+      expect(screen.getByRole("heading", { level: 1, name: "Main domain" })).toBeTruthy();
+      await user.keyboard(ctrlEnter);
+      expect(await heading("Email")).toBeTruthy();
+    });
+});
+
+describe("M8: Alt+Left in a text field", () => {
+  it("keeps the field's own word jump: no step change while typing; outside a field it goes back", async () => {
+    const { user } = boot({ steps: { ...NONE, name: true, cloudflare: true } });
+    await heading("Main domain");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Domain")));
+    await user.keyboard("go.new.test{Alt>}{ArrowLeft}{/Alt}");
+    expect(screen.getByRole("heading", { level: 1, name: "Main domain" })).toBeTruthy();
+    (document.activeElement as HTMLElement).blur();
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    expect(await heading("Connect Cloudflare")).toBeTruthy();
+  });
+});
