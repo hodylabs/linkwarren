@@ -137,7 +137,7 @@ describe("Links screen list", () => {
     await waitFor(() => expect(rows()[1]!.getAttribute("aria-selected")).toBe("true"));
     await user.click(screen.getByRole("button", { name: "Expired" }));
     await user.click(screen.getByRole("button", { name: "Mine" }));
-    await waitFor(() => expect(api.calls.at(-1)!.path).toContain("status=expired&mine=1"));
+    await waitFor(() => expect(api.calls.filter((c) => c.path.startsWith("/api/links")).at(-1)!.path).toContain("status=expired&mine=1"));
   });
 
   it("count shows the scope total with no filter", async () => {
@@ -344,5 +344,90 @@ describe("Link detail", () => {
     expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
     expect(within(detail()).getByText(/Created by Teammate/)).toBeTruthy();
+  });
+});
+
+describe("Links screen stats", () => {
+  const stat = (id: string, o: object = {}) => ({ linkId: id, days: [0, 1, 2, 3, 4, 5, 6], clicks: 1284, qr: 783, topCountry: "US", ...o });
+  const statsRoute = (seen: string[], live = "on", fail = false) => ({
+    "GET /api/analytics/links": (r: { url: URL }) => {
+      const ids = r.url.searchParams.get("ids") ?? "";
+      seen.push(ids);
+      if (fail) return { status: 500, body: { error: "internal" } };
+      return { body: { items: ids.split(",").map((i) => stat(i)), live } };
+    },
+  });
+
+  it("one stats request per page: Load more asks only for the new ids", async () => {
+    const seen: string[] = [];
+    let n = 0;
+    const { user } = boot({
+      routes: statsRoute(seen),
+      page: () => ({ body: ++n === 1 ? { items: [L1, L2], next: "c" } : { items: [L3], next: null } }),
+    });
+    await ready();
+    await waitFor(() => expect(seen).toEqual(["l1,l2"]));
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(seen).toEqual(["l1,l2", "l3"]));
+  });
+
+  it("sparklines: orange for an active link, grey for an expired one, with a text summary", async () => {
+    const seen: string[] = [];
+    const old = mk("l9", "old", { expiresAt: 5 });
+    boot({ routes: statsRoute(seen), page: () => ({ body: { items: [L1, old], next: null } }) });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(2));
+    const strokes = [...document.querySelectorAll("svg.spark polyline")].map((p) => p.getAttribute("stroke"));
+    expect(strokes).toEqual(["#FD8D27", "#B9BEC5"]);
+    expect(within(rows()[0]!).getByText("1,284 clicks in 7 days")).toBeTruthy();
+  });
+
+  it("the cell stays an empty td with a data-label until stats arrive, and a failed request leaves the table usable", async () => {
+    const seen: string[] = [];
+    boot({ routes: statsRoute(seen, "on", true) });
+    await ready();
+    await waitFor(() => expect(seen.length).toBe(1));
+    const cell = rows()[0]!.querySelector('td[data-label="7 days"]')!;
+    expect(cell.childNodes).toHaveLength(0);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("unknown recent days are shown as unknown when live is off", async () => {
+    boot({ routes: statsRoute([], "off") });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
+    expect(document.querySelector("svg.spark line[stroke-dasharray]")).not.toBeNull();
+    expect(within(rows()[0]!).getByText(/Recent days not available/)).toBeTruthy();
+  });
+
+  it("the detail shows Last 7 days from the loaded stats without refetching", async () => {
+    const seen: string[] = [];
+    const { user } = boot({ routes: statsRoute(seen) });
+    await ready();
+    await waitFor(() => expect(seen).toHaveLength(1));
+    await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
+    await user.click(rows()[0]!);
+    const d = detail();
+    expect(within(d).getByText("Last 7 days")).toBeTruthy();
+    expect(within(d).getByText("1,284")).toBeTruthy();
+    expect(within(d).getByText("61%")).toBeTruthy();
+    expect(within(d).getByText("US")).toBeTruthy();
+    await user.click(rows()[1]!);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("a stats answer from a replaced list is dropped", async () => {
+    let release: (r: FakeRes) => void = () => undefined;
+    let n = 0;
+    boot({
+      routes: { "GET /api/analytics/links": () => (++n === 1 ? new Promise<FakeRes>((r) => (release = r)) : { body: { items: [], live: "on" } }) },
+    });
+    await ready();
+    await waitFor(() => expect(n).toBe(1));
+    await userEvent.click(screen.getByRole("button", { name: "Active" }));
+    await waitFor(() => expect(n).toBe(2));
+    release({ body: { items: [stat("l1")], live: "on" } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.querySelectorAll("svg.spark")).toHaveLength(0);
   });
 });

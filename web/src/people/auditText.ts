@@ -7,7 +7,7 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 
 /** Plain-language parts of one audit row. Every value is text for React to escape; nothing here is HTML. */
 export function describeAudit(a: AuditItem, meId: string, domains: readonly { id: string; host: string }[] = [], users: readonly { id: string; email: string }[] = []): AuditText {
-  const who = a.actorId === meId ? "You" : a.actorName || a.actorEmail || "A deleted user";
+  const who = a.actorId === meId ? "You" : a.actorId === "system" ? "linkwarren" : a.actorName || a.actorEmail || "A deleted user";
   const via = a.via ? `via ${a.via}` : null;
   const host = str(a.detail.host);
   const slug = str(a.detail.slug);
@@ -38,6 +38,10 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     case "passkey.add": return done("added the passkey", str(a.detail.name));
     case "passkey.rename": return done("renamed a passkey to", str(a.detail.name));
     case "passkey.remove": return done("removed a passkey");
+    case "audit.purge": {
+      const n = num(a.detail.deleted);
+      return done("removed audit entries older than 3 years", null, n !== null ? ` (${n})` : "");
+    }
     case "import.run": {
       const p = num(a.detail.planned), s = num(a.detail.skipped);
       return done("imported links", null, p !== null && s !== null ? ` (${p} planned, ${s} skipped)` : "");

@@ -8,7 +8,11 @@ import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../
 import { useApp } from "../state";
 import { BackBar, useDetailView } from "../shell/narrow";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
-import { creatorLabel, linkState, linksQuery, type LinksFilter } from "./linkView";
+import { Sparkline } from "./Sparkline";
+import { creatorLabel, linkState, linksQuery, type LinkStats, type LinksFilter, type StatsLive } from "./linkView";
+
+const STATS_CHUNK = 50; // the server takes at most 50 ids per request
+const WORST: StatsLive[] = ["on", "off", "unavailable"];
 
 const STATUSES = ["all", "active", "scheduled", "expired"] as const;
 
@@ -38,6 +42,8 @@ export function LinksScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [stats, setStats] = useState<Record<string, LinkStats>>({});
+  const [live, setLive] = useState<StatsLive>("on");
   const generation = useRef(0);
   const loading = useRef(false); // a next-page request is in flight
   const deleting = useRef(false);
@@ -55,6 +61,20 @@ export function LinksScreen() {
     return api<Page<Link>>("GET", `/api/links${qs ? `?${qs}` : ""}`);
   }, [scope]);
 
+  // 7-day stats for a page of ids. An answer from an older generation (the list changed meanwhile) is dropped; a failure leaves the cells empty.
+  const loadStats = useCallback(async (g: number, ids: string[]) => {
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += STATS_CHUNK) chunks.push(ids.slice(i, i + STATS_CHUNK));
+    const done = await Promise.allSettled(
+      chunks.map((c) => api<{ items: LinkStats[]; live: StatsLive }>("GET", `/api/analytics/links?ids=${c.map(encodeURIComponent).join(",")}`)),
+    );
+    if (g !== generation.current) return;
+    const ok = done.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    if (ok.length === 0) return;
+    setStats((cur) => ({ ...cur, ...Object.fromEntries(ok.flatMap((r) => r.items.map((s) => [s.linkId, s] as const))) }));
+    setLive((cur) => ok.reduce((w, r) => (WORST.indexOf(r.live) > WORST.indexOf(w) ? r.live : w), cur === "on" ? "on" : cur));
+  }, []);
+
   // New scope or an explicit reload: start over. A stale answer (older generation) is dropped.
   useEffect(() => {
     const g = ++generation.current;
@@ -63,6 +83,7 @@ export function LinksScreen() {
     setNext(null);
     if (lastScope.current !== scope) {
       setItems([]);
+      setStats({});
       setLoaded(false); // no "No links here yet." flash while the new scope loads
     }
     lastScope.current = scope;
@@ -73,6 +94,8 @@ export function LinksScreen() {
         setItems(p.items);
         setNext(p.next);
         setLoaded(true);
+        setLive("on");
+        void loadStats(g, p.items.map((l) => l.id));
       },
       (e: unknown) => {
         if (g !== generation.current) return;
@@ -80,7 +103,7 @@ export function LinksScreen() {
         setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
       },
     );
-  }, [fetchPage, scope, linksVersion]);
+  }, [fetchPage, scope, linksVersion, loadStats]);
 
   const loadMore = async (): Promise<Link[]> => {
     if (!next || loading.current) return [];
@@ -91,6 +114,7 @@ export function LinksScreen() {
       if (g !== generation.current) return [];
       setItems((cur) => [...cur, ...p.items]);
       setNext(p.next);
+      void loadStats(g, p.items.map((l) => l.id));
       return p.items;
     } catch (e) {
       if (g === generation.current) setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
@@ -220,6 +244,7 @@ export function LinksScreen() {
                 <th>Goes to</th>
                 <th>Rules</th>
                 <th>Status</th>
+                <th className="num">7 days</th>
                 <th>Created by</th>
               </tr>
             </thead>
@@ -257,6 +282,9 @@ export function LinksScreen() {
                     <td>
                       <Tag tone={st.tone}>{st.label}</Tag>
                     </td>
+                    <td className="num spk" data-label="7 days">
+                      {stats[l.id] && <Sparkline days={stats[l.id]!.days} clicks={stats[l.id]!.clicks} active={st.tone === "ok"} live={live} />}
+                    </td>
                     <td data-label="By">{creatorLabel(l.createdBy, me, users)}</td>
                   </tr>
                 );
@@ -287,6 +315,8 @@ export function LinksScreen() {
             key={selected.id}
             ref={detailRef}
             link={selected}
+            stats={stats[selected.id]}
+            live={live}
             domain={domainOf(selected.domainId)}
             canEdit={canEdit(selected)}
             onSaved={(l) => setItems((cur) => cur.map((x) => (x.id === l.id ? l : x)))}

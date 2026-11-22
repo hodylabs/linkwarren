@@ -5,7 +5,7 @@ import { rebase } from "../draft";
 import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
-import { creatorLabel, linkState, shortUrl } from "./linkView";
+import { creatorLabel, linkState, shortUrl, type LinkStats, type StatsLive } from "./linkView";
 
 export type DetailHandle = { focusUrl(): void; copy(): void };
 
@@ -24,8 +24,8 @@ function diff(l: Link, d: Draft): Record<string, unknown> {
   return out;
 }
 
-export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void; onClose(): void }>(
-  function LinkDetail({ link, domain, canEdit, onSaved, onDelete, onClose }, ref) {
+export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStats | undefined; live: StatsLive; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void; onClose(): void }>(
+  function LinkDetail({ link, stats, live, domain, canEdit, onSaved, onDelete, onClose }, ref) {
     const app = useApp();
     const [draft, setDraft] = useState(() => draftOf(link));
     const [error, setError] = useState<{ code: string } | null>(null);
@@ -123,6 +123,17 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
             <span>{link.url}</span>
           </div>
         </div>
+        {stats && (
+          <div className="sect">
+            <h3>Last 7 days</h3>
+            <div className="stats">
+              <div className="stat"><b>{stats.clicks.toLocaleString("en-US")}</b><small>clicks</small></div>
+              <div className="stat"><b>{stats.clicks > 0 ? Math.round((100 * stats.qr) / stats.clicks) : 0}%</b><small>from QR</small></div>
+              <div className="stat"><b>{stats.topCountry ?? "None"}</b><small>top country</small></div>
+            </div>
+            {live !== "on" && <p className="hint">Yesterday and today are not available yet, so these counts leave them out.</p>}
+          </div>
+        )}
         <fieldset className="plain" disabled={!canEdit}>
           <div className="sect">
             <h3>Destination</h3>

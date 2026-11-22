@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Domain, Link, Me, UserItem } from "../api";
 import { fromLocalInput, shortDate, toLocalInput } from "../time";
-import { creatorLabel, linkState, linksQuery, shortUrl } from "./linkView";
+import { creatorLabel, linkState, linksQuery, shortUrl, sparkPoints } from "./linkView";
 
 const NOW = 1_800_000_000;
 const link = (o: Partial<Link> = {}): Link => ({
@@ -56,5 +56,13 @@ describe("local datetime", () => {
     const t = 1_790_000_040;
     expect(fromLocalInput(toLocalInput(t))).toBe(t);
     expect(toLocalInput(t)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d$/);
+  });
+});
+
+describe("sparkPoints", () => {
+  it("scales to the 72x20 box, last point at x 72", () => {
+    expect(sparkPoints([0, 0, 0])).toBe("0,18 36,18 72,18");
+    expect(sparkPoints([1, 2])).toBe("0,10 72,2");
+    expect(sparkPoints([1, 2, 3], 5)).toBe("0,12.7 18,7.3 36,2");
   });
 });

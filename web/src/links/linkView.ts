@@ -33,3 +33,15 @@ export function linksQuery(o: LinksFilter): string {
   if (o.cursor) p.set("cursor", o.cursor);
   return p.toString();
 }
+
+/** Per-link 7-day stats from GET /api/analytics/links. `days` is oldest first, today last. */
+export type LinkStats = { linkId: string; days: number[]; clicks: number; qr: number; topCountry: string | null };
+export type StatsLive = "on" | "off" | "unavailable";
+
+/** Polyline points for a 72x20 box. `of` is the full point count when only the first days are known. */
+export function sparkPoints(days: number[], of = days.length): string {
+  const max = Math.max(...days);
+  return days
+    .map((v, i) => `${+(i * 72 / (of - 1)).toFixed(1)},${max > 0 ? +(18 - 16 * v / max).toFixed(1) : 18}`)
+    .join(" ");
+}

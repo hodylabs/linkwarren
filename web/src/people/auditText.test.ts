@@ -78,3 +78,12 @@ describe("describeAudit", () => {
     expect(describeAudit(row, "uo").code).toBe("u9");
   });
 });
+
+describe("describeAudit system actor", () => {
+  it("names the system actor linkwarren and words the purge", () => {
+    const r = d({ actorId: "system", actorEmail: null, actorName: null, action: "audit.purge", targetType: "audit", targetId: "audit_log", detail: { deleted: 12 } });
+    expect(r.who).toBe("linkwarren");
+    expect(r.text).toBe("removed audit entries older than 3 years");
+    expect(r.suffix).toBe(" (12)");
+  });
+});

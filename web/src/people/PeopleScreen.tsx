@@ -271,7 +271,7 @@ export function PeopleScreen() {
             </div>
           )}
           <div className="foot">
-            <span>Every change, by every person and agent</span>
+            <span>Every change, by every person and agent. Kept for 3 years</span>
           </div>
         </aside>
       </div>

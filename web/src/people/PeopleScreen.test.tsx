@@ -51,6 +51,12 @@ describe("People screen", () => {
     expect(screen.getByText("3 people, 1 invite pending")).toBeTruthy();
   });
 
+  it("the audit footer states the retention", async () => {
+    boot();
+    await screen.findByText("Activity across every domain");
+    expect(screen.getByText(/Kept for 3 years/)).toBeTruthy();
+  });
+
   it("the Invited chip shows only invited users, Disabled only disabled", async () => {
     const { user } = boot();
     await waitFor(() => expect(rows()).toHaveLength(4));
