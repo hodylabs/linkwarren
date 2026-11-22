@@ -141,20 +141,33 @@ const PRUNES = [
  * Deletes expired rows, at most PRUNE_MAX per table and within `budget` D1 writes (WRITES_PER_ROW per deleted row,
  * counted before each DELETE). Returns the writes used. Hourly, so visitors' IP ranges in auth_limits do not linger.
  */
-export async function pruneExpired(env: Env, nowSec: number, budget: number, spent = { writes: 0 }): Promise<number> {
+export async function pruneExpired(env: Env, nowSec: number, budget: number, spent = { writes: 0 }, today?: string): Promise<number> {
+  const charge = today ? COUNTER_WRITES : 0; // the counter row and its key index, when this run records its writes
   let used = 0;
   for (const [table, col, age] of PRUNES) {
-    const rows = Math.min(PRUNE_MAX, Math.floor((budget - used) / WRITES_PER_ROW));
+    const rows = Math.min(PRUNE_MAX, Math.floor((budget - used - charge) / WRITES_PER_ROW));
     if (rows <= 0) break;
     // D1 has no DELETE ... LIMIT: the same bounded subquery as the sign-in prune.
-    const r = await env.DB.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${col} <= ? LIMIT ?)`)
-      .bind(nowSec - age, rows)
-      .run();
-    used += r.meta.changes * WRITES_PER_ROW;
+    const del = env.DB.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${col} <= ? LIMIT ?)`).bind(nowSec - age, rows);
+    // One batch per table: a deletion and its charge to the daily counter commit together or not at all.
+    const res = today ? await env.DB.batch([del, chargeStmt(env, today)]) : [await del.run()];
+    const n = res[0]!.meta.changes;
+    if (n > 0) used += n * WRITES_PER_ROW + charge;
     spent.writes = used; // kept per table, so writes done before a later table fails are still counted
   }
   return used;
 }
+
+const COUNTER_WRITES = 2;
+/** Adds the preceding DELETE's rows (changes()) to today's `rollup_writes`; writes nothing when it deleted nothing. */
+const chargeStmt = (env: Env, today: string) =>
+  env.DB.prepare(
+    `INSERT OR REPLACE INTO analytics_state (k, v)
+     SELECT 'rollup_writes', ?1 || '|' || CAST(
+       COALESCE((SELECT CAST(substr(v, instr(v, '|') + 1) AS INTEGER) FROM analytics_state WHERE k = 'rollup_writes' AND substr(v, 1, instr(v, '|') - 1) = ?1), 0)
+       + changes() * ?2 + ?3 AS INTEGER)
+     WHERE changes() > 0`,
+  ).bind(today, WRITES_PER_ROW, COUNTER_WRITES);
 
 const errName = (e: unknown) => (e instanceof Error ? e.name : "unknown"); // name only: messages could carry data
 
@@ -168,22 +181,14 @@ export async function scheduled(c: ScheduledController, env: Env, _ctx: Executio
   } catch (e) {
     console.error("analytics rollup failed", errName(e));
   }
-  // Pruning shares the rollup's daily D1 write budget and adds what it really wrote to the same counter.
+  // Cleanup shares the rollup's daily D1 write budget; each table's deletion and its charge commit together.
   const today = utcDay(now);
   const pruned = { writes: 0 };
   try {
     const left = Math.min(RUN_WRITE_BUDGET - spent.writes, DAY_WRITE_BUDGET - (await writtenToday(env, today)));
-    console.log(`expired rows pruned: ${(await pruneExpired(env, now, left, pruned)) / WRITES_PER_ROW}`);
+    console.log(`expired-row cleanup writes: ${await pruneExpired(env, now, left, pruned, today)}`);
   } catch (e) {
     console.error("expired rows prune failed", errName(e));
-  }
-  if (pruned.writes > 0) {
-    try {
-      const n = (await writtenToday(env, today)) + pruned.writes;
-      await env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', ?)").bind(`${today}|${n}`).run();
-    } catch (e) {
-      console.error("prune write count not saved", errName(e));
-    }
   }
   if (new Date(c.scheduledTime).getUTCHours() !== 0) return;
   try {

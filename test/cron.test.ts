@@ -323,7 +323,20 @@ describe("pruneExpired", () => {
     expect([await count("auth_limits"), await count("sessions")]).toEqual([3, 3]);
     await env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', '2026-11-20|100')").run();
     await worker.scheduled(ctl, env, {} as ExecutionContext);
-    expect(await mark()).toBe(`2026-11-20|${100 + 4 * 2 * 3}`); // 2 expired rows in each of 4 tables, 3 writes per row
+    expect(await mark()).toBe(`2026-11-20|${100 + 4 * (2 * 3 + 2)}`); // 4 tables x (2 rows x 3 writes + 2 for the counter)
+  });
+
+  it("reserves the counter write inside the budget and rolls a deletion back when its charge fails", async () => {
+    await fill(3, 0);
+    await env.DB.prepare("DELETE FROM analytics_state WHERE k = 'rollup_writes'").run();
+    expect(await pruneExpired(env, T, 3 + 2, { writes: 0 }, "2026-11-20")).toBe(5); // one row and its counter charge, nothing more
+    expect(await count("auth_limits")).toBe(2);
+    expect((await env.DB.prepare("SELECT v FROM analytics_state WHERE k = 'rollup_writes'").first<{ v: string }>())?.v).toBe("2026-11-20|5");
+    const real = env.DB.prepare.bind(env.DB);
+    const spy = vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => (q.includes("INSERT OR REPLACE INTO analytics_state") ? real("SELECT no_such_fn()") : real(q)));
+    await expect(pruneExpired(env, T, RUN_WRITE_BUDGET, { writes: 0 }, "2026-11-20")).rejects.toThrow();
+    spy.mockRestore();
+    expect(await count("auth_limits")).toBe(2); // the failed charge took its deletion back with it
   });
 
   it("reports writes from tables pruned before a later table fails", async () => {
