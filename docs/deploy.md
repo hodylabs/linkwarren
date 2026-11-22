@@ -9,14 +9,16 @@ Copy `wrangler.instance.example.jsonc` to `wrangler.instance.jsonc` (gitignored)
 Required vars:
 
 - `DASHBOARD_HOST`: the hostname that serves the dashboard and API. If it is missing or blank, every request answers `500 {"error":"misconfigured"}`.
-- `ACCESS_TEAM_DOMAIN`: your Cloudflare Access team domain, e.g. `your-team.cloudflareaccess.com`.
-- `ACCESS_AUD`: the audience tag of the Access application that protects the dashboard host.
+- `AUTH_MODE`: how people sign in, `app` (the default) or `access`. See [Sign-in](#sign-in).
+- App mode: `EMAIL_FROM`, the sender address of sign-in emails, e.g. `links@example.com`.
+- Access mode only: `ACCESS_TEAM_DOMAIN` (your Cloudflare Access team domain, e.g. `your-team.cloudflareaccess.com`) and `ACCESS_AUD` (the audience tag of the Access application that protects the dashboard host).
 
-Required secret:
+Required secrets:
 
 - `OWNER_EMAIL`: the email that becomes the owner on first sign-in. Only that email can bootstrap, and only while the users table is empty.
+- App mode: `RESEND_API_KEY`, the Resend API key that sends sign-in emails (`npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`).
 
-Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it to `vars`: a var with the same name replaces the secret on the next deploy.
+Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it (or `RESEND_API_KEY`) to `vars`: a var with the same name replaces the secret on the next deploy.
 
 `ACCESS_JWKS_JSON` is **test-only**. It replaces the real Access signing keys with a local key set. Never set it in production; the app logs a warning if it is set.
 
@@ -94,11 +96,29 @@ Worker routes created through the API survive `wrangler deploy`, so there is not
 
 Each call repairs at most 3 domains (in domain id order) so it stays within the Workers Free limit of 50 subrequests per request. The answer is `{ ok, failed, next }`: while `next` is not null, call again with `{ "after": "<next>" }` until it is. When Cloudflare cannot be reached the call stops at that domain and `next` points at it, so the retry starts there. The dashboard repeats the calls for you.
 
-## Access
+## Sign-in
 
-Create a Cloudflare Access application on the dashboard host only. Short domains must stay public. Take its audience tag for `ACCESS_AUD`.
+`AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. Any value other than `app` or `access` (exact, lowercase) fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting.
+
+### App mode (default)
+
+linkwarren signs people in itself, with an email link or a passkey. No Access application is needed.
+
+- Set the var `EMAIL_FROM` (e.g. `links@example.com`) and the secret `RESEND_API_KEY`. The sending domain must be verified in Resend.
+- `/healthz` is public on the dashboard host; no bypass is needed.
+- `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are not used.
+
+### Access mode
+
+Set `AUTH_MODE` to `access`. Cloudflare Access signs people in, exactly as before this mode switch; `/auth/*` and `/api/account/*` answer 404.
+
+Create a Cloudflare Access application on the dashboard host only. Short domains must stay public. Take its audience tag for `ACCESS_AUD`, and set `ACCESS_TEAM_DOMAIN`.
 
 Health checks: `/healthz` sits behind Access on the dashboard host. Add an Access bypass policy for the path `/healthz`, or give the monitor a service token, otherwise the check gets a login redirect.
+
+### Upgrading an existing instance
+
+Instances deployed before the sign-in modes used Access. The default is now app mode, so **set `AUTH_MODE` to `access` before deploying this version** to keep Access. Without it the dashboard switches to app mode and the Access token is ignored. To move to app mode later, set `EMAIL_FROM` and `RESEND_API_KEY`, apply the migrations, deploy, and then remove the Access application.
 
 ## Behaviour to know
 

@@ -2,6 +2,8 @@ export type UserRow = {
   id: string; email: string; name: string | null;
   role: "owner" | "member"; status: "invited" | "active" | "disabled"; createdAt: number;
 };
+/** The public side of an app-mode session (never the cookie secret or its hash). */
+export type SessionRef = { id: string; createdAt: number };
 export type DomainRow = {
   id: string; host: string; type: "main" | "shared" | "private";
   status: "pending" | "active" | "disabled"; ownerId: string;

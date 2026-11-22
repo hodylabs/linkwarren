@@ -12,6 +12,8 @@ export default defineConfig(async () => {
           bindings: {
             TEST_MIGRATIONS: migrations,
             DASHBOARD_HOST: "dash.test",
+            // The S1 suites run in access mode; app-mode tests set AUTH_MODE = "app" themselves.
+            AUTH_MODE: "access",
             ACCESS_TEAM_DOMAIN: "team.example.cloudflareaccess.com",
             ACCESS_AUD: "test-aud",
             OWNER_EMAIL: "owner@example.com",

@@ -1,9 +1,9 @@
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
-import { requireUser } from "./auth";
+import { authMode, requireUser } from "./auth";
 import type { Env } from "./env";
-import type { UserRow } from "./types";
+import type { SessionRef, UserRow } from "./types";
 import { normalizeHost } from "./host";
 import { handleRedirect } from "./redirect";
 import { links, locks } from "./api/links";
@@ -14,7 +14,7 @@ import { audit } from "./api/audit";
 import { settings } from "./api/settings";
 import { serveDashboard } from "./assets";
 
-const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
+const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } }>();
 
 // Missing config fails closed with a clear error instead of a throw.
 app.use("*", async (c, next) => {
@@ -29,6 +29,17 @@ app.use("*", async (c, next) => {
   }
   await next();
 });
+
+// Own sign-in routes exist only in app mode (R2, R3): access mode answers 404, an unknown mode fails closed.
+// Registered before the /api/* chain so requireUser never runs on /auth/* and /api/account/* is 404 before any auth check.
+const appModeOnly: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const mode = authMode(c.env);
+  if (!mode) return c.json({ error: "misconfigured" }, 500);
+  if (mode !== "app") return c.json({ error: "not_found" }, 404);
+  await next();
+};
+app.use("/auth/*", appModeOnly);
+app.use("/api/account/*", appModeOnly);
 
 // API responses carry identity and private data: never cache them anywhere.
 app.use("/api/*", async (c, next) => {

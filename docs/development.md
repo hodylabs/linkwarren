@@ -34,8 +34,10 @@ You need an instance config (`wrangler.instance.jsonc`, see `docs/deploy.md`) wi
 
    ```sh
    npx wrangler dev -c wrangler.instance.jsonc --local-upstream localhost \
-     --var DASHBOARD_HOST:localhost --var OWNER_EMAIL:<your Access email>
+     --var DASHBOARD_HOST:localhost --var OWNER_EMAIL:<your Access email> --var AUTH_MODE:access
    ```
+
+   This flow signs in with Access, so it runs the Worker in access mode (`AUTH_MODE=access`); the default app mode ignores the Access token.
 
    `--local-upstream localhost` matters when the instance config has `routes`: without it, `wrangler dev` presents requests as coming to the first route's host, and the Worker then treats every request as a short link.
 
