@@ -49,7 +49,7 @@ const hostPath = (url: string) => {
 };
 
 /** One line for the routing rule row: the first route in words, "(+n more)" for the rest, "Off" when none. */
-export function routeSummary(routes: Route[], _mainUrl: string): string {
+export function routeSummary(routes: Route[]): string {
   const r = routes[0];
   if (!r) return "Off";
   const devices = r.devices.map(cap).join(", ");

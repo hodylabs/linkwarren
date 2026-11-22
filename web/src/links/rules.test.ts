@@ -37,19 +37,19 @@ describe("passwordProblem", () => {
 describe("routeSummary", () => {
   it("first route in words", () => {
     expect(countryName("CA")).toBe("Canada");
-    expect(routeSummary([{ countries: ["CA"], devices: [], url: "https://northwind.ca/spring" }], "https://x.com")).toBe("Canada goes to northwind.ca/spring");
+    expect(routeSummary([{ countries: ["CA"], devices: [], url: "https://northwind.ca/spring" }])).toBe("Canada goes to northwind.ca/spring");
   });
   it("devices only", () => {
-    expect(routeSummary([{ countries: [], devices: ["mobile"], url: "https://m.x.com/" }], "https://x.com")).toBe("Mobile goes to m.x.com/");
+    expect(routeSummary([{ countries: [], devices: ["mobile"], url: "https://m.x.com/" }])).toBe("Mobile goes to m.x.com/");
   });
   it("countries on devices, plus more", () => {
     const r = [
       { countries: ["CA", "US"], devices: ["mobile" as const, "tablet" as const], url: "https://x.ca/a" },
       { countries: ["FR"], devices: [], url: "https://x.fr/" },
     ];
-    expect(routeSummary(r, "https://x.com")).toBe("Canada, United States on Mobile, Tablet goes to x.ca/a (+1 more)");
+    expect(routeSummary(r)).toBe("Canada, United States on Mobile, Tablet goes to x.ca/a (+1 more)");
   });
   it("Off when empty", () => {
-    expect(routeSummary([], "https://x.com")).toBe("Off");
+    expect(routeSummary([])).toBe("Off");
   });
 });

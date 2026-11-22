@@ -443,7 +443,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           <Rule
             icon="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12zM12 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"
             label="Country and device routing"
-            note={routeSummary(filled, url)}
+            note={routeSummary(filled)}
             keyName="R"
             open={routesOpen}
             onClick={toggleRoutes}

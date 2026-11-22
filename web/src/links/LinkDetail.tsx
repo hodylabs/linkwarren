@@ -267,7 +267,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
             )}
             <div className="toggle">
               <div>
-                Country and device routing<small>{routeSummary(draft.routes.filter((r) => !blank(r)), draft.url)}</small>
+                Country and device routing<small>{routeSummary(draft.routes.filter((r) => !blank(r)))}</small>
               </div>
               <Switch
                 checked={draft.routes.length > 0}

@@ -18,7 +18,6 @@ export function iterationsOf(env: Pick<Env, "PASSWORD_HASH_ITERATIONS">): number
   return Math.min(PASSWORD_MAX_ITERATIONS, Math.max(MIN_SETTING, Number(v)));
 }
 
-/** NFC-normalizes (never trims) and checks 8 to 128 code points. */
 /** The shared rule (also used by the dashboard), so server and client cannot drift. */
 export const checkPassword = passwordRule;
 
