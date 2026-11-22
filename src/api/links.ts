@@ -328,7 +328,7 @@ links.patch("/:id", async (c) => {
 
 /**
  * Deleting a link deletes every forwarder aimed at it and locks their slugs, so a printed QR code for an old
- * address can never land on a later link at the moved address. `parents`: JSON array of `{ t: link id, ... }`; `guard` reads
+ * address never lands on an unrelated link. `parents`: JSON array of `{ t: link id, ... }`; `guard` reads
  * `j.value` and must hold only while that link is still there to delete. Lock, audit (one row per forwarder) and delete, in that
  * order, before the parent's own DELETE in the same batch; the DELETE returns the cache keys to purge. Index probes only
  * (links_forward_to).
