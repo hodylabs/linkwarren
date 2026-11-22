@@ -308,3 +308,73 @@ describe("unlock CPU at 25000 iterations", () => {
     expect(verifyMs).toBeLessThan(50);
   });
 });
+
+describe("fix round 1", () => {
+  const rows = async () => (await env.DB.prepare("SELECT key, window_start, count FROM auth_limits ORDER BY key").all()).results;
+  const direct = async (u: string, init: RequestInit = {}) => {
+    const { handleRedirect } = await import("../src/redirect");
+    return handleRedirect(new Request(u, init), env, now());
+  };
+
+  it("http: GET and HEAD are 308 to the same https URL, query byte-exact; POST is 403 and reads no password", async () => {
+    const d = await seed({ password: HASH });
+    for (const method of ["GET", "HEAD"]) {
+      const r = await direct(`http://${d.host}/spring?a=%20&b=%2F&lw=qr`, { method });
+      expect([method, r.status, r.headers.get("location")]).toEqual([method, 308, `https://${d.host}/spring?a=%20&b=%2F&lw=qr`]);
+      expect(await r.text()).not.toContain('name="password"');
+    }
+    const before = await rows();
+    const p = await direct(`http://${d.host}/spring`, post(d.host, form(PW), { ip: freshIp(), origin: `http://${d.host}` }));
+    expect([p.status, p.headers.get("location")]).toEqual([403, null]);
+    expect(await rows()).toEqual(before);
+    expect(verifyPassword).not.toHaveBeenCalled();
+  });
+
+  it("http on an unprotected link keeps redirecting as before", async () => {
+    const d = await seed();
+    const r = await direct(`http://${d.host}/spring`);
+    expect([r.status, r.headers.get("location"), r.headers.get("strict-transport-security")]).toEqual([302, "https://dest.test/x", null]);
+  });
+
+  it("HSTS on the https form, the 401, the 403 and the 303", async () => {
+    const d = await seed({ password: HASH });
+    const h = harness();
+    const hsts = "max-age=31536000";
+    expect((await h.go(d.host, "/spring")).headers.get("strict-transport-security")).toBe(hsts);
+    expect((await h.go(d.host, "/spring", post(d.host, form("wrong-pass"), { ip: freshIp() }))).headers.get("strict-transport-security")).toBe(hsts);
+    const o = await h.go(d.host, "/spring", post(d.host, form(PW), { ip: freshIp(), origin: null }));
+    expect(o.headers.get("strict-transport-security")).toBe(hsts);
+    expect(await o.text()).toContain("This form must be sent from the link's own page. Open the link again.");
+    expect((await h.go(d.host, "/spring", post(d.host, form(PW), { ip: freshIp() }))).headers.get("strict-transport-security")).toBe(hsts);
+  });
+
+  it("once limited, further POSTs write nothing to D1", async () => {
+    const d = await seed({ password: HASH });
+    const h = harness();
+    const ip = freshIp();
+    for (let i = 0; i < 5; i++) await h.go(d.host, "/spring", post(d.host, form("wrong-pass"), { ip }));
+    const before = await rows();
+    for (let i = 0; i < 4; i++) expect((await h.go(d.host, "/spring", post(d.host, form("wrong-pass"), { ip }))).status).toBe(429);
+    expect(await rows()).toEqual(before);
+  });
+
+  it("six right unlocks from one range in a window all succeed (the slot is refunded)", async () => {
+    const d = await seed({ password: HASH });
+    const h = harness();
+    const ip = freshIp();
+    for (let i = 0; i < 6; i++) expect((await h.go(d.host, "/spring", post(d.host, form(PW), { ip }))).status).toBe(303);
+    const r = await env.DB.prepare("SELECT count FROM auth_limits WHERE key = ?").bind(`unlock:${d.link}:198.51.${ipN}.0/24`).first<{ count: number }>();
+    expect(r!.count).toBe(0);
+  });
+
+  it("parallel wrong guesses from one range never exceed 5 per window", async () => {
+    const d = await seed({ password: HASH });
+    const h = harness();
+    const ip = freshIp();
+    const res = await Promise.all(Array.from({ length: 12 }, () => h.go(d.host, "/spring", post(d.host, form("wrong-pass"), { ip }))));
+    const s = res.map((r) => r.status);
+    expect(s.filter((x) => x === 401)).toHaveLength(5);
+    expect(s.filter((x) => x === 429)).toHaveLength(7);
+    expect(verifyPassword.mock.calls.length).toBeLessThanOrEqual(5);
+  });
+});

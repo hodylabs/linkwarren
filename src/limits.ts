@@ -33,3 +33,8 @@ export async function blocked(env: Env, key: string, l: Limit): Promise<boolean>
   const r = await env.DB.prepare("SELECT count FROM auth_limits WHERE key = ? AND window_start > ?").bind(key, now - l.s).first<{ count: number }>();
   return !!r && r.count >= l.n;
 }
+
+/** Best effort: gives one event back (never below 0), e.g. a reserved attempt that turned out legitimate. */
+export async function refund(env: Env, key: string): Promise<void> {
+  await env.DB.prepare("UPDATE auth_limits SET count = count - 1 WHERE key = ? AND count > 0").bind(key).run();
+}

@@ -1,7 +1,7 @@
 import { type Ctx } from "./cache";
 import { splitQrMarker } from "./clicks";
 import type { Env } from "./env";
-import { blocked, hit, LIMITS } from "./limits";
+import { blocked, hit, LIMITS, refund } from "./limits";
 import { passwordPage } from "./pages";
 import { verifyPassword } from "./password";
 import { destinationOf, recordClick, robots } from "./redirect";
@@ -19,24 +19,32 @@ export const INTERSTITIAL_HEADERS = {
   "referrer-policy": "same-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
+  "strict-transport-security": "max-age=31536000",
 } as const;
+const HSTS = { "strict-transport-security": INTERSTITIAL_HEADERS["strict-transport-security"] };
 
 /** Attempts per link and IP range (counted before PBKDF2, right or wrong); failures per range across all links use LIMITS.failIp. */
 const UNLOCK = { n: 5, s: 900 } as const;
 const MAX_BODY = 1024;
 
 const plain = (body: string, status: number) =>
-  new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+  new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...HSTS } });
 
 /** Short host, protected link: GET/HEAD show the form; POST is the unlock. No cookie, no session, nothing reflected. */
 export async function handleProtected(req: Request, env: Env, link: LinkRow, domain: DomainRow, url: URL, now: number, ctx?: Ctx): Promise<Response> {
   const head = req.method === "HEAD";
   const show = (state: Parameters<typeof passwordPage>[0], status: number, extra: Record<string, string> = {}) =>
     new Response(head ? null : passwordPage(state), { status, headers: { ...INTERSTITIAL_HEADERS, ...extra } });
+  // HTTPS only: a password must never be typed into, or posted from, a plain-HTTP page.
+  if (url.protocol !== "https:") {
+    if (req.method === "POST") return new Response(head ? null : "HTTPS required", { status: 403, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+    // Byte-exact: only the scheme changes, the serialized path and query are kept as they are.
+    return new Response(null, { status: 308, headers: { location: `https:${req.url.slice(url.protocol.length)}`, "cache-control": "no-store" } });
+  }
   if (req.method !== "POST") return show("ask", 200);
 
   // R9: the only CSRF gate (there is no session to ride); missing or "null" is refused.
-  if (req.headers.get("origin") !== `https://${url.host}`) return show("ask", 403);
+  if (req.headers.get("origin") !== `https://${url.host}`) return show("origin", 403);
   const type = (req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
   if (type !== "application/x-www-form-urlencoded") return plain("Unsupported media type", 415);
   const len = req.headers.get("content-length");
@@ -46,8 +54,10 @@ export async function handleProtected(req: Request, env: Env, link: LinkRow, dom
   // Limits before any PBKDF2 work. The per-link counter is one atomic upsert, so parallel guesses cannot slip past it.
   const prefix = ipPrefix(req.headers.get("cf-connecting-ip")) ?? "none";
   const failKey = `unlockfail:${prefix}`;
+  const unlockKey = `unlock:${link.id}:${prefix}`;
   try {
-    if ((await blocked(env, failKey, LIMITS.failIp)) || !(await hit(env, `unlock:${link.id}:${prefix}`, UNLOCK)))
+    // Reads first: a limited range costs no D1 write. Then the atomic hit reserves a slot, so parallel guesses stay bounded.
+    if ((await blocked(env, failKey, LIMITS.failIp)) || (await blocked(env, unlockKey, UNLOCK)) || !(await hit(env, unlockKey, UNLOCK)))
       return show("limited", 429, { "retry-after": String(UNLOCK.s) });
   } catch {
     return show("unavailable", 503); // fail closed: no limiter, no password check
@@ -62,10 +72,12 @@ export async function handleProtected(req: Request, env: Env, link: LinkRow, dom
     return show("wrong", 401);
   }
 
+  // A right password gives its reserved slot back: people behind one NAT reopening the link are never locked out by it.
+  await refund(env, unlockKey).catch(() => {});
   const m = splitQrMarker(url.search);
   const res = new Response(null, {
     status: 303, // always 303, whatever redirect_code says (R4): POST becomes GET, nothing cacheable pairs URL and destination
-    headers: { location: destinationOf(req, link, m.search), "cache-control": "private, no-store", "referrer-policy": "no-referrer", ...robots(domain) },
+    headers: { location: destinationOf(req, link, m.search), "cache-control": "private, no-store", "referrer-policy": "no-referrer", ...HSTS, ...robots(domain) },
   });
   if (env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
   return res;

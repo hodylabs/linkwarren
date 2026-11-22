@@ -21,6 +21,7 @@ const MESSAGES = {
   wrong: "That password is not right. Try again.",
   limited: "Too many tries. Wait 15 minutes and try again.",
   unavailable: "Password check is unavailable right now.",
+  origin: "This form must be sent from the link's own page. Open the link again.",
 } as const;
 
 /** Fixed text only: nothing from the request or the link is ever reflected. No action: posts to the current URL with its query. */
