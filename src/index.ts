@@ -47,7 +47,8 @@ app.use("/api/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
 });
 
-// CSRF: the Origin check plus the Access JWT are the defence; the JSON-only 415 guard is best-effort.
+// CSRF: the Origin check plus the credential's own scope are the defence (app mode: the host-only SameSite=Lax session
+// cookie; access mode: the Access JWT); the JSON-only 415 guard is best-effort.
 // A missing Origin is allowed for non-browser clients.
 const dashboardOrigin = (host: string) => `https://${normalizeHost(host)}`;
 app.use("/api/*", (c, next) => csrf({ origin: dashboardOrigin(c.env.DASHBOARD_HOST) })(c, next));

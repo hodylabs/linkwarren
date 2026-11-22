@@ -19,7 +19,7 @@ const sha256Hex = async (s: string) =>
 
 describe("authMode", () => {
   it.each([
-    [undefined, "app"], ["", "app"], [" app ", "app"], ["access", "access"], ["Access", null], ["bogus", null],
+    [undefined, "app"], ["", "app"], [" app ", "app"], ["access", "access"], ["Access", null], ["bogus", null], [1, null], [true, null],
   ] as const)("%j -> %j", (v, want) => {
     expect(authMode({ AUTH_MODE: v } as unknown as Env)).toBe(want);
   });
@@ -70,6 +70,17 @@ describe("access mode", () => {
   });
 });
 
+describe("non-string mode", () => {
+  it.each([1, true])("%j answers 500 misconfigured, not internal", async (v) => {
+    (e as { AUTH_MODE?: unknown }).AUTH_MODE = v;
+    const me = await dash("/api/me");
+    expect(me.status).toBe(500);
+    expect(await me.json()).toEqual({ error: "misconfigured" });
+    const a = await dash("/auth/email", { method: "POST" });
+    expect(await a.json()).toEqual({ error: "misconfigured" });
+  });
+});
+
 describe("unknown mode", () => {
   beforeEach(() => { e.AUTH_MODE = "bogus"; });
 
@@ -92,5 +103,16 @@ describe("unknown mode", () => {
 
   it("still serves /healthz", async () => {
     expect((await dash("/healthz")).status).toBe(200);
+  });
+});
+
+describe("non-string mode", () => {
+  it.each([1, true])("%j answers 500 misconfigured, not internal", async (v) => {
+    (e as { AUTH_MODE?: unknown }).AUTH_MODE = v;
+    const me = await dash("/api/me");
+    expect(me.status).toBe(500);
+    expect(await me.json()).toEqual({ error: "misconfigured" });
+    const a = await dash("/auth/email", { method: "POST" });
+    expect(await a.json()).toEqual({ error: "misconfigured" });
   });
 });

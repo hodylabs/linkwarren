@@ -13,6 +13,7 @@ CREATE TABLE sessions (
   ip_prefix TEXT
 );
 CREATE INDEX sessions_user ON sessions(user_id);
+CREATE INDEX sessions_expires ON sessions(expires_at);
 
 CREATE TABLE login_tokens (
   token_hash TEXT PRIMARY KEY,
@@ -45,6 +46,7 @@ CREATE TABLE auth_challenges (
   user_id TEXT,
   expires_at INTEGER NOT NULL
 );
+CREATE INDEX auth_challenges_expires ON auth_challenges(expires_at);
 
 CREATE TABLE auth_limits (
   key TEXT PRIMARY KEY,

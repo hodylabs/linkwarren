@@ -1,6 +1,7 @@
 import { createLocalJWKSet, createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { createMiddleware } from "hono/factory";
 import { auditStmt } from "./audit";
+import { readSession } from "./session";
 import type { Env } from "./env";
 import { rowToUser, type SessionRef, type UserRow } from "./types";
 
@@ -63,7 +64,9 @@ export type AuthMode = "app" | "access";
 
 /** R2: unset or blank is app; "app" / "access" (trimmed, exact lowercase); anything else is null and fails closed. */
 export function authMode(env: Env): AuthMode | null {
-  const m = (env.AUTH_MODE ?? "").trim();
+  const raw: unknown = env.AUTH_MODE; // a non-string var (number, boolean) is a misconfiguration too, not a crash
+  if (raw != null && typeof raw !== "string") return null;
+  const m = (raw ?? "").trim();
   return m === "" || m === "app" ? "app" : m === "access" ? "access" : null;
 }
 
@@ -89,11 +92,6 @@ export async function resolveUser(env: Env, email: string): Promise<{ user: User
     if (!user || user.status !== "active") return { status: 403, error: user ? "disabled" : "not_invited" };
   }
   return { user };
-}
-
-/** Task 3 replaces this stub with the hashed-cookie lookup. */
-async function readSession(_req: Request, _env: Env): Promise<{ user: UserRow; session: SessionRef } | null> {
-  return null;
 }
 
 type AuthFail = { status: 401 | 403; error: "unauthenticated" | "not_invited" | "disabled" };
