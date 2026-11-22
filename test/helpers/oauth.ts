@@ -105,7 +105,8 @@ export async function connectAgent(email: string, o: { write?: boolean; del?: bo
 export async function mcpCall(token: string, method: string, params?: unknown): Promise<{ status: number; body: any }> {
   const r = await fetchW("/mcp", {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+    // The edge always sends Host; a test fetch does not, and the MCP handler checks it against DASHBOARD_HOST.
+    headers: { host: new URL(ORIGIN).host, authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
   });
   const text = await r.text();

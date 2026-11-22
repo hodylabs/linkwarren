@@ -2,6 +2,7 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import type { Env } from "./env";
 import { normalizeHost } from "./host";
 import { app } from "./app";
+import { mcpHandler } from "./mcp/server";
 
 /** Every path the OAuth provider answers; all of them are JSON 404 unless MCP_ENABLED is "1". */
 export const OAUTH_PATHS: readonly string[] = [
@@ -36,9 +37,6 @@ const checkRegistration = ({ clientMetadata }: { clientMetadata: Record<string, 
     return { code: "invalid_redirect_uri", description: "Only the claude.ai callback and http://localhost|127.0.0.1:<port>/callback are accepted" };
 };
 
-// Task 7 replaces this with the MCP handler.
-const mcpStub = { fetch: async () => Response.json({ jsonrpc: "2.0" }, { status: 501 }) };
-
 let cached: { host: string; p: OAuthProvider<Env> } | undefined;
 
 /** One provider per dashboard host (the resource URL is derived from it). The library reads its KV as env.OAUTH_KV. */
@@ -49,7 +47,7 @@ export function provider(env: Env): OAuthProvider<Env> {
       host,
       p: new OAuthProvider<Env>({
         apiRoute: "/mcp",
-        apiHandler: mcpStub,
+        apiHandler: mcpHandler,
         defaultHandler: { fetch: (req, e, ctx) => app.fetch(req, e, ctx) },
         authorizeEndpoint: "/authorize",
         tokenEndpoint: "/token",
