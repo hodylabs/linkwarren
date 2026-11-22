@@ -10,7 +10,7 @@ const all = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).
 const count = async (t: string) => (await all<{ n: number }>(`SELECT COUNT(*) n FROM ${t}`))[0]!.n;
 const audits = async (a: string) => (await all<{ n: number }>("SELECT COUNT(*) n FROM audit_log WHERE action = ?", a))[0]!.n;
 
-type L = { host: string | null; slug: string; destination: string; enabled?: boolean; startDate?: string | null; endDate?: string | null };
+type L = { host: string | null; slug: string; destination: string; enabled?: boolean; protected?: boolean; startDate?: string | null; endDate?: string | null };
 const link = (l: L) => ({ enabled: true, startDate: null, endDate: null, ...l });
 const body = (links: L[], domains: unknown[] = [], mainHost = "main.example") => ({ mainHost, domains, links: links.map(link) });
 async function imp(who: string, b: unknown, q = "") {
@@ -22,7 +22,7 @@ async function imp(who: string, b: unknown, q = "") {
 }
 const owner = (b: unknown, q = "") => imp("owner@example.com", b, q);
 const get = (host: string, path: string) => exports.default.fetch(`https://${host}${path}`, { redirect: "manual" });
-const rep = async (r: Response) => (await r.json()) as { created: number; skipped: number; conflicts: { host: string; slug: string; reason: string }[]; caseSensitiveDomains: string[]; domainsCreated: string[]; ignored: { host: string; field: string }[] };
+const rep = async (r: Response) => (await r.json()) as { created: number; skipped: number; conflicts: { host: string; slug: string; reason: string }[]; caseSensitiveDomains: string[]; domainsCreated: string[]; ignored: { host: string; field: string }[]; protected: { host: string; slug: string }[] };
 const D = (host: string, i: string | null = null, n: string | null = null) => ({ host, customIndexUrl: i, customNotFoundUrl: n });
 
 beforeAll(setupAccess);
@@ -37,7 +37,7 @@ describe("fixture import (main.example only)", () => {
   it("first run creates domain and links with exact slugs; second run skips all", async () => {
     const r1 = await owner(filtered());
     expect(r1.status).toBe(200);
-    expect(await rep(r1)).toEqual({ created: 4, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: ["main.example"], ignored: [] });
+    expect(await rep(r1)).toEqual({ created: 4, skipped: 0, conflicts: [], caseSensitiveDomains: [], domainsCreated: ["main.example"], ignored: [], protected: [] });
     const dom = (await all<Record<string, unknown>>("SELECT * FROM domains"))[0]!;
     expect(dom).toMatchObject({ host: "main.example", type: "private", status: "active", owner_id: "uo", bare_redirect: "https://example.org/home", notfound_redirect: "https://example.org/missing" });
     expect((await all<{ slug: string }>("SELECT slug FROM links ORDER BY slug")).map((r) => r.slug)).toEqual(["Spring", "app", "promo"]);
@@ -108,6 +108,25 @@ describe("rules", () => {
     const r3 = await rep(await owner(body([{ host: "a.test", slug: "live", destination: "https://e.org/l", enabled: false }])));
     expect(r3.conflicts).toEqual([{ host: "a.test", slug: "live", reason: "exists" }]);
     expect(await count("slug_locks")).toBe(1);
+  });
+  it("a protected legacy link arrives as a lock, never live, and is listed", async () => {
+    const b = body([{ host: "a.test", slug: "Secret", destination: "https://e.org/private", protected: true }, { host: "a.test", slug: "open", destination: "https://e.org/o" }]);
+    const dry = await rep(await owner(b, "?dryRun=1"));
+    expect(dry.protected).toEqual([{ host: "a.test", slug: "Secret" }]);
+    const r = await rep(await owner(b));
+    expect(r).toMatchObject({ created: 2, conflicts: [], protected: [{ host: "a.test", slug: "Secret" }] });
+    expect((await all<{ slug: string }>("SELECT slug FROM links")).map((x) => x.slug)).toEqual(["open"]);
+    expect((await all<{ slug_key: string }>("SELECT slug_key FROM slug_locks")).map((x) => x.slug_key)).toEqual(["secret"]);
+    const res = await get("a.test", "/Secret");
+    expect(res.status).not.toBe(302);
+    expect(res.headers.get("location")).toBeNull();
+    expect(await res.text()).not.toContain("e.org/private");
+    // Running it again keeps it locked and still lists it, so the owner can find it.
+    const r2 = await rep(await owner(b));
+    expect(r2).toMatchObject({ created: 0, skipped: 2, protected: [{ host: "a.test", slug: "Secret" }] });
+  });
+  it("protected must be a boolean", async () => {
+    expect((await owner({ ...body([]), links: [{ ...link({ host: null, slug: "a", destination: "https://e.org/" }), protected: "yes" }] })).status).toBe(400);
   });
   it("legacy reserved slugs are kept; invalid slug, destination and dates are reported", async () => {
     const r = await rep(await owner(body([

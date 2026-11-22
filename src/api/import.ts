@@ -23,6 +23,8 @@ const body = z.object({
   links: z.array(z.object({
     host: z.string().nullable(), slug: z.string(), destination: z.string(), enabled: z.boolean(),
     startDate: z.string().nullable().optional(), endDate: z.string().nullable().optional(),
+    // A legacy password link: its hash cannot be carried over, so it is imported like a disabled link (a lock) and listed.
+    protected: z.boolean().optional(),
   })),
 });
 
@@ -124,7 +126,7 @@ importApi.post("/", async (c) => {
     if (!dom) return conflict(i, badHost.get(host) ?? "invalid_host");
     if (!checkSlugShape(l.slug).ok) return conflict(i, "invalid_slug");
     if (!dom.cs && isTwin(host, l.slug)) return conflict(i, "case_twin");
-    if (!l.enabled) { disabled.push(i); return; }
+    if (!l.enabled || l.protected) { disabled.push(i); return; }
     const href = dest(l.destination);
     if (!href) return conflict(i, "invalid_destination");
     const startsAt = parseDate(l.startDate), expiresAt = parseDate(l.endDate);
@@ -156,6 +158,8 @@ importApi.post("/", async (c) => {
   const report = {
     created: planned, skipped, conflicts, caseSensitiveDomains: newDoms.filter((d) => d.cs).map((d) => d.host),
     domainsCreated: newDoms.map((d) => d.host), ignored,
+    // Locked or already locked: the owner recreates each with a new password. Conflicts are already in `conflicts`.
+    protected: b.links.flatMap((l, i) => (l.protected && out[i]!.kind !== "conflict" ? [{ host: hostOf(l.host), slug: l.slug }] : [])),
   };
   if (dry) return c.json(report);
 
