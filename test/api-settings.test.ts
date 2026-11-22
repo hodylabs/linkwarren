@@ -492,7 +492,7 @@ describe("instance and settings", () => {
     expect(put.status).toBe(200);
     const { logoVersion } = (await put.json()) as { logoVersion: number };
     expect(Number.isInteger(logoVersion)).toBe(true);
-    const g = await call("a", "GET", "/api/instance/logo");
+    const g = await call("a", "GET", `/api/instance/logo?v=${logoVersion}`);
     expect(g.status).toBe(200);
     expect(new Uint8Array(await g.arrayBuffer())).toEqual(bytes);
     expect(g.headers.get("content-type")).toBe("image/png");
@@ -505,6 +505,7 @@ describe("instance and settings", () => {
     expect(del.status).toBe(200);
     const g2 = await call("a", "GET", "/api/instance/logo");
     expect([g2.status, await g2.json()]).toEqual([404, { error: "no_logo" }]);
+    expect(g2.headers.get("cache-control")).toBe("no-store");
     expect(((await (await call("a", "GET", "/api/instance")).json()) as { logoVersion: unknown }).logoVersion).toBe(null);
     const acts = (await actions()).filter((a) => a[0].startsWith("logo."));
     expect(acts).toEqual([["logo.update", { type: "image/png", bytes: bytes.length }], ["logo.remove", {}]]);
@@ -570,5 +571,46 @@ describe("instance and settings", () => {
     expect((await actions()).filter((a) => a[0] === "setup.complete")).toHaveLength(1);
     expect((await steps()).configured).toBe(true);
     expect(((await (await call("a", "GET", "/api/instance")).json()) as { configured: boolean }).configured).toBe(true);
+  });
+});
+
+describe("logo and main domain hardening (Task 11)", () => {
+  beforeEach(async () => {
+    await env.CACHE.delete("instance:logo");
+    await run("DELETE FROM auth_limits");
+  });
+
+  it("the logo is cacheable only under its current version; any other ?v= is no-store", async () => {
+    const put = await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    const { logoVersion } = (await put.json()) as { logoVersion: number };
+    expect((await call("a", "GET", `/api/instance/logo?v=${logoVersion}`)).headers.get("cache-control")).toBe("private, max-age=300");
+    for (const q of ["", "?v=1", `?v=${logoVersion + 1}`])
+      expect([q, (await call("a", "GET", `/api/instance/logo${q}`)).headers.get("cache-control")]).toEqual([q, "no-store"]);
+  });
+
+  it("DELETE with no logo is a no-op: no KV delete, no audit", async () => {
+    const del = vi.spyOn(env.CACHE, "delete");
+    const r = await call("owner", "DELETE", "/api/settings/logo");
+    expect([r.status, await r.json()]).toEqual([200, { logoVersion: null }]);
+    expect(del).not.toHaveBeenCalled();
+    expect((await actions()).filter((a) => a[0].startsWith("logo."))).toEqual([]);
+  });
+
+  it("logo changes are limited to 20 per UTC day: then 429 too_many and no KV write", async () => {
+    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('logo:day', ?, 20)", Math.floor(Date.now() / 1000));
+    const putSpy = vi.spyOn(env.CACHE, "put");
+    const r = await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    expect([r.status, await r.json()]).toEqual([429, { error: "too_many" }]);
+    expect(putSpy).not.toHaveBeenCalled();
+  });
+
+  it("a main domain disabled between the check and the batch is not saved: 400 bad_main_domain, no audit", async () => {
+    await mainDom("dm9", "m9.test");
+    const restore = beforeBatch(1, () => run("UPDATE domains SET status = 'disabled' WHERE id = 'dm9'"));
+    let r: Response;
+    try { r = await call("owner", "PATCH", "/api/settings", { mainDomainId: "dm9" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([400, { error: "bad_main_domain" }]);
+    expect(await all("SELECT * FROM settings WHERE key = 'instance.mainDomainId'")).toEqual([]);
+    expect((await actions()).filter((a) => a[0] === "settings.update")).toEqual([]);
   });
 });

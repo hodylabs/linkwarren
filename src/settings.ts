@@ -50,20 +50,23 @@ export function parseSettings(rows: { key: string; value: string }[]): InstanceS
   return out as InstanceSettings;
 }
 
-/** Per key one upsert (null deletes) plus one settings.update audit { key, value }, guarded by the row it records. Batch with the caller's other writes. */
-export function settingStmts(env: Env, actorId: string, patch: Partial<InstanceSettings>): D1PreparedStatement[] {
+/** Per key one upsert (null deletes) plus one settings.update audit { key, value }, guarded by the row it records. Batch with the caller's other writes.
+ * `when`: an extra SQL condition every upsert and audit also needs (e.g. the chosen main domain is still valid). */
+export function settingStmts(env: Env, actorId: string, patch: Partial<InstanceSettings>, when?: { sql: string; binds: unknown[] }): D1PreparedStatement[] {
   const now = Math.floor(Date.now() / 1000);
   return NAMES.filter((n) => patch[n] !== undefined).flatMap((n) => {
     const key = FIELDS[n].key;
     const value = patch[n] ?? null;
+    const w = when ? ` AND ${when.sql}` : "";
+    const wb = when?.binds ?? [];
     const audit = (guard: { sql: string; binds: unknown[] }) =>
-      auditStmt(env, { actorId, action: "settings.update", targetType: "settings", targetId: key, detail: { key, value } }, guard);
-    if (value === null) return [env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(key), audit({ sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: [key] })];
+      auditStmt(env, { actorId, action: "settings.update", targetType: "settings", targetId: key, detail: { key, value } }, { sql: guard.sql + w, binds: [...guard.binds, ...wb] });
+    if (value === null) return [env.DB.prepare(`DELETE FROM settings WHERE key = ?${w}`).bind(key, ...wb), audit({ sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: [key] })];
     const json = JSON.stringify(value);
     return [
       env.DB.prepare(
-        "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-      ).bind(key, json, now, actorId),
+        `INSERT INTO settings (key, value, updated_at, updated_by) SELECT ?,?,?,? WHERE 1${w} ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+      ).bind(key, json, now, actorId, ...wb),
       audit({ sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [key, json] }),
     ];
   });

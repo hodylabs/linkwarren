@@ -21,6 +21,8 @@ export const LIMITS = {
   inviteResend: { n: 1, s: 60 },
   /** Invite emails per hour, instance wide: their own budget, so invites never starve sign-in links (LIMITS.instance). */
   inviteHour: { n: 20, s: 3600 },
+  /** Logo uploads and removals per UTC day: each spends one of the account's 1,000 KV writes. */
+  logoDay: { n: 20, s: 86400, utc: true },
   /** KV deletes spent by bulk edits per UTC day: half the account's 1,000, the rest stays for single edits and OAuth. */
   bulkKvDay: { n: 500, s: 86400, utc: true },
 } as const;
@@ -28,7 +30,7 @@ export const LIMITS = {
 export type Limit = { n: number; s: number; utc?: boolean };
 
 /** Windows longer than an hour: the hourly prunes keep these keys for a day (SQL on auth_limits.key). */
-export const DAY_KEYS_SQL = "(key IN ('reg:day', 'api:day', 'bulk:kv') OR key LIKE 'api:ud:%')";
+export const DAY_KEYS_SQL = "(key IN ('reg:day', 'api:day', 'bulk:kv', 'logo:day') OR key LIKE 'api:ud:%')";
 
 /** A window_start at or below this is outside the current window. */
 const since = (l: Limit, now: number) => (l.utc ? now - (now % l.s) - 1 : now - l.s);
@@ -55,6 +57,7 @@ export const limitKey = {
   inviteHour: "invite:hour",
   /** Instance KV deletes spent by bulk edits, per UTC day (LIMITS.bulkKvDay). */
   bulkKv: "bulk:kv",
+  logoDay: "logo:day",
 } as const;
 
 /** Counts one event in one atomic upsert (a window older than s restarts at 1); true when still within the limit. */

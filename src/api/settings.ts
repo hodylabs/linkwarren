@@ -8,7 +8,7 @@ import { AUDIT_KEEP_DAYS } from "../cron";
 import { checkLogo, LOGO_HEADERS, LOGO_KEY, LOGO_MAX_BYTES, LOGO_TYPES, type LogoType } from "../logo";
 import { getSettings, settingStmts, type InstanceSettings } from "../settings";
 import { emailConfigured, sendEmail, UNSAFE } from "../email";
-import { LIMITS, hitAll, limitKey } from "../limits";
+import { LIMITS, hit, hitAll, limitKey } from "../limits";
 import { CfError, cfConfig, cfConfigFor, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
 import { syncDomain, syncErrorCode } from "../cf/attach";
 import { checkToken, sampleZone } from "../cf/perms";
@@ -40,14 +40,20 @@ instance.get("/", async (c) => {
   });
 });
 instance.get("/logo", async (c) => {
-  const r = await c.env.CACHE.getWithMetadata<{ type?: string }>(LOGO_KEY, "arrayBuffer");
+  const r = await c.env.CACHE.getWithMetadata<{ type?: string; v?: number }>(LOGO_KEY, "arrayBuffer");
   const type = r.metadata?.type;
-  if (!r.value || !LOGO_TYPES.includes(type as LogoType)) return c.json({ error: "no_logo" }, 404);
-  return new Response(r.value, { headers: { "Content-Type": type!, ...LOGO_HEADERS } });
+  if (!r.value || !LOGO_TYPES.includes(type as LogoType)) {
+    c.header("Cache-Control", "no-store");
+    return c.json({ error: "no_logo" }, 404);
+  }
+  // Cacheable only under the version these bytes carry: a stale KV read (eventual consistency) or a version the D1
+  // write never reached is never cached under the new ?v= URL.
+  const current = r.metadata?.v !== undefined && c.req.query("v") === String(r.metadata.v);
+  return new Response(r.value, { headers: { "Content-Type": type!, ...LOGO_HEADERS, ...(current ? {} : { "Cache-Control": "no-store" }) } });
 });
 
-const validMain = async (env: Env, id: string | null) =>
-  !!id && !!(await env.DB.prepare("SELECT 1 FROM domains WHERE id = ? AND type = 'main' AND status != 'disabled'").bind(id).first());
+const MAIN_OK = "EXISTS (SELECT 1 FROM domains WHERE id = ? AND type = 'main' AND status != 'disabled')";
+const validMain = async (env: Env, id: string | null) => !!id && !!(await env.DB.prepare(`SELECT ${MAIN_OK} ok`).bind(id).first<{ ok: number }>())?.ok;
 
 async function settingsBody(env: Env) {
   const [s, emailOk, secrets] = await Promise.all([getSettings(env), emailConfigured(env), secretStatus(env)]);
@@ -81,8 +87,11 @@ settings.patch("/", async (c) => {
     if (len < 1 || len > NAME_MAX) return c.json({ error: "bad_name" }, 400);
     patch.name = name;
   }
-  if (rest.mainDomainId !== undefined && !(await validMain(c.env, rest.mainDomainId))) return c.json({ error: "bad_main_domain" }, 400);
-  await c.env.DB.batch(settingStmts(c.env, c.var.user.id, patch));
+  const main = rest.mainDomainId;
+  if (main !== undefined && !(await validMain(c.env, main))) return c.json({ error: "bad_main_domain" }, 400);
+  // Re-checked in SQL: a domain disabled or retyped after the read above leaves every key of this patch unwritten.
+  const res = await c.env.DB.batch(settingStmts(c.env, c.var.user.id, patch, main === undefined ? undefined : { sql: MAIN_OK, binds: [main] }));
+  if (main !== undefined && !res[0]!.meta.changes) return c.json({ error: "bad_main_domain" }, 400);
   return c.json(await settingsBody(c.env));
 });
 
@@ -103,6 +112,7 @@ settings.put("/logo", bodyLimit({ maxSize: LOGO_BODY_MAX + 256, onError: (c) => 
   }
   const check = checkLogo(bytes);
   if (!check.ok) return c.json({ error: check.reason }, 400);
+  if (!(await hit(c.env, limitKey.logoDay, LIMITS.logoDay))) return c.json({ error: "too_many" }, 429);
   const type = check.type;
   const v = Date.now();
   // One KV write per upload (R7). The stored name is fixed: no user-provided filename is ever kept.
@@ -115,6 +125,9 @@ settings.put("/logo", bodyLimit({ maxSize: LOGO_BODY_MAX + 256, onError: (c) => 
   return c.json({ logoVersion: v });
 });
 settings.delete("/logo", async (c) => {
+  // Nothing to remove: no KV delete, no audit.
+  if ((await getSettings(c.env)).logoVersion === null) return c.json({ logoVersion: null });
+  if (!(await hit(c.env, limitKey.logoDay, LIMITS.logoDay))) return c.json({ error: "too_many" }, 429);
   await c.env.CACHE.delete(LOGO_KEY);
   await c.env.DB.batch([
     ...settingStmts(c.env, c.var.user.id, { logoVersion: null }),
