@@ -17,6 +17,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
   let seq = 0;
   const nid = (p: string) => `${p}${++seq}`;
   const state = {
+    omitTotalCount: false as boolean,
     zones: [...(opts.zones ?? [])],
     dns: [] as { id: string; zoneId: string; type: string; name: string; content: string; proxied: boolean; comment: string | null }[],
     routes: [] as { id: string; zoneId: string; pattern: string; script: string | null }[],
@@ -135,7 +136,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
       if (m === "GET") {
         const h = url.searchParams.get("hostname");
         const rows = state.hostnames.filter((x) => !h || x.hostname === h);
-        return ok(url.searchParams.get("per_page") === "1" ? rows.slice(0, 1) : rows, { total_count: rows.length });
+        return ok(url.searchParams.get("per_page") === "1" ? rows.slice(0, 1) : rows, state.omitTotalCount ? {} : { total_count: rows.length });
       }
       if (m === "POST") {
         if (typeof b.hostname !== "string" || !b.hostname) return err(400, 1407);

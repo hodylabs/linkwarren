@@ -16,6 +16,7 @@ const notConfigured = () => new CfError(0, [-1]);
 
 /** Cloudflare for SaaS includes this many custom hostnames; each one past it is billed, so linkwarren never creates one there. */
 export const FREE_HOSTNAMES = 100;
+export const HOSTNAME_GUARD = 95;
 
 /**
  * The one mapping from a sync failure to the stable code stored as `last_error` and reported by resync.
@@ -125,7 +126,8 @@ async function outsideRefusal(cfg: CfConfig, host: string, f: OutsideFacts, held
   // Our own exact route wins over a broader foreign one; without it, any foreign (or script-less) covering route refuses.
   if (f.route ? f.route.script !== cfg.workerName : covers.some((r) => r.script !== cfg.workerName)) return "route_in_use";
   if (f.hostname && f.hostname.id !== heldHostnameId && !covers.some((r) => r.script === cfg.workerName)) return "hostname_in_use";
-  if (!f.hostname && (await hostnameCount(cfg)) >= FREE_HOSTNAMES) return "hostname_limit";
+  // Stops short of the free 100 so concurrent creates (the count is not atomic) cannot cross into billed hostnames.
+  if (!f.hostname && (await hostnameCount(cfg)) >= HOSTNAME_GUARD) return "hostname_limit";
   return null;
 }
 

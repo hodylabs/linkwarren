@@ -310,19 +310,26 @@ describe("outside refusals on a shared SaaS zone (I-1) and the free hostname quo
     expect(writes(fake.calls)).toEqual([]);
   });
   const fill = (f: Fake, n: number) => { for (let i = 0; i < n; i++) f.state.hostnames.push({ id: `ch-f${i}`, hostname: `f${i}.other.test`, status: "active", ssl: { status: "active" } }); };
-  it("100 hostnames used: create refuses 409 hostname_limit before any write (each one past 100 is billed)", async () => {
+  it("95 hostnames used: create refuses 409 hostname_limit before any write (headroom below the billed 101st)", async () => {
     const fake = installFakeCloudflare({ zones });
-    fill(fake, 100);
+    fill(fake, 95);
     const r = await create("a", "go.outside.test");
     expect([r.status, await r.json()]).toEqual([409, { error: "hostname_limit" }]);
     expect(await domainCount()).toBe(0);
     expect(writes(fake.calls)).toEqual([]);
   });
-  it("99 hostnames used: the 100th is created", async () => {
+  it("94 hostnames used: the 95th is created", async () => {
     const fake = installFakeCloudflare({ zones });
-    fill(fake, 99);
+    fill(fake, 94);
     expect((await create("a", "go.outside.test")).status).toBe(201);
-    expect(fake.state.hostnames).toHaveLength(100);
+    expect(fake.state.hostnames).toHaveLength(95);
+  });
+  it("a hostname count reply without total_count fails closed: hostname_limit, nothing written", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.omitTotalCount = true;
+    const r = await create("a", "go.outside.test");
+    expect([r.status, await r.json()]).toEqual([409, { error: "hostname_limit" }]);
+    expect(writes(fake.calls)).toEqual([]);
   });
   it("a repair that would re-create a hostname past the quota stores hostname_limit and creates nothing", async () => {
     const fake = installFakeCloudflare({ zones });

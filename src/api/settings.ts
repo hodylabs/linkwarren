@@ -44,7 +44,7 @@ settings.get("/cloudflare", async (c) => {
     accountName: zone?.accountName ?? null,
     cnameTarget: target ? normalizeHost(target) : null,
     fallbackOrigin: fb,
-    hostnames: used === null ? null : { used, limit: 100 },
+    hostnames: used === null || !Number.isFinite(used) ? null : { used, limit: 100 },
     attachedCount: attached?.n ?? 0,
     controlsEnabled: controls?.value === "1",
   });

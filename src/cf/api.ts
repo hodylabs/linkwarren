@@ -126,7 +126,9 @@ export async function findHostname(cfg: CfConfig, host: string): Promise<(Hostna
 export const createHostname = async (cfg: CfConfig, host: string) =>
   toHostname(parse(hostS, (await cf(cfg, "POST", saas(cfg), { hostname: host, ssl: { method: "http", type: "dv" } })).result));
 export const deleteHostname = async (cfg: CfConfig, id: string) => del(cfg, `${saas(cfg)}/${q(id)}`);
-export const hostnameCount = async (cfg: CfConfig): Promise<number> => (await cf(cfg, "GET", `${saas(cfg)}?per_page=1`)).info.total_count ?? 0;
+/** Billing guard input: a reply without total_count fails closed (reads as unlimited usage), never as 0. */
+export const hostnameCount = async (cfg: CfConfig): Promise<number> =>
+  (await cf(cfg, "GET", `${saas(cfg)}?per_page=1`)).info.total_count ?? Number.POSITIVE_INFINITY;
 
 const originS = z.object({ origin: z.string().nullish(), status: z.string().nullish() });
 export async function getFallbackOrigin(cfg: CfConfig): Promise<{ origin: string; status: string | null } | null> {
