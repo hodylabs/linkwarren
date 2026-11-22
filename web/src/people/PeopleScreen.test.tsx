@@ -54,7 +54,7 @@ describe("People screen", () => {
   it("the audit footer states the retention", async () => {
     boot();
     await screen.findByText("Activity across every domain");
-    expect(screen.getByText(/Kept for 3 years/)).toBeTruthy();
+    expect([...document.querySelectorAll(".foot span")].map((x) => x.textContent)).toEqual(["Kept for 3 years", "Every change, by every person and agent"]);
   });
 
   it("the Invited chip shows only invited users, Disabled only disabled", async () => {
