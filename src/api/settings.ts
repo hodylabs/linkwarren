@@ -32,7 +32,8 @@ settings.get("/cloudflare", async (c) => {
   const saas = !!(cfg?.saasZoneId && cfg.cnameTarget);
   const [zone, fb, used, attached, controls] = await Promise.all([
     cfg ? orNull(sampleZone(cfg)) : null,
-    saas ? getFallbackOrigin(cfg!).then((o) => (o ? (o.status === "active" ? "active" : "pending") : "missing"), () => null) : null,
+    // in_use: the zone's fallback origin is not our target (setup refuses to replace it), so outside domains are not ready.
+    saas ? getFallbackOrigin(cfg!).then((o) => (!o ? "missing" : normalizeHost(o.origin) !== cfg!.cnameTarget ? "in_use" : o.status === "active" ? "active" : "pending"), () => null) : null,
     cfg?.saasZoneId ? orNull(hostnameCount(cfg)) : null,
     c.env.DB.prepare("SELECT COUNT(*) n FROM domain_cf WHERE kind = 'account' AND route_id IS NOT NULL").first<{ n: number }>(),
     c.env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(CONTROLS).first<{ value: string }>(),
@@ -90,6 +91,8 @@ settings.patch("/cloudflare", async (c) => {
 });
 
 const TARGET_RECORD = "cf.target_record_id";
+// Stored before the record is created and written into its comment, so a record whose id never reached D1 is still provably ours.
+const TARGET_INTENT = "cf.target_record_intent";
 
 settings.post("/cloudflare/setup", async (c) => {
   const cfg = cfConfig(c.env);
@@ -97,11 +100,13 @@ settings.post("/cloudflare/setup", async (c) => {
   if (!cfg.saasZoneId || !cfg.cnameTarget) return c.json({ error: "outside_not_configured" }, 409);
   const { saasZoneId: zoneId, cnameTarget: target } = cfg;
   const userId = c.var.user.id;
+  const upsert = (key: string, value: string) => c.env.DB.prepare(
+    "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+  ).bind(key, value, Math.floor(Date.now() / 1000), userId);
+  const setting = async (key: string) => (await c.env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>())?.value ?? null;
   // The upsert and the audit share one batch; the audit is guarded by the row it records.
   const record = (recordId: string | null, error?: string) => c.env.DB.batch([
-    ...(recordId ? [c.env.DB.prepare(
-      "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-    ).bind(TARGET_RECORD, recordId, Math.floor(Date.now() / 1000), userId)] : []),
+    ...(recordId ? [upsert(TARGET_RECORD, recordId)] : []),
     auditStmt(c.env, { actorId: userId, action: "cloudflare.setup", targetType: "settings", targetId: "cloudflare", detail: { target, ...(recordId ? { recordId } : {}), ...(error ? { error } : {}) } },
       recordId ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [TARGET_RECORD, recordId] } : undefined),
   ]);
@@ -111,13 +116,22 @@ settings.post("/cloudflare/setup", async (c) => {
     const fb = await getFallbackOrigin(cfg);
     // The fallback origin is zone-wide: replacing someone else's would repoint every custom hostname in the zone.
     if (fb && normalizeHost(fb.origin) !== target) return c.json({ error: "fallback_in_use" }, 409);
-    const ours = (await c.env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(TARGET_RECORD).first<{ value: string }>())?.value ?? null;
+    const [ours, intent] = await Promise.all([setting(TARGET_RECORD), setting(TARGET_INTENT)]);
+    const mark = (n: string) => `linkwarren setup ${n}`;
     const records = (await listDns(cfg, zoneId, target)).filter((r) => ["A", "AAAA", "CNAME"].includes(r.type));
-    if (records.some((r) => r.id !== ours)) return c.json({ error: "target_in_use" }, 409);
-    if (!records.length) created = (await createDns(cfg, zoneId, target)).id;
+    // Ours: the stored id, or the comment of a create whose id was lost when its D1 write failed. Anything else is foreign.
+    const unrecorded = records.filter((r) => r.id !== ours);
+    if (unrecorded.some((r) => !intent || r.comment !== mark(intent))) return c.json({ error: "target_in_use" }, 409);
+    if (!records.length) {
+      const n = crypto.randomUUID();
+      await upsert(TARGET_INTENT, n).run();
+      created = (await createDns(cfg, zoneId, target, mark(n))).id;
+    }
+    // shortcut: Cloudflare has no conditional write for the fallback origin, so one set in the dashboard between the read above
+    // and this PUT is replaced. The window is one round trip; use a conditional write if Cloudflare ever offers one.
     if (!fb) await setFallbackOrigin(cfg);
     const now = fb ?? (await getFallbackOrigin(cfg).catch(() => null));
-    await record(created);
+    await record(created ?? unrecorded[0]?.id ?? null);
     return c.json({ target, fallbackOrigin: now?.status === "active" ? "active" : "pending" });
   } catch (e) {
     const f = cfFail(e);

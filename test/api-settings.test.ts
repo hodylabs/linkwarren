@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { beforeBatch } from "./helpers/race";
 import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare, type FakePerm } from "./helpers/cf";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -81,6 +82,8 @@ describe("GET /api/settings/cloudflare", () => {
     expect(await (await call("owner", "GET", S)).json()).toMatchObject({ fallbackOrigin: "pending", outsideReady: false });
     fake.state.fallbackStatus = "active";
     expect(await (await call("owner", "GET", S)).json()).toMatchObject({ fallbackOrigin: "active", outsideReady: true });
+    fake.state.fallbackOrigin = "origin.other.example"; // active, but someone else's: setup would refuse it
+    expect(await (await call("owner", "GET", S)).json()).toMatchObject({ fallbackOrigin: "in_use", outsideReady: false });
   });
   it("Cloudflare failures leave those fields null instead of a 500", async () => {
     const fake = installFakeCloudflare({ zones });
@@ -182,7 +185,7 @@ describe("POST /api/settings/cloudflare/setup", () => {
     fake.state.fallbackStatus = "pending_deployment";
     const r = await call("owner", "POST", `${S}/setup`);
     expect([r.status, await r.json()]).toEqual([200, { target: "edge.test", fallbackOrigin: "pending" }]);
-    expect(fake.state.dns).toEqual([expect.objectContaining({ zoneId: "zsaas", type: "AAAA", name: "edge.test", content: "100::", proxied: true, comment: "linkwarren" })]);
+    expect(fake.state.dns).toEqual([expect.objectContaining({ zoneId: "zsaas", type: "AAAA", name: "edge.test", content: "100::", proxied: true, comment: expect.stringMatching(/^linkwarren setup [0-9a-f-]{36}$/) })]);
     expect(fake.state.fallbackOrigin).toBe("edge.test");
     const id = fake.state.dns[0]!.id;
     expect(await stored()).toBe(id);
@@ -227,6 +230,21 @@ describe("POST /api/settings/cloudflare/setup", () => {
       expect(await all("SELECT * FROM settings")).toEqual([]);
       vi.restoreAllMocks();
     }
+  });
+  it("a D1 failure after the record was created: the retry recognises it by its setup mark and records it", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const restore = beforeBatch(1, async () => { throw new Error("D1 unavailable"); });
+    try {
+      expect((await call("owner", "POST", `${S}/setup`)).status).toBe(500);
+    } finally { restore(); }
+    expect([fake.state.dns.length, await stored()]).toEqual([1, null]);
+    const r = await call("owner", "POST", `${S}/setup`);
+    expect([r.status, await r.json()]).toEqual([200, { target: "edge.test", fallbackOrigin: "active" }]);
+    expect(fake.state.dns).toHaveLength(1);
+    expect(await stored()).toBe(fake.state.dns[0]!.id);
+    // A record with another setup's mark is still foreign.
+    fake.state.dns.push({ id: "x9", zoneId: "zsaas", type: "CNAME", name: "edge.test", content: "x.example", proxied: true, comment: "linkwarren setup 00000000-0000-0000-0000-000000000000" });
+    expect(await (await call("owner", "POST", `${S}/setup`)).json()).toEqual({ error: "target_in_use" });
   });
   it("the fallback PUT failing after the record was created keeps the id, so a retry finishes", async () => {
     const fake = installFakeCloudflare({ zones });

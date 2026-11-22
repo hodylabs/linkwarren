@@ -1,6 +1,7 @@
 import { api } from "../api";
 
-export type FallbackOrigin = "active" | "pending" | "missing" | null;
+/** in_use: the zone's fallback origin is someone else's, so setup refuses and outside domains are not ready. */
+export type FallbackOrigin = "active" | "pending" | "missing" | "in_use" | null;
 export type CloudflareSettings = {
   configured: boolean;
   outsideReady: boolean;

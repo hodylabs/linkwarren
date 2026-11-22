@@ -91,8 +91,8 @@ const dnsS = z.object({ id: z.string(), type: z.string(), name: z.string(), cont
 export type DnsRecord = z.infer<typeof dnsS>;
 export const listDns = async (cfg: CfConfig, zoneId: string, name: string): Promise<DnsRecord[]> =>
   parseList(dnsS, (await cf(cfg, "GET", `/zones/${q(zoneId)}/dns_records?name=${q(name)}`)).result);
-export const createDns = async (cfg: CfConfig, zoneId: string, host: string): Promise<DnsRecord> =>
-  parse(dnsS, (await cf(cfg, "POST", `/zones/${q(zoneId)}/dns_records`, { type: "AAAA", name: host, content: "100::", proxied: true, comment: "linkwarren" })).result);
+export const createDns = async (cfg: CfConfig, zoneId: string, host: string, comment = "linkwarren"): Promise<DnsRecord> =>
+  parse(dnsS, (await cf(cfg, "POST", `/zones/${q(zoneId)}/dns_records`, { type: "AAAA", name: host, content: "100::", proxied: true, comment })).result);
 export const deleteDns = (cfg: CfConfig, zoneId: string, id: string) => del(cfg, `/zones/${q(zoneId)}/dns_records/${q(id)}`);
 
 const routeS = z.object({ id: z.string(), pattern: z.string(), script: z.string().nullish() });
