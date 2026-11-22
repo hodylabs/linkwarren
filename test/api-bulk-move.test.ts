@@ -99,6 +99,14 @@ describe("move: body and whole-request checks", () => {
     expect(await count("auth_limits")).toBe(0);
   });
 
+  it("M6: an unknown target answers the same 403 forbidden as one the person cannot use", async () => {
+    await seed("a1", "ua");
+    for (const d of ["db", "no-such-domain"]) {
+      const r = await move("a", ["a1"], d, "copy");
+      expect([d, r.status, await r.json()]).toEqual([d, 403, { error: "forbidden" }]);
+    }
+  });
+
   it("a pending or disabled target as the owner: 400 target_not_active whole", async () => {
     await seed("o1", "uo");
     for (const d of ["dp", "dd"]) {

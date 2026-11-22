@@ -101,8 +101,8 @@ export async function bulk(c: Context<E>) {
   // R5 whole-request checks on the one target: usable (narrowed by the grant), then active (D12).
   const target = b.action === "move" ? domains.get(b.domainId) : undefined;
   if (b.action === "move") {
-    if (!target) return c.json({ error: "not_found" }, 404);
-    if (!canUseDomain(user, target, member.has(target.id), g.domains)) return c.json({ error: "forbidden" }, 403);
+    // Unknown and unusable answer alike, so a domain id is never confirmed to someone who cannot use it.
+    if (!target || !canUseDomain(user, target, member.has(target.id), g.domains)) return c.json({ error: "forbidden" }, 403);
     if (target.status !== "active") return c.json({ error: "target_not_active" }, 400);
   }
 
