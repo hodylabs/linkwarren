@@ -50,6 +50,8 @@ export function qrPng(m: boolean[][], scale = 16, margin = 4): Promise<Blob> {
 
 export const fileName = (host: string, slug: string, ext: "svg" | "png"): string => `${host}-${slug}`.replace(/[^A-Za-z0-9._-]/g, "-") + `.${ext}`;
 
+export const REVOKE_MS = 1000;
+
 /** Blob download that needs no inline script or style, so it works under the strict CSP. */
 export function download(name: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
@@ -59,5 +61,6 @@ export function download(name: string, blob: Blob): void {
   document.body.append(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  // Not in the same tick: some browsers cancel a download whose blob URL is revoked that early.
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_MS);
 }

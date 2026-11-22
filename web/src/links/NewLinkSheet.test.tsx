@@ -286,8 +286,12 @@ describe("New link sheet", () => {
     expect(pw.getAttribute("autocomplete")).toBe("new-password");
     expect(within(sheet).getByText("At least 8 characters. Visitors type it before the link opens.")).toBeTruthy();
     await user.type(pw, "secret-pass");
-    await user.click(within(sheet).getByRole("button", { name: "Show password" }));
+    const toggle = within(sheet).getByRole("button", { name: "Show password" });
+    // One signal only: the name changes, so there is no aria-pressed ("Hide password, pressed" reads as a double negative).
+    expect(toggle.hasAttribute("aria-pressed")).toBe(false);
+    await user.click(toggle);
     expect(pw.type).toBe("text");
+    expect(toggle.getAttribute("aria-label")).toBe("Hide password");
     expect(sheet.querySelector('[aria-keyshortcuts="P"] small')!.textContent).toBe("On");
   });
 

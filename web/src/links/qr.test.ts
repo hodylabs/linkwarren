@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { qrMatrix, qrSvg, qrText } from "./qr";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { download, qrMatrix, qrSvg, qrText, REVOKE_MS } from "./qr";
 
 describe("qr", () => {
   it("encodes the short link with the QR marker", () => {
@@ -33,5 +33,31 @@ describe("qr", () => {
     expect(svg).not.toContain("style=");
     expect(doc.querySelector("rect")?.getAttribute("fill")).toBe("#FFFFFF");
     expect(doc.querySelector("path")?.getAttribute("fill")).toBe("#15181D");
+  });
+});
+
+describe("download", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("clicks a temporary link to an object URL and revokes it only after a delay", () => {
+    vi.useFakeTimers();
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const clicked: { href: string; download: string; attached: boolean }[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push({ href: this.href, download: this.download, attached: this.isConnected });
+    });
+    const blob = new Blob(["x"], { type: "image/svg+xml" });
+    download("go.test-spring.svg", blob);
+    expect(create).toHaveBeenCalledWith(blob);
+    expect(clicked).toEqual([{ href: "blob:fake", download: "go.test-spring.svg", attached: true }]);
+    expect(document.querySelector("a[download]")).toBeNull();
+    vi.advanceTimersByTime(REVOKE_MS - 1);
+    expect(revoke).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(revoke).toHaveBeenCalledWith("blob:fake");
   });
 });

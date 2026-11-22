@@ -426,7 +426,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
                   aria-invalid={err("password") ? true : undefined}
                   onChange={(e) => setPassword(e.target.value)}
                 />
-                <button type="button" className="btn ghost" aria-pressed={showPw} aria-label={showPw ? "Hide password" : "Show password"} onClick={() => setShowPw((v) => !v)}>
+                <button type="button" className="btn ghost" aria-label={showPw ? "Hide password" : "Show password"} onClick={() => setShowPw((v) => !v)}>
                   {showPw ? "Hide" : "Show"}
                 </button>
               </div>
