@@ -69,18 +69,18 @@ export function signInEmail(o: { host: string; url: string; name?: string | null
   };
 }
 
-/** The invite: plain text plus simple HTML, every interpolation escaped, one link to the dashboard host over https. */
+/** The invite: plain text plus simple HTML, every interpolation escaped, one link to the dashboard host's /join page over https. */
 export function inviteEmail(o: { instanceName: string; inviter: string; dashboardHost: string; role: "owner" | "member" }): { subject: string; text: string; html: string } {
   const name = oneLine(o.instanceName);
-  const url = `https://${o.dashboardHost}/`;
+  const url = `https://${o.dashboardHost}/join`; // no email, id or token: personal data stays out of URLs
   const lines = [`${oneLine(o.inviter)} invited you to ${name}, a link shortener.`];
   const owner = "You will be an owner: you can manage every person, domain and link.";
-  const link = `Sign in at ${url} with your email.`;
+  const link = `Open ${url} and sign in with the address this was sent to.`;
   const text = [lines[0]!, link, ...(o.role === "owner" ? [owner] : [])].join("\n") + "\n";
   const a = `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`;
   return {
     subject: `You're invited to ${name}`,
     text,
-    html: `<p>${escapeHtml(lines[0]!)}</p>\n<p>Sign in at ${a} with your email.</p>\n${o.role === "owner" ? `<p>${escapeHtml(owner)}</p>\n` : ""}`,
+    html: `<p>${escapeHtml(lines[0]!)}</p>\n<p>Open ${a} and sign in with the address this was sent to.</p>\n${o.role === "owner" ? `<p>${escapeHtml(owner)}</p>\n` : ""}`,
   };
 }

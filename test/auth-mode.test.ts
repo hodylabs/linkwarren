@@ -35,6 +35,16 @@ describe("app mode", () => {
     expect(await count()).toBe(0);
   });
 
+  it("the /api/me 401 carries the instance name for the join page, and no other 401 does", async () => {
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at, updated_by) VALUES ('instance.name', ?, 1, 'u')").bind(JSON.stringify("Acme")).run();
+    try {
+      expect(await (await dash("/api/me")).json()).toEqual({ error: "unauthenticated", signIn: "app", name: "Acme" });
+      expect(await (await dash("/api/domains")).json()).toEqual({ error: "unauthenticated", signIn: "app" });
+    } finally {
+      await env.DB.prepare("DELETE FROM settings WHERE key = 'instance.name'").run();
+    }
+  });
+
   it("serves /healthz publicly", async () => {
     expect((await dash("/healthz")).status).toBe(200);
   });

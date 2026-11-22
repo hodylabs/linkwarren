@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, ApiError, type Me } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys } from "../keys";
@@ -26,7 +26,7 @@ const submit = (fn: () => void) => (e: FormEvent) => {
 };
 
 /** The app-mode sign-in screen: email link, passkey, link landing and the passkey offer (R13). Centred, no rail. */
-export function SignIn({ next, token, incomplete, onSpent }: { next: string; token?: string; incomplete?: boolean; onSpent?: () => void }) {
+export function SignIn({ next, token, incomplete, onSpent, join }: { next: string; token?: string; incomplete?: boolean; onSpent?: () => void; join?: { name: string } }) {
   const host = location.host;
   const [view, setView] = useState<View>(token ? "landing" : "form");
   const [email, setEmail] = useState("");
@@ -35,6 +35,9 @@ export function SignIn({ next, token, incomplete, onSpent }: { next: string; tok
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
   const supported = passkeysSupported();
+  // The invite page opens on its heading (not the field), so a screen reader hears where it is first.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (join) heading.current?.focus(); }, [join]);
 
   const run = async (fn: () => Promise<void>) => {
     if (busy) return;
@@ -90,10 +93,17 @@ export function SignIn({ next, token, incomplete, onSpent }: { next: string; tok
   if (view === "form")
     body = (
       <>
-        <h1>Sign in to {host}</h1>
+        {join ? (
+          <>
+            <h1 ref={heading} tabIndex={-1}>You were invited to {join.name}</h1>
+            <p>Sign in with the address the invite was sent to.</p>
+          </>
+        ) : (
+          <h1>Sign in to {host}</h1>
+        )}
         <form onSubmit={submit(sendLink)}>
           <label htmlFor="signin-email">Email</label>
-          <input id="signin-email" type="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input id="signin-email" type="email" autoComplete="username" required autoFocus={!join} value={email} onChange={(e) => setEmail(e.target.value)} />
           <button type="submit" className="btn primary act" aria-keyshortcuts="Enter" disabled={busy}>
             Send me a sign-in link <span className="k">Enter</span>
           </button>

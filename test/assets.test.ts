@@ -28,7 +28,7 @@ describe("dashboard host", () => {
     expect(await r.text()).toBe(HTML);
     expectHeaders(r);
   });
-  it.each(["/links", "/domains/abc", "/people?sel=u1"])("falls back to the shell for %s", async (p) => {
+  it.each(["/links", "/domains/abc", "/people?sel=u1", "/join"])("falls back to the shell for %s", async (p) => {
     const r = await get("dash.test", p);
     expect(r.status).toBe(200);
     expect(await r.text()).toBe(HTML);
@@ -108,5 +108,18 @@ describe("short hosts never serve dashboard files", () => {
     expect(r.headers.get("x-fake-assets")).toBeNull();
     expect(r.headers.get("content-security-policy")).toBeNull();
     expect(await r.text()).not.toContain("<title>lw</title>");
+  });
+});
+
+describe("/join on a short host", () => {
+  it("stays a slug lookup: a link named join redirects and an unknown path is the usual 404 with no shell", async () => {
+    await env.DB.prepare("INSERT INTO domains (id,host,type,status,owner_id,noindex,case_sensitive,created_at) VALUES ('dj','j.test','main','active','uo',1,0,1)").run();
+    await env.DB.prepare("INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,created_by,updated_by,created_at,updated_at) VALUES ('lj','dj','join','join','https://x.com/a',302,1,'uo','uo',1,1)").run();
+    const r = await get("j.test", "/join", { redirect: "manual" });
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe("https://x.com/a");
+    const miss = await get("j.test", "/join/x");
+    expect(miss.status).toBe(404);
+    expect(await miss.text()).not.toContain("<title>lw</title>");
   });
 });

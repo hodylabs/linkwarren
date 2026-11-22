@@ -1,7 +1,9 @@
 import { createLocalJWKSet, createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { createMiddleware } from "hono/factory";
 import { auditStmt } from "./audit";
+import { displayName } from "./email";
 import { readSession } from "./session";
+import { getSettings } from "./settings";
 import type { Env } from "./env";
 import { rowToUser, type SessionRef, type UserRow } from "./types";
 import { FULL_GRANT, type Grant } from "./principal";
@@ -121,7 +123,10 @@ export const requireUser = createMiddleware<{ Bindings: Env; Variables: { user: 
   const r = await authenticate(c.req.raw, c.env);
   if ("status" in r) {
     // The signIn flag tells the dashboard to show its own sign-in instead of the Access text.
-    return r.status === 401 && mode === "app" ? c.json({ error: r.error, signIn: "app" }, 401) : c.json({ error: r.error }, r.status);
+    if (r.status !== 401 || mode !== "app") return c.json({ error: r.error }, r.status);
+    // /api/me also carries the instance name (already in every email's subject) so the invite page can say where you are invited.
+    const name = c.req.path === "/api/me" ? (await getSettings(c.env)).name : null;
+    return c.json({ error: r.error, signIn: "app", ...(name ? { name: displayName(name) } : {}) }, 401);
   }
   c.set("user", r.user);
   c.set("session", r.session);

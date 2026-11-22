@@ -99,8 +99,9 @@ describe("inviteEmail", () => {
   it("has the exact subject and text, no owner line for members", () => {
     const m = inviteEmail(o);
     expect(m.subject).toBe("You're invited to Acme");
-    expect(m.text).toBe("Bo invited you to Acme, a link shortener.\nSign in at https://links.example.com/ with your email.\n");
-    expect(m.html).toContain('<a href="https://links.example.com/">https://links.example.com/</a>');
+    expect(m.text).toBe("Bo invited you to Acme, a link shortener.\nOpen https://links.example.com/join and sign in with the address this was sent to.\n");
+    expect(m.html).toContain('<a href="https://links.example.com/join">https://links.example.com/join</a>');
+    expect(m.text).not.toMatch(/[?#]/);
     expect(m.html).not.toContain("owner");
   });
   it("adds the owner line only for owners", () => {
