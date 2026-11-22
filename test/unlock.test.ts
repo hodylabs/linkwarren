@@ -22,14 +22,15 @@ let ipN = 0;
 const freshIp = () => `198.51.${++ipN}.9`;
 const form = (password: string | null) => (password === null ? "other=1" : new URLSearchParams({ password }).toString());
 
-/** A form POST as a browser sends it from the interstitial on `host`. */
-function post(host: string, body: string, o: { ip?: string; origin?: string | null; type?: string; length?: string | null; cf?: { country: string }; ua?: string } = {}): RequestInit {
+/** A form POST as a browser sends it from the interstitial on `host`: same-origin Referer (the page's policy), not the visitor's source. */
+function post(host: string, body: string, o: { ip?: string; origin?: string | null; type?: string; length?: string | null; cf?: { country: string }; ua?: string; referer?: string | null } = {}): RequestInit {
   const headers: Record<string, string> = {
     "content-type": o.type ?? "application/x-www-form-urlencoded",
     "cf-connecting-ip": o.ip ?? "203.0.113.7",
     "user-agent": o.ua ?? "Mozilla/5.0 (X11; Linux x86_64) Chrome/130",
   };
   if (o.origin !== null) headers.origin = o.origin ?? `https://${host}`;
+  if (o.referer !== null) headers.referer = o.referer ?? `https://${host}/spring`;
   if (o.length !== null) headers["content-length"] = o.length ?? String(new TextEncoder().encode(body).length);
   return { method: "POST", headers, body, cf: o.cf ?? { country: "us" } } as RequestInit;
 }
@@ -58,7 +59,7 @@ describe("password interstitial", () => {
     expect(html).toMatch(/<form method="post">/);
     expect(html).not.toMatch(/action=/);
     expect(html).toContain('<label for="pw">Password</label>');
-    expect(html).toContain('<input id="pw" name="password" type="password" autocomplete="current-password" required maxlength="128" autofocus>');
+    expect(html).toContain('<input id="pw" name="password" type="password" autocomplete="current-password" required autofocus>');
     expect(html).toContain("Open link");
     expect(html).toContain('name="viewport"');
     expect(html).not.toMatch(/<script|<link|src=/);
@@ -173,7 +174,7 @@ describe("unlock", () => {
     expect(verifyPassword).not.toHaveBeenCalled();
   });
 
-  it("body checks: 415 for a non-form type, 411 without a length, 413 over 1024 bytes; no PBKDF2", async () => {
+  it("body checks: 415 for a non-form type, 411 without a length, 413 over 2048 bytes; no PBKDF2", async () => {
     const d = await seed({ password: HASH });
     const h = harness();
     const ip = freshIp();
@@ -182,8 +183,8 @@ describe("unlock", () => {
     expect((await go({ type: "multipart/form-data; boundary=x" })).status).toBe(415);
     expect((await go({ length: null })).status).toBe(411);
     expect((await go({ length: "abc" })).status).toBe(411);
-    expect((await go({ length: "2000" })).status).toBe(413);
-    expect((await go({}, `password=${"a".repeat(1100)}`)).status).toBe(413);
+    expect((await go({ length: "2049" })).status).toBe(413);
+    expect((await go({}, `password=${"a".repeat(2100)}`)).status).toBe(413);
     // A charset parameter is fine.
     expect((await go({ type: "application/x-www-form-urlencoded; charset=UTF-8" })).status).toBe(303);
     expect(verifyPassword).toHaveBeenCalledTimes(1);
@@ -306,6 +307,41 @@ describe("unlock CPU at 25000 iterations", () => {
     const unlockMs = (Date.now() - t) / N;
     console.info(`unlock bench @25000: verify ${verifyMs.toFixed(2)} ms, full unlock ${unlockMs.toFixed(2)} ms (wall, local)`);
     expect(verifyMs).toBeLessThan(50);
+  });
+});
+
+describe("final fix wave", () => {
+  it("I1: right unlocks are capped too: the 31st from one range in a window is 429 before PBKDF2", async () => {
+    const d = await seed({ password: HASH });
+    const h = harness({ clicks: false });
+    const ip = freshIp();
+    for (let i = 0; i < 30; i++) expect((await h.go(d.host, "/spring", post(d.host, form(PW), { ip }))).status).toBe(303);
+    verifyPassword.mockClear();
+    const r = await h.go(d.host, "/spring", post(d.host, form(PW), { ip }));
+    expect([r.status, r.headers.get("location"), r.headers.get("retry-after")]).toEqual([429, null, "900"]);
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(await limitRows()).toContain(`unlockok:${d.link}:198.51.${ipN}.0/24`);
+    // Another range, and another link from this range, still open.
+    expect((await h.go(d.host, "/spring", post(d.host, form(PW), { ip: freshIp() }))).status).toBe(303);
+    const other = await seed({ password: HASH });
+    expect((await h.go(other.host, "/spring", post(other.host, form(PW), { ip }))).status).toBe(303);
+  });
+
+  it("I2: the unlock POST's own-host Referer is never recorded as the referrer", async () => {
+    const d = await seed({ password: HASH });
+    const h = harness();
+    await h.go(d.host, "/spring", post(d.host, form(PW), { ip: freshIp(), referer: `https://${d.host}/spring?lw=qr` }));
+    await h.go(d.host, "/spring", post(d.host, form(PW), { ip: freshIp(), referer: `https://www.${d.host}/x` }));
+    await h.go(d.host, "/spring", post(d.host, form(PW), { ip: freshIp(), referer: "https://news.example/a" }));
+    expect(h.points.map((p) => p.blobs?.[5])).toEqual(["", "", "news.example"]);
+  });
+
+  it("long non-Latin passwords: 128 emoji (12 bytes each form-encoded) unlock", async () => {
+    const pw = "\u{1F511}".repeat(128);
+    const d = await seed({ password: await hashPassword(pw, 1000) });
+    const body = form(pw);
+    expect(new TextEncoder().encode(body).length).toBeGreaterThan(1024);
+    expect((await harness().go(d.host, "/spring", post(d.host, body, { ip: freshIp() }))).status).toBe(303);
   });
 });
 

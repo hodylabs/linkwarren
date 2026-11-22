@@ -25,7 +25,10 @@ const HSTS = { "strict-transport-security": INTERSTITIAL_HEADERS["strict-transpo
 
 /** Attempts per link and IP range (counted before PBKDF2, right or wrong); failures per range across all links use LIMITS.failIp. */
 const UNLOCK = { n: 5, s: 900 } as const;
-const MAX_BODY = 1024;
+/** Right unlocks per link and IP range: read before any write or PBKDF2, so a script looping one known password is bounded. */
+const UNLOCK_OK = { n: 30, s: 900 } as const;
+/** 128 code points of 4-byte UTF-8, percent-encoded (12 bytes each), plus `password=` and slack. */
+const MAX_BODY = 2048;
 
 const plain = (body: string, status: number) =>
   new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...HSTS } });
@@ -37,7 +40,7 @@ export async function handleProtected(req: Request, env: Env, link: LinkRow, dom
     new Response(head ? null : passwordPage(state), { status, headers: { ...INTERSTITIAL_HEADERS, ...extra } });
   // HTTPS only: a password must never be typed into, or posted from, a plain-HTTP page.
   if (url.protocol !== "https:") {
-    if (req.method === "POST") return new Response(head ? null : "HTTPS required", { status: 403, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+    if (req.method === "POST") return new Response("HTTPS required", { status: 403, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
     // Byte-exact: only the scheme changes, the serialized path and query are kept as they are.
     return new Response(null, { status: 308, headers: { location: `https:${req.url.slice(url.protocol.length)}`, "cache-control": "no-store" } });
   }
@@ -55,9 +58,15 @@ export async function handleProtected(req: Request, env: Env, link: LinkRow, dom
   const prefix = ipPrefix(req.headers.get("cf-connecting-ip")) ?? "none";
   const failKey = `unlockfail:${prefix}`;
   const unlockKey = `unlock:${link.id}:${prefix}`;
+  const okKey = `unlockok:${link.id}:${prefix}`;
   try {
     // Reads first: a limited range costs no D1 write. Then the atomic hit reserves a slot, so parallel guesses stay bounded.
-    if ((await blocked(env, failKey, LIMITS.failIp)) || (await blocked(env, unlockKey, UNLOCK)) || !(await hit(env, unlockKey, UNLOCK)))
+    if (
+      (await blocked(env, failKey, LIMITS.failIp)) ||
+      (await blocked(env, unlockKey, UNLOCK)) ||
+      (await blocked(env, okKey, UNLOCK_OK)) ||
+      !(await hit(env, unlockKey, UNLOCK))
+    )
       return show("limited", 429, { "retry-after": String(UNLOCK.s) });
   } catch {
     return show("unavailable", 503); // fail closed: no limiter, no password check
@@ -74,6 +83,7 @@ export async function handleProtected(req: Request, env: Env, link: LinkRow, dom
 
   // A right password gives its reserved slot back: people behind one NAT reopening the link are never locked out by it.
   await refund(env, unlockKey).catch(() => {});
+  await hit(env, okKey, UNLOCK_OK).catch(() => false);
   const m = splitQrMarker(url.search);
   const res = new Response(null, {
     status: 303, // always 303, whatever redirect_code says (R4): POST becomes GET, nothing cacheable pairs URL and destination

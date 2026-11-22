@@ -69,9 +69,11 @@ export async function recordClick(env: Env, req: Request, link: LinkRow, domain:
     const country = typeof cf?.country === "string" && cf.country ? cf.country.toUpperCase() : "XX";
     const ip = req.headers.get("cf-connecting-ip") ?? "";
     const visitor = await visitorHash(env.VISITOR_SALT, utcDay(now), ip, ua ?? "");
+    // An own-host referrer is the protected link's form page (same-origin policy), never where the visitor came from.
+    const ref = referrerHost(req.headers.get("referer"));
     env.CLICKS?.writeDataPoint({
       indexes: [domain.id],
-      blobs: [domain.id, link.id, link.slug, country, device, referrerHost(req.headers.get("referer")), qr ? "qr" : "typed", kind, visitor],
+      blobs: [domain.id, link.id, link.slug, country, device, ref === referrerHost(req.url) ? "" : ref, qr ? "qr" : "typed", kind, visitor],
       doubles: [1],
     });
   } catch (e) {

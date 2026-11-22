@@ -32,6 +32,6 @@ export const passwordPage = (state: keyof typeof MESSAGES): string =>
     `<h1>Protected link</h1><p>Enter the password to open this link.</p>` +
       (MESSAGES[state] ? `<p class="err" role="alert">${MESSAGES[state]}</p>` : "") +
       `<form method="post"><label for="pw">Password</label>` +
-      `<input id="pw" name="password" type="password" autocomplete="current-password" required maxlength="128" autofocus>` +
+      `<input id="pw" name="password" type="password" autocomplete="current-password" required autofocus>` +
       `<button type="submit">Open link</button></form>`,
   );
