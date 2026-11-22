@@ -86,6 +86,19 @@ describe("scope", () => {
     expect(await byId(await bulk(s, { action: "redirect", ids: ["l1", "la"], passQuery: false }))).toEqual({ l1: "ok", la: "forbidden", pending: [] });
   });
 
+  it("the link's own creator with a key restricted to go.test cannot edit or delete their a.test link, one at a time or in bulk", async () => {
+    const s = await key("ua", { write: true, del: true, domainIds: ["dm"] });
+    const one1 = (method: string, body?: unknown) => exports.default.fetch("https://dash.test/api/v1/links/la", {
+      method, headers: { authorization: `Bearer ${s}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    expect((await one1("PATCH", { url: "https://y.com/" })).status).toBe(403);
+    expect((await one1("DELETE")).status).toBe(403);
+    for (const b of [{ action: "redirect", ids: ["la"], passQuery: false }, { action: "delete", ids: ["la"] }, { action: "move", ids: ["la"], domainId: "dm", oldAddress: "copy" }])
+      expect(await byId(await bulk(s, b))).toEqual({ la: "forbidden", pending: [] });
+    expect(await one("SELECT domain_id, url, pass_query FROM links WHERE id = 'la'")).toEqual({ domain_id: "da", url: "https://x.com/", pass_query: 1 });
+    expect(await count("links")).toBe(3);
+  });
+
   it("move to a domain outside the key's domains: 403 forbidden whole", async () => {
     const s = await key("uo", { write: true, domainIds: ["dm"] });
     const r = await bulk(s, { action: "move", ids: ["l1"], domainId: "da", oldAddress: "forward" });
@@ -144,6 +157,15 @@ describe("daily units (R3): one per link processed", () => {
     const r = await bulk(await key("ua", { write: true }), { action: "redirect", ids: ["l1", "nope1", "nope2"], passQuery: false });
     expect(await byId(r)).toEqual({ l1: "ok", nope1: "not_found", nope2: "not_found", pending: [] });
     expect((await limits())["api:ud:ua"]).toBe(3);
+  });
+
+  it("a kv_budget refusal charges no daily units beyond the middleware's one (a refused request writes nothing)", async () => {
+    await setLimit("bulk:kv", 499);
+    const r = await bulk(await key("ua", { write: true }), { action: "redirect", ids: ["l1", "l2"], passQuery: false });
+    expect([r.status, await r.json()]).toEqual([429, { error: "kv_budget" }]);
+    const l = await limits();
+    expect([l["api:ud:ua"], l["api:day"], l["bulk:kv"]]).toEqual([1, 1, 499]);
+    expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
   });
 
   it("the dashboard route charges no daily units but does charge bulk:kv", async () => {
