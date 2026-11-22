@@ -199,17 +199,74 @@ Hashing: PBKDF2-SHA256 with the iteration count from the optional var `PASSWORD_
 
 Caching: a browser that once got a `301` for a link keeps going straight to the old destination. A link that was `301` and now has a password can therefore still be skipped by those browsers (they already knew the destination), and a `301` link with routes sends returning visitors to the destination they got first, even after they travel or the routes change. Use `302` for links with routes.
 
-## Agents and API limits
+## Agents and API
+
+Agents (Claude, ChatGPT, Claude Code, Codex) connect to `https://<dashboard host>/mcp` with OAuth; scripts use personal API keys on `/api/v1`. How people connect and use them is in [agents.md](agents.md). This section is what the operator sets up, and what it costs on the Workers Free plan.
+
+### Setup
+
+1. Create a second KV namespace for the OAuth state: `npx wrangler kv namespace create linkwarren-oauth`. Put its id in `wrangler.instance.jsonc` under the binding **`OAUTH_KV`** (the name is fixed by the OAuth library; see `wrangler.instance.example.jsonc`). Keep the binding on every deploy, also with MCP off: requests to the dashboard host pass through the OAuth library.
+2. Apply the migrations, which include `0007_agents.sql` (tables `api_keys`, `agent_connections`, `tool_calls`): `npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
+3. Set the var `MCP_ENABLED` to `"1"` and deploy. Check it: `curl -si -X POST https://<dashboard host>/mcp` answers `401` with a `WWW-Authenticate` header that contains `resource_metadata="https://<dashboard host>/.well-known/oauth-protected-resource/mcp"`, and `curl -s https://<dashboard host>/.well-known/oauth-authorization-server` answers JSON.
+
+### MCP_ENABLED
+
+MCP is **off unless `MCP_ENABLED` is exactly `"1"`**. Off, `/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (with or without `/mcp`) answer `404 {"error":"not_found"}`: no agent can register, connect, refresh or call a tool, and existing tokens stop working until it is turned back on. API keys on `/api/v1` keep working either way (revoke them in the dashboard). Turning it off is the kill switch after an incident; the API & agents screen then tells people that agent connections are off.
+
+### Access mode
+
+In app mode (`AUTH_MODE=app`, the default) nothing more is needed. With `AUTH_MODE=access`, Cloudflare Access sits in front of the dashboard host and would answer agents and scripts with a login page. Add an Access application with a **Bypass** policy for exactly these paths on the dashboard host, and nothing else:
+
+- `/mcp`
+- `/token`
+- `/register`
+- `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`)
+- `/api/v1/*`
+
+`/authorize` must stay behind Access: it is where the person signs in and approves. The bypassed paths are protected by OAuth tokens or API keys and the limits below.
+
+### Allowed redirect URIs
+
+`/register` (Dynamic Client Registration) accepts only these redirect URIs, compared exactly; any other is refused with `invalid_redirect_uri` before anything is written:
+
+- `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback` (claude.ai and Claude Desktop)
+- `https://chatgpt.com/connector_platform_oauth_redirect` (ChatGPT)
+- `http://localhost:<port>/callback` and `http://127.0.0.1:<port>/callback`, any port (Claude Code, Codex and other local clients)
+
+Authorization responses carry the `iss` parameter (RFC 9207, advertised as `authorization_response_iss_parameter_supported`), which ChatGPT requires. PKCE with `S256` is required for every client. Client registrations are kept 30 days (`clientRegistrationTTL`).
+
+### Tokens
+
+- Access tokens last 24 hours. Every tool call still re-reads the connection and the person in D1, so a Disconnect, a lowered access or a disabled person applies on the next call, even with a valid token.
+- Refresh tokens last 30 days and rotate on every use: the old one stops working as soon as the new one is issued.
+
+### KV budget
+
+Workers KV Free allows 1,000 writes, 1,000 deletes and 1,000 lists per day for the whole account, shared with the redirect cache (`CACHE`, one write per cache miss). A separate namespace does not add any. Measured in the OAuth library:
+
+| Event | KV writes | Deletes | Lists |
+| --- | --- | --- | --- |
+| Register a client (`/register`) | 1 | 0 | 0 |
+| Connect: approval page, approve, code exchange | about 4 | 1 | 1 |
+| Refresh (about once a day per agent in use, with 24 h tokens) | 2 | 0 | 0 |
+| Disconnect | 0 | the grant and its tokens | 1 |
+| Tool call | 0 (one read) | 0 | 0 |
+
+So 100 agents in daily use cost about 200 writes a day for refreshes. When the daily cap is reached, registering, connecting and refreshing fail with `503 {"error":"unavailable"}` until 00:00 UTC (agents drop off as their tokens expire), and redirect cache writes are skipped (redirects fall back to D1 reads). The limits below keep anonymous callers and loops from spending it.
+
+### Limits
 
 MCP tool calls (`/mcp`) and machine API requests (`/api/v1`) share the D1 limiter (table `auth_limits`, no paid features). Limits, all checked read-only before anything is written:
 
 - 120 calls per minute per person (`api:u:`), 60 per minute per MCP connection (`api:c:`) or API key (`api:k:`).
 - 1000 calls per UTC day per person (`api:ud:`).
 - 3000 calls per UTC day for the whole instance, every person and agent together (`api:day`).
+- `POST /register`: 5 per hour per IP range, /24 or /48 (`reg:`), and 50 per UTC day for the instance (`reg:day`); over it `429` with `Retry-After: 3600`. Someone who rotates IP ranges can use up the 50 and block new connections for the rest of the UTC day; existing connections keep working. This is the accepted trade for keeping anonymous registration from spending the KV budget.
+- `/authorize`: 10 per hour per signed-in person (`authz:u:`), counting the approval page and the approve or deny; over it the page answers `429`.
 
 Over a limit the API answers `429 {"error":"rate_limited"}`; an MCP tool answers "Rate limited, try again in a minute." or, for the two daily caps, "Daily limit reached, try again tomorrow (UTC).".
 
-D1 rows written, counted the same way as above (a limiter key writes 2 rows per upsert, 3 when it is new in its window):
+D1 rows written, counted as under [Password-protected links](#password-protected-links) (a limiter key writes 2 rows per upsert, 3 when it is new in its window):
 
 - An MCP tool call that runs: 4 limiter upserts (8 rows, up to 12) plus one `tool_calls` row (3 rows: the row and its two indexes), so about 11, up to 15. The hourly cron deletes each `tool_calls` row after 90 days, 3 more rows then. A tool that changes a link also writes the link row, its indexes and the audit row.
 - An `/api/v1` request that runs: the same 4 limiter upserts (8, up to 12), plus 1 for `last_used_at` at most once a minute per key, plus the link and audit writes of a change.
@@ -217,10 +274,16 @@ D1 rows written, counted the same way as above (a limiter key writes 2 rows per 
 
 Against the Free plan's 100,000 rows written per day for the whole account: one person at the 1000-call cap spends about 14,000 rows a day (counting the later prune), and the instance cap of 3000 calls about 42,000. That leaves room for sign-in, link edits, password unlocks and the rollup, but not much: a busy instance with several active agents reaches the instance cap first, and then agents and scripts stop until 00:00 UTC while the dashboard keeps working. The caps are constants in `src/limits.ts` (`apiDay`, `apiInstanceDay`); lower them if the account runs other Workers that write to D1.
 
+### Deviations from the MCP standard
+
+- **Refresh replay does not revoke the grant.** A replayed old refresh token is refused, but the connection stays valid (OAuth library behaviour). Disconnect it in the dashboard if a refresh token may have leaked.
+- **`/mcp` accepts only OAuth access tokens, not API keys.** Keys work only on `/api/v1`.
+- **No IP allowlist.** Claude Code, Codex and scripts call from people's own machines, so a WAF rule limited to one vendor's IP ranges would break them. Protection is OAuth with sign-in on `/authorize`, hashed API keys, and the limits above.
+
 ## Behaviour to know
 
 - Turning a domain case-sensitive changes which URLs match: `/Spring` and `/spring` become different links. Existing links keep their exact slug as the key. Turning it back off is refused while case twins conflict.
 - Cache staleness: redirects are cached in KV for up to about 5 minutes. After an edit or delete the old destination can still be served for that long in rare races, and KV deletes take up to about 60 seconds to propagate across locations.
 - Known limit: a redirect that read the database just before an edit can re-fill the cache with the old row; the old destination can then be served for up to 5 minutes. Cloudflare KV is eventually consistent (about 60 s), so a versioned-key scheme would narrow but not remove this window.
 - Concurrent edits: a `PATCH` writes only the fields it sends, and only if the link has not changed since the request read it. A losing request gets `409 {"error":"conflict"}`; reload the link and retry.
-- The API only accepts JSON bodies and only from the dashboard origin (CSRF guard). Scripts that call it should send `Content-Type: application/json`. Calls without a body that change something (for example `DELETE`) must also send `Origin: https://<dashboard host>`, or the CSRF guard refuses them with 403. A dashboard served from `http://localhost` during local development is refused the same way.
+- The API only accepts JSON bodies and only from the dashboard origin (CSRF guard). Scripts that call it should send `Content-Type: application/json`. Calls without a body that change something (for example `DELETE`) must also send `Origin: https://<dashboard host>`, or the CSRF guard refuses them with 403. A dashboard served from `http://localhost` during local development is refused the same way. Scripts should use `/api/v1` with a personal API key instead, which needs no `Origin` (see [agents.md](agents.md)).

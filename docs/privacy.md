@@ -32,11 +32,25 @@ Short links set no cookies and run no scripts: a visitor gets a plain redirect, 
 
 One exception to "no IP addresses" in the database: a visitor who submits a link password has their IP range (the /24 for IPv4, the /48 for IPv6, never the full address) stored as a rate-limit counter, only to limit password guessing. It is kept for the limiter window (15 minutes) plus the cleanup delay: an hourly cleanup deletes counters whose window started over an hour ago, so a range is normally gone within about two hours of the last attempt.
 
+## Agents and API keys
+
+When people connect agents (MCP) or create API keys (see [agents.md](agents.md)), linkwarren also stores, in the instance's D1 database:
+
+- **Tool calls:** one row per MCP tool call with the time, the person, the agent's name (as shown on the approval screen), the connection id, the tool name and the outcome (`ok`, `refused`, `error` or `rate_limited`). Never the arguments, the results or any token. Kept 90 days, then the hourly cleanup deletes it.
+- **API keys:** the name, the access chosen, the domains it is limited to, created, expiry, last use and revoked times, a SHA-256 hash of the key and its first 10 characters for display. The key itself is shown once and never stored.
+- **Agent connections:** the agent's name, the host it redirects back to (for example `claude.ai`), the access chosen, when it was connected or disconnected. Last use is read from the tool calls.
+- **Audit log:** a change made by an agent or a key is recorded like any other change, with "via" naming the agent or the key (for example "Mia via Claude"). Kept 3 years like the rest of the audit log.
+
+The OAuth state (registered clients, grants and hashed tokens) lives in the `OAUTH_KV` namespace. A grant carries only the person's id, the connection id and the agent's name, never link data. Grants end with Disconnect or when their refresh token expires (30 days unused); client registrations are kept 30 days.
+
+`POST /register` is limited per IP range (the /24 or /48, never the full address) and `/authorize` per person; those counters live in the same rate-limit table as the password limits and are cleaned up the same way.
+
 ## How long data is kept
 
 - Raw click points live 90 days in Cloudflare Workers Analytics Engine, then the platform removes them.
 - Daily totals stay in the instance's D1 database until the instance is deleted.
-- The audit log of dashboard changes is kept for 3 years.
+- The audit log of dashboard changes (including changes by agents and keys) is kept for 3 years.
+- MCP tool calls are kept 90 days.
 
 Everything linkwarren stores stays in the Cloudflare account that runs the instance. linkwarren sends no data anywhere else.
 
