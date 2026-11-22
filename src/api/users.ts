@@ -115,7 +115,8 @@ users.patch("/:id", async (c) => {
     { sql: ACTOR_OK, binds: [me.id] },
     losesOwner && { sql: OTHER_OWNER, binds: [id] },
     // None outside the read list (still true once the batch has moved them), so the audit's list is complete.
-    demote && { sql: `NOT EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED}${moved.length ? ` AND host NOT IN (${moved.map(() => "?").join(",")})` : ""})`, binds: [id, ...moved] },
+    // json_each keeps it at two binds whatever the domain count (D1 caps a statement at 100 bound values).
+    demote && { sql: `NOT EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED} AND host NOT IN (SELECT value FROM json_each(?)))`, binds: [id, JSON.stringify(moved)] },
   );
   const now = Math.floor(Date.now() / 1000);
   const stmts: D1PreparedStatement[] = [];
@@ -125,7 +126,9 @@ users.patch("/:id", async (c) => {
   if (demote) stmts.push(env.DB.prepare(`UPDATE domains SET owner_id = ? WHERE owner_id = ? AND ${SHARED} AND ${g.sql}`).bind(me.id, id, ...g.binds));
   if (status === "disabled") {
     // D1 marks first: sessions end and agent connections are revoked in the same batch; OAUTH_KV is cleared after commit.
+    // Unused email links go too, or a re-enable within their 15 minutes would revive one.
     stmts.push(endSessionStmt(env, { userId: id }, g),
+      env.DB.prepare(`DELETE FROM login_tokens WHERE email = ? COLLATE NOCASE AND ${g.sql}`).bind(t.email, ...g.binds),
       env.DB.prepare(`UPDATE agent_connections SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND ${g.sql}`).bind(now, id, ...g.binds));
   }
   stmts.push(env.DB.prepare(`UPDATE users SET role = ?, status = ? WHERE id = ? AND ${g.sql}`).bind(newRole ?? t.role, status ?? t.status, id, ...g.binds));
@@ -147,7 +150,7 @@ users.delete("/:id", async (c) => {
   if (me.role !== "owner") return c.json(forbidden, 403);
   const id = c.req.param("id");
   if (id === me.id) return c.json({ error: "self" }, 409);
-  const to = c.req.query("transferTo") ?? me.id;
+  const to = c.req.query("transferTo") || me.id;
   const [pr, tr, doms, ln] = await Promise.all([
     env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first(),
     env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(to).first(),
@@ -179,7 +182,7 @@ users.delete("/:id", async (c) => {
     q("DELETE FROM domain_members WHERE user_id = ?", id),
     q("DELETE FROM api_keys WHERE user_id = ?", id),
     q("DELETE FROM agent_connections WHERE user_id = ?", id),
-    q("DELETE FROM login_tokens WHERE email = ?", p.email),
+    q("DELETE FROM login_tokens WHERE email = ? COLLATE NOCASE", p.email),
     q("DELETE FROM users WHERE id = ?", id),
   ]);
   if (!res[res.length - 1]!.meta.changes) {

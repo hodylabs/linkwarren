@@ -197,6 +197,10 @@ This version adds migration `0008_forwarders.sql`. **Apply it before you deploy 
 
 Order matters. The new Worker reads `forward_to` on every link query and uses `slug_locks_lower` for every lock check. Without the migration, moves fail (the loop check errors and is swallowed, so every move is refused) and lock checks run without their index. The old Worker keeps working against the migrated database, so applying the migration first is always safe.
 
+### Upgrading to people and setup (migration 0009)
+
+This version adds migration `0009_links_created_by.sql`, one index (`links_created_by`) that removing a person uses to count and move their links. Apply it before or after deploying; without it removal still works but reads every link. Same commands as above.
+
 ## Password-protected links
 
 A link with a password answers its short URL with a small form page instead of a redirect. The form posts back to the same URL (query included); a right password answers `303` to the destination (routes and query pass-through apply, the QR marker is stripped), with `Cache-Control: private, no-store` and `Referrer-Policy: no-referrer`. A wrong one shows the form again with a generic message (`401`). There is no unlock cookie: every visit asks again, and short hosts never set cookies. The unlock POST must carry `Origin: https://<short host>` and a form body of at most 2048 bytes (enough for 128 characters of any script), else `403`, `415`, `411` or `413`. Showing the form records no click; a right unlock records one.

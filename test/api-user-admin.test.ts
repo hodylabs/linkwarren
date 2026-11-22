@@ -293,3 +293,69 @@ describe("DELETE /api/users/:id (Review Focus 2)", () => {
     expect(n).toBeLessThan(50);
   });
 });
+
+describe("hardening (Task 11)", () => {
+  it("disable deletes the person's unused email links, so a re-enable cannot revive one", async () => {
+    const P = await signedIn("p@example.com");
+    await run("INSERT INTO login_tokens (token_hash, email, created_at, expires_at) VALUES ('h1', 'P@Example.com', 1, 9999999999)");
+    await run("INSERT INTO login_tokens (token_hash, email, created_at, expires_at) VALUES ('h2', 'other@example.com', 1, 9999999999)");
+    expect((await patch(A.cookie, P.user.id, { status: "disabled" })).status).toBe(200);
+    expect(await rows("SELECT token_hash FROM login_tokens ORDER BY token_hash")).toEqual([{ token_hash: "h2" }]);
+  });
+
+  it("demoting an owner with 150 shared domains works (no bind cap)", async () => {
+    const B = await signedIn("b@example.com", { role: "owner" });
+    await env.DB.batch(Array.from({ length: 150 }, (_, i) =>
+      env.DB.prepare("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,'shared','active',?,1)").bind(`d${i}`, `s${i}.test`, B.user.id)));
+    const r = await patch(A.cookie, B.user.id, { role: "member" });
+    expect(r.status).toBe(200);
+    expect(await one("SELECT COUNT(*) n FROM domains WHERE owner_id = ?", A.user.id)).toEqual({ n: 150 });
+    const [a] = await audits("user.role");
+    expect(JSON.parse(a!.detail as string).movedDomains).toHaveLength(150);
+  });
+
+  it("an empty ?transferTo= defaults to the actor", async () => {
+    const P = await signedIn("p@example.com");
+    await dom("dp", "p.test", "private", P.user.id);
+    expect((await remove(A.cookie, P.user.id, "")).status).toBe(200);
+    expect(await one("SELECT owner_id FROM domains WHERE id = 'dp'")).toEqual({ owner_id: A.user.id });
+  });
+
+  it("links.created_by is indexed (remove counts and moves by it)", async () => {
+    expect(await one("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'links_created_by'")).toEqual({ name: "links_created_by" });
+  });
+
+  it("the grant revoke failing after disable still leaves the OAuth refresh and MCP call refused", async () => {
+    const P = await signedIn("p@example.com");
+    const agent = await connectAgent("p@example.com");
+    vi.spyOn(env.OAUTH_PROVIDER!, "listUserGrants").mockRejectedValue(new Error("kv down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await patch(A.cookie, P.user.id, { status: "disabled" })).status).toBe(200);
+    vi.restoreAllMocks();
+    expect(await grantsOf(P.user.id)).toHaveLength(1);
+    expect((await refresh(agent.clientId, agent.refreshToken)).status).toBeGreaterThanOrEqual(400);
+    expect(await mcpRefused(agent.accessToken)).toBe(true);
+  });
+
+  it("after enable the API key works again and the agent connection stays revoked", async () => {
+    const P = await signedIn("p@example.com");
+    const secret = await apiKey(P.cookie);
+    await connectAgent("p@example.com");
+    expect((await patch(A.cookie, P.user.id, { status: "disabled" })).status).toBe(200);
+    expect((await patch(A.cookie, P.user.id, { status: "active" })).status).toBe(200);
+    expect((await v1(secret, "/links")).status).toBe(200);
+    expect(await rows("SELECT id FROM agent_connections WHERE user_id = ? AND revoked_at IS NULL", P.user.id)).toEqual([]);
+  });
+
+  it("owners A and B remove each other at once: exactly one wins, one active owner remains", async () => {
+    const B = await signedIn("b@example.com", { role: "owner" });
+    // B removes A in the window between A's reads and A's batch.
+    const restore = beforeBatch(1, async () => { expect((await remove(B.cookie, A.user.id)).status).toBe(200); });
+    let r: Response;
+    try { r = await remove(A.cookie, B.user.id); } finally { restore(); }
+    expect(r.status).toBe(403);
+    expect(await user(B.user.id)).toEqual({ role: "owner", status: "active" });
+    expect(await activeOwners()).toBe(1);
+    expect((await audits("user.remove")).map((a) => a.target_id)).toEqual([A.user.id]);
+  });
+});
