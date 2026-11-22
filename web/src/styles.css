@@ -325,7 +325,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .top h1{font-size:19px}
   .t-row{flex-wrap:wrap;row-gap:0}
   .toolbar>*{order:4}
-  .toolbar .search{order:1;flex:1 1 0;width:auto;min-width:0}
+  .toolbar .search{order:1;flex:1 1 160px;width:auto;min-width:0}
   .toolbar .act{order:2;margin-left:0;padding:0 12px}
   .toolbar .chips{order:3;flex:1 0 100%;flex-wrap:nowrap;overflow-x:auto;margin:0 -16px;padding:2px 16px;scrollbar-width:none}
   .chips .chip{flex:none}
