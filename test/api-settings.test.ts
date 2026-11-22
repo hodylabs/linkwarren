@@ -600,6 +600,19 @@ describe("logo and main domain hardening (Task 11)", () => {
     expect((await actions()).filter((a) => a[0].startsWith("logo."))).toEqual([]);
   });
 
+  it("DELETE whose KV delete fails once: the retry no-ops and public GET /logo is already 404", async () => {
+    await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(env.CACHE, "delete").mockRejectedValueOnce(new Error("kv down"));
+    expect((await call("owner", "DELETE", "/api/settings/logo")).status).toBe(500);
+    expect(await env.CACHE.get("instance:logo", "arrayBuffer")).not.toBe(null);
+    const g = await call("a", "GET", "/api/instance/logo");
+    expect([g.status, await g.json()]).toEqual([404, { error: "no_logo" }]);
+    const retry = await call("owner", "DELETE", "/api/settings/logo");
+    expect([retry.status, await retry.json()]).toEqual([200, { logoVersion: null }]);
+    expect((await call("a", "GET", "/api/instance/logo")).status).toBe(404);
+  });
+
   it("logo changes are limited to 20 per UTC day: then 429 too_many and no KV write", async () => {
     await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('logo:day', ?, 20)", Math.floor(Date.now() / 1000));
     const putSpy = vi.spyOn(env.CACHE, "put");
@@ -742,10 +755,10 @@ describe("settings by permission (S8 R5)", () => {
     const { logoVersion } = (await put.json()) as { logoVersion: number };
     const served = async () => {
       const r = await env.CACHE.getWithMetadata<{ v: number }>("instance:logo", "arrayBuffer");
-      return [r.value ? new Uint8Array(r.value).length : null, r.metadata?.v ?? null];
+      return [r.value ? Array.from(new Uint8Array(r.value)) : null, r.metadata?.v ?? null];
     };
     const before = await served();
-    expect(before).toEqual([pngBytes(4, 4).length, logoVersion]);
+    expect(before).toEqual([Array.from(pngBytes(4, 4)), logoVersion]);
     let restore = beforeBatch(1, () => setPerms([]));
     let r: Response;
     try { r = await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(8, 8)) }); } finally { restore(); }

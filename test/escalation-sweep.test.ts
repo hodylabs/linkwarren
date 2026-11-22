@@ -29,6 +29,7 @@ beforeEach(async () => {
     ["oi", "owner", null, "invited"], ["ti", "member", "aud", "invited"], ["mi", "member", null, "invited"]])
     await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES (?,?,?,?,?,1)", id, `${id}@example.com`, role, roleId, status);
   for (const u of ["own", "ta", "tm"]) {
+    await run("INSERT INTO sessions (id,token_hash,user_id,method,created_at,last_seen_at,expires_at) VALUES (?,?,?,'email',1,1,4102444800)", `s_${u}`, `sh_${u}`, u);
     await run("INSERT INTO api_keys (id,user_id,name,prefix,hash,can_write,can_delete,domain_ids,expires_at,created_at) VALUES (?,?,'k','lw_x',?,1,1,'[]',4102444800,1)", `k_${u}`, u, `h_${u}`);
     await run("INSERT INTO agent_connections (id,user_id,client_id,client_name,redirect_host,can_write,can_delete,created_at) VALUES (?,?,'cl','Agent','agent.example',1,0,1)", `c_${u}`, u);
   }
@@ -39,6 +40,7 @@ const call = (m: M, path: string, body?: unknown) =>
   dash(path, { method: m, headers: { cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
 const state = async () => ({
   users: await all("SELECT id, role, role_id, status FROM users ORDER BY id"),
+  sessions: await all("SELECT id, user_id FROM sessions ORDER BY id"),
   keys: await all("SELECT id, revoked_at FROM api_keys ORDER BY id"),
   conns: await all("SELECT id, can_write, can_delete, revoked_at FROM agent_connections ORDER BY id"),
   audit: await all("SELECT action FROM audit_log WHERE action != 'auth.sign_in'"),

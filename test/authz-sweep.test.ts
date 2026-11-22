@@ -124,7 +124,7 @@ async function sweep(perms: readonly Perm[], login: () => Promise<string>) {
     if (path.includes("sign-out")) cookie = await login();
     const b = (await r.json().catch(() => null)) as { error?: string } | null;
     const no = r.status === 403 && b?.error === "forbidden", want = refused(need, perms);
-    if (r.status === 401 || no !== want) bad.push(`${m} ${path}: ${r.status} ${JSON.stringify(b)} (want ${want ? "" : "not "}403 forbidden)`);
+    if (r.status === 401 || r.status >= 500 || no !== want) bad.push(`${m} ${path}: ${r.status} ${JSON.stringify(b)} (want ${want ? "" : "not "}403 forbidden)`);
   }
   expect(bad).toEqual([]);
 }
@@ -154,7 +154,7 @@ describe("permissions by role (S8)", () => {
       if (path.includes("sign-out")) continue; // would end the shared owner session; covered by the 401/415 rows
       const r = await req(m, path, { cookie: owner, ...(m === "GET" ? {} : { "content-type": "application/json" }) }, body ?? "{}");
       const b = (await r.json().catch(() => null)) as { error?: string } | null;
-      if (r.status === 401 || (r.status === 403 && b?.error === "forbidden")) bad.push(`${m} ${path}: ${r.status} ${JSON.stringify(b)}`);
+      if (r.status === 401 || r.status >= 500 || (r.status === 403 && b?.error === "forbidden")) bad.push(`${m} ${path}: ${r.status} ${JSON.stringify(b)}`);
     }
     expect(bad).toEqual([]);
   });
@@ -257,7 +257,7 @@ describe("/api/v1 (Bearer keys only)", () => {
       const r = await v1(m, path, { authorization: `Bearer ${secret}`, ...(m === "GET" ? {} : { "content-type": "application/json" }) }, m === "GET" ? undefined : "{}");
       const b = (await r.json().catch(() => null)) as { error?: string } | null;
       const want = p === "keys" ? "keys_not_allowed" : refused(need, perms) ? "forbidden" : null;
-      if (r.status === 401 || (want ? r.status !== 403 || b?.error !== want : r.status === 403)) bad.push(`${m} ${path}: ${r.status} ${JSON.stringify(b)} (want ${want ?? "not 403"})`);
+      if (r.status === 401 || r.status >= 500 || (want ? r.status !== 403 || b?.error !== want : r.status === 403)) bad.push(`${m} ${path}: ${r.status} ${JSON.stringify(b)} (want ${want ?? "not 403"})`);
     }
     expect(bad).toEqual([]);
   });

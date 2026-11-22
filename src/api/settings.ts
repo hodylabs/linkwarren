@@ -57,7 +57,9 @@ instance.get("/", async (c) => {
 instance.get("/logo", async (c) => {
   const r = await c.env.CACHE.getWithMetadata<{ type?: string; v?: number }>(LOGO_KEY, "arrayBuffer");
   const type = r.metadata?.type;
-  if (!r.value || !LOGO_TYPES.includes(type as LogoType)) {
+  // logoVersion null = removed: serve 404 even if a failed KV delete left bytes behind. A D1 read, so no extra KV op
+  // (KV deletes are capped at 1000/day on Free) and nothing to retry.
+  if (!r.value || !LOGO_TYPES.includes(type as LogoType) || (await getSettings(c.env)).logoVersion === null) {
     c.header("Cache-Control", "no-store");
     return c.json({ error: "no_logo" }, 404);
   }
