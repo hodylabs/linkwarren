@@ -113,7 +113,7 @@ curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<l
 
 ### Bulk changes
 
-`POST /api/v1/links/bulk` changes up to 50 distinct links in one request (a list of up to 100 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The body has an `action` and the `ids`, plus the fields of that action:
+`POST /api/v1/links/bulk` changes up to 50 distinct links in one request (a list of up to 100 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The person's role must allow bulk edits (`403 forbidden` otherwise), and each link follows the single-edit rights of their role. The body has an `action` and the `ids`, plus the fields of that action:
 
 | `action` | Other fields |
 | --- | --- |
@@ -157,7 +157,7 @@ Agents and keys share per-minute limits per person, per connection and per key, 
 | 401 | `invalid_key` | Wrong, revoked or expired key, or the person was disabled |
 | 403 | `read_only` | The key cannot create or change links |
 | 403 | `delete_not_allowed` | The key cannot delete links |
-| 403 | `forbidden` | Not a domain or link you (or this key) may use |
+| 403 | `forbidden` | Not a domain or link you (or this key) may use, or your role does not allow it (creating links, editing someone else's link, bulk changes) |
 | 404 | `not_found` | No such link or domain, or a path that is not part of `/api/v1` |
 | 400 | `too_many` | More than 50 distinct ids in a bulk request |
 | 400 | `target_not_active` | A move to a domain that is not active yet |

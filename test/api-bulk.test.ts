@@ -302,3 +302,64 @@ describe("budget and guards", () => {
     }
   });
 });
+
+describe("roles (S8 R9)", () => {
+  const as = async (email: string, body: unknown) => dash("/api/links/bulk", {
+    method: "POST", headers: { "Cf-Access-Jwt-Assertion": await tokenFor(email), "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+  const setPerms = (id: string, perms: string[]) => run("UPDATE roles SET perms = ? WHERE id = ?", JSON.stringify(perms), id);
+  beforeEach(async () => {
+    await run("DELETE FROM roles WHERE builtin = 0");
+    for (const [id, perms] of [["nb", ["links.create"]], ["ea", ["links.create", "links.bulk", "links.editAny"]], ["dmg", ["links.create", "links.bulk", "domains.manage"]]] as const)
+      await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1)", id, `Role ${id}`, JSON.stringify(perms));
+    for (const id of ["nb", "ea", "dmg"])
+      await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES (?,?,'member',?,'active',1)", `u${id}`, `${id}@example.com`, id);
+    await seed("a1", "ua");
+  });
+
+  it("403 without links.bulk, before the body is read; nothing written", async () => {
+    await seed("n1", "unb");
+    for (const body of [{ action: "delete", ids: ["n1"] }, "{nope"]) {
+      const r = await as("nb@example.com", body);
+      expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    }
+    expect(await count("links WHERE id = 'n1'")).toBe(1);
+  });
+
+  it("links.editAny edits a teammate's link in bulk; domains.manage alone does not", async () => {
+    let r = await answer(await as("ea@example.com", { action: "redirect", ids: ["a1"], redirectCode: 301 }));
+    expect(byId(r.results)).toEqual({ a1: "ok" });
+    r = await answer(await as("dmg@example.com", { action: "redirect", ids: ["a1"], redirectCode: 302 }));
+    expect(byId(r.results)).toEqual({ a1: "forbidden" });
+    expect(await one("SELECT redirect_code FROM links WHERE id = 'a1'")).toEqual({ redirect_code: 301 });
+  });
+
+  it("race: links.bulk removed between the reads and the batch: 403, nothing written", async () => {
+    await seed("e1", "uea");
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dm2','go2.test','main','active','uo',1)");
+    // The move reads the target keys in a third batch, so its write is the fourth.
+    for (const [body, nth] of [[{ action: "delete", ids: ["e1", "a1"] }, 3], [{ action: "redirect", ids: ["e1", "a1"], redirectCode: 301 }, 3],
+      [{ action: "move", ids: ["e1", "a1"], domainId: "dm2", oldAddress: "forward" }, 4], [{ action: "move", ids: ["e1", "a1"], domainId: "dm2", oldAddress: "copy" }, 4]] as const) {
+      await setPerms("ea", ["links.create", "links.bulk", "links.editAny"]);
+      const restore = beforeBatch(nth, () => setPerms("ea", ["links.create", "links.editAny"]));
+      let r;
+      try { r = await as("ea@example.com", body); } finally { restore(); }
+      expect([body.action, r.status, await r.json()]).toEqual([body.action, 403, { error: "forbidden" }]);
+    }
+    expect(await all("SELECT id, domain_id, redirect_code FROM links WHERE id IN ('e1','a1') OR domain_id = 'dm2' ORDER BY id"))
+      .toEqual([{ id: "a1", domain_id: "dm", redirect_code: 302 }, { id: "e1", domain_id: "dm", redirect_code: 302 }]);
+    expect(await count("slug_locks")).toBe(0);
+    expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
+  });
+
+  it("race: links.editAny removed mid-request: the teammate's link is refused, the own link still written", async () => {
+    await seed("e1", "uea");
+    const restore = beforeBatch(3, () => setPerms("ea", ["links.create", "links.bulk"]));
+    let r;
+    try { r = await answer(await as("ea@example.com", { action: "redirect", ids: ["e1", "a1"], redirectCode: 301 })); } finally { restore(); }
+    expect(byId(r.results)).toEqual({ e1: "ok", a1: "forbidden" });
+    expect(await one("SELECT redirect_code FROM links WHERE id = 'a1'")).toEqual({ redirect_code: 302 });
+    expect(await count("audit_log WHERE action = 'link.update'")).toBe(1);
+  });
+});

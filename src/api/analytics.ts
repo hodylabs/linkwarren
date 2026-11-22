@@ -1,12 +1,13 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { aeConfigured, aeLinkDays } from "../ae";
-import { buildReport, loadRows, resolveRange, resolveScope, type RangeQuery } from "../analytics";
+import { buildReport, everyDomain, loadRows, resolveRange, resolveScope, type RangeQuery } from "../analytics";
 import { utcDay } from "../clicks";
 import { rolledThrough } from "../cron";
 import type { Env } from "../env";
 import { usableDomains } from "../perm";
 import type { Grant } from "../principal";
+import { can } from "../roles";
 import type { UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -52,13 +53,14 @@ export const linkStats = async (c: Context<E>) => {
   const env = c.env;
   const found = (await env.DB.prepare("SELECT id, domain_id FROM links WHERE id IN (SELECT value FROM json_each(?))")
     .bind(JSON.stringify(asked)).all<{ id: string; domain_id: string }>()).results;
-  const u = usableDomains(c.var.user.id, c.var.grant.domains);
+  const all = can(c.var.user, "analytics.all"), only = c.var.grant.domains;
+  const u = all ? everyDomain(only) : usableDomains(c.var.user.id, only);
   const usable = new Set((await env.DB.prepare(u.sql).bind(...u.binds).all<{ id: string }>()).results.map((d) => d.id));
   if (found.some((l) => !usable.has(l.domain_id))) return c.json({ error: "forbidden" }, 403);
   const linkIds = found.map((l) => l.id);
   // A moved link keeps older points under the domain of the moment: only points on a usable domain count here
-  // (null: every domain is usable, as for an unrestricted owner, so no filter and no extra AE chunks).
-  const usableIds = c.var.user.role === "owner" && !c.var.grant.domains ? null : [...usable];
+  // (null: every domain counts, with analytics.all and no grant restriction, so no filter and no extra AE chunks).
+  const usableIds = all && !only ? null : [...usable];
 
   const nowSec = Math.floor(Date.now() / 1000);
   const today = utcDay(nowSec);
