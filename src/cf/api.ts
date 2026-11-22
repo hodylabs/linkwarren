@@ -64,7 +64,7 @@ async function del(cfg: CfConfig, path: string): Promise<void> {
 
 const q = encodeURIComponent;
 // A 2xx body that does not match the expected shape is still a Cloudflare failure, never a raw ZodError.
-function parse<S extends z.ZodType>(s: S, v: unknown): z.infer<S> {
+export function parse<S extends z.ZodType>(s: S, v: unknown): z.infer<S> {
   const r = s.safeParse(v);
   if (!r.success) throw new CfError(200);
   return r.data;

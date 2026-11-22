@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import { CfError, cfConfig } from "../cf/api";
+import { PlanLimitError, SECURITY_LEVELS, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
@@ -178,6 +179,56 @@ domains.get("/:id/cloudflare", async (c) => {
   // A disabled domain is never repaired: no Cloudflare calls.
   if (cf && !fresh && (d.status === "pending" || d.status === "active")) cf = await trySync(c.env, d, cf, { attach: false });
   return c.json(cfView(c.env, d, cf));
+});
+
+const controlsBody = z.strictObject({
+  securityLevel: z.enum(SECURITY_LEVELS).nullable().optional(),
+  rateLimit: z.number().int().min(10).max(1000).nullable().optional(), // requests per 10 s
+});
+
+/** Owner only, same-account attached domains, behind the `cf.controls` setting. Cloudflare first; D1 changes only after it succeeded. */
+domains.patch("/:id/cloudflare", async (c) => {
+  const user = c.var.user;
+  if (user.role !== "owner") return c.json(forbidden, 403);
+  const body = controlsBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  const b = body.data;
+  if (b.securityLevel === undefined && b.rateLimit === undefined) return c.json({ error: "no_changes" }, 400);
+  const d = await getDomain(c.env, c.req.param("id"));
+  if (!d) return c.json(notFound, 404);
+  const on = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'cf.controls'").first<{ value: string }>();
+  if (on?.value !== "1") return c.json({ error: "controls_off" }, 409);
+  const cf = await getCf(c.env, d.id);
+  if (!cf || cf.kind !== "account" || !cf.routeId || !cf.zoneId) return c.json({ error: "not_same_account" }, 409);
+  const cfg = cfConfig(c.env);
+  if (!cfg) return c.json(notConfigured, 409);
+  try {
+    if (b.securityLevel !== undefined) {
+      if (b.securityLevel === null) await deleteHostRule(cfg, cf.zoneId, "http_config_settings", secRef(d.id));
+      else await upsertHostRule(cfg, cf.zoneId, "http_config_settings", securityRule(d.id, d.host, b.securityLevel));
+    }
+    if (b.rateLimit !== undefined) {
+      if (b.rateLimit === null) await deleteHostRule(cfg, cf.zoneId, "http_ratelimit", rlRef(d.id));
+      else await upsertHostRule(cfg, cf.zoneId, "http_ratelimit", rateLimitRule(d.id, d.host, b.rateLimit));
+    }
+  } catch (e) {
+    if (e instanceof PlanLimitError) return c.json({ error: "cloudflare_plan_limit" }, 409);
+    if (isForbidden(e)) return c.json({ error: "cloudflare_forbidden" }, 409);
+    if (e instanceof CfError) return c.json({ error: e.status === 0 ? "cloudflare_unreachable" : "cloudflare_error" }, 502);
+    logInternal(d.id, e);
+    throw e;
+  }
+  const next = { securityLevel: b.securityLevel === undefined ? cf.securityLevel : b.securityLevel, rateLimit: b.rateLimit === undefined ? cf.rateLimit : b.rateLimit };
+  // Only the keys sent are written, so two edits of different controls do not clobber each other.
+  const cols: [string, string | number | null][] = [];
+  if (b.securityLevel !== undefined) cols.push(["security_level", b.securityLevel]);
+  if (b.rateLimit !== undefined) cols.push(["rate_limit", b.rateLimit]);
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ?`).bind(...cols.map(([, v]) => v), d.id),
+    auditStmt(c.env, { actorId: user.id, action: "domain.cloudflare", targetType: "domain", targetId: d.id, detail: { host: d.host, ...next } },
+      { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?)", binds: [d.id] }),
+  ]);
+  return c.json(next);
 });
 
 domains.patch("/:id", async (c) => {

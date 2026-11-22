@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { rowToCf, type CfRow, type DomainRow } from "../types";
 import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findRoute, findZone, listDns, listRoutes, type CfConfig, type DnsRecord, type Route } from "./api";
+import { deleteHostRule, isForbidden, rlRef, secRef, type Phase } from "./controls";
 import { dnsPointsAt } from "./dns";
 
 export class AttachError extends Error {
@@ -191,9 +192,20 @@ async function save(env: Env, id: string, cf: CfRow, made: Made, fields: Record<
 }
 
 /** Deletes only ids linkwarren stored; 404 counts as already gone (Task 3 client). Any other failure rejects before later steps. */
-export async function detachDomain(_env: Env, cfg: CfConfig, _d: DomainRow, cf: CfRow): Promise<void> {
+export async function detachDomain(_env: Env, cfg: CfConfig, d: DomainRow, cf: CfRow): Promise<void> {
   if (cf.kind === "manual") return;
-  // Task 8 hook: our ruleset rules are deleted here first.
+  // Our ruleset rules go first, matched by ref, so a foreign rule is never touched.
+  if (cf.kind === "account" && cf.zoneId) {
+    const rules: [Phase, string, unknown][] = [["http_config_settings", secRef(d.id), cf.securityLevel], ["http_ratelimit", rlRef(d.id), cf.rateLimit]];
+    for (const [phase, ref, stored] of rules) {
+      try {
+        await deleteHostRule(cfg, cf.zoneId, phase, ref);
+      } catch (e) {
+        // A token without the optional rules permission cannot have made a rule we never stored: nothing to remove.
+        if (!(stored === null && isForbidden(e))) throw e;
+      }
+    }
+  }
   const routeZone = cf.kind === "outside" ? cfg.saasZoneId : cf.zoneId;
   if (cf.routeId) {
     if (!routeZone) throw new CfError(0);

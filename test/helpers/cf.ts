@@ -9,6 +9,7 @@ export type FakeToken = { perms: FakePerm[]; status?: string; userOwned?: boolea
 /**
  * In-memory Cloudflare API + DoH. Install with `vi.spyOn(globalThis, "fetch").mockImplementation((i, init) => fake.handle(new Request(i, init)))`
  * (see installFakeCloudflare). Unknown URLs throw so a test can never reach the real API.
+ * Rulesets: phase entrypoints with rules (foreign ones have no linkwarren ref), rule POST/PATCH/DELETE, create refused when the entrypoint exists and a per-zone rate limit cap (shapes assumed, not measured).
  * Error shapes mirror measured live behaviour: 403 code 10000 for a missing permission (POST workers/routes: 403 with no code),
  * 401 code 10000 for a bad token, duplicates rejected (DNS name+type 400 81058, route pattern 409 10020, custom hostname 409 1406), 400 for validation, 404 code 10003 for a missing ruleset entrypoint, 404 code 1551 for an unset fallback origin.
  */
@@ -22,7 +23,11 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
     hostnames: [] as { id: string; hostname: string; status: string; ssl: { status: string; validation_errors?: { message: string }[] }; verification_errors?: string[] }[],
     fallbackOrigin: null as string | null,
     fallbackStatus: "active",
-    rulesets: {} as Record<string, unknown>, // `${zoneId}/${phase}` -> ruleset
+    /** `${zoneId}/${phase}` -> entrypoint ruleset. Rules without a `ref` model ones another tool made. */
+    rulesets: {} as Record<string, { id: string; kind: string; phase: string; rules: (Json & { id: string; ref?: string })[] }>,
+    /** Rate limiting rules allowed per zone (Free plan: 1). Over it, POST answers 400 with `planLimitCode` (undefined = no code). */
+    ratelimitMax: Infinity,
+    planLimitCode: undefined as number | undefined,
     /** DoH answers keyed `TYPE:name`, e.g. "CNAME:go.example.com" -> ["edge.test"]. */
     doh: { ...(opts.doh ?? {}) } as Record<string, string[]>,
   };
@@ -144,7 +149,31 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
     if ((r = path.match(/^\/zones\/([^/]+)\/rulesets\/phases\/([^/]+)\/entrypoint$/))) {
       const key = `${r[1]}/${r[2]}`;
       if (m === "GET") return key in state.rulesets ? ok(state.rulesets[key]) : err(404, 10003);
-      if (m === "PUT") return ok((state.rulesets[key] = { id: nid("rs"), ...b }));
+      if (m === "PUT") return ok((state.rulesets[key] = { id: nid("rs"), kind: "zone", phase: r[2]!, rules: ((b.rules ?? []) as Json[]).map((x) => ({ id: nid("rule"), ...x })) }));
+    }
+    // Create a zone ruleset: a second entrypoint for the same phase is refused (unverified live: shape assumed 400).
+    if (m === "POST" && (r = path.match(/^\/zones\/([^/]+)\/rulesets$/))) {
+      const key = `${r[1]}/${b.phase}`;
+      if (b.kind !== "zone" || typeof b.phase !== "string") return err(400, 20003);
+      if (key in state.rulesets) return err(400, 20080);
+      const rules = (b.rules ?? []) as Json[];
+      if (b.phase === "http_ratelimit" && rules.length > state.ratelimitMax) return err(400, state.planLimitCode);
+      return ok((state.rulesets[key] = { id: nid("rs"), kind: "zone", phase: b.phase, rules: rules.map((x) => ({ id: nid("rule"), ...x })) }));
+    }
+    if ((r = path.match(/^\/zones\/([^/]+)\/rulesets\/([^/]+)\/rules(?:\/([^/]+))?$/))) {
+      const [, zoneId, rsId, ruleId] = r;
+      const key = Object.keys(state.rulesets).find((k) => k.startsWith(`${zoneId}/`) && state.rulesets[k]!.id === rsId);
+      if (!key) return err(404, 10003);
+      const rs = state.rulesets[key]!;
+      if (m === "POST" && !ruleId) {
+        if (rs.phase === "http_ratelimit" && rs.rules.length >= state.ratelimitMax) return err(400, state.planLimitCode);
+        rs.rules.push({ id: nid("rule"), ...b });
+        return ok(rs);
+      }
+      const i = rs.rules.findIndex((x) => x.id === ruleId);
+      if (i < 0) return err(404, 10003);
+      if (m === "PATCH") return (rs.rules[i] = { ...b, id: ruleId! }), ok(rs);
+      if (m === "DELETE") return rs.rules.splice(i, 1), ok(rs);
     }
     unexpected.push(`${m} ${path}`);
     throw new Error(`fakeCloudflare: unhandled ${m} ${path}`);

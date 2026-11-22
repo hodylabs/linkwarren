@@ -419,7 +419,10 @@ describe("detachDomain", () => {
     const r = await syncDomain(e, cfg, d, cf, { attach: true });
     fake.calls.length = 0;
     await detachDomain(e, cfg, d, r);
-    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([`DELETE /zones/z1/workers/routes/${r.routeId}`, `DELETE /zones/z1/dns_records/${r.dnsRecordId}`]);
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /zones/z1/rulesets/phases/http_config_settings/entrypoint", "GET /zones/z1/rulesets/phases/http_ratelimit/entrypoint", // no rules: nothing deleted
+      `DELETE /zones/z1/workers/routes/${r.routeId}`, `DELETE /zones/z1/dns_records/${r.dnsRecordId}`,
+    ]);
     expect(fake.state.routes.map((x) => x.id)).toEqual(["r-other"]);
     expect(fake.state.dns).toEqual([]);
   });
