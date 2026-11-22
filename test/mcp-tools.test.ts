@@ -5,6 +5,7 @@ import pkg from "../package.json";
 import { INSTRUCTIONS } from "../src/mcp/server";
 import { apiAs, TOOLS } from "../src/mcp/tools";
 import { ApiError } from "../src/mcp/run";
+import { ROLE_JOIN, USER_COLS } from "../src/roles";
 import { rowToUser } from "../src/types";
 import { VERSION } from "../src/version";
 import { setupAccess } from "./helpers/access";
@@ -567,7 +568,7 @@ describe("bounded inputs", () => {
   });
 
   it("apiAs refuses a path outside /api/v1 with a plain error, not an API answer", async () => {
-    const user = rowToUser((await one<Row>("SELECT * FROM users WHERE id = 'ua'"))!);
+    const user = rowToUser((await one<Row>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = 'ua'`))!);
     const api = apiAs(env, createExecutionContext(), { user, grant: { write: false, del: false, domains: null, via: "t" }, limiterKey: "api:c:x" });
     const e = await api("GET", "/../keys").catch((x: unknown) => x);
     expect(e).toBeInstanceOf(Error);

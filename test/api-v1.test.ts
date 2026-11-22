@@ -2,6 +2,7 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { callApi } from "../src/call";
+import { ROLE_JOIN, USER_COLS } from "../src/roles";
 import { rowToUser, type UserRow } from "../src/types";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { signInApp, withCookie } from "./helpers/session";
@@ -272,7 +273,7 @@ describe("rate limits (D1 limiter)", () => {
 });
 
 describe("callApi (in-process seam)", () => {
-  const userA = async (): Promise<UserRow> => rowToUser((await one<Record<string, unknown>>("SELECT * FROM users WHERE id = 'ua'"))!);
+  const userA = async (): Promise<UserRow> => rowToUser((await one<Record<string, unknown>>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = 'ua'`))!);
 
   it("acts as its principal: 403 on another member's private domain, writes carry its via, no limiter rows", async () => {
     const ctx = createExecutionContext();

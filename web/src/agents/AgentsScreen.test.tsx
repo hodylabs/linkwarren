@@ -24,7 +24,7 @@ const key = (o: Partial<KeyItem>): KeyItem => ({
   id: "k1", userId: "um", userEmail: null, name: "zapier", prefix: "lw_abcdefg", write: false, del: false, domainIds: [],
   createdAt: now - 50 * DAY, lastUsedAt: null, expiresAt: now + 40 * DAY, ...o,
 });
-const dana: UserItem = { id: "ud", email: "dana@example.com", name: "Dana R.", role: "member", status: "active", createdAt: 1, linkCount: 0, agentCount: 1, domains: [] };
+const dana: UserItem = { id: "ud", email: "dana@example.com", name: "Dana R.", role: "member", roleId: "member", roleName: "Member", perms: [], status: "active", createdAt: 1, linkCount: 0, agentCount: 1, domains: [] };
 const mcpUrl = () => `https://${location.host}/mcp`;
 
 function boot(me: Me, routes: FakeRoutes = {}) {

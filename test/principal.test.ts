@@ -8,6 +8,7 @@ import { domains } from "../src/api/domains";
 import { analytics } from "../src/api/analytics";
 import { resolveScope } from "../src/analytics";
 import { FULL_GRANT, type Grant } from "../src/principal";
+import { ROLE_JOIN, USER_COLS } from "../src/roles";
 import { rowToUser, type UserRow } from "../src/types";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -18,7 +19,7 @@ const EMAIL: Record<string, string> = { uo: "owner@example.com", ua: "a@example.
 function as(userId: string, grant: Grant) {
   const a = new Hono<{ Bindings: Env; Variables: { user: UserRow; grant: Grant } }>();
   a.use("*", async (c, next) => {
-    c.set("user", rowToUser((await one<Record<string, unknown>>("SELECT * FROM users WHERE id = ?", userId))!));
+    c.set("user", rowToUser((await one<Record<string, unknown>>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = ?`, userId))!));
     c.set("grant", grant);
     await next();
   });
@@ -96,7 +97,7 @@ describe("restricted grant: domains", () => {
   });
 
   it("resolveScope honours the restriction, for the owner too", async () => {
-    const owner = rowToUser((await one<Record<string, unknown>>("SELECT * FROM users WHERE id = 'uo'"))!);
+    const owner = rowToUser((await one<Record<string, unknown>>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = 'uo'`))!);
     expect(await resolveScope(env, owner, null, "", ["dA"])).toEqual({ scope: { domainIds: ["dA"], linkIds: null }, truncated: false });
     expect(await resolveScope(env, owner, ["dB"], "", ["dA"])).toEqual({ error: "forbidden" });
     expect(await resolveScope(env, owner, null, "", null)).toEqual({ scope: { domainIds: null, linkIds: null }, truncated: false });

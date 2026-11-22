@@ -1,5 +1,6 @@
 import { auditStmt } from "./audit";
 import type { Env } from "./env";
+import { ROLE_JOIN, USER_COLS } from "./roles";
 import { rowToUser, type SessionRef, type UserRow } from "./types";
 
 export const SESSION_COOKIE = "__Host-lw_session";
@@ -69,7 +70,7 @@ export async function readSession(req: Request, env: Env): Promise<{ user: UserR
   if (!secret) return null;
   const now = nowS();
   const r = await env.DB.prepare(
-    "SELECT u.*, s.id sid, s.created_at screated, s.last_seen_at sseen FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ? AND s.created_at > ?",
+    `SELECT ${USER_COLS}, s.id sid, s.created_at screated, s.last_seen_at sseen FROM sessions s JOIN users u ON u.id = s.user_id ${ROLE_JOIN} WHERE s.token_hash = ? AND s.expires_at > ? AND s.created_at > ?`,
   ).bind(await sha256Hex(secret), now, now - ABSOLUTE).first<Record<string, unknown>>();
   if (!r) return null;
   const user = rowToUser(r);

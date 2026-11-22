@@ -4,6 +4,7 @@ import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { beforeBatch } from "./helpers/race";
 import { getLink } from "../src/cache";
 import { verifyPassword } from "../src/password";
+import { MEMBER_DEFAULT } from "../src/roles";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -302,7 +303,7 @@ describe("check", () => {
 describe("me", () => {
   it("returns id, email, name and role", async () => {
     await run("UPDATE users SET name = 'Ann' WHERE id = 'ua'");
-    expect(await (await call("a", "GET", "/api/me")).json()).toEqual({ id: "ua", email: EMAIL.a, name: "Ann", role: "member", authMode: "access" });
+    expect(await (await call("a", "GET", "/api/me")).json()).toEqual({ id: "ua", email: EMAIL.a, name: "Ann", role: "member", roleId: "member", roleName: "Member", perms: [...MEMBER_DEFAULT], authMode: "access" });
   });
 });
 

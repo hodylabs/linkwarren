@@ -6,6 +6,10 @@
   "observability": { "enabled": true },
   // No ids or vars here: real ids and hosts live in wrangler.instance.jsonc (gitignored). This file only feeds the tests;
   // without DASHBOARD_HOST the Worker answers 500 misconfigured, so it is safe if deployed or run by mistake.
-  "d1_databases": [{ "binding": "DB", "database_name": "linkwarren", "migrations_dir": "migrations" }],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "linkwarren", "migrations_dir": "migrations" },
+    // Test-only: test/roles-upgrade.test.ts migrates it step by step to check an upgrade keeps every answer.
+    { "binding": "DB_UPGRADE", "database_name": "linkwarren-upgrade-test" }
+  ],
   "kv_namespaces": [{ "binding": "CACHE" }, { "binding": "OAUTH_KV" }]
 }

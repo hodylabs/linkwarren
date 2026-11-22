@@ -6,6 +6,7 @@ import { loopLinks } from "../src/api/shared";
 import { getLink } from "../src/cache";
 import type { Env } from "../src/env";
 import type { Grant } from "../src/principal";
+import { ROLE_JOIN, USER_COLS } from "../src/roles";
 import { rowToUser, type UserRow } from "../src/types";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { beforeBatch } from "./helpers/race";
@@ -292,7 +293,7 @@ describe("grant scopes inside the handler (defense in depth)", () => {
   const app = (grant: Grant) => {
     const h = new Hono<{ Bindings: Env; Variables: { user: UserRow; grant: Grant } }>();
     h.use("*", async (c, next) => {
-      c.set("user", rowToUser((await one<Record<string, unknown>>("SELECT * FROM users WHERE id = 'ua'"))!));
+      c.set("user", rowToUser((await one<Record<string, unknown>>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = 'ua'`))!));
       c.set("grant", grant);
       await next();
     });

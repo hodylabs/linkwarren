@@ -1,0 +1,49 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`upgrade to 0011 > every route answers as it did before the migration 1`] = `
+{
+  "analytics a@example.com": {
+    "body": "{"from":"2026-11-14","to":"2026-11-20","unit":"day","live":"off","truncated":false,"totals":{"clicks":6,"qr":2,"typed":4,"bots":0,"visitors":null,"prevClicks":null},"series":[{"bucket":"2026-11-14","qr":0,"typed":0},{"bucket":"2026-11-15","qr":0,"typed":0},{"bucket":"2026-11-16","qr":0,"typed":0},{"bucket":"2026-11-17","qr":2,"typed":4},{"bucket":"2026-11-18","qr":0,"typed":0},{"bucket":"2026-11-19","qr":0,"typed":0},{"bucket":"2026-11-20","qr":0,"typed":0}],"links":[{"linkId":"lM","domainId":"dM","host":"main.test","slug":"lM","clicks":3},{"linkId":"lS","domainId":"dS","host":"shared.test","slug":"lS","clicks":3}],"domains":[{"domainId":"dM","host":"main.test","clicks":3},{"domainId":"dS","host":"shared.test","clicks":3}],"countries":[],"devices":[],"referrers":[]}",
+    "status": 200,
+  },
+  "analytics owner@example.com": {
+    "body": "{"from":"2026-11-14","to":"2026-11-20","unit":"day","live":"off","truncated":false,"totals":{"clicks":9,"qr":3,"typed":6,"bots":0,"visitors":null,"prevClicks":null},"series":[{"bucket":"2026-11-14","qr":0,"typed":0},{"bucket":"2026-11-15","qr":0,"typed":0},{"bucket":"2026-11-16","qr":0,"typed":0},{"bucket":"2026-11-17","qr":3,"typed":6},{"bucket":"2026-11-18","qr":0,"typed":0},{"bucket":"2026-11-19","qr":0,"typed":0},{"bucket":"2026-11-20","qr":0,"typed":0}],"links":[{"linkId":"lM","domainId":"dM","host":"main.test","slug":"lM","clicks":3},{"linkId":"lS","domainId":"dS","host":"shared.test","slug":"lS","clicks":3},{"linkId":"lX","domainId":"dX","host":"theirs.test","slug":"lX","clicks":3}],"domains":[{"domainId":"dM","host":"main.test","clicks":3},{"domainId":"dS","host":"shared.test","clicks":3},{"domainId":"dX","host":"theirs.test","clicks":3}],"countries":[],"devices":[],"referrers":[]}",
+    "status": 200,
+  },
+  "createKey": {
+    "body": "{"key":{"id":"<uuid>","userId":"ua","userEmail":null,"name":"ci2","prefix":"lw_<x>","write":false,"del":false,"domainIds":[],"createdAt":1795176000,"lastUsedAt":null,"expiresAt":1802952000},"secret":"lw_<x>"}",
+    "status": 201,
+  },
+  "createLink": {
+    "body": "{"id":"<uuid>","domainId":"dM","slug":"fresh","slugKey":"fresh","url":"https://example.com/new","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1795176000,"updatedAt":1795176000,"hasPassword":false}",
+    "status": 201,
+  },
+  "domains a@example.com": {
+    "body": "[{"id":"dM","host":"main.test","type":"main","status":"active","ownerId":"uo","bareRedirect":null,"notfoundRedirect":null,"caseSensitive":false,"noindex":true,"reservedExtra":[],"createdAt":1,"linkCount":1,"isMember":false,"cloudflare":{"kind":"manual","dns":"unknown","ownership":"unknown","certificate":"unknown","errors":[],"lastError":null,"checkedAt":null,"securityLevel":null,"rateLimit":null,"instructions":null,"attachOnApproval":false,"attached":false}},{"id":"dP","host":"mine.test","type":"private","status":"active","ownerId":"ua","bareRedirect":null,"notfoundRedirect":null,"caseSensitive":false,"noindex":true,"reservedExtra":[],"createdAt":1,"linkCount":1,"isMember":false,"cloudflare":{"kind":"manual","dns":"unknown","ownership":"unknown","certificate":"unknown","errors":[],"lastError":null,"checkedAt":null,"securityLevel":null,"rateLimit":null,"instructions":null,"attachOnApproval":false,"attached":false}},{"id":"dS","host":"shared.test","type":"shared","status":"active","ownerId":"uo","bareRedirect":null,"notfoundRedirect":null,"caseSensitive":false,"noindex":true,"reservedExtra":[],"createdAt":1,"linkCount":1,"isMember":true,"cloudflare":{"kind":"manual","dns":"unknown","ownership":"unknown","certificate":"unknown","errors":[],"lastError":null,"checkedAt":null,"securityLevel":null,"rateLimit":null,"instructions":null,"attachOnApproval":false,"attached":false}}]",
+    "status": 200,
+  },
+  "domains owner@example.com": {
+    "body": "[{"id":"dM","host":"main.test","type":"main","status":"active","ownerId":"uo","bareRedirect":null,"notfoundRedirect":null,"caseSensitive":false,"noindex":true,"reservedExtra":[],"createdAt":1,"linkCount":1,"isMember":false,"cloudflare":{"kind":"manual","dns":"unknown","ownership":"unknown","certificate":"unknown","errors":[],"lastError":null,"checkedAt":null,"securityLevel":null,"rateLimit":null,"instructions":null,"attachOnApproval":false,"attached":false}},{"id":"dP","host":"mine.test","type":"private","status":"active","ownerId":"ua","bareRedirect":null,"notfoundRedirect":null,"caseSensitive":false,"noindex":true,"reservedExtra":[],"createdAt":1,"linkCount":1,"isMember":false,"cloudflare":{"kind":"manual","dns":"unknown","ownership":"unknown","certificate":"unknown","errors":[],"lastError":null,"checkedAt":null,"securityLevel":null,"rateLimit":null,"instructions":null,"attachOnApproval":false,"attached":false}},{"id":"dS","host":"shared.test","type":"shared","status":"active","ownerId":"uo","bareRedirect":null,"notfoundRedirect":null,"caseSensitive":false,"noindex":true,"reservedExtra":[],"createdAt":1,"linkCount":1,"isMember":false,"cloudflare":{"kind":"manual","dns":"unknown","ownership":"unknown","certificate":"unknown","errors":[],"lastError":null,"checkedAt":null,"securityLevel":null,"rateLimit":null,"instructions":null,"attachOnApproval":false,"attached":false}},{"id":"dX","host":"theirs.test","type":"shared","status":"active","ownerId":"uo","bareRedirect":null,"notfoundRedirect":null,"caseSensitive":false,"noindex":true,"reservedExtra":[],"createdAt":1,"linkCount":1,"isMember":false,"cloudflare":{"kind":"manual","dns":"unknown","ownership":"unknown","certificate":"unknown","errors":[],"lastError":null,"checkedAt":null,"securityLevel":null,"rateLimit":null,"instructions":null,"attachOnApproval":false,"attached":false}}]",
+    "status": 200,
+  },
+  "links a@example.com": {
+    "body": "{"items":[{"id":"lS","domainId":"dS","slug":"lS","slugKey":"ls","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1,"updatedAt":1,"hasPassword":false},{"id":"lP","domainId":"dP","slug":"lP","slugKey":"lp","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1,"updatedAt":1,"hasPassword":false},{"id":"lM","domainId":"dM","slug":"lM","slugKey":"lm","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"uo","updatedBy":"uo","createdAt":1,"updatedAt":1,"hasPassword":false}],"next":null}",
+    "status": 200,
+  },
+  "links owner@example.com": {
+    "body": "{"items":[{"id":"lX","domainId":"dX","slug":"lX","slugKey":"lx","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"uo","updatedBy":"uo","createdAt":1,"updatedAt":1,"hasPassword":false},{"id":"lS","domainId":"dS","slug":"lS","slugKey":"ls","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1,"updatedAt":1,"hasPassword":false},{"id":"lP","domainId":"dP","slug":"lP","slugKey":"lp","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1,"updatedAt":1,"hasPassword":false},{"id":"lM","domainId":"dM","slug":"lM","slugKey":"lm","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"uo","updatedBy":"uo","createdAt":1,"updatedAt":1,"hasPassword":false}],"next":null}",
+    "status": 200,
+  },
+  "me": {
+    "authMode": "access",
+    "email": "a@example.com",
+    "id": "ua",
+    "name": null,
+    "role": "member",
+  },
+  "v1": {
+    "body": "{"items":[{"id":"<uuid>","domainId":"dM","slug":"fresh","slugKey":"fresh","url":"https://example.com/new","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1795176000,"updatedAt":1795176000,"hasPassword":false},{"id":"lS","domainId":"dS","slug":"lS","slugKey":"ls","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1,"updatedAt":1,"hasPassword":false},{"id":"lP","domainId":"dP","slug":"lP","slugKey":"lp","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"ua","updatedBy":"ua","createdAt":1,"updatedAt":1,"hasPassword":false},{"id":"lM","domainId":"dM","slug":"lM","slugKey":"lm","url":"https://x.com/","redirectCode":302,"startsAt":null,"expiresAt":null,"passQuery":true,"routes":[],"forwardTo":null,"createdBy":"uo","updatedBy":"uo","createdAt":1,"updatedAt":1,"hasPassword":false}],"next":null}",
+    "status": 200,
+  },
+}
+`;

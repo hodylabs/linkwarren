@@ -9,7 +9,7 @@ import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", authMode: "app" };
 const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", authMode: "app" };
 const USERS: UserItem[] = [
-  { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", status: "active", createdAt: 1, linkCount: 0, agentCount: 0, domains: [] },
+  { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", roleId: "owner", roleName: "Owner", perms: [], status: "active", createdAt: 1, linkCount: 0, agentCount: 0, domains: [] },
 ];
 const DOMAINS = [
   { id: "d0", host: "go.test", type: "main", status: "active" },

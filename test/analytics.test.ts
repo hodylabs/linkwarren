@@ -10,7 +10,7 @@ const ae: Env = { ...env, CLICKS: { writeDataPoint() {} }, CF_ACCOUNT_ID: "acc1"
 const D = (s: string) => new Date(s);
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
-const user = (id: string, role: "owner" | "member"): UserRow => ({ id, email: `${id}@example.com`, name: null, role, status: "active", createdAt: 1 });
+const user = (id: string, role: "owner" | "member"): UserRow => ({ id, email: `${id}@example.com`, name: null, role, status: "active", createdAt: 1, roleId: role, roleName: role, perms: [] });
 
 /** `rows` answer the series query (bucket, qr, typed, bots); `links` the per-link query. */
 function stubAe(rows: unknown[], status = 200, links: unknown[] = []) {

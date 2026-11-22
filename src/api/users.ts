@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { clearCookie, endSessionStmt } from "../session";
+import { ROLE_JOIN, USER_COLS, type Guard } from "../roles";
 import { rowToUser, type UserListItem, type UserRow } from "../types";
 import type { Grant } from "../principal";
 import { purgeHost } from "./shared";
@@ -13,7 +14,7 @@ export const users = new Hono<E>();
 
 const forbidden = { error: "forbidden" } as const;
 const notFound = { error: "not_found" } as const;
-type Guard = { sql: string; binds: unknown[] };
+const BY_ID = `SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = ?`;
 const and = (...g: (Guard | false)[]): Guard => {
   const parts = g.filter((x): x is Guard => !!x);
   return { sql: parts.map((x) => `(${x.sql})`).join(" AND "), binds: parts.flatMap((x) => x.binds) };
@@ -43,7 +44,7 @@ async function revokeGrants(env: Env, userId: string): Promise<void> {
 /** The list rows, or only `id`'s row. */
 async function userItems(env: Env, id: string | null = null): Promise<UserListItem[]> {
   const [u, counts, agentCounts, access] = await Promise.all([
-    env.DB.prepare("SELECT * FROM users WHERE ? IS NULL OR id = ? ORDER BY created_at, id").bind(id, id).all(),
+    env.DB.prepare(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE ? IS NULL OR u.id = ? ORDER BY u.created_at, u.id`).bind(id, id).all(),
     env.DB.prepare("SELECT created_by, COUNT(*) n FROM links WHERE ? IS NULL OR created_by = ? GROUP BY created_by").bind(id, id).all<{ created_by: string; n: number }>(),
     env.DB.prepare("SELECT user_id, COUNT(*) n FROM agent_connections WHERE revoked_at IS NULL AND (? IS NULL OR user_id = ?) GROUP BY user_id").bind(id, id).all<{ user_id: string; n: number }>(),
     // Owned domains first (via='owner'), then grants; the per-user loop below keeps the first sighting so owner rows win.
@@ -97,7 +98,7 @@ users.patch("/:id", async (c) => {
   if (!role && !status) return c.json({ error: "no_changes" }, 400);
   const id = c.req.param("id");
   if (id === me.id) return c.json({ error: "self" }, 409);
-  const row = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first();
+  const row = await env.DB.prepare(BY_ID).bind(id).first();
   if (!row) return c.json(notFound, 404);
   const t = rowToUser(row);
   if ((status === "disabled" && t.status === "disabled") || (status === "active" && t.status !== "disabled")) return c.json({ error: "bad_state" }, 409);
@@ -152,8 +153,8 @@ users.delete("/:id", async (c) => {
   if (id === me.id) return c.json({ error: "self" }, 409);
   const to = c.req.query("transferTo") || me.id;
   const [pr, tr, doms, ln] = await Promise.all([
-    env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first(),
-    env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(to).first(),
+    env.DB.prepare(BY_ID).bind(id).first(),
+    env.DB.prepare(BY_ID).bind(to).first(),
     env.DB.prepare("SELECT host, type FROM domains WHERE owner_id = ? ORDER BY host").bind(id).all<{ host: string; type: string }>(),
     env.DB.prepare("SELECT COUNT(*) n FROM links WHERE created_by = ?").bind(id).first<{ n: number }>(),
   ]);

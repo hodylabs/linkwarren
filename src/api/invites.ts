@@ -8,7 +8,8 @@ import { normalizeHost } from "../host";
 import { LIMITS, hitAll, limitKey } from "../limits";
 import type { Grant } from "../principal";
 import { getSettings } from "../settings";
-import type { UserListItem, UserRow } from "../types";
+import { ROLE_JOIN, USER_COLS } from "../roles";
+import { rowToUser, type UserListItem, type UserRow } from "../types";
 import { parse } from "./signin";
 import { ACTOR_OK } from "./users";
 
@@ -79,6 +80,7 @@ invites.post("/invite", owner, async (c) => {
         .bind(id, b.email, b.role, now, me, JSON.stringify(doms.map((d) => d.id)), doms.length),
       ...doms.map((d) => c.env.DB.prepare(`INSERT INTO domain_members (domain_id, user_id) SELECT ?, ? WHERE ${made.sql}`).bind(d.id, id, ...made.binds)),
       auditStmt(c.env, { actorId: me, action: "user.invite", targetType: "user", targetId: id, detail: { email: b.email, role: b.role, domains: doms.map((d) => d.host) } }, made),
+      c.env.DB.prepare(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = ?`).bind(id), // the answer's role name and perms
     ]);
   } catch (e) {
     if (String(e).includes("UNIQUE")) return c.json({ error: "email_taken" }, 409);
@@ -89,7 +91,7 @@ invites.post("/invite", owner, async (c) => {
     return ok?.a ? c.json({ error: "bad_domain" }, 400) : c.json({ error: "forbidden" }, 403);
   }
   const user: UserListItem = {
-    id, email: b.email, name: null, role: b.role, status: "invited", createdAt: now, linkCount: 0, agentCount: 0,
+    ...rowToUser(done.at(-1)!.results[0] as Record<string, unknown>), linkCount: 0, agentCount: 0,
     domains: doms.map((d) => ({ id: d.id, host: d.host, via: "member" as const })),
   };
   const u = { id, email: b.email, role: b.role };

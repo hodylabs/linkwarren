@@ -57,7 +57,8 @@ When an agent tries to register with a callback address the instance does not al
 
 The people who use the dashboard are stored in the instance's D1 database:
 
-- **People:** email address, name (optional), role (owner or member), status (invited, active or disabled) and when they were added.
+- **People:** email address, name (optional), role (Owner, Member or a custom role, shown by its name), status (invited, active or disabled) and when they were added.
+- **Roles:** each custom role's name, its permission toggles, when it was created and changed, and who changed it last. Roles hold no personal data beyond that last editor.
 - **Sign-in** (when the instance runs its own sign-in, `AUTH_MODE=app`): sessions with the sign-in method, the device (a short label from the browser) and the IP range (the /24 or /48, never the full address), passkeys (the public key and a name, never a private key), and email sign-in tokens, of which only a SHA-256 hash is stored. Sessions and tokens end when they expire or when the person signs out, is disabled or is removed.
 - **Sign-in limiter:** a sign-in email request counts against the address (hashed) and against the requester's IP range (the /24 or /48, never the full address). These counters live in the same rate-limit table as the password limits and are cleaned up the same way, normally within about two hours.
 - **Removing a person** deletes their row, sessions, passkeys, keys and agent connections. Their email address stays in the audit log, in the details of entries such as an invite, a role change, a revoked invite and the removal itself, for the 3-year audit retention.

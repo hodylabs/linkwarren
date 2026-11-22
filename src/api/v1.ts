@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { hashKey, KEY_SHAPE } from "../keys";
 import { hitAll, LIMITS, limitKey } from "../limits";
 import type { Grant } from "../principal";
+import { ROLE_JOIN, USER_COLS } from "../roles";
 import { rowToUser, type UserRow } from "../types";
 import { linkStats } from "./analytics";
 import { listDomains } from "./domains";
@@ -51,8 +52,8 @@ v1.use("*", async (c, next) => {
   let row: KeyRow | null;
   try {
     row = await c.env.DB.prepare(
-      `SELECT k.id AS key_id, k.name AS key_name, k.can_write, k.can_delete, k.domain_ids, k.last_used_at, u.*
-       FROM api_keys k JOIN users u ON u.id = k.user_id
+      `SELECT k.id AS key_id, k.name AS key_name, k.can_write, k.can_delete, k.domain_ids, k.last_used_at, ${USER_COLS}
+       FROM api_keys k JOIN users u ON u.id = k.user_id ${ROLE_JOIN}
        WHERE k.hash = ? AND k.revoked_at IS NULL AND k.expires_at > ? AND u.status = 'active'`,
     ).bind(await hashKey(secret), now).first<KeyRow>();
   } catch {

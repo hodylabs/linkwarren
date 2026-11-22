@@ -78,7 +78,8 @@ app.use("/api/*", async (c, next) => {
 app.use("/api/*", (c, next) => (isV1(c.req.path) ? next() : requireUser(c, next)));
 app.get("/api/me", async (c) => {
   const mode = authMode(c.env); // non-null: requireUser refused a bad mode already
-  const me = { id: c.var.user.id, email: c.var.user.email, name: c.var.user.name, role: c.var.user.role, authMode: mode };
+  const u = c.var.user;
+  const me = { id: u.id, email: u.email, name: u.name, role: u.role, roleId: u.roleId, roleName: u.roleName, perms: u.perms, authMode: mode };
   if (mode !== "app") return c.json(me);
   const n = await c.env.DB.prepare("SELECT COUNT(*) n FROM passkeys WHERE user_id = ?").bind(c.var.user.id).first<{ n: number }>();
   return c.json({ ...me, passkeys: n?.n ?? 0 });

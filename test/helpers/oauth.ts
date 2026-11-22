@@ -34,15 +34,21 @@ export async function registerClient(redirect = CLAUDE_CB, o: { name?: string | 
 export const authorizePath = (q: Record<string, string | undefined>) =>
   `/authorize?${new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => e[1] !== undefined))}`;
 
-/** The signed-in credentials for `email` in the current AUTH_MODE: a session cookie (app) or an Access JWT (access, needs setupAccess). */
-export async function signInHeaders(email: string): Promise<Record<string, string>> {
+/**
+ * The signed-in credentials for `email` in the current AUTH_MODE: a session cookie (app) or an Access JWT (access, needs setupAccess).
+ * `roleId` puts the (member) person on that custom role first.
+ */
+export async function signInHeaders(email: string, roleId?: string): Promise<Record<string, string>> {
+  const onRole = () => roleId ? env.DB.prepare("UPDATE users SET role_id = ? WHERE email = ?").bind(roleId, email).run() : null;
   if ((env as { AUTH_MODE?: string }).AUTH_MODE === "app") {
     const cookie = await signInApp(email);
     vi.restoreAllMocks();
+    await onRole();
     return { cookie };
   }
   await env.DB.prepare("INSERT INTO users (id,email,role,status,created_at) SELECT ?,?,'member','active',1 WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ?)")
     .bind(crypto.randomUUID(), email, email).run();
+  await onRole();
   return { "Cf-Access-Jwt-Assertion": await tokenFor(email) };
 }
 
@@ -72,11 +78,11 @@ export const token = (form: Record<string, string>) =>
 
 /** Registers, approves and exchanges the code; returns the code too so a test can replay it. */
 /** `clientId` reuses an already registered client (registered for `redirect`) instead of registering a new one. */
-export async function connectAgentFull(email: string, o: { write?: boolean; del?: boolean; redirect?: string; name?: string; clientId?: string } = {}) {
+export async function connectAgentFull(email: string, o: { write?: boolean; del?: boolean; redirect?: string; name?: string; clientId?: string; roleId?: string } = {}) {
   const redirect = o.redirect ?? CLAUDE_CB;
   const clientId = o.clientId ?? (await registerClient(redirect, { name: o.name })).clientId;
   const { verifier, challenge } = await pkce();
-  const auth = await signInHeaders(email);
+  const auth = await signInHeaders(email, o.roleId);
   const state = crypto.randomUUID();
   const page = await openConsent(authorizePath({
     response_type: "code", client_id: clientId, redirect_uri: redirect, state, code_challenge: challenge, code_challenge_method: "S256",
@@ -97,7 +103,7 @@ export async function connectAgentFull(email: string, o: { write?: boolean; del?
   return { accessToken: tok.access_token, refreshToken: tok.refresh_token, expiresIn: tok.expires_in, connId: row!.id, clientId, exchange };
 }
 
-export async function connectAgent(email: string, o: { write?: boolean; del?: boolean; redirect?: string } = {}):
+export async function connectAgent(email: string, o: { write?: boolean; del?: boolean; redirect?: string; roleId?: string } = {}):
   Promise<{ accessToken: string; refreshToken: string; connId: string; clientId: string }> {
   const { accessToken, refreshToken, connId, clientId } = await connectAgentFull(email, o);
   return { accessToken, refreshToken, connId, clientId };

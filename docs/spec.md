@@ -35,6 +35,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 **People and access**
 - Sign-in by **email link or passkey** (app mode, the default) or through **Cloudflare Access** (`AUTH_MODE=access`). Sign-in proves the email; the app's own `users` table decides who gets in. People are invited from the dashboard.
 - The **owner** sees and manages every user, domain and link.
+- **Roles** decide what a person can do; which domains they can use stays per person. Owner is built in with every permission; **Member** is built in and editable, its defaults equal a member's rights before roles existed; owners add custom roles from twelve permission toggles (create links, edit anyone's links, bulk edit, all analytics, own domains, manage domains, people, API keys, AI agents, settings, export and import, audit log). The permissions load with the person on every request (one join, no extra query).
 - **Full audit log** of every change by every person and agent, kept **3 years**. Agent changes are recorded as "person via tool".
 
 **Analytics**
