@@ -507,6 +507,29 @@ describe("M7: a main domain outside the Cloudflare account", () => {
       await user.keyboard(ctrlEnter);
       expect(await heading("Email")).toBeTruthy();
     });
+  it("a domain created before the main domain save failed still shows its DNS next step after Retry", async () => {
+    const domains: object[] = [];
+    let fail = true;
+    const { user } = boot({
+      steps: { ...NONE, name: true, cloudflare: true },
+      routes: {
+        "GET /api/domains": () => ({ body: domains }),
+        "POST /api/domains": () => {
+          const d = { ...MAIN, id: "dn", host: "go.new.test", cloudflare: cf("outside") };
+          domains.push(d);
+          return { status: 201, body: d };
+        },
+        "PATCH /api/settings": ({ body }) => (fail ? ((fail = false), { status: 500, body: { error: "internal_error" } }) : { body: { ...SETTINGS, ...(body as object) } }),
+      },
+    });
+    await heading("Main domain");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Domain")));
+    await user.keyboard(`go.new.test${ctrlEnter}`);
+    expect(await screen.findByRole("radio", { name: "go.new.test" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /^Continue/ }));
+    expect(await screen.findByText(/new\.test isn't in your Cloudflare account/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Main domain" })).toBeTruthy();
+  });
 });
 
 describe("M8: Alt+Left in a text field", () => {

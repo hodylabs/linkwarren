@@ -166,6 +166,15 @@ export function SetupWizard() {
     if (step === 2 && cfSet && check === null) void runCheck();
   }, [step, cfSet, check, runCheck, tokenSaves]);
 
+  const created = useRef<{ id: string; host: string; view: CfView } | null>(null);
+  /** Shows the DNS next step of the domain this wizard created, once; true when it did. */
+  const showCreated = (id: string) => {
+    const c = created.current;
+    if (!c || c.id !== id) return false;
+    created.current = null;
+    setDns({ host: c.host, view: c.view });
+    return true;
+  };
   const addMain = (confirm: boolean) =>
     run(async () => {
       const h = normalizeHost(host.trim()); // display only: the server stays the authority
@@ -182,12 +191,14 @@ export function SetupWizard() {
         return;
       }
       setTakeover(null);
+      // Kept until shown: if the save below fails, the retry (the existing-main branch) still shows this DNS next step.
+      created.current = d.cloudflare && d.cloudflare.kind !== "account" ? { id: d.id, host: d.host, view: d.cloudflare } : null;
       // Reload before saving: if the save fails, the new domain is in the choice list for the next try.
       await app.reloadDomains().catch(() => undefined);
       const s = await patchSettings({ mainDomainId: d.id });
       setSettings(s);
       done("mainDomain");
-      if (d.cloudflare && d.cloudflare.kind !== "account") return setDns({ host: d.host, view: d.cloudflare });
+      if (showCreated(d.id)) return;
       go(4);
     });
 
@@ -223,6 +234,7 @@ export function SetupWizard() {
       return void run(async () => {
         if (chosen !== settings.mainDomainId) setSettings(await patchSettings({ mainDomainId: chosen }));
         done("mainDomain");
+        if (chosen && showCreated(chosen)) return;
         go(4);
       });
     }
