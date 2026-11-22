@@ -39,46 +39,49 @@ export function BulkBar({ count, cannot, onAction, onClear }: { count: number; c
   const phone = useMedia(PHONE);
   const [more, setMore] = useState(false);
   const shown = phone ? ACTIONS.slice(0, ON_PHONE_BAR) : ACTIONS;
+  // The More sheet is a sibling of the bar: the phone bar is fixed, a stacking context that would cap the sheet's layer.
   return (
-    <div className="bulkbar" role="region" aria-label="Selected links">
-      <span className="bb-n">
-        <b>{count} selected</b>
-        {cannot > 0 && <small>{cannot} you cannot change</small>}
-      </span>
-      <div className="bb-acts">
-        {shown.map(([a, label, k]) => (
-          <ActionButton key={a} a={a} label={label} k={k} onAction={onAction} />
-        ))}
-        {phone && (
-          <button type="button" className="btn" onClick={() => setMore(true)}>
-            More
+    <>
+      <div className="bulkbar" role="region" aria-label="Selected links">
+        <span className="bb-n">
+          <b>{count} selected</b>
+          {cannot > 0 && <small>{cannot} you cannot change</small>}
+        </span>
+        <div className="bb-acts">
+          {shown.map(([a, label, k]) => (
+            <ActionButton key={a} a={a} label={label} k={k} onAction={onAction} />
+          ))}
+          {phone && (
+            <button type="button" className="btn" onClick={() => setMore(true)}>
+              More
+            </button>
+          )}
+          <button type="button" className="btn ghost" onClick={onClear} aria-keyshortcuts="Escape">
+            Clear <span className="k">Esc</span>
           </button>
-        )}
-        <button type="button" className="btn ghost" onClick={onClear} aria-keyshortcuts="Escape">
-          Clear <span className="k">Esc</span>
-        </button>
+        </div>
       </div>
-      {more && (
-        <Sheet label="More actions" onClose={() => setMore(false)}>
-          <div className="sh-head">
-            <h2>More actions</h2>
-          </div>
-          <div className="sh-body bb-more">
-            {ACTIONS.slice(ON_PHONE_BAR).map(([a, label, k]) => (
-              <ActionButton
-                key={a}
-                a={a}
-                label={label}
-                k={k}
-                onAction={(x) => {
-                  setMore(false);
-                  onAction(x);
-                }}
-              />
-            ))}
-          </div>
-        </Sheet>
-      )}
-    </div>
+        {more && (
+          <Sheet label="More actions" onClose={() => setMore(false)}>
+            <div className="sh-head">
+              <h2>More actions</h2>
+            </div>
+            <div className="sh-body bb-more">
+              {ACTIONS.slice(ON_PHONE_BAR).map(([a, label, k]) => (
+                <ActionButton
+                  key={a}
+                  a={a}
+                  label={label}
+                  k={k}
+                  onAction={(x) => {
+                    setMore(false);
+                    onAction(x);
+                  }}
+                />
+              ))}
+            </div>
+          </Sheet>
+        )}
+    </>
   );
 }

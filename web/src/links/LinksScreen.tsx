@@ -203,6 +203,7 @@ export function LinksScreen() {
     }
     const neighbour = items[at + 1] ?? items[at - 1];
     setItems((cur) => cur.filter((l) => l.id !== selected.id));
+    setPicked((s) => keepOnly(s, new Set(order.filter((id) => id !== selected.id))));
     setConfirming(false);
     select(neighbour?.id ?? null);
     app.announce("Deleted. The slug stays locked.");
@@ -211,13 +212,25 @@ export function LinksScreen() {
 
   const order = items.map((l) => l.id);
   const pickedLinks = items.filter((l) => picked.ids.has(l.id));
+  const latest = useRef({ picked, items });
+  latest.current = { picked, items };
+  // Every change the person makes goes through here, so the count is announced (the bar's text is not a live region).
+  const pick = (next: Sel) => {
+    setPicked(next);
+    const n = latest.current.items.filter((l) => next.ids.has(l.id)).length;
+    app.announce(n > 0 ? `${n} selected` : "Selection cleared");
+  };
+  const clearPick = () => {
+    pick(EMPTY_SEL);
+    rowRefs.current.get(cursor() ?? order[0] ?? "")?.focus(); // focus stays on the list, not on the removed bar
+  };
   const picking = pickedLinks.length > 0;
   const allPicked = picking && pickedLinks.length === items.length;
   // The row X and Shift+J/K act on: the focused row, else the detail's row.
   const cursor = () => [...rowRefs.current].find(([, el]) => el.contains(document.activeElement))?.[0] ?? selectedId;
   const extendBy = (step: 1 | -1) => {
     const r = extend(picked, order, cursor() ?? "", step);
-    setPicked(r.sel);
+    pick(r.sel);
     select(r.cursor, true);
   };
 
@@ -229,7 +242,9 @@ export function LinksScreen() {
     }
     if (a !== "copy") return setBulk(a);
     const text = shortUrls(pickedLinks, hostOf);
-    navigator.clipboard.writeText(text).then(
+    if (!text) return app.announce("Cannot copy: these links' domains are unknown");
+    // A missing clipboard (plain http) throws; the promise turns that into "Could not copy".
+    Promise.resolve().then(() => navigator.clipboard.writeText(text)).then(
       () => app.announce(`Copied ${plural(text ? text.split("\n").length : 0, "short link")}`),
       () => app.announce("Could not copy"),
     );
@@ -261,11 +276,13 @@ export function LinksScreen() {
   const startPress = (id: string, e: PointerEvent) => {
     pressed.current = false;
     endPress();
-    if (!phone) return;
+    // A hold on the checkbox is left to the checkbox's own click, or the press would add the row and the click undo it.
+    if (!phone || (e.target as HTMLElement).closest(".pick")) return;
     const t = window.setTimeout(() => {
       press.current = null;
       pressed.current = true;
-      setPicked((s) => (s.ids.has(id) ? s : toggle(s, id)));
+      const s = latest.current.picked;
+      if (!s.ids.has(id)) pick(toggle(s, id));
     }, LONG_PRESS_MS);
     press.current = { x: e.clientX, y: e.clientY, t };
   };
@@ -275,8 +292,8 @@ export function LinksScreen() {
   };
   const rowClick = (id: string, e: MouseEvent) => {
     if (pressed.current) return void (pressed.current = false);
-    if (e.shiftKey) return setPicked(range(picked, order, id));
-    if (phone && picking) return setPicked(toggle(picked, id));
+    if (e.shiftKey) return pick(range(picked, order, id));
+    if (phone && picking) return pick(toggle(picked, id));
     show(id) || select(id);
   };
 
@@ -304,15 +321,16 @@ export function LinksScreen() {
       n: () => app.open({ kind: "newLink" }),
       x: () => {
         const id = cursor();
-        if (id) setPicked(toggle(picked, id));
+        if (id) pick(toggle(picked, id));
       },
       "shift+j": () => extendBy(1),
       "shift+k": () => extendBy(-1),
-      "mod+a": () => setPicked(all(order)),
+      "mod+a": () => pick(all(order)),
       escape: (e) => {
         if (isTypingTarget(e.target)) return;
-        if (picking) setPicked(EMPTY_SEL);
-        else if (sel) closeDetail();
+        if (open || !picking) {
+          if (sel) closeDetail(); // the pushed detail first: the selection behind it is not on screen
+        } else clearPick();
       },
     } satisfies Bindings<typeof LINKS_KEYS>;
   // While links are selected C and Shift+D act on all of them.
@@ -348,7 +366,7 @@ export function LinksScreen() {
         <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />
       </ScreenHeader>
       {picking && !open && (
-        <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l) || l.forwardTo).length} onAction={onAction} onClear={() => setPicked(EMPTY_SEL)} />
+        <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l) || l.forwardTo).length} onAction={onAction} onClear={clearPick} />
       )}
       <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className={`list${picking ? " picking" : ""}`} aria-label="Links">
@@ -366,8 +384,9 @@ export function LinksScreen() {
                       type="checkbox"
                       aria-label="Select every loaded link"
                       checked={allPicked}
+                      tabIndex={phone ? -1 : 0} // the phone header row is visually hidden
                       ref={(el) => void (el && (el.indeterminate = picking && !allPicked))}
-                      onChange={() => setPicked(allPicked ? EMPTY_SEL : all(order))}
+                      onChange={() => pick(allPicked ? EMPTY_SEL : all(order))}
                     />
                   </th>
                 )}
@@ -390,6 +409,7 @@ export function LinksScreen() {
                     aria-selected={isSel}
                     tabIndex={isSel || (!selected && i === 0) ? 0 : -1}
                     onClick={(e) => rowClick(l.id, e)}
+                    onMouseDown={(e) => e.shiftKey && e.preventDefault()} // Shift+click picks a range, never a text selection
                     onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), show(l.id) || select(l.id))}
                     onPointerDown={(e) => startPress(l.id, e)}
                     onPointerMove={movePress}
@@ -401,10 +421,11 @@ export function LinksScreen() {
                       <td className="pick">
                         <input
                           type="checkbox"
-                          aria-label={`Select ${domainOf(l.domainId)?.host}/${l.slug}`}
+                          aria-label={`Select ${domainOf(l.domainId) ? `${domainOf(l.domainId)!.host}/` : ""}${l.slug}`}
                           checked={picked.ids.has(l.id)}
+                          tabIndex={-1} // the row is the Tab stop (roving tabindex); X and clicks toggle
                           onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => setPicked((s) => ((e.nativeEvent as globalThis.MouseEvent).shiftKey ? range(s, order, l.id) : toggle(s, l.id)))}
+                          onChange={(e) => pick((e.nativeEvent as globalThis.MouseEvent).shiftKey ? range(picked, order, l.id) : toggle(picked, l.id))}
                         />
                       </td>
                     )}

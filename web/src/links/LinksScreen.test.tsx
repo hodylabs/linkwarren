@@ -784,6 +784,99 @@ describe("Links selection", () => {
     expect(location.search).not.toContain("sel=");
   });
 
+  it("row checkboxes are not Tab stops (the header one is); X on a row announces the count", async () => {
+    const { user } = boot();
+    await ready();
+    expect(boxes().slice(1).every((b) => b.tabIndex === -1)).toBe(true);
+    expect(header().tabIndex).toBe(0);
+    await user.keyboard("j");
+    await user.keyboard("x");
+    expect(document.activeElement).toBe(rows()[0]);
+    await waitFor(() => expect(document.querySelector("[aria-live]")!.textContent).toBe("1 selected"));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getByText("Selection cleared")).toBeTruthy());
+  });
+
+  it("Shift+K extends upward and J still moves the detail after a selection", async () => {
+    const { user } = boot({ path: "/links?sel=l3" });
+    await ready();
+    await waitFor(() => expect(rows()[2]!.getAttribute("aria-selected")).toBe("true"));
+    await user.keyboard("{Shift>}K{/Shift}");
+    expect(box("app").checked && box("menu").checked && !box("spring").checked).toBe(true);
+    expect(rows()[1]!.getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("k");
+    expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+  });
+
+  it("a domain switch and a search each clear the selection", async () => {
+    const other: Domain = { ...domain, id: "d2", host: "b.test" };
+    const { user } = boot({ routes: { "GET /api/domains": () => ({ body: [domain, other] }) } });
+    await ready();
+    await user.keyboard("{Control>}a{/Control}");
+    await user.click(screen.getByRole("button", { name: /Switch domain/ }));
+    await user.keyboard("2");
+    await waitFor(() => expect(bar()).toBeNull());
+    await ready();
+    await user.keyboard("{Control>}a{/Control}");
+    expect(bar()).not.toBeNull();
+    act(() => void history.pushState(null, "", "/links?q=spr"));
+    act(() => void window.dispatchEvent(new PopStateEvent("popstate")));
+    await waitFor(() => expect(bar()).toBeNull());
+  });
+
+  it("a reload keeps only the selected links that are still on page 1", async () => {
+    let n = 0;
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: ++n === 1 ? [L1, L2, L3] : [L1, L2], next: null } }),
+      routes: { "PATCH /api/links/l1": () => ({ status: 409, body: { error: "conflict" } }) },
+    });
+    await ready();
+    await user.click(box("menu"));
+    await user.click(box("app"));
+    expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    await user.clear(urlInput());
+    await user.type(urlInput(), "https://example.com/new");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.click(await screen.findByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(within(bar()!).getByText("1 selected")).toBeTruthy();
+  });
+
+  it("a failed copy says so; Clear moves focus to the link's row", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("no"));
+    const { user } = boot({ path: "/links?sel=l2" });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await ready();
+    await user.keyboard("x");
+    await user.keyboard("c");
+    await waitFor(() => expect(screen.getByText("Could not copy")).toBeTruthy());
+    await user.click(within(bar()!).getByRole("button", { name: /^Clear/ }));
+    expect(bar()).toBeNull();
+    expect(document.activeElement).toBe(rows()[1]);
+  });
+
+  it("a link with an unknown domain gets a slug label and cannot be copied", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { user } = boot({ page: () => ({ body: { items: [mk("l9", "lost", { domainId: "gone" })], next: null } }) });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await ready();
+    await user.click(screen.getByRole("checkbox", { name: "Select lost" }));
+    await user.keyboard("c");
+    await waitFor(() => expect(screen.getByText("Cannot copy: these links' domains are unknown")).toBeTruthy());
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("X and Ctrl+A typed in the detail's URL field type, select nothing", async () => {
+    const { user } = boot({ path: "/links?sel=l1" });
+    await ready();
+    await user.click(urlInput());
+    await user.keyboard("x{Control>}a{/Control}");
+    expect(urlInput().value.endsWith("x")).toBe(true);
+    expect(bar()).toBeNull();
+  });
+
   it("X inside the search input types and selects nothing", async () => {
     const { user } = boot({ path: "/links?sel=l1" });
     await ready();
@@ -901,6 +994,47 @@ describe("Links selection", () => {
       fireEvent.click(rows()[1]!);
       expect(within(bar()!).getByText("2 selected")).toBeTruthy();
       expect(location.search).not.toContain("view=detail");
+    });
+
+    it("pointercancel ends a press; holding the checkbox itself does not undo itself", async () => {
+      phone();
+      boot();
+      await ready();
+      vi.useFakeTimers();
+      fireEvent.pointerDown(rows()[0]!, { clientX: 1, clientY: 1 });
+      fireEvent.pointerCancel(rows()[0]!);
+      act(() => void vi.advanceTimersByTime(600));
+      expect(boxes()).toHaveLength(0);
+      fireEvent.pointerDown(rows()[0]!, { clientX: 1, clientY: 1 });
+      act(() => void vi.advanceTimersByTime(500));
+      vi.useRealTimers();
+      expect(within(bar()!).getByText("1 selected")).toBeTruthy();
+      // now in selection mode: a press held on the menu checkbox, then its click, selects it once
+      vi.useFakeTimers();
+      fireEvent.pointerDown(box("menu"), { clientX: 1, clientY: 1 });
+      act(() => void vi.advanceTimersByTime(500));
+      fireEvent.pointerUp(box("menu"));
+      fireEvent.click(box("menu"));
+      vi.useRealTimers();
+      expect(box("menu").checked).toBe(true);
+      expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    });
+
+    it("Esc with the pushed detail open goes back to the list and keeps the selection", async () => {
+      phone();
+      const { user } = boot();
+      await ready();
+      vi.useFakeTimers();
+      fireEvent.pointerDown(rows()[0]!, { clientX: 1, clientY: 1 });
+      act(() => void vi.advanceTimersByTime(500));
+      vi.useRealTimers();
+      act(() => void history.pushState({ detail: true }, "", "/links?sel=l2&view=detail"));
+      act(() => void window.dispatchEvent(new PopStateEvent("popstate")));
+      await waitFor(() => expect(screen.queryByRole("complementary", { name: "Selected link" })).not.toBeNull());
+      (document.activeElement as HTMLElement | null)?.blur();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(location.search).not.toContain("view=detail"));
+      expect(within(bar()!).getByText("1 selected")).toBeTruthy();
     });
 
     it("the phone bar has Delete, Schedule, Move and More; More holds the rest", async () => {
