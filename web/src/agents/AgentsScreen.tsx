@@ -85,6 +85,10 @@ function ConnDetail({ item: c, person, onModal, onClose, onGone, onSaved }: Deta
   const changed = draft.write !== c.write || draft.del !== c.del;
   // The audit log names the person, so the hint does too (the mockup: "Dana R. via Claude").
   const auditName = person.name || person.email;
+  // R6: on someone else's connection the owner may only lower access, so a switch that is off is not offered (the server 403 is the backstop).
+  const noRaise = `Only ${person.label} can give it more access.`;
+  const lockWrite = !person.own && !c.write;
+  const lockDel = !person.own && !c.del;
 
   useEffect(() => onModal(confirm), [confirm]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onModal(false), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -112,8 +116,8 @@ function ConnDetail({ item: c, person, onModal, onClose, onGone, onSaved }: Deta
   };
   const save = () => run(async () => {
     if (!changed) return;
-    await api("PATCH", path, draft);
-    onSaved({ ...c, ...draft });
+    const saved = await api<ConnectionItem>("PATCH", path, draft);
+    onSaved({ ...c, write: saved.write, del: saved.del });
     app.announce("Access changed");
   });
   const disconnect = () => run(async () => {
@@ -147,15 +151,15 @@ function ConnDetail({ item: c, person, onModal, onClose, onGone, onSaved }: Deta
           </div>
           <div className="toggle">
             <div>
-              Create and edit links<small>Shown in the audit log as {auditName} via {c.clientName}</small>
+              Create and edit links<small>{lockWrite ? noRaise : `Shown in the audit log as ${auditName} via ${c.clientName}`}</small>
             </div>
-            <Switch checked={draft.write} onChange={(write) => setDraft((d) => ({ write, del: write && d.del }))} label="Create and edit links" />
+            <Switch checked={draft.write} disabled={lockWrite} onChange={(write) => setDraft((d) => ({ write, del: write && d.del }))} label="Create and edit links" />
           </div>
           <div className="toggle">
             <div>
-              Delete links<small>Off by default for agents</small>
+              Delete links<small>{lockDel ? noRaise : "Off by default for agents"}</small>
             </div>
-            <Switch checked={draft.del} onChange={(del) => setDraft((d) => ({ write: d.write || del, del }))} label="Delete links" />
+            <Switch checked={draft.del} disabled={lockDel} onChange={(del) => setDraft((d) => ({ write: d.write || del, del }))} label="Delete links" />
           </div>
         </div>
         <div className="sect">
@@ -360,11 +364,21 @@ export function AgentsScreen() {
     const to = at < 0 ? ids[step === 1 ? 0 : ids.length - 1] : ids[at + step];
     if (to) select(to, true);
   };
+  // After Disconnect or Revoke the confirm's opener is gone: focus the next row, else the previous, else the list heading.
+  const focusAfter = useRef<string | null>(null);
+  const headRef = useRef<HTMLHeadingElement>(null);
   const gone = () => {
+    focusAfter.current = ids[at + 1] ?? ids[at - 1] ?? "";
     setConns((l) => l && l.filter((c) => c.id !== sel));
     setKeys((l) => l && l.filter((k) => k.id !== sel));
     select(null);
   };
+  useEffect(() => {
+    const id = focusAfter.current;
+    if (id === null) return;
+    focusAfter.current = null;
+    (rowRefs.current.get(id) ?? headRef.current)?.focus();
+  }, [conns, keys]);
 
   const copy = () => {
     if (mcp !== "on") return;
@@ -376,7 +390,7 @@ export function AgentsScreen() {
       n: () => app.open({ kind: "newKey" }),
       j: () => move(1),
       k: () => move(-1),
-      c: copy,
+      c: (e) => void (!e.shiftKey && copy()), // Shift+C is not Copy
       escape: (e) => {
         if (!isTypingTarget(e.target) && sel) closeDetail();
       },
@@ -445,7 +459,8 @@ export function AgentsScreen() {
               {error}
             </p>
           )}
-          <h2 className="sub-h">Connected agents</h2>
+          <h2 className="sub-h" ref={headRef} tabIndex={-1}>Connected agents</h2>
+          {conns === null && !error && <p className="muted pad">Loading agents</p>}
           {conns?.length === 0 && <p className="muted pad">No agents connected yet.</p>}
           {conns && conns.length > 0 && (
             <table>
@@ -474,6 +489,7 @@ export function AgentsScreen() {
             </table>
           )}
           <h2 className="sub-h">API keys</h2>
+          {keys === null && !error && <p className="muted pad">Loading keys</p>}
           {keys?.length === 0 && <p className="muted pad">No API keys yet.</p>}
           {keys && keys.length > 0 && (
             <table>

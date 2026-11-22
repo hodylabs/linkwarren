@@ -64,7 +64,9 @@ describe("New API key sheet", () => {
     const { api, user } = boot();
     const dlg = await openSheet(user);
     await user.type(within(dlg).getByLabelText("Name"), "Bad Name");
-    expect(within(dlg).getByText(errorText("key_name"))).toBeTruthy();
+    const err = within(dlg).getByText(errorText("key_name"));
+    expect(within(dlg).getByLabelText("Name").getAttribute("aria-describedby")).toBe(err.id);
+    expect(err.id).not.toBe("");
     await user.keyboard("{Control>}{Enter}{/Control}");
     expect(posts(api)).toHaveLength(0);
   });

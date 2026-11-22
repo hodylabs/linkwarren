@@ -118,6 +118,8 @@ describe("API & agents screen", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(api.calls.some((c) => c.method === "DELETE" && c.path === "/api/agents/connections/c1")).toBe(true));
     await waitFor(() => expect(screen.queryByRole("cell", { name: "Claude" })).toBeNull());
+    // Focus lands on the next row (the key), not on the page body.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("cell", { name: "zapier" }).closest("tr")));
   });
 
   it("the detail shows read as always on (not a switch) and recent calls", async () => {
@@ -147,19 +149,54 @@ describe("API & agents screen", () => {
     expect(screen.getByRole("switch", { name: "Delete links" }).getAttribute("aria-checked")).toBe("false");
   });
 
-  it("a 403 owner_cannot_raise shows its message and keeps the switches", async () => {
-    boot(owner, {
-      "GET /api/agents/connections": () => ({ body: { items: [conn({ userId: "ud", userEmail: "dana@example.com" })] } }),
-      "PATCH /api/agents/connections/c1": () => ({ status: 403, body: { error: "owner_cannot_raise" } }),
-    });
+  it("the owner is not offered raising someone else's connection", async () => {
+    boot(owner, { "GET /api/agents/connections": () => ({ body: { items: [conn({ userId: "ud", userEmail: "dana@example.com" })] } }) });
     const user = userEvent.setup();
     await loaded();
     await user.keyboard("j");
     expect(await screen.findByText("Claude, for Dana R.")).toBeTruthy();
-    await user.click(screen.getByRole("switch", { name: "Create and edit links" }));
+    const write = screen.getByRole("switch", { name: "Create and edit links" }) as HTMLButtonElement;
+    const del = screen.getByRole("switch", { name: "Delete links" }) as HTMLButtonElement;
+    expect(write.disabled).toBe(true);
+    expect(del.disabled).toBe(true);
+    expect(screen.getAllByText("Only Dana R. can give it more access.")).toHaveLength(2);
+    await user.click(write);
+    expect(write.getAttribute("aria-checked")).toBe("false");
+    expect((screen.getByRole("button", { name: "Change access" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the owner can lower someone else's access; the saved state is the server's answer", async () => {
+    const { api } = boot(owner, {
+      "GET /api/agents/connections": () => ({ body: { items: [conn({ userId: "ud", userEmail: "dana@example.com", write: true, del: true })] } }),
+      "PATCH /api/agents/connections/c1": () => ({ body: conn({ userId: "ud", write: false, del: false }) }),
+    });
+    const user = userEvent.setup();
+    await loaded();
+    await user.keyboard("j");
+    const write = await screen.findByRole("switch", { name: "Create and edit links" }) as HTMLButtonElement;
+    expect(write.disabled).toBe(false);
+    await user.click(write);
     await user.click(screen.getByRole("button", { name: "Change access" }));
-    expect(await screen.findByText(errorText("owner_cannot_raise"))).toBeTruthy();
-    expect(screen.getByRole("switch", { name: "Create and edit links" }).getAttribute("aria-checked")).toBe("true");
+    await waitFor(() => expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ write: false, del: false }));
+    // Saved: the row shows the new access and both switches are now offers to raise, so disabled.
+    await waitFor(() => expect(within(screen.getByRole("row", { name: /Claude/ })).getByText("Read only")).toBeTruthy());
+    expect((screen.getByRole("switch", { name: "Create and edit links" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows a loading line until the lists arrive", async () => {
+    boot(member, { "GET /api/keys": () => new Promise(() => {}) });
+    expect(await screen.findByText("Loading agents")).toBeTruthy();
+    expect(screen.getByText("Loading keys")).toBeTruthy();
+  });
+
+  it("Shift+C does not copy", async () => {
+    const { user } = boot(member);
+    await loaded();
+    await screen.findByText(mcpUrl());
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await user.keyboard("{Shift>}C{/Shift}");
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it("keys show Unused 6 weeks or Expired, and Revoke asks first", async () => {
@@ -175,6 +212,8 @@ describe("API & agents screen", () => {
     await screen.findByRole("dialog", { name: "Revoke old" });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(api.calls.some((c) => c.method === "DELETE" && c.path === "/api/keys/k2")).toBe(true));
+    // The last row went: focus moves to the row before it.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("cell", { name: "zapier" }).closest("tr")));
   });
 });
 

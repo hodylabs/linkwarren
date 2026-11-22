@@ -141,6 +141,7 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 .toggle{display:flex;align-items:center;justify-content:space-between;padding:7px 0}
 .toggle small{display:block;color:var(--faint)}
 .sw{border:0;padding:0;width:30px;height:18px;border-radius:999px;background:#D7D9D4;position:relative;flex:none}
+.sw:disabled{opacity:.5;cursor:not-allowed}
 .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .sw.on{background:var(--signal)} .sw.on::after{left:14px}
 .route{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;word-break:break-all;font-family:var(--mono);font-size:12px;color:var(--muted);background:var(--bg);border:1px solid var(--line-soft);border-radius:8px;padding:10px}
@@ -340,7 +341,6 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .body.agents.solo{grid-template-columns:minmax(0,1fr)}
 .connect{margin:14px 20px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);display:grid;gap:10px}
 .connect h3{margin:0 0 4px;font-size:13.5px}.connect p{margin:0;color:var(--muted);max-width:72ch}
-.connect .callout{color:#6A4708}
 .mcp{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px 6px 6px 12px;background:var(--bg);max-width:520px}
 .mcp .mono{flex:1;min-width:0;overflow-wrap:anywhere}
 .howto{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap}

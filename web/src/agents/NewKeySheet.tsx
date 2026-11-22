@@ -69,7 +69,7 @@ export function NewKeySheet() {
   // Closing before copying loses the key for good, so ask first.
   const dismiss = () => (secret !== null && !copied ? setAsk(true) : app.close());
 
-  useHotkeys({ "mod+enter": () => void submit(), c: copy } satisfies Bindings<typeof NEW_KEY_KEYS>, !ask);
+  useHotkeys({ "mod+enter": () => void submit(), c: (e) => void (!e.shiftKey && copy()) } satisfies Bindings<typeof NEW_KEY_KEYS>, !ask);
 
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   return (
@@ -105,11 +105,11 @@ export function NewKeySheet() {
             <div className="f">
               <label htmlFor="nk-name">Name</label>
               <div className={nameError ? "ctl bad" : "ctl"}>
-                <input id="nk-name" className="mono" autoFocus value={name} spellCheck={false} autoComplete="off" aria-describedby="nk-name-h"
+                <input id="nk-name" className="mono" autoFocus value={name} spellCheck={false} autoComplete="off" aria-describedby={nameError ? "nk-name-e" : "nk-name-h"}
                   aria-invalid={nameError ? true : undefined} onChange={(e) => setName(e.target.value)} />
               </div>
               {nameError ? (
-                <p className="err" role="alert">{errorText("key_name")}</p>
+                <p className="err" id="nk-name-e" role="alert">{errorText("key_name")}</p>
               ) : (
                 <p className="hint" id="nk-name-h">Lowercase letters, digits and hyphens, for example print-shop-import</p>
               )}
