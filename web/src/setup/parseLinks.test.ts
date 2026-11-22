@@ -45,9 +45,9 @@ describe("parseLinksFile", () => {
   it("takes the import JSON as it is, keeping its own main host", () => {
     expect(parseLinksFile("export.JSON", JSON.stringify(exp), "go.test")).toEqual({ body: exp, errors: [] });
   });
-  it("drops unknown fields from the JSON", () => {
-    const withExtra = { ...exp, links: [{ ...exp.links[0], password: "x" }], extra: 1 };
-    expect(parseLinksFile("e.json", JSON.stringify(withExtra), "go.test").body).toEqual(exp);
+  it("keeps protected and drops unknown fields from the JSON; hosts are normalized", () => {
+    const withExtra = { ...exp, mainHost: "Old.Test.", links: [{ ...exp.links[0], password: "x", protected: true }], extra: 1 };
+    expect(parseLinksFile("e.json", JSON.stringify(withExtra), "go.test").body).toEqual({ ...exp, links: [{ ...exp.links[0], protected: true }] });
   });
   it("refuses other JSON with the export copy", () => {
     for (const t of ["[]", '{"links":[]}', "{not json", JSON.stringify({ ...exp, links: [{ slug: 1 }] })])
@@ -55,7 +55,7 @@ describe("parseLinksFile", () => {
     expect(NOT_AN_EXPORT).toBe("This JSON is not a linkwarren or legacy export");
   });
   it("uses the instance main host for CSV and refuses other extensions", () => {
-    expect(parseLinksFile("l.csv", "slug,destination\nab,https://x.test", "go.test").body?.mainHost).toBe("go.test");
+    expect(parseLinksFile("l.csv", "slug,destination,host\nab,https://x.test,Other.Test", "go.test").body).toMatchObject({ mainHost: "go.test", links: [{ host: "other.test" }] });
     expect(parseLinksFile("l.txt", "", "go.test").body).toBeNull();
   });
 });

@@ -1,10 +1,8 @@
-/** The POST /api/import body (src/api/import.ts). `host` null = the export's main host. */
-export type ImportLink = { host: string | null; slug: string; destination: string; enabled: boolean; startDate?: string | null; endDate?: string | null };
-export type ImportBody = {
-  mainHost: string;
-  domains: { host: string; customIndexUrl?: string | null; customNotFoundUrl?: string | null }[];
-  links: ImportLink[];
-};
+import { normHost, parseExport, type Export, type ExportLink } from "../../../scripts/lib/export";
+
+/** The POST /api/import body: the CLI importer's export shape (scripts/lib/export.ts), so both paths send the same thing. */
+export type ImportLink = ExportLink;
+export type ImportBody = Export;
 /** `line` counts the header as 1; 0 is the whole file. */
 export type LineError = { line: number; reason: string };
 export type Parsed = { body: ImportBody | null; errors: LineError[] };
@@ -53,7 +51,7 @@ function validDate(v: string): boolean {
 
 /** CSV rows (header first) to an import body. Empty host = the main domain. Any error leaves the body empty of that row. */
 export function linksFromCsv(rows: string[][], mainHost: string): { body: ImportBody; errors: LineError[] } {
-  const body: ImportBody = { mainHost, domains: [], links: [] };
+  const body: ImportBody = { mainHost: normHost(mainHost), domains: [], links: [] };
   const errors: LineError[] = [];
   const head = (rows[0] ?? []).map((h) => h.trim().toLowerCase());
   const col = (...names: string[]) => head.findIndex((h) => names.includes(h));
@@ -72,21 +70,9 @@ export function linksFromCsv(rows: string[][], mainHost: string): { body: Import
     if (enabled && !Object.hasOwn(BOOL, enabled)) return errors.push({ line, reason: "enabled must be true, false, 1, 0, yes or no" });
     for (const [name, v] of [["start_date", start], ["end_date", end]] as const)
       if (v && !validDate(v)) return errors.push({ line, reason: `${name} must be YYYY-MM-DD HH:MM:SS (UTC)` });
-    body.links.push({ host: host || null, slug, destination, enabled: enabled ? BOOL[enabled]! : true, startDate: start || null, endDate: end || null });
+    body.links.push({ host: host ? normHost(host) : null, slug, destination, enabled: enabled ? BOOL[enabled]! : true, startDate: start || null, endDate: end || null });
   });
   return { body, errors };
-}
-
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const optStr = (v: unknown) => v === undefined || v === null || typeof v === "string";
-/** The import shape, checked deeply enough that the server's own check is the only thing left to fail. */
-function isImportBody(v: unknown): v is ImportBody {
-  if (!isObj(v) || typeof v.mainHost !== "string" || !v.mainHost || !Array.isArray(v.domains) || !Array.isArray(v.links)) return false;
-  return (
-    v.domains.every((d) => isObj(d) && typeof d.host === "string" && optStr(d.customIndexUrl) && optStr(d.customNotFoundUrl)) &&
-    v.links.every((l) => isObj(l) && (l.host === null || typeof l.host === "string") && typeof l.slug === "string" && typeof l.destination === "string" &&
-      typeof l.enabled === "boolean" && optStr(l.startDate) && optStr(l.endDate))
-  );
 }
 
 /** A chosen file to an import body. JSON keeps its own mainHost (the legacy main host); CSV uses this instance's. */
@@ -94,20 +80,10 @@ export function parseLinksFile(name: string, text: string, mainHost: string): Pa
   const ext = name.toLowerCase().split(".").pop();
   if (ext === "csv") return linksFromCsv(parseCsv(text), mainHost);
   if (ext !== "json") return { body: null, errors: [{ line: 0, reason: "Choose a .csv or .json file" }] };
-  let data: unknown;
+  // The CLI's own parser: the same checks, hosts normalized, only known fields kept (protected included).
   try {
-    data = JSON.parse(text.replace(/^﻿/, ""));
+    return { body: parseExport(JSON.parse(text.replace(/^\uFEFF/, ""))), errors: [] };
   } catch {
     return { body: null, errors: [{ line: 0, reason: NOT_AN_EXPORT }] };
   }
-  if (!isImportBody(data)) return { body: null, errors: [{ line: 0, reason: NOT_AN_EXPORT }] };
-  // Only the known fields go on: nothing else from the file reaches the request.
-  return {
-    body: {
-      mainHost: data.mainHost,
-      domains: data.domains.map((d) => ({ host: d.host, customIndexUrl: d.customIndexUrl ?? null, customNotFoundUrl: d.customNotFoundUrl ?? null })),
-      links: data.links.map((l) => ({ host: l.host, slug: l.slug, destination: l.destination, enabled: l.enabled, startDate: l.startDate ?? null, endDate: l.endDate ?? null })),
-    },
-    errors: [],
-  };
 }

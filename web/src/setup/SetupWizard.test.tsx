@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -16,7 +16,10 @@ const SETTINGS = {
   secrets: { pasteAvailable: true, cf: "secret", resend: "secret" }, linkRedirectCode: 302, linkPassQuery: true, retention: { auditDays: 1096, clickDetailDays: 90 },
 };
 const PERMS = { token: "active", accountName: "Acme", permissions: [{ key: "zone_read", state: "ok" }, { key: "ssl_edit", state: "missing" }] };
-const REPORT = { created: 2, skipped: 1, conflicts: [{ host: "go.test", slug: "taken", reason: "exists" }], caseSensitiveDomains: [], domainsCreated: ["new.test"], ignored: [] };
+const REPORT = { created: 2, skipped: 1, conflicts: [{ host: "go.test", slug: "taken", reason: "exists" }], caseSensitiveDomains: [], domainsCreated: ["new.test"], ignored: [], protected: [] };
+const MAIN_ONLY = { steps: ALL, settings: { name: "N", mainDomainId: "d0" }, domains: [MAIN] };
+const CSV = () => new File(["slug,url\nab,https://x.test\n"], "links.csv", { type: "text/csv" });
+const ctrlEnter = "{Control>}{Enter}{/Control}";
 
 function boot(o: { me?: Me; configured?: boolean; steps?: Steps; settings?: object; domains?: object[]; routes?: FakeRoutes; path?: string } = {}) {
   history.replaceState(null, "", o.path ?? "/links");
@@ -201,7 +204,7 @@ describe("setup wizard steps", () => {
   });
 
   it("Finish without a main domain shows what is missing", async () => {
-    const { user } = boot({ steps: ALL, routes: { "POST /api/setup/complete": () => ({ status: 400, body: { error: "incomplete", missing: ["mainDomain"] } }) } });
+    const { user } = boot({ steps: ALL, domains: [MAIN], routes: { "POST /api/setup/complete": () => ({ status: 400, body: { error: "incomplete", missing: ["mainDomain"] } }) } });
     await heading("Bring your links");
     await user.keyboard("{Control>}{Enter}{/Control}");
     expect(await screen.findByText("Setup cannot finish yet: add a main domain first.")).toBeTruthy();
@@ -240,5 +243,156 @@ describe("setup wizard end to end", () => {
     expect(writes(api).map((c) => `${c.method} ${c.path}`)).toEqual([
       "PATCH /api/settings", "POST /api/settings/cloudflare/check", "POST /api/domains", "PATCH /api/settings", "POST /api/setup/complete",
     ]);
+  });
+});
+
+describe("import results", () => {
+  it("lists protected links with what to do, and never claims password links are detected by itself", async () => {
+    const rep = { ...REPORT, protected: [{ host: "go.test", slug: "secret" }] };
+    const { user } = boot({ ...MAIN_ONLY, routes: { "POST /api/import": () => ({ body: rep }) } });
+    await heading("Bring your links");
+    expect(document.body.textContent).not.toMatch(/arrive disabled/);
+    const json = { mainHost: "old.test", domains: [], links: [{ host: null, slug: "secret", destination: "https://x.test", enabled: true, protected: true }] };
+    await user.upload(screen.getByLabelText("Links file"), new File([JSON.stringify(json)], "export.json", { type: "application/json" }));
+    expect(await screen.findByText(/1 password link comes in locked/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    expect(await screen.findByText("Create each again with its new password: open the New link sheet, release the lock, set the password, then create.")).toBeTruthy();
+    expect(screen.getByText("go.test/secret")).toBeTruthy();
+  });
+
+  it("shows the first 20 conflicts, and Download results has every row", async () => {
+    const conflicts = Array.from({ length: 25 }, (_, i) => ({ host: "go.test", slug: i === 24 ? "=bad" : `c${i}`, reason: "exists" }));
+    const { user } = boot({ ...MAIN_ONLY, routes: { "POST /api/import": () => ({ body: { ...REPORT, conflicts } }) } });
+    let blob: Blob | null = null;
+    Object.assign(URL, { createObjectURL: vi.fn((b: Blob) => ((blob = b), "blob:x")), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    await heading("Bring your links");
+    await user.upload(screen.getByLabelText("Links file"), CSV());
+    expect(await screen.findByText("and 5 more")).toBeTruthy();
+    expect(screen.getByText("go.test/c19: exists")).toBeTruthy();
+    expect(screen.queryByText("go.test/c20: exists")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Download results" }));
+    const text = await blob!.text();
+    expect(text.split("\r\n").filter(Boolean)).toHaveLength(26);
+    expect(text).toContain("go.test,'=bad,conflict,exists");
+  });
+
+  it("a stopped import offers Retry, which resumes; the file input is cleared for choosing again", async () => {
+    let fail = true;
+    const { api, user } = boot({ ...MAIN_ONLY, routes: { "POST /api/import": ({ url }) => (url.search || !fail ? { body: REPORT } : ((fail = false), { status: 502, body: { error: "internal_error" } })) } });
+    await heading("Bring your links");
+    const input = screen.getByLabelText("Links file") as HTMLInputElement;
+    await user.upload(input, CSV());
+    await user.click(await screen.findByRole("button", { name: "Import" }));
+    expect(await screen.findByText(/^Stopped at part 1 of 1/)).toBeTruthy();
+    expect(input.value).toBe("");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(/^Imported 2, 1 already there, 1 conflicts/)).toBeTruthy();
+    expect(writes(api).map((c) => c.path)).toEqual(["/api/import?dryRun=1", "/api/import", "/api/import"]);
+  });
+
+  it("shows progress while a part is on its way", async () => {
+    let release = () => undefined as void;
+    const { user } = boot({ ...MAIN_ONLY, routes: { "POST /api/import": () => new Promise((r) => (release = () => r({ body: REPORT }))) } });
+    await heading("Bring your links");
+    await user.upload(screen.getByLabelText("Links file"), CSV());
+    expect(await screen.findByText("Checking part 1 of 1")).toBeTruthy();
+    release();
+    expect(await screen.findByText(/2 to import/)).toBeTruthy();
+  });
+});
+
+describe("takeover and keys", () => {
+  const takeover = { status: 409, body: { error: "dns_record_exists", records: [{ type: "A", name: "www.example.test", content: "192.0.2.1" }] } };
+
+  it("a DNS record in the way is named, Ctrl+Enter never confirms, and only the explicit button sends confirmTakeover", async () => {
+    let n = 0;
+    const { api, user } = boot({ steps: { ...NONE, name: true, cloudflare: true }, routes: {
+      "POST /api/domains": ({ body }) => ((body as { confirmTakeover?: boolean }).confirmTakeover ? ((n = 1), { status: 201, body: { ...MAIN, id: "dn", host: "www.example.test" } }) : takeover),
+    } });
+    await heading("Main domain");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Domain")));
+    await user.keyboard(`www.example.test${ctrlEnter}`);
+    const callout = await screen.findByText(/www\.example\.test already has DNS records in your Cloudflare account/);
+    expect(callout.textContent).toContain("A www.example.test 192.0.2.1");
+    await user.keyboard(ctrlEnter);
+    await waitFor(() => expect(writes(api).filter((c) => c.path === "/api/domains")).toHaveLength(2));
+    expect(writes(api).every((c) => !(c.body as { confirmTakeover?: boolean } | undefined)?.confirmTakeover)).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Replace the record for www.example.test and continue" }));
+    expect(await heading("Email")).toBeTruthy();
+    expect(n).toBe(1);
+    expect(writes(api).filter((c) => c.path === "/api/domains").at(-1)!.body).toEqual({ host: "www.example.test", type: "main", confirmTakeover: true });
+  });
+
+  it("a held Ctrl+Enter (key repeat) does not walk through steps", async () => {
+    const { user } = boot({ steps: { ...NONE, name: true } });
+    await heading("Connect Cloudflare");
+    await screen.findByRole("list", { name: "Token permissions" });
+    fireEvent.keyDown(window, { key: "Enter", ctrlKey: true, repeat: true });
+    expect(screen.getByRole("heading", { level: 1, name: "Connect Cloudflare" })).toBeTruthy();
+    await user.keyboard(ctrlEnter);
+    expect(await heading("Main domain")).toBeTruthy();
+  });
+
+  it("Check again runs the check again after a failure", async () => {
+    let n = 0;
+    const { user } = boot({ steps: { ...NONE, name: true }, routes: { "POST /api/settings/cloudflare/check": () => (++n === 1 ? { status: 502, body: { error: "cloudflare_unreachable" } } : { body: PERMS }) } });
+    await heading("Connect Cloudflare");
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByRole("list", { name: "Token permissions" })).toBeTruthy();
+    expect(n).toBe(2);
+  });
+
+  it("focus moves to the error, and Esc goes back a step", async () => {
+    const { user } = boot({ steps: { ...NONE, name: true } });
+    await heading("Connect Cloudflare");
+    await user.keyboard("{Escape}");
+    expect(await heading("Sign-in")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(await heading("Name it")).toBeTruthy();
+    await user.clear(screen.getByLabelText("Name"));
+    await user.keyboard(ctrlEnter);
+    const alert = await screen.findByRole("alert");
+    await waitFor(() => expect(document.activeElement).toBe(alert));
+  });
+});
+
+describe("load states", () => {
+  it("a slow /api/instance shows a message with Reload instead of a blank page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { api } = boot({ routes: { "GET /api/instance": () => new Promise(() => undefined) } });
+      await waitFor(() => expect(api.calls.some((c) => c.path === "/api/instance")).toBe(true));
+      expect(document.body.textContent).toBe("");
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(await screen.findByText(/is taking longer than it should/)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an owner whose /api/instance fails gets the shell", async () => {
+    boot({ routes: { "GET /api/instance": () => ({ status: 500, body: { error: "internal_error" } }) } });
+    expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
+  });
+
+  it("a failed domain load shows in the wizard with Retry, and no domain is offered to create", async () => {
+    let fail = true;
+    const { user } = boot({ steps: { ...NONE, name: true, cloudflare: true }, routes: { "GET /api/domains": () => (fail ? ((fail = false), { status: 500, body: { error: "internal_error" } }) : { body: [MAIN] }) } });
+    await heading("Main domain");
+    expect(await screen.findByText(/Could not load the dashboard data/)).toBeTruthy();
+    expect(screen.queryByLabelText("Domain")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("radio", { name: "go.test" })).toBeTruthy();
+  });
+
+  it("a signed-out answer shows the sign-in banner", async () => {
+    const { user } = boot({ routes: { "PATCH /api/settings": () => ({ status: 401, body: { error: "unauthenticated" } }) } });
+    await heading("Name it");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Name")));
+    await user.keyboard(`N${ctrlEnter}`);
+    expect(await screen.findByRole("button", { name: "Reload" })).toBeTruthy();
   });
 });

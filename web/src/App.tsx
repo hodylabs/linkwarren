@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useChord, useHotkeys, type Bindings } from "./keys";
 import { navigate, useRoute, type Screen } from "./router";
 import { ComingSoon } from "./shell/ComingSoon";
@@ -88,9 +89,25 @@ function Shell() {
 }
 
 /** R10: an owner of an instance that is not set up yet gets the first-run wizard in place of the shell; members never do. */
+const SLOW_MS = 10_000;
 function Root() {
   const { me, instance } = useApp();
-  if (me.role === "owner" && instance === undefined) return null; // one request: no flash of the shell before the wizard
+  const pending = me.role === "owner" && instance === undefined;
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!pending) return;
+    const t = setTimeout(() => setSlow(true), SLOW_MS);
+    return () => clearTimeout(t);
+  }, [pending]);
+  // One request, so the shell never flashes before the wizard; a hung one says so instead of a blank page.
+  if (pending)
+    return slow ? (
+      <div className="gate" role="alert">
+        <img src="/linkwarren-mark.svg" alt="" />
+        <p>Loading this linkwarren is taking longer than it should. Check your connection, then reload.</p>
+        <button type="button" className="btn" onClick={() => location.reload()}>Reload</button>
+      </div>
+    ) : null;
   if (me.role === "owner" && instance?.configured === false) return <SetupWizard />;
   return <Shell />;
 }

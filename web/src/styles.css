@@ -662,6 +662,8 @@ main>.an{flex:1;min-height:0}
 .wiz .field.stack small{margin-top:4px}
 .wiz .callout{margin-top:14px}
 .wiz .row-actions{margin-top:10px}
+.wiz .callout p{margin:0}
+.wiz .banner{margin:0 0 12px}
 .choices{border:0;margin:0;padding:0}
 .choices legend{padding:0;margin-bottom:4px}
 .navrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px;align-items:center}

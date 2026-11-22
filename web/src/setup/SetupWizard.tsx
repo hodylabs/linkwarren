@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { api, ApiError, type Domain } from "../api";
+import { errorText, plural } from "../copy";
+import { downloadCsv } from "../links/bulk";
 import { useHotkeys, type Bindings } from "../keys";
 import { normalizeHost } from "../../../src/host";
 import { navigate } from "../router";
@@ -9,11 +11,12 @@ import { settingsError } from "../settings/copy";
 import { SecretField } from "../settings/SecretField";
 import { addPasskey, passkeysSupported } from "../signin/passkey";
 import { useApp } from "../state";
-import { chunkImport, runImport, type ImportRun } from "./importRun";
+import { chunkImport, errorsCsv, resultsCsv, runImport, type ImportRun } from "./importRun";
 import { parseLinksFile, type ImportBody, type LineError } from "./parseLinks";
 
 /** Wizard hotkeys (the navrow shows them; the shell's shortcuts sheet is not on screen here). */
-export const WIZARD_KEYS = { "mod+enter": "Continue", "alt+arrowleft": "Back" } as const;
+export const WIZARD_KEYS = { "mod+enter": "Continue", "alt+arrowleft": "Back", escape: "Back (or dismiss the record warning)" } as const;
+export const RECREATE = "Create each again with its new password: open the New link sheet, release the lock, set the password, then create.";
 
 type StepKey = "name" | "signIn" | "cloudflare" | "mainDomain" | "email";
 type SetupStatus = { configured: boolean; steps: Record<StepKey, boolean> };
@@ -40,6 +43,8 @@ function stepError(e: unknown): string {
   return settingsError(code(e));
 }
 const counts = (r: ImportRun["report"]) => `${r.skipped} already there, ${r.conflicts.length} conflicts`;
+type Record_ = { type: string; name: string; content: string };
+const csvDay = () => new Date().toISOString().slice(0, 10);
 
 /** Line errors and conflicts as plain text rows (server text is never markup). */
 function Rows({ items }: { items: string[] }) {
@@ -72,14 +77,18 @@ export function SetupWizard() {
   const [checkError, setCheckError] = useState<string | null>(null);
   const checking = useRef(false);
   const [host, setHost] = useState("");
-  const [takeover, setTakeover] = useState<string | null>(null);
+  const [takeover, setTakeover] = useState<{ host: string; records: Record_[] } | null>(null);
   const [choice, setChoice] = useState<string | null>(null);
   const [mail, setMail] = useState<{ text: string; error: boolean } | null>(null);
   const [fileErrors, setFileErrors] = useState<LineError[]>([]);
   const [chunks, setChunks] = useState<ImportBody[] | null>(null);
   const [preview, setPreview] = useState<ImportRun | null>(null);
   const [result, setResult] = useState<ImportRun | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [part, setPart] = useState<string | null>(null);
   const fileGen = useRef(0); // only the newest chosen file may show its preview
+  const errorEl = useRef<HTMLParagraphElement>(null);
+  const takeoverEl = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -152,8 +161,11 @@ export function SetupWizard() {
       try {
         d = await api<Domain>("POST", "/api/domains", { host: h, type: "main", ...(confirm ? { confirmTakeover: true } : {}) });
       } catch (e) {
-        if (code(e) === "dns_record_exists") setTakeover(h);
-        throw e;
+        if (code(e) !== "dns_record_exists") throw e;
+        // Named, with what is there today; only the explicit button confirms (never Ctrl+Enter).
+        const recs = (e as ApiError).data as { records?: unknown } | undefined;
+        setTakeover({ host: h, records: Array.isArray(recs?.records) ? (recs.records as Record_[]) : [] });
+        return;
       }
       setTakeover(null);
       // Reload before saving: if the save fails, the new domain is in the choice list for the next try.
@@ -187,6 +199,7 @@ export function SetupWizard() {
       });
     }
     if (step === 3) {
+      if (!mains.length && app.loadError) return setError(app.loadError);
       if (!mains.length) return void addMain(false);
       return void run(async () => {
         if (chosen !== settings.mainDomainId) setSettings(await patchSettings({ mainDomainId: chosen }));
@@ -198,7 +211,11 @@ export function SetupWizard() {
     go(step + 1);
   };
   const back = () => step > 0 && !working.current && go(step - 1);
-  useHotkeys({ "mod+enter": next, "alt+arrowleft": back } satisfies Bindings<typeof WIZARD_KEYS>, settings !== null);
+  useHotkeys({
+    "mod+enter": (e) => !e.repeat && next(), // a held key must not walk through the steps
+    "alt+arrowleft": back,
+    escape: () => (takeover ? setTakeover(null) : back()),
+  } satisfies Bindings<typeof WIZARD_KEYS>, settings !== null);
 
   // Each step opens on its first field (or its first control, else Continue).
   useEffect(() => {
@@ -207,30 +224,47 @@ export function SetupWizard() {
     const el = root?.querySelector<HTMLElement>("input:not([disabled]), select, textarea") ?? root?.querySelector<HTMLElement>("button:not([disabled])") ?? primary.current;
     el?.focus();
   }, [step, settings, mains.length]);
+  // An error or a record warning takes focus, so a keyboard user hears it and goes on from there (the field may be disabled while saving).
+  useEffect(() => void (error && errorEl.current?.focus()), [error]);
+  useEffect(() => void (takeover && takeoverEl.current?.focus()), [takeover]);
 
+  const onPart = (verb: string) => (i: number, n: number) => setPart(`${verb} part ${i} of ${n}`);
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const g = ++fileGen.current;
     const f = e.target.files?.[0];
+    e.target.value = ""; // choosing the same file again fires change again
     setFileErrors([]);
     setChunks(null);
     setPreview(null);
     setResult(null);
     if (!f) return;
+    setFileName(f.name);
     // Checked here for a quick answer; the server checks every request again.
     if (f.size > MAX_FILE) return setFileErrors([{ line: 0, reason: "The file is larger than 10 MB" }]);
     const text = await f.text();
     if (g !== fileGen.current) return;
     const p = parseLinksFile(f.name, text, mainHost);
     if (!p.body || p.errors.length) return setFileErrors(p.errors);
-    const c = chunkImport(p.body);
+    if (!p.body.mainHost) return setFileErrors([{ line: 0, reason: "Pick a main domain first (Main domain step)" }]);
+    let c: ImportBody[];
+    try {
+      c = chunkImport(p.body);
+    } catch (err) {
+      return setFileErrors([{ line: 0, reason: (err as Error).message }]);
+    }
     setChunks(c);
-    const r = await runImport(c, true);
-    if (g === fileGen.current) setPreview(r);
+    const r = await runImport(c, true, { onPart: (i, n) => g === fileGen.current && onPart("Checking")(i, n) });
+    if (g !== fileGen.current) return;
+    setPart(null);
+    setPreview(r);
   };
-  const doImport = () =>
+  /** Import, or Retry from the part that failed (the server skips what an earlier try already wrote). */
+  const doImport = (dry: boolean, from?: ImportRun) =>
     chunks &&
     run(async () => {
-      const r = await runImport(chunks, false);
+      const r = await runImport(chunks, dry, { onPart: onPart(dry ? "Checking" : "Importing"), ...(from ? { from: from.failedAt!, report: from.report } : {}) });
+      setPart(null);
+      if (dry) return setPreview(r);
       setResult(r);
       app.bumpLinks();
       void app.reloadDomains().catch(() => undefined);
@@ -290,7 +324,7 @@ export function SetupWizard() {
             {check && <PermList check={check} />}
             {checkError && <p className="err" role="alert">{checkError}</p>}
             <div className="row-actions gap-top">
-              <button type="button" className="btn" onClick={() => setCheck(null)}>Check again</button>
+              <button type="button" className="btn" onClick={() => void runCheck()}>Check again</button>
             </div>
           </>
         )}
@@ -298,7 +332,9 @@ export function SetupWizard() {
     );
   } else if (step === 3) {
     lead = "Short links live on the main domain unless you pick another one. You can add more domains later.";
-    content = mains.length ? (
+    content = !mains.length && app.loadError ? (
+      <p className="muted">The domain list did not load. Retry above before adding a main domain, so an existing one is not added twice.</p>
+    ) : mains.length ? (
       <fieldset className="choices">
         <legend className="muted">Pick the main domain</legend>
         {mains.map((d) => (
@@ -317,9 +353,16 @@ export function SetupWizard() {
             setTakeover(null);
           }} disabled={busy} />
         </div>
-        {takeover === normalizeHost(host.trim()) && (
-          <div className="row-actions">
-            <button type="button" className="btn" disabled={busy} onClick={() => void addMain(true)}>Replace the record and continue</button>
+        {takeover && takeover.host === normalizeHost(host.trim()) && (
+          <div className="callout wait" role="alert" tabIndex={-1} ref={takeoverEl}>
+            <p>
+              {`${takeover.host} already has DNS records in your Cloudflare account`}
+              {takeover.records.length ? `: ${takeover.records.map((r) => `${r.type} ${r.name} ${r.content}`).join(", ")}` : ""}
+              {". Replacing sends its traffic to linkwarren, and whatever it serves today stops. Esc keeps it, then pick another name."}
+            </p>
+            <div className="row-actions">
+              <button type="button" className="btn" disabled={busy} onClick={() => void addMain(true)}>{`Replace the record for ${takeover.host} and continue`}</button>
+            </div>
           </div>
         )}
       </>
@@ -351,40 +394,61 @@ export function SetupWizard() {
     );
   } else {
     title = "Bring your links";
-    lead = "Import short links from a CSV file or a linkwarren or legacy JSON export. Existing slugs are never overwritten, and links that need a password arrive disabled.";
+    lead = "Import short links from a CSV file or the legacy JSON export (see docs/import-legacy.md). Existing slugs are never overwritten. Links the export marks protected (they had a password) come in locked, never live.";
     skip = result ? null : "Skip";
     const r = result ?? preview;
+    const rows = r ? r.report.conflicts.length + r.report.protected.length + r.report.ignored.length : 0;
     content = (
       <>
         <div className="field stack">
           <label htmlFor="wiz-file">Links file</label>
           <input id="wiz-file" type="file" accept=".csv,.json" onChange={(e) => void onFile(e)} disabled={busy} />
-          <small className="muted">CSV columns: slug, destination (or url), and optional host, enabled, start_date and end_date (YYYY-MM-DD HH:MM:SS, UTC). Up to 10 MB.</small>
+          {fileName && <small className="muted">{`Chosen: ${fileName}`}</small>}
+          <small className="muted">CSV columns: slug, destination (or url), and optional host, enabled, start_date and end_date (YYYY-MM-DD HH:MM:SS, UTC). A CSV cannot mark password links: leave them out or set enabled to false. Up to 10 MB.</small>
         </div>
         {fileErrors.length > 0 && (
           <div role="alert">
-            <p className="err">This file cannot be imported. Fix it and choose it again.</p>
+            <p className="err">{`This file cannot be imported (${plural(fileErrors.length, "problem")}). Fix it and choose it again.`}</p>
             <Rows items={fileErrors.map((e) => (e.line ? `Line ${e.line}: ${e.reason}` : e.reason))} />
+            {fileErrors.length > 1 && (
+              <div className="row-actions">
+                <button type="button" className="btn" onClick={() => downloadCsv(errorsCsv(fileErrors), `linkwarren-import-errors-${csvDay()}.csv`)}>Download errors</button>
+              </div>
+            )}
           </div>
         )}
         <div aria-live="polite">
+          {part && <p className="muted">{part}</p>}
           {preview && !result && preview.failedAt === null && (
-            <p>{`${preview.report.created} to import, ${counts(preview.report)}, new domains: ${preview.report.domainsCreated.join(", ") || "none"}`}</p>
+            <>
+              <p>{`${preview.report.created} to import, ${counts(preview.report)}, new domains: ${preview.report.domainsCreated.join(", ") || "none"}`}</p>
+              {preview.report.protected.length > 0 && (
+                <p>{`${plural(preview.report.protected.length, "password link")} ${preview.report.protected.length === 1 ? "comes" : "come"} in locked, never live. You set their new passwords after the import.`}</p>
+              )}
+            </>
           )}
           {result && result.failedAt === null && <p>{`Imported ${result.report.created}, ${counts(result.report)}.`}</p>}
           {r && r.failedAt !== null && (
             <p className="err" role="alert">
               {`Stopped at part ${r.failedAt + 1} of ${chunks?.length ?? 1}: ${settingsError(r.error ?? "internal")}`}
-              {result && r.failedAt > 0 ? ` The parts before it are imported (${r.report.created} links). Choose the file again to retry: nothing is imported twice.` : ""}
+              {result && r.failedAt > 0 ? ` The parts before it are imported (${r.report.created} links).` : ""}
+              {" Retry continues from that part; nothing is imported twice."}
             </p>
           )}
           {r && <Rows items={r.report.conflicts.map((c) => `${c.host}/${c.slug}: ${c.reason}`)} />}
+          {result && result.report.protected.length > 0 && (
+            <>
+              <h3>{`${plural(result.report.protected.length, "password link")} imported locked`}</h3>
+              <p>{RECREATE}</p>
+              <Rows items={result.report.protected.map((x) => `${x.host}/${x.slug}`)} />
+            </>
+          )}
         </div>
-        {preview && preview.failedAt === null && !result && (
-          <div className="row-actions">
-            <button type="button" className="btn" disabled={busy} onClick={() => void doImport()}>Import</button>
-          </div>
-        )}
+        <div className="row-actions">
+          {preview && preview.failedAt === null && !result && <button type="button" className="btn" disabled={busy} onClick={() => void doImport(false)}>Import</button>}
+          {r && r.failedAt !== null && <button type="button" className="btn" disabled={busy} onClick={() => void doImport(!result, r)}>Retry</button>}
+          {rows > 0 && <button type="button" className="btn" onClick={() => downloadCsv(resultsCsv(r!.report), `linkwarren-import-results-${csvDay()}.csv`)}>Download results</button>}
+        </div>
       </>
     );
   }
@@ -408,12 +472,24 @@ export function SetupWizard() {
         <p>Everything here can be changed later in Settings. Your answers are saved as you go.</p>
       </aside>
       <main className="wiz">
+        {app.signedOut && (
+          <div className="banner" role="alert">
+            {errorText("network")}
+            <button type="button" className="btn" onClick={() => location.reload()}>Reload</button>
+          </div>
+        )}
+        {app.loadError && (
+          <div className="banner" role="alert">
+            Could not load the dashboard data. {app.loadError}
+            <button type="button" className="btn" onClick={app.retryLoad}>Retry</button>
+          </div>
+        )}
         <h1>{title}</h1>
         <p className="lead">{lead}</p>
         <div ref={body}>{content}</div>
-        {error && <p className="err" role="alert">{error}</p>}
+        {error && <p className="err" role="alert" tabIndex={-1} ref={errorEl}>{error}</p>}
         <div className="navrow">
-          <span className="left"><kbd>Ctrl</kbd> <kbd>Enter</kbd> continue, <kbd>Alt</kbd> <kbd>←</kbd> back</span>
+          <span className="left"><kbd>Ctrl</kbd> <kbd>Enter</kbd> continue, <kbd>Alt</kbd> <kbd>←</kbd> or <kbd>Esc</kbd> back</span>
           {step > 0 && <button type="button" className="btn" onClick={back} disabled={busy} aria-keyshortcuts="Alt+ArrowLeft">Back</button>}
           {skip && <button type="button" className="btn ghost" onClick={() => (last ? void finish() : go(step + 1))} disabled={busy}>{skip}</button>}
           <button ref={primary} type="button" className="btn primary" onClick={next} disabled={busy} aria-keyshortcuts="Control+Enter">
