@@ -4,12 +4,12 @@ linkwarren keeps everything in one D1 database (plus the logo in KV). There are 
 
 ## D1 Time Travel (restore)
 
-Cloudflare D1 keeps 30 days of point-in-time history on every plan, including Free. To restore the whole database to an earlier moment:
+Cloudflare D1 keeps point-in-time history for 7 days on the Workers Free plan and 30 days on Workers Paid (see Cloudflare's D1 limits). For anything older, keep a full JSON export. To restore the whole database to an earlier moment:
 
 1. Find the time or bookmark: `npx wrangler d1 time-travel info linkwarren --timestamp=2026-01-31T12:00:00Z -c wrangler.instance.jsonc`.
 2. Restore: `npx wrangler d1 time-travel restore linkwarren --timestamp=2026-01-31T12:00:00Z -c wrangler.instance.jsonc` (or `--bookmark=<bookmark>`).
 
-A restore replaces the whole database, including links, people, sessions and the audit log, and it is itself undoable for 30 days (the command prints the bookmark to go back to). Use your own database name if it is not `linkwarren`. Redirects served from the KV cache can show the old answer for up to their cache lifetime after a restore.
+A restore replaces the whole database, including links, people, sessions and the audit log, and it is itself undoable within the same window, 7 days on Free and 30 on Paid (the command prints the bookmark to go back to). Use your own database name if it is not `linkwarren`. Redirects served from the KV cache can show the old answer for up to their cache lifetime after a restore.
 
 ## Full JSON export
 

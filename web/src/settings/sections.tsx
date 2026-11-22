@@ -316,7 +316,7 @@ export function BackupsSection() {
   return (
     <section className="sblock" aria-labelledby="st-backups">
       <h2 id="st-backups">Backups and export</h2>
-      <p>Cloudflare D1 keeps 30 days of point-in-time restore (Time Travel). The export is a full copy of your links, domains, people and audit log, without secrets or passwords.</p>
+      <p>Cloudflare D1 keeps point-in-time restore (Time Travel) for 7 days on Workers Free and 30 days on Workers Paid. The export is a full copy of your links, domains, people and audit log, without secrets or passwords.</p>
       <label className="check">
         <input type="checkbox" checked={analytics} disabled={run.phase !== "idle" && run.phase !== "done"} onChange={(ev) => setAnalytics(ev.target.checked)} />
         Include click analytics (daily totals; can be many rows)

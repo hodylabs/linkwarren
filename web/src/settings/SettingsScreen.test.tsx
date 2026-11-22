@@ -170,7 +170,7 @@ describe("Settings sections", () => {
         "POST /api/export/page": () => ({ body: pages.shift() }),
       },
     });
-    expect(await screen.findByText(/Cloudflare D1 keeps 30 days of point-in-time restore \(Time Travel\)/)).toBeTruthy();
+    expect(await screen.findByText(/Cloudflare D1 keeps point-in-time restore \(Time Travel\) for 7 days on Workers Free and 30 days on Workers Paid/)).toBeTruthy();
     expect((screen.getByLabelText(/Include click analytics/) as HTMLInputElement).checked).toBe(false);
     await user.click(screen.getByRole("button", { name: "Download full export" }));
     await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
