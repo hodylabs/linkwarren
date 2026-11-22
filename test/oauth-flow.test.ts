@@ -9,7 +9,7 @@ afterEach(() => vi.restoreAllMocks());
 const refresh = (clientId: string, refresh_token: string) => token({ grant_type: "refresh_token", refresh_token, client_id: clientId });
 
 describe("full OAuth flow", () => {
-  for (const redirect of [CLAUDE_CB, "http://localhost:53682/callback", "http://127.0.0.1:41000/callback"]) {
+  for (const redirect of [CLAUDE_CB, "http://localhost:53682/callback", "http://127.0.0.1:41000/callback", "http://127.0.0.1:1455/callback/AbC123_-xyz0"]) {
     it(`connects with redirect ${redirect}`, async () => {
       const t = await connectAgent("flow@example.com", { redirect });
       expect(t.accessToken).toBeTruthy();

@@ -147,7 +147,7 @@ describe("oauth front door on the dashboard host", () => {
   it("accepts only the Claude and ChatGPT callbacks and loopback /callback redirect URIs at registration", async () => {
     let n = 0;
     const ip = () => `10.${++n}.0.1`; // a fresh IP range each, so the per-range limit never interferes
-    for (const ok of [[CLAUDE_CB], ["https://claude.com/api/mcp/auth_callback"], ["https://chatgpt.com/connector_platform_oauth_redirect"], ["http://localhost:33418/callback"], ["http://127.0.0.1:1/callback", "http://localhost:65535/callback"]])
+    for (const ok of [[CLAUDE_CB], ["https://claude.com/api/mcp/auth_callback"], ["https://chatgpt.com/connector_platform_oauth_redirect"], ["http://localhost:33418/callback"], ["http://localhost:1455/callback/AbC123_-xyz0"], ["http://127.0.0.1:1455/callback/AbC123_-xyz0"], [`http://127.0.0.1:2/callback/${"a".repeat(64)}`], ["http://127.0.0.1:1/callback", "http://localhost:65535/callback"]])
       expect([ok, (await register(ip(), ok)).status]).toEqual([ok, 201]);
     const kvBefore = (await env.OAUTH_KV.list()).keys.length;
     for (const bad of [
@@ -171,6 +171,14 @@ describe("oauth front door on the dashboard host", () => {
       "http://localhost:8080/callback/",
       "http://localhost:8080/callback?x=1",
       "http://localhost:8080/other",
+      "http://localhost:8080/callback/a/b",
+      "http://localhost:8080/callback/..",
+      "http://localhost:8080/callback/.",
+      "http://localhost:8080/callback/%2F",
+      "http://127.0.0.1:8080/callback/a%2Fb",
+      `http://localhost:8080/callback/${"a".repeat(65)}`,
+      "http://localhost:8080/callback/abc?x=1",
+      "http://localhost:8080/callbackx",
       "http://localhost.evil.example:8080/callback",
       "http://user@localhost:8080/callback",
       "https://localhost:8080/callback",

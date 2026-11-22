@@ -25,9 +25,10 @@ const CALLBACKS: readonly string[] = [
   "https://claude.com/api/mcp/auth_callback",
   "https://chatgpt.com/connector_platform_oauth_redirect",
 ];
-const LOOPBACK_CALLBACK = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9]\d{0,4})\/callback$/;
+// /callback, or /callback/<id> as Codex sends it (one segment of the id alphabet: no dots, slashes or escapes).
+const LOOPBACK_CALLBACK = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9]\d{0,4})\/callback(?:\/[A-Za-z0-9_-]{1,64})?$/;
 
-/** The only redirect URIs a client may register: one of CALLBACKS exactly, or a loopback /callback on port 1-65535. */
+/** The only redirect URIs a client may register: one of CALLBACKS exactly, or a loopback /callback[/<id>] on port 1-65535. */
 export function allowedRedirect(u: unknown): boolean {
   if (typeof u !== "string") return false;
   if (CALLBACKS.includes(u)) return true;
@@ -39,7 +40,7 @@ export function allowedRedirect(u: unknown): boolean {
 const checkRegistration = ({ clientMetadata }: { clientMetadata: Record<string, unknown> }) => {
   const uris = clientMetadata.redirect_uris;
   if (!Array.isArray(uris) || uris.length === 0 || !uris.every(allowedRedirect))
-    return { code: "invalid_redirect_uri", description: `Only ${CALLBACKS.join(", ")} and http://localhost|127.0.0.1:<port>/callback are accepted` };
+    return { code: "invalid_redirect_uri", description: `Only ${CALLBACKS.join(", ")} and http://localhost|127.0.0.1:<port>/callback[/<id>] are accepted` };
 };
 
 let cached: { host: string; p: OAuthProvider<Env> } | undefined;
