@@ -13,7 +13,11 @@ A restore replaces the whole database, including links, people, sessions and the
 
 ## Full JSON export
 
-The owner downloads it in Settings, Backups and export, "Download full export". The browser asks the server for one table page at a time (500 rows per request, a few D1 queries each), so the export fits the Workers Free limit of 50 D1 queries per request however large the instance is. The first request writes one `export.run` row to the audit log. Each page request checks again that you are signed in as an owner. The file is named `linkwarren-export-<YYYY-MM-DD>.json`.
+The owner downloads it in Settings, Backups and export, "Download full export". The browser asks the server for one table page at a time (up to 500 rows, and at most about 1 MB of JSON, per request, a few D1 queries each), so each request fits the Workers Free limits of 50 D1 queries and 10 ms CPU however large the instance is. The first request writes one `export.run` row to the audit log (the tables, whether analytics were included and the estimated reads) and returns a run id that the page requests must carry; it is valid for 6 hours and only for the owner who started it. Each page request checks again that you are signed in as an owner. The file is named `linkwarren-export-<YYYY-MM-DD>.json`.
+
+**Read cost.** Each exported row is one D1 row read, and the Free plan allows 5,000,000 row reads per day for the whole account. A run that uses them up makes D1 refuse reads until 00:00 UTC, which stops redirects that are not cached and the dashboard. Before reading any page the dashboard shows the estimated reads and their share of the daily budget, and asks you to confirm above 1,000,000. The daily click totals (`clicks_daily`, `clicks_daily_dim`) are kept forever and are usually the largest tables, so they are left out unless you tick "Include analytics"; include them only when you need them, ideally soon after the UTC reset.
+
+**Not a snapshot.** The export reads table by table while the instance keeps running. A row created, changed or deleted during the run can be missing or appear twice (for example the hourly job rewrites a day of click totals, or a new link shows up in the audit log but not in `links`). For a point-in-time copy use D1 Time Travel.
 
 Shape:
 
@@ -22,17 +26,18 @@ Shape:
   "format": "linkwarren-export",
   "version": 1,
   "exportedAt": 1767225600,
+  "includeAnalytics": false,
   "logo": { "type": "image/png", "data": "<base64>" },
   "tables": { "users": [ ... ], "links": [ ... ], ... },
   "complete": true
 }
 ```
 
-`complete` is the last key. A file without it was cut off and is not a valid export. `logo` is `null` without a custom logo. Rows keep the database column names and values (timestamps in Unix seconds, JSON columns such as `links.routes` as their stored text).
+`complete` is the last key. A file without it was cut off and is not a valid export. Without analytics the two click tables are absent from `tables`. `logo` is `null` without a custom logo. Rows keep the database column names and values (timestamps in Unix seconds, JSON columns such as `links.routes` as their stored text).
 
 ### What it holds
 
-`users`, `domains`, `domain_cf`, `domain_members`, `links` (with `routes` and `forward_to`), `slug_locks`, `audit_log`, `settings`, `clicks_daily`, `clicks_daily_dim`, `api_keys` (name, prefix, permissions, domains and dates only), `agent_connections`, `tool_calls`.
+`users`, `domains`, `domain_cf`, `domain_members`, `links` (with `routes` and `forward_to`), `slug_locks`, `audit_log`, `settings`, `clicks_daily` and `clicks_daily_dim` (only with "Include analytics"), `api_keys` (name, prefix, permissions, domains and dates only), `agent_connections`, `tool_calls`.
 
 ### What it leaves out
 
