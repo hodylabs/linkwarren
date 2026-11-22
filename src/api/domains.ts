@@ -168,10 +168,15 @@ domains.get("/:id/cloudflare", async (c) => {
   if (!d) return c.json(notFound, 404);
   if (!canManageDomain(c.var.user, d)) return c.json(forbidden, 403);
   let cf = await getCf(c.env, d.id);
-  // Throttled on the last attempt, failed ones included, so a failing domain cannot drain the shared API budget.
-  const fresh = !!cf && Math.floor(Date.now() / 1000) - Math.max(cf.checkedAt ?? 0, cf.updatedAt) < 10;
   // A disabled domain is never repaired: no Cloudflare calls.
-  if (cf && !fresh && (d.status === "pending" || d.status === "active")) cf = await trySync(c.env, d, cf, { attach: false });
+  if (cf && (d.status === "pending" || d.status === "active")) {
+    // Throttled on the last attempt, failed ones included, so a failing domain cannot drain the shared API budget.
+    // The claim is one UPDATE: of concurrent polls past the throttle only the one that moved updated_at checks, the rest answer the stored row.
+    const now = Math.floor(Date.now() / 1000);
+    const won = await c.env.DB.prepare("UPDATE domain_cf SET updated_at = ? WHERE domain_id = ? AND max(coalesce(checked_at, 0), updated_at) <= ? RETURNING *")
+      .bind(now, d.id, now - 10).first();
+    if (won) cf = await trySync(c.env, d, rowToCf(won), { attach: false });
+  }
   return c.json(cfView(c.env, d, cf));
 });
 

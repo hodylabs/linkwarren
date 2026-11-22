@@ -225,6 +225,24 @@ describe("GET /api/domains/:id/cloudflare", () => {
     await poll("a", id);
     expect(fake.calls).toHaveLength(afterFirst);
   });
+  it("a poll arriving while another poll's check runs makes no Cloudflare calls and answers the stored view", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { id } = await (await create("a", "go.outside.test")).json<{ id: string }>();
+    advance(11);
+    const lookups = () => fake.calls.filter((c) => c.path.includes("/custom_hostnames?hostname=")).length; // one per check round
+    const before = lookups();
+    let inner: number | null = null;
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      if (inner === null) {
+        inner = 0; // the outer check's other fetches pass straight through
+        inner = (await poll("a", id)).status;
+      }
+      return fake.handle(new Request(i as RequestInfo, init));
+    });
+    expect((await poll("a", id)).status).toBe(200);
+    expect(inner).toBe(200);
+    expect(lookups() - before).toBe(1);
+  });
   it("a member's poll never attaches: account stays unattached with zero writes", async () => {
     const fake = installFakeCloudflare({ zones });
     const { id } = await (await create("a", "links.owned.test")).json<{ id: string }>();
