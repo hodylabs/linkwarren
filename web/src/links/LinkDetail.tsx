@@ -36,7 +36,12 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
 
     // A new revision (after a save or a reload) replaces the form; typing never triggers this.
     // After this form's own save, fields edited while it was pending keep what was typed.
+    // The revision the form last took; the first render already did (useState), so an edit made before this effect runs is kept.
+    const revision = useRef(`${link.id}:${link.updatedAt}`);
     useEffect(() => {
+      const rev = `${link.id}:${link.updatedAt}`;
+      if (revision.current === rev) return;
+      revision.current = rev;
       const s = sent.current;
       sent.current = null;
       setDraft((now) => (s?.id === link.id ? rebase(draftOf(link), s.draft, now) : draftOf(link)));
