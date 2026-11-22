@@ -264,6 +264,25 @@ describe("onboarding rules", () => {
     const o = (await (await create("owner", host, "shared")).json()) as Record<string, unknown>;
     expect(o.loopLinks).toBe(2);
   });
+  it("a padded CF_CNAME_TARGET is trimmed for the reserved host and the loop check alike", async () => {
+    const e = env as unknown as Record<string, string | undefined>;
+    const was = e.CF_CNAME_TARGET;
+    e.CF_CNAME_TARGET = " Edge.test ";
+    try {
+      await status(await create("owner", "edge.test", "shared"), 400, { error: "reserved_host" });
+      await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "https://edge.test/x" }), 400, { error: "loop" });
+    } finally { e.CF_CNAME_TARGET = was; }
+  });
+  it("loopLinks counts destinations stored with a trailing dot on the host", async () => {
+    await link("la", "https://dot.example.com./a"); await link("lb", "http://dot.example.com.:81/b");
+    const o = (await (await create("owner", "dot.example.com", "shared")).json()) as Record<string, unknown>;
+    expect(o.loopLinks).toBe(2);
+  });
+  it("a pending domain cannot redirect to itself: it would loop once approved", async () => {
+    await status(await call("a", "PATCH", "/api/domains/dp", { bareRedirect: "https://priv.test/" }), 400, { error: "loop" });
+    await status(await call("a", "PATCH", "/api/domains/dp", { notfoundRedirect: "http://PRIV.test.:8080/x" }), 400, { error: "loop" });
+    expect((await call("a", "PATCH", "/api/domains/dp", { bareRedirect: "https://elsewhere.test/" })).status).toBe(200);
+  });
   it("approve as owner returns loopLinks", async () => {
     await link("la", "https://priv.test/a");
     const j = (await (await call("owner", "POST", "/api/domains/dp/approve")).json()) as { status: string; loopLinks: number };

@@ -6,14 +6,19 @@ const BASE = "https://api.cloudflare.com/client/v4";
 
 export type CfConfig = { token: string; accountId: string; workerName: string; saasZoneId: string | null; cnameTarget: string | null };
 
+/** The one normalized CF_CNAME_TARGET (trimmed, lowercase, no trailing dot) for routing, validation and Cloudflare alike. */
+export const cnameTarget = (env: Env): string | null => {
+  const t = env.CF_CNAME_TARGET?.trim();
+  return t ? normalizeHost(t) : null;
+};
+
 export function cfConfig(env: Env, tokenOverride?: string): CfConfig | null {
   const t = (v: string | undefined) => v?.trim() || null;
   const token = t(tokenOverride ?? env.CF_API_TOKEN);
   const accountId = t(env.CF_ACCOUNT_ID);
   const workerName = t(env.CF_WORKER_NAME);
   if (!token || !accountId || !workerName) return null;
-  const target = t(env.CF_CNAME_TARGET);
-  return { token, accountId, workerName, saasZoneId: t(env.CF_SAAS_ZONE_ID), cnameTarget: target && normalizeHost(target) };
+  return { token, accountId, workerName, saasZoneId: t(env.CF_SAAS_ZONE_ID), cnameTarget: cnameTarget(env) };
 }
 
 /** Message is the numeric status only: Cloudflare's own text can echo request input. */

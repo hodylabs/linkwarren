@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
-import { CfError, cfConfig, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
+import { CfError, cfConfig, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
 import { syncDomain, syncErrorCode } from "../cf/attach";
 import { checkToken, sampleZone } from "../cf/perms";
 import type { Env } from "../env";
@@ -37,12 +37,12 @@ settings.get("/cloudflare", async (c) => {
     c.env.DB.prepare("SELECT COUNT(*) n FROM domain_cf WHERE kind = 'account' AND route_id IS NOT NULL").first<{ n: number }>(),
     c.env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(CONTROLS).first<{ value: string }>(),
   ]);
-  const target = c.env.CF_CNAME_TARGET?.trim();
+  const target = cnameTarget(c.env);
   return c.json({
     configured: !!cfg,
     outsideReady: saas && fb === "active",
     accountName: zone?.accountName ?? null,
-    cnameTarget: target ? normalizeHost(target) : null,
+    cnameTarget: target,
     fallbackOrigin: fb,
     hostnames: used === null || !Number.isFinite(used) ? null : { used, limit: 100 },
     attachedCount: attached?.n ?? 0,

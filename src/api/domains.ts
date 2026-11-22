@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
-import { CfError, cfConfig } from "../cf/api";
+import { CfError, cfConfig, cnameTarget } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
@@ -49,8 +49,7 @@ const getCf = async (env: Env, id: string): Promise<CfRow | null> => {
 
 /** A missing domain_cf row reads as manual (S1 behaviour). `manage` false (a member using someone else's domain) strips the setup details. */
 function cfView(env: Env, d: DomainRow, cf: CfRow | null, manage = true): CfView {
-  const t = env.CF_CNAME_TARGET?.trim();
-  const target = t ? normalizeHost(t) : null;
+  const target = cnameTarget(env);
   const apex = apexOf(d.host);
   const base = cf ?? { kind: "manual", dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, routeId: null, securityLevel: null, rateLimit: null };
   const view: CfView = {
@@ -107,7 +106,7 @@ domains.post("/", async (c) => {
   const isOwner = user.role === "owner";
   if (!isOwner && type !== "private") return c.json(forbidden, 403);
   const host = normalizeHost(body.data.host.trim());
-  const bad = hostError(host, c.env.DASHBOARD_HOST, c.env.CF_CNAME_TARGET);
+  const bad = hostError(host, c.env.DASHBOARD_HOST, cnameTarget(c.env) ?? undefined);
   if (bad) return c.json({ error: bad }, 400);
   // Early exits so a doomed create makes no Cloudflare calls; the INSERT below still enforces both under races.
   if (await c.env.DB.prepare("SELECT 1 FROM domains WHERE host = ?").bind(host).first()) return c.json({ error: "host_taken" }, 409);
@@ -275,7 +274,8 @@ domains.patch("/:id", async (c) => {
   const target = async (raw: string | null | undefined, cur: string | null): Promise<{ v: string | null } | { err: string }> => {
     if (raw === undefined) return { v: cur };
     if (raw === null) return { v: null };
-    const r = await destination(c.env, raw);
+    // Its own host counts even while pending or disabled: approval does not re-check, and a redirect to itself would loop.
+    const r = await destination(c.env, raw, [d.host]);
     return "error" in r ? { err: r.error } : { v: r.href };
   };
   const bare = await target(b.bareRedirect, d.bareRedirect), nf = await target(b.notfoundRedirect, d.notfoundRedirect);

@@ -1,4 +1,5 @@
 import { invalidateHost, invalidateLink } from "../cache";
+import { cnameTarget } from "../cf/api";
 import type { Env } from "../env";
 import { rowToDomain, type DomainRow } from "../types";
 import { checkDestination } from "../validate";
@@ -20,17 +21,21 @@ export const purgeHost = (env: Env, host: string) => swallow(invalidateHost(env,
 export const purgeMany = (env: Env, domainId: string, keys: string[]) =>
   swallow(Promise.all(keys.map((k) => invalidateLink(env, domainId, k))));
 
-/** Validates the destination and returns the normalized href, or an error code. */
-export async function destination(env: Env, raw: string): Promise<{ href: string } | { error: string }> {
-  const r = checkDestination(raw, [...(await allHosts(env)), env.DASHBOARD_HOST, ...(env.CF_CNAME_TARGET ? [env.CF_CNAME_TARGET] : [])]);
+/** Validates the destination and returns the normalized href, or an error code. `also`: more hosts that count as short hosts. */
+export async function destination(env: Env, raw: string, also: string[] = []): Promise<{ href: string } | { error: string }> {
+  const target = cnameTarget(env);
+  const r = checkDestination(raw, [...(await allHosts(env)), env.DASHBOARD_HOST, ...(target ? [target] : []), ...also]);
   if (!r.ok) return { error: r.reason === "too_long" ? "url_too_long" : r.reason };
   if (r.url.href.length > 2048) return { error: "url_too_long" };
   return { href: r.url.href };
 }
 
-/** Links (any domain) whose destination points at `host` on any scheme or port; they would loop once it is active. substr compare, not LIKE: D1 rejects LIKE patterns over 50 bytes and hosts reach 253. */
+/**
+ * Links (any domain) whose destination points at `host` on any scheme or port, with or without the trailing dot (validation ignores
+ * it, stored URLs keep it); they would loop once it is active. substr compare, not LIKE: D1 rejects LIKE patterns over 50 bytes and hosts reach 253.
+ */
 export async function loopLinks(env: Env, host: string): Promise<number> {
-  const p = ["http", "https"].flatMap((s) => [`${s}://${host}/`, `${s}://${host}:`]);
+  const p = ["http", "https"].flatMap((s) => [host, `${host}.`].flatMap((h) => [`${s}://${h}/`, `${s}://${h}:`]));
   const r = await env.DB.prepare(`SELECT COUNT(*) n FROM links WHERE ${p.map(() => "substr(url, 1, ?) = ?").join(" OR ")}`)
     .bind(...p.flatMap((x) => [x.length, x])).first<{ n: number }>();
   return r?.n ?? 0;
