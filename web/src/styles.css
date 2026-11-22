@@ -1,4 +1,4 @@
-/* Tokens and component styles copied from design/ui/index.html (the visual source of truth). Adaptations are marked "app:". */
+/* Tokens and component styles, taken from the approved UI mockup. Adaptations of it are marked "app:". */
 :root{
   --graphite:#15181D; --rail:#1C2026; --rail-hi:#262B33; --rail-text:#C9CED6; --rail-dim:#7D8591;
   --bg:#F6F6F3; --panel:#FFFFFF; --line:#E4E5E0; --line-soft:#EEEFEB;
