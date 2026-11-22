@@ -134,6 +134,7 @@ describe("GET /api/analytics/links", () => {
     });
     const [member, owner] = fetchSpy.mock.calls.map((c: unknown[]) => JSON.parse(String((c[1] as RequestInit).body)));
     expect(Object.entries(member.params).filter(([k]) => /^d\d+$/.test(k)).map(([, v]) => v).sort()).toEqual(["dM", "dS"]);
+    expect(member.query).toContain("blob1 = $d");
     expect(owner.query).not.toContain("blob1 = $d");
   });
   it("an id on a domain the caller cannot use is 403; unknown ids are dropped", async () => {
