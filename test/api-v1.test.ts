@@ -305,7 +305,7 @@ describe("callApi (in-process seam)", () => {
     const del = { action: "delete", ids: ["la"] }, edit = { action: "redirect", ids: ["la"], passQuery: false };
     expect(await callApi(env, ctx, wo, "POST", "/links/bulk", del)).toEqual({ status: 403, json: { error: "delete_not_allowed" } });
     expect(await callApi(env, ctx, ro, "POST", "/links/bulk", edit)).toEqual({ status: 403, json: { error: "read_only" } });
-    for (const [i, [o, body, error]] of ([[{ write: true }, del, "delete_not_allowed"], [{}, edit, "read_only"], [{}, del, "read_only"]] as const).entries()) {
+    for (const [i, [o, body, error]] of ([[{ write: true }, del, "delete_not_allowed"], [{}, edit, "read_only"], [{}, del, "delete_not_allowed"]] as const).entries()) {
       const k = await key("ua", { ...o, name: `bulk${i}` });
       const r = await v1(k.secret, "/links/bulk", { method: "POST", json: body });
       expect([r.status, await r.json()]).toEqual([403, { error }]);

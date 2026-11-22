@@ -9,7 +9,7 @@ import { rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type L
 import { canUseDomain } from "../perm";
 import { checkSlug, slugKey } from "../validate";
 import { badWindow, bodyError, canEditLink, code, passwordInput, rules, times } from "./links";
-import { purge } from "./shared";
+import { isV1, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 
@@ -143,6 +143,16 @@ export async function bulk(c: Context<E>) {
       return true;
     });
     accepted.push(...keep);
+  }
+
+  // R3: the daily caps count one unit per link processed (refused ones too, pending ones not) for /api/v1 and MCP; the key
+  // middleware or runTool already charged one (not refunded on a refusal, D7). Read-only first so a refused request writes
+  // nothing; fits then hitBy is not atomic, so concurrent requests may overshoot by at most one request's units (accepted).
+  const extra = order.length - pending.length - 1;
+  if (isV1(c.req.path) && extra > 0) {
+    const caps = [[limitKey.apiDay(user.id), LIMITS.apiDay], [limitKey.apiInstanceDay, LIMITS.apiInstanceDay]] as const;
+    if (!(await Promise.all(caps.map(([k, l]) => fits(env, k, l, extra)))).every(Boolean)) return c.json({ error: "rate_limited" }, 429);
+    await Promise.all(caps.map(([k, l]) => hitBy(env, k, l, extra)));
   }
 
   const results = () => order.flatMap((id) => out.get(id) ?? []);

@@ -85,3 +85,6 @@ export async function withDomainLock(env: Env, domainId: string, fn: (lease: Lea
 /** For responses after a committed write: a failed count omits the field instead of turning the write into a 500. */
 export const loopField = (env: Env, host: string) =>
   loopLinks(env, host).then((loopLinks) => ({ loopLinks }), (e) => { console.warn("loopLinks failed", String(e)); return {}; });
+
+/** Decoded path (what Hono routes on) is the machine API. Here, not in v1.ts, so bulk.ts can use it without an import cycle. */
+export const isV1 = (p: string) => p === "/api/v1" || p.startsWith("/api/v1/");

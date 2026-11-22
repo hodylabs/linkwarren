@@ -7,7 +7,7 @@ import { rowToUser, type UserRow } from "../types";
 import { linkStats } from "./analytics";
 import { listDomains } from "./domains";
 import { links } from "./links";
-import { nonJsonBody } from "./shared";
+import { isV1, nonJsonBody } from "./shared";
 
 /** Who an /api/v1 call acts as. `limiterKey` is `api:k:<keyId>` for keys, `api:c:<connId>` for MCP connections. */
 export type Principal = { user: UserRow; grant: Grant; limiterKey: string };
@@ -16,8 +16,7 @@ type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 /** R2: in-process principals, written only by callApi. An outside request is a fresh object and is never in it. */
 export const inProcess = new WeakMap<Request, Principal>();
 
-/** Decoded path (what Hono routes on) is the machine API. */
-export const isV1 = (p: string) => p === "/api/v1" || p.startsWith("/api/v1/");
+export { isV1 };
 
 const LAST_USED_EVERY = 60;
 const invalidKey = { error: "invalid_key" } as const;
@@ -90,11 +89,13 @@ v1.use("*", async (c, next) => {
   await next();
 });
 
-// Scope gate: reads always; create and edit need write; delete needs delete (which implies write).
+// Scope gate: reads always; create and edit need write; delete (DELETE, or a bulk delete) needs delete (which implies write).
 v1.use("/links/*", async (c, next) => {
   const g = c.var.grant, m = c.req.method;
+  // A bulk POST is a delete when its body says so (Hono caches the parsed body for the route).
+  const del = m === "DELETE" || (m === "POST" && c.req.path.endsWith("/links/bulk") && (await c.req.json().catch(() => null))?.action === "delete");
+  if (del && !(g.write && g.del)) return c.json({ error: "delete_not_allowed" }, 403);
   if ((m === "POST" || m === "PATCH") && !g.write) return c.json({ error: "read_only" }, 403);
-  if (m === "DELETE" && !(g.write && g.del)) return c.json({ error: "delete_not_allowed" }, 403);
   await next();
 });
 
