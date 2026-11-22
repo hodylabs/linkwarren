@@ -101,7 +101,7 @@ describe("iterationsOf", () => {
   });
 
   it("has the planned constants", () => {
-    expect(PASSWORD_DEFAULT_ITERATIONS).toBe(25000);
+    expect(PASSWORD_DEFAULT_ITERATIONS).toBe(10000);
     expect(PASSWORD_MAX_ITERATIONS).toBe(100000);
   });
 });

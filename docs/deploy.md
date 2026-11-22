@@ -185,7 +185,7 @@ Past a limit the form answers `429` with `Retry-After: 900`. If D1 cannot be rea
 
 HTTPS: a protected link is only served over HTTPS. A plain-HTTP GET or HEAD answers `308` to the same URL on `https:`, a plain-HTTP POST is refused (`403`), and the form and unlock answers carry `Strict-Transport-Security: max-age=31536000`. Turn on **Always Use HTTPS** (SSL/TLS, Edge Certificates) on every short-link zone as well, so unprotected links are upgraded too.
 
-Hashing: PBKDF2-SHA256 with the iteration count from the optional var `PASSWORD_HASH_ITERATIONS` (integer, clamped to 1000..100000; unset uses the built-in default of 25000). The count is stored in each hash, so changing the var only affects passwords set afterwards. One unlock attempt costs one PBKDF2 run: at 25000 iterations about 2.5 to 3 ms locally (the whole unlock, D1 included, about 5 ms of wall time), inside the Workers Free plan's 10 ms CPU per request. Keep the default on the Free plan; on Workers Paid you may raise it up to 100000.
+Hashing: PBKDF2-SHA256 with the iteration count from the optional var `PASSWORD_HASH_ITERATIONS` (integer, clamped to 1000..100000; unset uses the built-in default of 10000). The count is stored in each hash, so changing the var only affects passwords set afterwards; existing links keep working. One unlock attempt costs one PBKDF2 run. Measured live on Workers Free, 25000 iterations took 10 to 18 ms of CPU per unlock, over the Free plan's 10 ms per request; 10000 keeps an unlock inside it. On the Free plan keep 10000; on Workers Paid you may raise it up to 100000.
 
 ## Behaviour to know
 
