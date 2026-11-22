@@ -1,25 +1,57 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { clearCookie, endSessionStmt } from "../session";
 import { rowToUser, type UserListItem, type UserRow } from "../types";
 import type { Grant } from "../principal";
+import { purgeHost } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
+/** Dashboard session only (never under /api/v1, never a Bearer key); every route is owner-only. */
 export const users = new Hono<E>();
 
-users.get("/", async (c) => {
-  if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
+const forbidden = { error: "forbidden" } as const;
+const notFound = { error: "not_found" } as const;
+type Guard = { sql: string; binds: unknown[] };
+const and = (...g: (Guard | false)[]): Guard => {
+  const parts = g.filter((x): x is Guard => !!x);
+  return { sql: parts.map((x) => `(${x.sql})`).join(" AND "), binds: parts.flatMap((x) => x.binds) };
+};
+/** R4: the acting owner is still an active owner (bind the actor). */
+export const ACTOR_OK = "EXISTS (SELECT 1 FROM users WHERE id = ? AND role = 'owner' AND status = 'active')";
+/** R4: an active owner other than the target remains (bind the target). */
+export const OTHER_OWNER = "(SELECT COUNT(*) FROM users WHERE role = 'owner' AND status = 'active' AND id != ?) >= 1";
+const SHARED = "type IN ('main','shared')";
+
+/** Best effort after a committed D1 write: the per-call checks already refuse the person, this only clears OAUTH_KV. */
+async function revokeGrants(env: Env, userId: string): Promise<void> {
+  try {
+    const oauth = env.OAUTH_PROVIDER;
+    if (!oauth) throw new Error("no oauth helpers");
+    let cursor: string | undefined;
+    do {
+      const page = await oauth.listUserGrants(userId, { cursor });
+      for (const g of page.items) await oauth.revokeGrant(g.id, userId);
+      cursor = page.cursor;
+    } while (cursor);
+  } catch (err) {
+    console.error("grant revoke failed", err instanceof Error ? err.name : "unknown");
+  }
+}
+
+/** The list rows, or only `id`'s row. */
+async function userItems(env: Env, id: string | null = null): Promise<UserListItem[]> {
   const [u, counts, agentCounts, access] = await Promise.all([
-    c.env.DB.prepare("SELECT * FROM users ORDER BY created_at, id").all(),
-    c.env.DB.prepare("SELECT created_by, COUNT(*) n FROM links GROUP BY created_by").all<{ created_by: string; n: number }>(),
-    c.env.DB.prepare("SELECT user_id, COUNT(*) n FROM agent_connections WHERE revoked_at IS NULL GROUP BY user_id").all<{ user_id: string; n: number }>(),
+    env.DB.prepare("SELECT * FROM users WHERE ? IS NULL OR id = ? ORDER BY created_at, id").bind(id, id).all(),
+    env.DB.prepare("SELECT created_by, COUNT(*) n FROM links WHERE ? IS NULL OR created_by = ? GROUP BY created_by").bind(id, id).all<{ created_by: string; n: number }>(),
+    env.DB.prepare("SELECT user_id, COUNT(*) n FROM agent_connections WHERE revoked_at IS NULL AND (? IS NULL OR user_id = ?) GROUP BY user_id").bind(id, id).all<{ user_id: string; n: number }>(),
     // Owned domains first (via='owner'), then grants; the per-user loop below keeps the first sighting so owner rows win.
-    c.env.DB.prepare(
+    env.DB.prepare(
       `SELECT * FROM (SELECT owner_id uid, id, host, 'owner' via, 0 rk FROM domains
        UNION ALL SELECT m.user_id, d.id, d.host, 'member', 1 FROM domain_members m JOIN domains d ON d.id = m.domain_id)
-       ORDER BY uid, rk, host`,
-    ).all<{ uid: string; id: string; host: string; via: "owner" | "member" }>(),
+       WHERE ? IS NULL OR uid = ? ORDER BY uid, rk, host`,
+    ).bind(id, id).all<{ uid: string; id: string; host: string; via: "owner" | "member" }>(),
   ]);
   const n = new Map(counts.results.map((r) => [r.created_by, r.n]));
   const ac = new Map(agentCounts.results.map((r) => [r.user_id, r.n]));
@@ -29,18 +61,22 @@ users.get("/", async (c) => {
     if (!list.some((d) => d.id === a.id)) list.push({ id: a.id, host: a.host, via: a.via });
     doms.set(a.uid, list);
   }
-  // shortcut: no pagination, the user table is small (same as domains); add a cursor if it grows.
-  const items: UserListItem[] = u.results.map((r) => {
+  return u.results.map((r) => {
     const x = rowToUser(r);
     return { ...x, linkCount: n.get(x.id) ?? 0, agentCount: ac.get(x.id) ?? 0, domains: doms.get(x.id) ?? [] };
   });
-  return c.json({ items });
+}
+
+users.get("/", async (c) => {
+  if (c.var.user.role !== "owner") return c.json(forbidden, 403);
+  // shortcut: no pagination, the user table is small (same as domains); add a cursor if it grows.
+  return c.json({ items: await userItems(c.env) });
 });
 
 users.delete("/:id/sessions", async (c) => {
-  if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
+  if (c.var.user.role !== "owner") return c.json(forbidden, 403);
   const id = c.req.param("id");
-  if (!(await c.env.DB.prepare("SELECT 1 FROM users WHERE id = ?").bind(id).first())) return c.json({ error: "not_found" }, 404);
+  if (!(await c.env.DB.prepare("SELECT 1 FROM users WHERE id = ?").bind(id).first())) return c.json(notFound, 404);
   await c.env.DB.batch([
     auditStmt(c.env, { actorId: c.var.user.id, action: "session.end_all", targetType: "user", targetId: id, count: { sql: "SELECT COUNT(*) FROM sessions WHERE user_id = ?", binds: [id] } },
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE user_id = ?)", binds: [id] }),
@@ -48,4 +84,117 @@ users.delete("/:id/sessions", async (c) => {
   ]);
   if (id === c.var.user.id) c.header("Set-Cookie", clearCookie());
   return c.body(null, 204);
+});
+
+const patchBody = z.strictObject({ role: z.enum(["owner", "member"]).optional(), status: z.enum(["active", "disabled"]).optional() });
+
+users.patch("/:id", async (c) => {
+  const me = c.var.user, env = c.env;
+  if (me.role !== "owner") return c.json(forbidden, 403);
+  const body = patchBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  const { role, status } = body.data;
+  if (!role && !status) return c.json({ error: "no_changes" }, 400);
+  const id = c.req.param("id");
+  if (id === me.id) return c.json({ error: "self" }, 409);
+  const row = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first();
+  if (!row) return c.json(notFound, 404);
+  const t = rowToUser(row);
+  if ((status === "disabled" && t.status === "disabled") || (status === "active" && t.status !== "disabled")) return c.json({ error: "bad_state" }, 409);
+  const newRole = role && role !== t.role ? role : null;
+  if (!newRole && !status) return c.json({ user: (await userItems(env, id))[0] });
+  const demote = newRole === "member";
+  const losesOwner = t.role === "owner" && (demote || status === "disabled");
+  const moved = demote
+    ? (await env.DB.prepare(`SELECT host FROM domains WHERE owner_id = ? AND ${SHARED} ORDER BY host`).bind(id).all<{ host: string }>()).results.map((r) => r.host)
+    : [];
+  // The target still holds what was read (so `from` is exact), the actor is still an active owner, and
+  // removing owner rights never leaves zero active owners (R4).
+  const g = and(
+    { sql: "EXISTS (SELECT 1 FROM users WHERE id = ? AND role = ? AND status = ?)", binds: [id, t.role, t.status] },
+    { sql: ACTOR_OK, binds: [me.id] },
+    losesOwner && { sql: OTHER_OWNER, binds: [id] },
+    // None outside the read list (still true once the batch has moved them), so the audit's list is complete.
+    demote && { sql: `NOT EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED}${moved.length ? ` AND host NOT IN (${moved.map(() => "?").join(",")})` : ""})`, binds: [id, ...moved] },
+  );
+  const now = Math.floor(Date.now() / 1000);
+  const stmts: D1PreparedStatement[] = [];
+  if (newRole) stmts.push(auditStmt(env, { actorId: me.id, action: "user.role", targetType: "user", targetId: id, detail: { from: t.role, to: newRole, movedDomains: moved } }, g));
+  if (status) stmts.push(auditStmt(env, { actorId: me.id, action: status === "disabled" ? "user.disable" : "user.enable", targetType: "user", targetId: id }, g));
+  // R5: a member never owns a main or shared domain.
+  if (demote) stmts.push(env.DB.prepare(`UPDATE domains SET owner_id = ? WHERE owner_id = ? AND ${SHARED} AND ${g.sql}`).bind(me.id, id, ...g.binds));
+  if (status === "disabled") {
+    // D1 marks first: sessions end and agent connections are revoked in the same batch; OAUTH_KV is cleared after commit.
+    stmts.push(endSessionStmt(env, { userId: id }, g),
+      env.DB.prepare(`UPDATE agent_connections SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND ${g.sql}`).bind(now, id, ...g.binds));
+  }
+  stmts.push(env.DB.prepare(`UPDATE users SET role = ?, status = ? WHERE id = ? AND ${g.sql}`).bind(newRole ?? t.role, status ?? t.status, id, ...g.binds));
+  const res = await env.DB.batch(stmts);
+  if (!res[res.length - 1]!.meta.changes) {
+    const w = await env.DB.prepare(`SELECT ${ACTOR_OK} a, EXISTS (SELECT 1 FROM users WHERE id = ?) e, ${OTHER_OWNER} o`).bind(me.id, id, id).first<{ a: number; e: number; o: number }>();
+    if (!w?.a) return c.json(forbidden, 403);
+    if (!w.e) return c.json(notFound, 404);
+    if (losesOwner && !w.o) return c.json({ error: "last_owner" }, 409);
+    return c.json({ error: "changed" }, 409);
+  }
+  if (status === "disabled") await revokeGrants(env, id);
+  await Promise.all(moved.map((h) => purgeHost(env, h)));
+  return c.json({ user: (await userItems(env, id))[0] });
+});
+
+users.delete("/:id", async (c) => {
+  const me = c.var.user, env = c.env;
+  if (me.role !== "owner") return c.json(forbidden, 403);
+  const id = c.req.param("id");
+  if (id === me.id) return c.json({ error: "self" }, 409);
+  const to = c.req.query("transferTo") ?? me.id;
+  const [pr, tr, doms, ln] = await Promise.all([
+    env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first(),
+    env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(to).first(),
+    env.DB.prepare("SELECT host, type FROM domains WHERE owner_id = ? ORDER BY host").bind(id).all<{ host: string; type: string }>(),
+    env.DB.prepare("SELECT COUNT(*) n FROM links WHERE created_by = ?").bind(id).first<{ n: number }>(),
+  ]);
+  if (!pr) return c.json(notFound, 404);
+  const p = rowToUser(pr), t = tr ? rowToUser(tr) : null;
+  if (to === id || !t || t.status !== "active") return c.json({ error: "bad_transfer" }, 400);
+  const needsOwner = doms.results.some((d) => d.type !== "private");
+  if (needsOwner && t.role !== "owner") return c.json({ error: "transfer_needs_owner" }, 400);
+  const hosts = doms.results.map((d) => d.host);
+  // R5 stays exact either way: an owner target must still be an owner, a member target only takes private domains.
+  const g = and(
+    { sql: "EXISTS (SELECT 1 FROM users WHERE id = ? AND role = ? AND status = ?)", binds: [id, p.role, p.status] },
+    { sql: `EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active'${t.role === "owner" ? " AND role = 'owner'" : ""})`, binds: [to] },
+    t.role !== "owner" && { sql: `NOT EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED})`, binds: [id] },
+    { sql: ACTOR_OK, binds: [me.id] },
+    p.role === "owner" && p.status === "active" && { sql: OTHER_OWNER, binds: [id] },
+  );
+  const q = (sql: string, ...a: unknown[]) => env.DB.prepare(`${sql} AND ${g.sql}`).bind(...a, ...g.binds);
+  // R13: api_keys and agent_connections reference users(id) without cascade, so they go before the user row.
+  // shortcut: `links` and `domains` in the audit detail are read just before the batch; a link the person makes in that window moves but is not counted.
+  const res = await env.DB.batch([
+    auditStmt(env, { actorId: me.id, action: "user.remove", targetType: "user", targetId: id,
+      detail: { email: p.email, role: p.role, transferTo: to, links: ln?.n ?? 0, domains: hosts } }, g),
+    q("UPDATE links SET created_by = ? WHERE created_by = ?", to, id),
+    q("UPDATE domains SET owner_id = ? WHERE owner_id = ?", to, id),
+    q("DELETE FROM domain_members WHERE user_id = ?", id),
+    q("DELETE FROM api_keys WHERE user_id = ?", id),
+    q("DELETE FROM agent_connections WHERE user_id = ?", id),
+    q("DELETE FROM login_tokens WHERE email = ?", p.email),
+    q("DELETE FROM users WHERE id = ?", id),
+  ]);
+  if (!res[res.length - 1]!.meta.changes) {
+    const w = await env.DB.prepare(
+      `SELECT ${ACTOR_OK} a, EXISTS (SELECT 1 FROM users WHERE id = ?) e, EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active') t,
+       EXISTS (SELECT 1 FROM users WHERE id = ? AND role = 'owner') tOwner, EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED}) needs, ${OTHER_OWNER} o`,
+    ).bind(me.id, id, to, to, id, id).first<{ a: number; e: number; t: number; tOwner: number; needs: number; o: number }>();
+    if (!w?.a) return c.json(forbidden, 403);
+    if (!w.e) return c.json(notFound, 404);
+    if (!w.t) return c.json({ error: "bad_transfer" }, 400);
+    if (w.needs && !w.tOwner) return c.json({ error: "transfer_needs_owner" }, 400);
+    if (!w.o) return c.json({ error: "last_owner" }, 409);
+    return c.json({ error: "changed" }, 409);
+  }
+  await revokeGrants(env, id);
+  await Promise.all(hosts.map((h) => purgeHost(env, h)));
+  return c.json({});
 });

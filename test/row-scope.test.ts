@@ -146,3 +146,49 @@ describe("owner end-all", () => {
     }
   });
 });
+
+describe("user admin: role, disable and remove touch only the person", () => {
+  it("demote, disable and remove leave a second person's links, domains, grants, keys, connections, tokens and sessions alone", async () => {
+    const { signedIn } = await import("./helpers/session");
+    const mode = env as { AUTH_MODE?: string };
+    const prev = mode.AUTH_MODE;
+    mode.AUTH_MODE = "app";
+    try {
+      await env.DB.batch(["api_keys", "agent_connections", "login_tokens", "passkeys", "sessions", "audit_log"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+      const o = await signedIn("so@example.com", { role: "owner" });
+      const p = await signedIn("sp@example.com", { role: "owner" });
+      const q = await signedIn("sq@example.com", { role: "owner" });
+      for (const [u, d, host, type] of [[p.user.id, "pM", "pm.test", "shared"], [q.user.id, "qM", "qm.test", "shared"], [p.user.id, "pP", "pp.test", "private"], [q.user.id, "qP", "qp.test", "private"]])
+        await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,?,'active',?,1)", d, host, type, u);
+      for (const [l, d, u] of [["pl", "pP", p.user.id], ["ql", "qP", q.user.id]])
+        await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?,?,?,?,'https://x.com/',?,?,1,1)", l, d, l, l, u, u);
+      for (const [u, e, k] of [[p.user.id, "sp@example.com", "p"], [q.user.id, "sq@example.com", "q"]]) {
+        await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dM',?)", u);
+        await run("INSERT INTO api_keys (id,user_id,name,prefix,hash,expires_at,created_at) VALUES (?,?,'k','lw_x',?,9999999999,1)", `k${k}`, u, `h${k}`);
+        await run("INSERT INTO agent_connections (id,user_id,client_id,client_name,redirect_host,created_at) VALUES (?,?,'c','C','claude.ai',1)", `c${k}`, u);
+        await run("INSERT INTO login_tokens (token_hash,email,created_at,expires_at) VALUES (?,?,1,9999999999)", `t${k}`, e);
+      }
+      const qRows = async () => ({
+        users: await rows("SELECT * FROM users WHERE id = ?", q.user.id),
+        domains: await rows("SELECT * FROM domains WHERE owner_id = ? ORDER BY id", q.user.id),
+        links: await rows("SELECT * FROM links WHERE created_by = ? ORDER BY id", q.user.id),
+        members: await rows("SELECT * FROM domain_members WHERE user_id = ?", q.user.id),
+        keys: await rows("SELECT * FROM api_keys WHERE user_id = ?", q.user.id),
+        conns: await rows("SELECT * FROM agent_connections WHERE user_id = ?", q.user.id),
+        tokens: await rows("SELECT * FROM login_tokens WHERE email = 'sq@example.com'"),
+        sessions: await rows("SELECT * FROM sessions WHERE user_id = ?", q.user.id),
+      });
+      const before = await qRows();
+      const go = (method: string, path: string, body?: unknown) =>
+        dash(path, { method, headers: { cookie: o.cookie, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+      expect((await go("PATCH", `/api/users/${p.user.id}`, { role: "member" })).status).toBe(200);
+      expect((await go("PATCH", `/api/users/${p.user.id}`, { status: "disabled" })).status).toBe(200);
+      expect((await go("PATCH", `/api/users/${p.user.id}`, { status: "active" })).status).toBe(200);
+      expect((await go("DELETE", `/api/users/${p.user.id}`)).status).toBe(200);
+      expect(await qRows()).toEqual(before);
+      expect(await rows("SELECT id FROM users WHERE id = ?", p.user.id)).toEqual([]);
+    } finally {
+      mode.AUTH_MODE = prev;
+    }
+  });
+});
