@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Domain, Link, Me, UserItem } from "../api";
 import { fromLocalInput, shortDate, toLocalInput } from "../time";
 import { creatorLabel, linkState, linksQuery, shortUrl, sparkPoints } from "./linkView";
+import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
 const NOW = 1_800_000_000;
 const link = (o: Partial<Link> = {}): Link => ({
@@ -25,8 +26,8 @@ describe("linkState", () => {
 });
 
 describe("shortUrl and creatorLabel", () => {
-  const owner: Me = { id: "uo", email: "o@example.com", name: null, role: "owner" };
-  const member: Me = { ...owner, id: "um", role: "member" };
+  const owner: Me = { id: "uo", email: "o@example.com", name: null, role: "owner", ...OWNER_ROLE };
+  const member: Me = { ...owner, id: "um", role: "member", ...MEMBER_ROLE };
   const users = [{ id: "u1", email: "dana@example.com", name: "Dana R." }, { id: "u2", email: "x@example.com", name: null }] as UserItem[];
   it("builds the url", () => expect(shortUrl("go.test", "spring")).toBe("https://go.test/spring"));
   it("You, names for the owner, Teammate for members", () => {

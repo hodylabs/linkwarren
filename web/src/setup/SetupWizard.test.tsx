@@ -4,9 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { Me } from "../api";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
+import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner", authMode: "app" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", authMode: "app" };
+const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner", ...OWNER_ROLE, authMode: "app" };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE, authMode: "app" };
 const MAIN = { id: "d0", host: "go.test", type: "main", status: "active", ownerId: "uo", linkCount: 0, isMember: false };
 type Steps = { name: boolean; signIn: true; cloudflare: boolean; mainDomain: boolean; email: boolean };
 const NONE: Steps = { name: false, signIn: true, cloudflare: false, mainDomain: false, email: false };

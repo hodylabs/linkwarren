@@ -4,6 +4,7 @@ import { errorText, plural } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
 import { Seg } from "../shell/ui";
+import { canUseDomain } from "../perms";
 import { useApp } from "../state";
 import { fromLocalInput } from "../time";
 import type { BulkAction } from "./BulkBar";
@@ -48,7 +49,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
   const [password, setPassword] = useState(""); // never logged or announced
   // Move: only active domains the person can use (D12); the old-address choice starts empty every time (R5).
   const targets = useMemo(
-    () => domains.filter((d) => d.status === "active" && (me.role === "owner" || d.type === "main" || d.isMember || d.ownerId === me.id)),
+    () => domains.filter((d) => d.status === "active" && canUseDomain(me, d)),
     [domains, me],
   );
   const [target, setTarget] = useState(() => {

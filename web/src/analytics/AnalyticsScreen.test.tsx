@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { AnalyticsReport, Domain, Me } from "../api";
 import { fakeApi, type FakeReq, type FakeRes } from "../test/fakeApi";
+import { OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const dom = (id: string, host: string, type: Domain["type"]): Domain => ({
   id, host, type, status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 3, isMember: false,

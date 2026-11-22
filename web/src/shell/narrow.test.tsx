@@ -5,8 +5,9 @@ import App from "../App";
 import type { Domain, Link, Me } from "../api";
 import { fakeApi } from "../test/fakeApi";
 import { NARROW, PHONE } from "./narrow";
+import { OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const domain: Domain = {
   id: "d1", host: "go.test", type: "main", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 2, isMember: false,

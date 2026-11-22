@@ -11,7 +11,7 @@ import { BackupsSection, DataSection, EmailSection, InstanceSection, LinkDefault
 
 const STEP: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
-/** Owner only (App renders "Owner only" for members before this mounts). Each section is its own URL, /settings/<section> (R15). */
+/** Needs the settings permission (App renders "Not in your role" before this mounts); secrets stay owner only. Each section is its own URL, /settings/<section> (R15). */
 export function SettingsScreen() {
   const { sub } = useRoute();
   const section = SECTIONS.find((x) => x.id === sub)?.id;
@@ -60,7 +60,7 @@ export function SettingsScreen() {
 
   return (
     <>
-      <ScreenHeader title="Settings" text="Owner only" />
+      <ScreenHeader title="Settings" text="This instance, for everyone on it" />
       <div className="setwrap">
         <nav className="subnav" aria-label="Settings sections" ref={nav} onKeyDown={onNavKey}>
           {SECTIONS.map((x) => (

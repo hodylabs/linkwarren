@@ -5,7 +5,8 @@ import { ComingSoon } from "./shell/ComingSoon";
 import { Gate } from "./shell/Gate";
 import { DomainSwitcher } from "./shell/DomainSwitcher";
 import { Palette } from "./shell/Palette";
-import { OWNER_ONLY, Rail } from "./shell/Rail";
+import { Rail } from "./shell/Rail";
+import { canSee, isOwner } from "./perms";
 import { useOpenSheets } from "./shell/Sheet";
 import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
@@ -26,8 +27,7 @@ import { SetupWizard } from "./setup/SetupWizard";
 
 function ScreenView({ screen }: { screen: Screen }) {
   const { me } = useApp();
-  if (OWNER_ONLY.has(screen) && me.role !== "owner")
-    return <ComingSoon title="Owner only" text="Only the owner of this linkwarren can open this page." />;
+  if (!canSee(me, screen)) return <ComingSoon title="Not in your role" text="Your role in this linkwarren does not include this page." />;
   if (screen === "links") return <LinksScreen />;
   if (screen === "domains") return <DomainsScreen />;
   if (screen === "settings") return <SettingsScreen />;
@@ -49,7 +49,7 @@ function Shell() {
   } satisfies Bindings<typeof GLOBAL_KEYS>);
   useChord((letter) => {
     const to = Object.hasOwn(GO_KEYS, letter) ? GO_KEYS[letter as keyof typeof GO_KEYS] : undefined;
-    if (!to || (OWNER_ONLY.has(to) && me.role !== "owner")) return false;
+    if (!to || !canSee(me, to)) return false;
     navigate(`/${to}`);
     return true;
   }, free);
@@ -82,8 +82,8 @@ function Shell() {
       {overlay?.kind === "addDomain" && <AddDomainSheet />}
       {overlay?.kind === "newLink" && <NewLinkSheet slug={overlay.slug} />}
       {overlay?.kind === "newKey" && <NewKeySheet />}
-      {overlay?.kind === "invite" && me.role === "owner" && <InviteSheet />}
-      {overlay?.kind === "person" && me.role === "owner" && <PersonSheet id={overlay.id} />}
+      {overlay?.kind === "invite" && <InviteSheet />}
+      {overlay?.kind === "person" && <PersonSheet id={overlay.id} />}
     </div>
   );
 }
@@ -92,7 +92,7 @@ function Shell() {
 const SLOW_MS = 10_000;
 function Root() {
   const { me, instance, reloadInstance } = useApp();
-  const pending = me.role === "owner" && instance === undefined;
+  const pending = isOwner(me) && instance === undefined;
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     if (!pending) return;
@@ -109,7 +109,7 @@ function Root() {
       </div>
     ) : null;
   // An owner cannot tell set up from not set up without /api/instance, so neither the shell nor the wizard is safe to show.
-  if (me.role === "owner" && instance === null)
+  if (isOwner(me) && instance === null)
     return (
       <div className="gate" role="alert">
         <img src="/linkwarren-mark.svg" alt="" />
@@ -117,7 +117,7 @@ function Root() {
         <button type="button" className="btn" onClick={() => void reloadInstance().catch(() => undefined)}>Retry</button>
       </div>
     );
-  if (me.role === "owner" && instance?.configured === false) return <SetupWizard />;
+  if (isOwner(me) && instance?.configured === false) return <SetupWizard />;
   return <Shell />;
 }
 

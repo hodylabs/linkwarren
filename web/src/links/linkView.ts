@@ -1,4 +1,5 @@
 import type { Domain, Link, Me, UserItem } from "../api";
+import { can } from "../perms";
 import { shortDate } from "../time";
 
 export type Tone = "ok" | "wait" | "bad" | "off";
@@ -17,10 +18,10 @@ export const forwardTarget = (l: Link): string => l.url.replace(/^https:\/\//, "
 
 export const shortUrl = (host: string, slug: string): string => `https://${host}/${slug}`;
 
-/** "You"; the owner sees a name or email; a member only ever sees "Teammate". */
+/** "You"; an owner, a links.editAny or a people.manage holder sees a name or email; anyone else only ever sees "Teammate". */
 export function creatorLabel(createdBy: string, me: Me, users: UserItem[] | null): string {
   if (createdBy === me.id) return "You";
-  if (me.role !== "owner") return "Teammate";
+  if (!can(me, "links.editAny") && !can(me, "people.manage")) return "Teammate";
   const u = users?.find((x) => x.id === createdBy);
   return u ? u.name || u.email : "Teammate";
 }

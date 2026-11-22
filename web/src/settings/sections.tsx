@@ -4,6 +4,7 @@ import { api, ApiError } from "../api";
 import { errorText, plural } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Kbd, Seg, Switch } from "../shell/ui";
+import { isOwner } from "../perms";
 import { useApp } from "../state";
 import { useUnsaved } from "../unsaved";
 import { deleteLogo, logoUrl, patchSettings, putLogo, sendTestEmail, type SecretStatus, type SettingsBody, type SettingsPatch } from "./api";
@@ -194,7 +195,7 @@ export function EmailSection({ s, onSecrets }: { s: SettingsBody; onSecrets: (st
       <Field label="Sender" hint="The EMAIL_FROM variable in the Worker config">
         <span className={s.emailFrom ? "mono" : "muted"}>{s.emailFrom ?? "Not set. Add EMAIL_FROM to the Worker config."}</span>
       </Field>
-      <SecretField name="resend" status={s.secrets.resend} pasteAvailable={s.secrets.pasteAvailable} onSaved={onSecrets} hint={s.authMode === "app" ? RESEND_HINT : undefined} />
+      <SecretField name="resend" status={s.secrets.resend} pasteAvailable={s.secrets.pasteAvailable} onSaved={onSecrets} hint={s.authMode === "app" ? RESEND_HINT : undefined} readOnly={!isOwner(me)} />
       <Field label="Test email" hint="Sends a short message to you">
         <div className="row-actions">
           <button type="button" className="btn" onClick={() => void test()} disabled={busy}>Send test email</button>

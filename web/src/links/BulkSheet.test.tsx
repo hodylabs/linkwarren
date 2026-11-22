@@ -5,8 +5,9 @@ import App from "../App";
 import type { Domain, Link, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeReq, type FakeRes } from "../test/fakeApi";
+import { OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const dom = (id: string, host: string, o: Partial<Domain> = {}): Domain => ({
   id, host, type: "shared", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 1, isMember: false, ...o,

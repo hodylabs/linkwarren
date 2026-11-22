@@ -15,9 +15,10 @@ import { LINKS_KEYS } from "../links/LinksScreen";
 import { NEW_LINK_KEYS } from "../links/NewLinkSheet";
 import { PEOPLE_KEYS } from "../people/PeopleScreen";
 import { fakeApi } from "../test/fakeApi";
-import { GLOBAL_KEYS, GROUPS } from "./Shortcuts";
+import { GLOBAL_KEYS, groupsFor } from "./Shortcuts";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 afterEach(() => vi.unstubAllGlobals());
 
 async function openSheet(me: Me = owner) {
@@ -58,19 +59,19 @@ describe("Shortcuts sheet", () => {
     const dlg = await openSheet();
     const domains = sheetRows(dlg, "Domains");
     expect(domains).toContain("N = Add a domain");
-    expect(domains).toContain("A = Approve or enable the selected domain (owner)");
-    expect(domains).toContain("Shift D = Disable the selected domain (owner)");
+    expect(domains).toContain("A = Approve or enable the selected domain");
+    expect(domains).toContain("Shift D = Disable the selected domain");
     expect(dlg.textContent).not.toContain("Open the first setup step");
     expect(sheetRows(dlg, "New link")).toEqual(
       expect.arrayContaining(["T = Campaign tags", "S = Schedule and expiry", "Alt D = Change the domain", "Ctrl Enter = Create the link", "Ctrl Shift Enter = Create and copy the short link"]),
     );
-    expect(sheetRows(dlg, "Everywhere")).toEqual(expect.arrayContaining(["G L = Go to Links", "G P = Go to People & audit log (owner)"]));
+    expect(sheetRows(dlg, "Everywhere")).toEqual(expect.arrayContaining(["G L = Go to Links", "G P = Go to People & audit log"]));
     expect(sheetRows(dlg, "In search and go (Ctrl K)")).toEqual(expect.arrayContaining(["S D = Switch domain", "C D = Add a domain", "C L = New link"]));
   });
 
   it("every group in the table renders (app mode)", async () => {
     const dlg = await openSheet({ ...owner, authMode: "app", passkeys: 0 });
-    await waitFor(() => expect(within(dlg).getAllByText(/./, { selector: ".p-sec" }).map((e) => e.textContent)).toEqual(GROUPS.map((g) => g.title)));
+    await waitFor(() => expect(within(dlg).getAllByText(/./, { selector: ".p-sec" }).map((e) => e.textContent)).toEqual(groupsFor({ ...owner, authMode: "app" }).map((g) => g.title)));
   });
 
   it("access mode lists no account keys and no ys palette entry; app mode does", async () => {
@@ -82,5 +83,33 @@ describe("Shortcuts sheet", () => {
     const dlg = await openSheet({ ...owner, authMode: "app", passkeys: 0 });
     expect(sheetRows(dlg, "In search and go (Ctrl K)")).toContain("Y S = Sign-in and security");
     expect(within(dlg).getByText("Sign-in and security", { selector: ".p-sec" })).toBeTruthy();
+  });
+});
+
+describe("Shortcuts sheet follows the role", () => {
+  const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
+  const titles = (dlg: HTMLElement) => within(dlg).getAllByText(/./, { selector: ".p-sec" }).map((e) => e.textContent);
+
+  it("a Member sees today's member sheet: no People or Settings, but links, bulk, domains and keys", async () => {
+    const dlg = await openSheet(member);
+    expect(titles(dlg)).toEqual(["Everywhere", "In search and go (Ctrl K)", "Links", "Selected links", "New link", "Domains", "Analytics", "API & agents", "New API key"]);
+    expect(sheetRows(dlg, "Everywhere")).not.toContain("G P = Go to People & audit log");
+    expect(sheetRows(dlg, "Domains")).toContain("N = Add a domain");
+    expect(sheetRows(dlg, "Domains").join("\n")).not.toContain("Approve");
+  });
+
+  it("a role without create, bulk, domains, keys or agents lists none of their keys", async () => {
+    const dlg = await openSheet({ ...member, ...customRole(["settings"]) });
+    expect(titles(dlg)).toEqual(["Everywhere", "In search and go (Ctrl K)", "Links", "Domains", "Analytics", "API & agents", "Settings"]);
+    const links = sheetRows(dlg, "Links");
+    expect(links).not.toContain("N = New link");
+    expect(links).not.toContain("X = Select or unselect the link");
+    expect(sheetRows(dlg, "Domains")).not.toContain("N = Add a domain");
+    expect(sheetRows(dlg, "API & agents")).not.toContain("N = New API key");
+    expect(sheetRows(dlg, "API & agents")).not.toContain("C = Copy the agent address");
+    expect(sheetRows(dlg, "Settings")).not.toContain("C = Check the Cloudflare token");
+    const palette = sheetRows(dlg, "In search and go (Ctrl K)");
+    expect(palette).toContain("G S = Settings");
+    for (const r of ["C L = New link", "C D = Add a domain", "C K = New API key", "C P = Invite a person", "G P = People & audit log"]) expect(palette).not.toContain(r);
   });
 });

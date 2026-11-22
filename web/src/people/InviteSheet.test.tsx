@@ -5,9 +5,10 @@ import App from "../App";
 import type { Me, UserItem } from "../api";
 import { buildCommands } from "../shell/palette";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", authMode: "app" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", authMode: "app" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE, authMode: "app" };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE, authMode: "app" };
 const USERS: UserItem[] = [
   { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", roleId: "owner", roleName: "Owner", perms: [], status: "active", createdAt: 1, linkCount: 0, agentCount: 0, domains: [] },
 ];
@@ -66,7 +67,7 @@ describe("Invite sheet", () => {
 
   it("a member has no invite button and N does nothing", async () => {
     const { user } = boot({ me: member });
-    await screen.findByText("Owner only");
+    await screen.findByText("Not in your role");
     expect(screen.queryByRole("button", { name: /Invite person/ })).toBeNull();
     await user.keyboard("n");
     expect(screen.queryByRole("dialog", { name: "Invite a person" })).toBeNull();
@@ -180,13 +181,25 @@ describe("Invite sheet", () => {
   });
 });
 
+describe("Invite sheet for a people manager", () => {
+  it("people.manage invites with N, as a Member only: no Owner choice", async () => {
+    const { user } = boot({ me: { ...member, ...customRole(["people.manage"]) } });
+    await ready();
+    await waitFor(() => expect(document.querySelectorAll("tbody tr")).toHaveLength(1));
+    await user.keyboard("n");
+    const dlg = await screen.findByRole("dialog", { name: "Invite a person" });
+    expect(within(dlg).queryByRole("radio", { name: "Owner" })).toBeNull();
+    expect(within(dlg).getByText("Member")).toBeTruthy();
+  });
+});
+
 describe("palette cp", () => {
   const ctx = { domains: [], open: vi.fn(), setCurrentDomain: () => {} };
   it("Invite a person, owner only", () => {
-    const cp = buildCommands(ctx, true).find((c) => c.keys === "cp")!;
+    const cp = buildCommands(ctx, owner).find((c) => c.keys === "cp")!;
     expect(cp).toMatchObject({ section: "Create", label: "Invite a person" });
     cp.run();
     expect(ctx.open).toHaveBeenCalledWith({ kind: "invite" });
-    expect(buildCommands(ctx, false).some((c) => c.keys === "cp")).toBe(false);
+    expect(buildCommands(ctx, member).some((c) => c.keys === "cp")).toBe(false);
   });
 });

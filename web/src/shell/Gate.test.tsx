@@ -3,10 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { nav } from "../signin/next";
 import { fakeApi } from "../test/fakeApi";
 import { Gate } from "./Gate";
+import { MEMBER_ROLE } from "../test/roles";
 
 vi.mock("@simplewebauthn/browser", () => ({ browserSupportsWebAuthn: () => true, startAuthentication: vi.fn(), startRegistration: vi.fn() }));
 
-const me = { id: "u1", email: "a@example.com", name: null, role: "member" as const, authMode: "app" as const, passkeys: 1 };
+const me = { id: "u1", email: "a@example.com", name: null, role: "member" as const, ...MEMBER_ROLE, authMode: "app" as const, passkeys: 1 };
 
 describe("Gate", () => {
   it("401 with signIn app shows the sign-in form in place, email focused", async () => {

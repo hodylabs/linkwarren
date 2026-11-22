@@ -3,8 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError, type Me } from "./api";
 import { AppProvider, useApp } from "./state";
 import { fakeApi } from "./test/fakeApi";
+import { OWNER_ROLE } from "./test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: null, role: "owner" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: null, role: "owner", ...OWNER_ROLE };
 
 function Probe() {
   const { currentDomainId, loadError, reloadDomains } = useApp();

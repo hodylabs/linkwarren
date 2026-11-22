@@ -7,6 +7,7 @@ import { NavLink } from "../router";
 import { getCloudflare } from "../settings/api";
 import { Sheet } from "../shell/Sheet";
 import { CloseButton, Switch, Tag } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { DEFAULT_RESERVED } from "../../../src/validate";
 import { shortDate } from "../time";
@@ -18,12 +19,12 @@ import { cfSettled, useCfPoll } from "./useCfPoll";
 
 type Confirm = "case" | "disable" | "reject" | "takeover";
 
-/** Domain detail hotkeys (owner) and their text on the shortcuts sheet. */
+/** Domain detail hotkeys (domains.manage) and their text on the shortcuts sheet. */
 export const DOMAIN_DETAIL_KEYS = {
-  a: "Approve or enable the selected domain (owner)",
-  f: "Finish connecting the selected domain to Cloudflare (owner)",
-  "shift+r": "Reject the selected pending domain (owner)",
-  "shift+d": "Disable the selected domain (owner)",
+  a: "Approve or enable the selected domain",
+  f: "Finish connecting the selected domain to Cloudflare",
+  "shift+r": "Reject the selected pending domain",
+  "shift+d": "Disable the selected domain",
 } as const;
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
 const loopText = (n: number, host: string) => `${plural(n, "existing link")} ${n === 1 ? "points" : "point"} at ${host} and now loop${n === 1 ? "s" : ""}.`;
@@ -32,7 +33,7 @@ const editThem = (n: number) => (n === 1 ? "Edit it" : "Edit them");
 export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onModal(open: boolean): void; onClose(): void }) {
   const app = useApp();
   const { me, users, domains, overlay } = app;
-  const isOwner = me.role === "owner";
+  const admin = can(me, "domains.manage"); // approve, disable, reject, members and Cloudflare (S8 R8)
   const canEdit = canManage(me, domain);
   const [draft, setDraft] = useState(() => draftOf(domain));
   const [errors, setErrors] = useState<ReturnType<typeof domainDiff>["errors"]>({});
@@ -54,12 +55,12 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
   const accountKind = view?.kind === "account";
   useEffect(() => {
     setControlsEnabled(false);
-    if (!isOwner || !accountKind) return;
+    if (!admin || !accountKind) return;
     const ac = new AbortController();
     getCloudflare(ac.signal).then((s) => setControlsEnabled(s.controlsEnabled), () => {});
     return () => ac.abort();
-  }, [isOwner, accountKind, domain.id]);
-  const tag = statusTag(view ? { ...domain, cloudflare: view } : domain, isOwner);
+  }, [admin, accountKind, domain.id]);
+  const tag = statusTag(view ? { ...domain, cloudflare: view } : domain, admin);
   const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
 
   useEffect(() => onModal(confirm !== null), [confirm]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -108,10 +109,10 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
       }
     });
 
-  const canApprove = isOwner && domain.status !== "active";
+  const canApprove = admin && domain.status !== "active";
   // An active same-account domain that Cloudflare does not serve yet: approve finishes the attach.
-  const canFinish = isOwner && domain.status === "active" && view !== null && needsFinish(view);
-  const canReject = isOwner && domain.status === "pending";
+  const canFinish = admin && domain.status === "active" && view !== null && needsFinish(view);
+  const canReject = admin && domain.status === "pending";
   const path = `/api/domains/${encodeURIComponent(domain.id)}`;
 
   const disable = () =>
@@ -177,7 +178,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
         if (canReject) setConfirm("reject");
       },
       "shift+d": () => {
-        if (isOwner && domain.status !== "disabled") setConfirm("disable");
+        if (admin && domain.status !== "disabled") setConfirm("disable");
       },
     } satisfies Bindings<typeof DOMAIN_DETAIL_KEYS>,
     overlay === null && confirm === null,
@@ -251,7 +252,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
         {domain.status === "pending" && (
           <div className="sect">
             <div className="callout wait">
-              {isOwner
+              {admin
                 ? `${plural(domain.linkCount, "link")} ${domain.linkCount === 1 ? "is" : "are"} already here. They show a "not active yet" page until you approve the domain.`
                 : 'Links here show a "not active yet" page until the owner approves the domain.'}
             </div>
@@ -323,7 +324,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
             {formError ?? actionError}
           </p>
         )}
-        {(canEdit || isOwner) && (
+        {(canEdit || admin) && (
           <div className="actions">
             {canEdit && (
               <button type="button" className="btn primary" onClick={() => void save()} aria-keyshortcuts="Control+Enter">
@@ -345,7 +346,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
                 Reject <kbd>Shift R</kbd>
               </button>
             )}
-            {isOwner && domain.status !== "disabled" && (
+            {admin && domain.status !== "disabled" && (
               <button type="button" className="btn" onClick={() => setConfirm("disable")} aria-keyshortcuts="Shift+D">
                 Disable <kbd>Shift D</kbd>
               </button>

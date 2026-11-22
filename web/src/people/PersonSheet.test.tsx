@@ -5,8 +5,9 @@ import App from "../App";
 import { transferTargets } from "./PersonSheet";
 import type { Me, UserItem } from "../api";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", authMode: "app" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE, authMode: "app" };
 const u = (id: string, o: Partial<UserItem> = {}): UserItem => ({
   id, email: `${id}@example.com`, name: id.toUpperCase(), role: "member", roleId: "member", roleName: "Member", perms: [], status: "active", createdAt: 1_700_050_000, linkCount: 2, agentCount: 0, domains: [], ...o,
 });
@@ -282,7 +283,7 @@ describe("Person sheet", () => {
 });
 
 describe("transferTargets (S8 R4: a manager's removal goes to an owner)", () => {
-  const manager: Me = { id: "um", email: "m@example.com", name: "Mo", role: "member", authMode: "app" };
+  const manager: Me = { id: "um", email: "m@example.com", name: "Mo", role: "member", ...MEMBER_ROLE, authMode: "app" };
   const people = [u("um"), u("ua"), u("ob", { role: "owner", createdAt: 5 }), u("oa", { role: "owner", createdAt: 5 }), u("o1", { role: "owner", createdAt: 2 }), u("od", { role: "owner", status: "disabled", createdAt: 1 })];
   it("a non-owner gets only active owners, first owner first, never themselves", () => {
     expect(transferTargets(people, manager, "ua", false).map((x) => x.id)).toEqual(["o1", "oa", "ob"]);

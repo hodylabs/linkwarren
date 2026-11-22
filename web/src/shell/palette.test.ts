@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { Me } from "../api";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 import { buildCommands, paletteKey, type Command, type PaletteState } from "./palette";
+
+const OWNER: Me = { id: "uo", email: "o@example.com", name: null, role: "owner", ...OWNER_ROLE };
+const MEMBER: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 
 const cmd = (keys: string): Command => ({ keys, section: "Go to", label: keys, run: () => {} });
 const cmds = [cmd("gl"), cmd("gd"), cmd("cl"), cmd("sd"), cmd("?")];
@@ -61,16 +66,16 @@ describe("paletteKey", () => {
 describe("buildCommands: sign-in and security", () => {
   const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
   it("ys exists in app mode only", () => {
-    expect(buildCommands(ctx, true, true).find((c) => c.keys === "ys")?.label).toBe("Sign-in and security");
-    expect(buildCommands(ctx, true).some((c) => c.keys === "ys")).toBe(false);
-    expect(buildCommands(ctx, false, false).some((c) => c.keys === "ys")).toBe(false);
+    expect(buildCommands(ctx, OWNER, true).find((c) => c.keys === "ys")?.label).toBe("Sign-in and security");
+    expect(buildCommands(ctx, OWNER).some((c) => c.keys === "ys")).toBe(false);
+    expect(buildCommands(ctx, MEMBER, false).some((c) => c.keys === "ys")).toBe(false);
   });
 });
 
 describe("buildCommands: analytics domain filter", () => {
   it("af opens the analytics domain picker for everyone", () => {
     const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
-    const af = buildCommands(ctx, false).find((c) => c.keys === "af")!;
+    const af = buildCommands(ctx, MEMBER).find((c) => c.keys === "af")!;
     expect(af).toMatchObject({ section: "Go to", label: "Filter analytics by domain" });
     af.run();
     expect(location.pathname + location.search).toBe("/analytics?pick=1");
@@ -81,15 +86,35 @@ describe("buildCommands: API & agents", () => {
   const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
   it("gi and ck exist for a member as well as the owner", () => {
     for (const isOwner of [false, true]) {
-      const cmds = buildCommands(ctx, isOwner);
+      const cmds = buildCommands(ctx, isOwner ? OWNER : MEMBER);
       expect(cmds.find((c) => c.keys === "gi")).toMatchObject({ section: "Go to", label: "API & agents" });
       expect(cmds.find((c) => c.keys === "ck")).toMatchObject({ section: "Create", label: "New API key" });
     }
-    expect(buildCommands(ctx, false).some((c) => c.keys === "gp" || c.keys === "gs")).toBe(false);
+    expect(buildCommands(ctx, MEMBER).some((c) => c.keys === "gp" || c.keys === "gs")).toBe(false);
   });
   it("ck opens the New API key sheet", () => {
     let opened: unknown = null;
-    buildCommands({ ...ctx, open: (o) => (opened = o) }, false).find((c) => c.keys === "ck")!.run();
+    buildCommands({ ...ctx, open: (o) => (opened = o) }, MEMBER).find((c) => c.keys === "ck")!.run();
     expect(opened).toEqual({ kind: "newKey" });
+  });
+});
+
+describe("buildCommands: follows the role", () => {
+  const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
+  const keys = (me: Me) => buildCommands(ctx, me).filter((c) => !c.quiet).map((c) => c.keys);
+  it("a Member gets exactly today's member commands", () => {
+    expect(keys(MEMBER)).toEqual(["gl", "gd", "ga", "af", "gi", "cl", "cd", "ck", "sd", "?"]);
+  });
+  it("the owner gets every command", () => {
+    expect(keys(OWNER)).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "gs", "cl", "cd", "ck", "cp", "sd", "?"]);
+  });
+  it("a role without create, domains or keys has none of their commands; settings and audit add G S and G P", () => {
+    const me: Me = { ...MEMBER, ...customRole(["settings", "audit"]) };
+    expect(keys(me)).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "gs", "sd", "?"]);
+    expect(buildCommands(ctx, me).filter((c) => c.quiet).length).toBe(7); // Settings: <section>
+  });
+  it("people.manage adds G P and Invite; domains.manage alone adds Add a domain", () => {
+    expect(keys({ ...MEMBER, ...customRole(["people.manage"]) })).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "cp", "sd", "?"]);
+    expect(keys({ ...MEMBER, ...customRole(["domains.manage"]) })).toEqual(["gl", "gd", "ga", "af", "gi", "cd", "sd", "?"]);
   });
 });

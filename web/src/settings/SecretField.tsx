@@ -22,8 +22,9 @@ const errorFor = (c: string) => (c === "cloudflare_not_configured" ? "Set the Cl
  * otherwise the wrangler command. The typed value lives only in the input: it is cleared after a save and never kept in state.
  * Reused by the setup wizard.
  */
-export function SecretField({ name, status, pasteAvailable, onSaved, hint }: {
-  name: "cf" | "resend"; status: SecretSource; pasteAvailable: boolean; onSaved: (s: SecretStatus) => void; hint?: string;
+/** `readOnly`: the status line only, for a settings role that is not an owner (secret writes stay owner only, S8 R5). */
+export function SecretField({ name, status, pasteAvailable, onSaved, hint, readOnly = false }: {
+  name: "cf" | "resend"; status: SecretSource; pasteAvailable: boolean; onSaved: (s: SecretStatus) => void; hint?: string; readOnly?: boolean;
 }) {
   const { env, label, remove } = NAMES[name];
   const [asking, setAsking] = useState(false);
@@ -65,6 +66,15 @@ export function SecretField({ name, status, pasteAvailable, onSaved, hint }: {
     }
   };
 
+  if (readOnly)
+    return (
+      <div className="sfield">
+        <div>
+          <b>{label}</b>
+          <small>{STATUS[status]}</small>
+        </div>
+      </div>
+    );
   const paste = status !== "secret" && pasteAvailable;
   // A dashboard value is the only one in use (no Worker secret), so removing it always asks first.
   const removeBtn = status === "dashboard" && <button type="button" className="btn ghost" onClick={() => setAsking(true)} disabled={busy}>Remove</button>;

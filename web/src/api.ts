@@ -9,7 +9,7 @@ export type ConnectionItem = {
 /** `authMode` and `passkeys` come from /api/me; optional so a Me built without them reads as access mode. */
 /** GET /api/agents/mcp: whether agent connections are on, and whether the deploy config locks them off. */
 export type McpState = { on: boolean; locked: boolean };
-export type Me = Pick<UserRow, "id" | "email" | "name" | "role"> & { authMode?: "app" | "access"; passkeys?: number };
+export type Me = Pick<UserRow, "id" | "email" | "name" | "role" | "roleId" | "roleName" | "perms"> & { authMode?: "app" | "access"; passkeys?: number };
 export type { PasskeyItem, Route, RouteDevice, SessionItem } from "../../src/types";
 export type Link = ApiLink;
 /** One bulk action as POST /api/links/bulk takes it (src/api/bulk.ts), without the ids. Absent fields are kept. */
@@ -24,7 +24,8 @@ export type BulkBody = BulkOp & { ids: string[] };
 export type BulkResult = { id: string; ok: true; link?: Link } | { id: string; ok: false; error: string };
 /** `pending`: accepted password links not hashed yet (one per request), to send again. */
 export type BulkResponse = { results: BulkResult[]; pending: string[] };
-export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView };
+/** `canUse` only in a non-owner domain manager's list (S8 R8): false = administer only. Missing means usable. */
+export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView; canUse?: boolean };
 export type UserItem = UserListItem;
 /** POST /api/users/invite and /api/users/:id/resend (src/api/invites.ts): the invite stands whether or not the mail went out. */
 export type InviteResult = { emailed: boolean; emailReason?: "not_configured" | "rejected" | "network" | "settings" | "too_many" };

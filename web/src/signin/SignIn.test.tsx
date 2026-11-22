@@ -5,6 +5,7 @@ import { Gate } from "../shell/Gate";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 import { nav } from "./next";
 import { SignIn } from "./SignIn";
+import { MEMBER_ROLE } from "../test/roles";
 
 const wa = vi.hoisted(() => ({ supported: true, startAuthentication: vi.fn(), startRegistration: vi.fn() }));
 vi.mock("@simplewebauthn/browser", () => ({
@@ -14,7 +15,7 @@ vi.mock("@simplewebauthn/browser", () => ({
 }));
 
 const TOKEN = "A".repeat(42) + "b";
-const me = (passkeys: number) => ({ id: "u1", email: "a@example.com", name: null, role: "member", authMode: "app", passkeys });
+const me = (passkeys: number) => ({ id: "u1", email: "a@example.com", name: null, role: "member", ...MEMBER_ROLE, authMode: "app", passkeys });
 let assign: ReturnType<typeof vi.fn<(url: string) => void>>;
 
 beforeEach(() => {

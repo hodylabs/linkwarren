@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ApiError, type Domain } from "../api";
 import { errorText } from "../copy";
 import { Switch } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 
 const label = (u: { name: string | null; email: string; status: string }) => `${u.name || u.email}${u.status === "disabled" ? " (disabled)" : ""}`;
@@ -30,7 +31,7 @@ export function MembersEditor({ domain }: { domain: Domain }) {
   }, [savedKey, domain.id]);
   useEffect(() => setError(null), [domain.id]);
 
-  if (me.role !== "owner") return null;
+  if (!can(me, "domains.manage")) return null;
   if (domain.type === "main")
     return (
       <div className="sect">

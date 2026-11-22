@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError, onSignedOut, type Domain, type Me, type UserItem } from "./api";
 import { errorText } from "./copy";
+import { can, mayOpen } from "./perms";
 import { getInstance, type InstanceInfo } from "./settings/api";
 
 export type Overlay =
@@ -18,7 +19,7 @@ export type Overlay =
 export type AppState = {
   me: Me;
   domains: Domain[];
-  /** Owner only; null for members and until loaded. */
+  /** GET /api/users: owners, people.manage and domains.manage holders (S8 R11); null for anyone else and until loaded. */
   users: UserItem[] | null;
   /** null = every domain the user can see. */
   currentDomainId: string | null;
@@ -91,12 +92,12 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
     if (g > gen.stored) { gen.stored = g; setDomains(list); }
   }, []);
   const reloadUsers = useCallback(async () => {
-    if (me.role !== "owner") return;
+    if (!can(me, "people.manage") && !can(me, "domains.manage")) return;
     const gen = usersGen.current;
     const g = ++gen.sent;
     const { items } = await api<{ items: UserItem[] }>("GET", "/api/users");
     if (g > gen.stored) { gen.stored = g; setUsers(items); }
-  }, [me.role]);
+  }, [me]);
 
   const instanceGen = useRef(0);
   const reloadInstance = useCallback(async () => {
@@ -140,7 +141,7 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
       linksVersion,
       bumpLinks: () => setLinksVersion((v) => v + 1),
       overlay,
-      open: setOverlay,
+      open: (o: Overlay) => mayOpen(me, o) && setOverlay(o), // a hidden action stays a no-op, whatever triggers it
       close: () => setOverlay(null),
       announce: (text: string) => setAnnouncement((a) => ({ text, n: a.n + 1 })),
       signedOut,

@@ -5,9 +5,10 @@ import App from "../App";
 import type { CfView, Domain, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const dom = (id: string, host: string, o: Partial<Domain> = {}): Domain => ({
   id, host, type: "shared", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 2, isMember: true, ...o,
@@ -441,5 +442,35 @@ describe("Cloudflare controls in the detail", () => {
     await screen.findByLabelText("The bare domain");
     expect(screen.queryByLabelText("Rate limit")).toBeNull();
     expect(gets(api)).toHaveLength(0);
+  });
+});
+
+describe("Domains follow the role", () => {
+  const manager: Me = { ...member, ...customRole(["domains.manage"]) };
+  it("a Member keeps Add domain and sees no approval controls on a pending domain they own", async () => {
+    boot({ me: member, path: "/domains?sel=d2" });
+    await ready();
+    expect(screen.getByRole("button", { name: /Add domain/ })).toBeTruthy();
+    expect(within(panel()).queryByRole("button", { name: /Approve domain/ })).toBeNull();
+    expect(screen.queryByText(/waiting for you/)).toBeNull();
+  });
+
+  it("a domains.manage holder approves, rejects and sees the waiting count; a domain they cannot use reads Admin only", async () => {
+    boot({ me: manager, path: "/domains?sel=d2", list: () => [MAIN, PEND, { ...OTHER, canUse: false }] });
+    await ready();
+    expect(screen.getByText("1 waiting for you")).toBeTruthy();
+    expect(within(panel()).getByRole("button", { name: /Approve domain/ })).toBeTruthy();
+    expect(within(panel()).getByRole("button", { name: /Reject/ })).toBeTruthy();
+    const other = rows().find((r) => within(r).queryByText("other.test"))!;
+    expect(within(other).getByText("Admin only")).toBeTruthy();
+    expect(within(rows()[0]!).queryByText("Admin only")).toBeNull();
+  });
+
+  it("a role with neither domains.own nor domains.manage has no Add domain and N opens nothing", async () => {
+    const { user } = boot({ me: { ...member, ...customRole(["links.create"]) } });
+    await ready();
+    expect(screen.queryByRole("button", { name: /Add domain/ })).toBeNull();
+    await user.keyboard("n");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

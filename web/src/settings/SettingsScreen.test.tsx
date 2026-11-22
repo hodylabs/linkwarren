@@ -6,9 +6,10 @@ import type { Me } from "../api";
 import { buildCommands } from "../shell/palette";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 import css from "../styles.css?raw";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner", authMode: "app" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", authMode: "app" };
+const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner", ...OWNER_ROLE, authMode: "app" };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE, authMode: "app" };
 const DOMAINS = [
   { id: "d0", host: "go.test", type: "main", status: "active" },
   { id: "d1", host: "nw.test", type: "main", status: "active" },
@@ -46,9 +47,17 @@ afterEach(() => vi.restoreAllMocks());
 describe("Settings sections", () => {
   it("a member at /settings/email sees Owner only and never reads /api/settings", async () => {
     const { api } = boot("/settings/email", { me: member });
-    expect(await screen.findByText("Owner only")).toBeTruthy();
+    expect(await screen.findByText("Not in your role")).toBeTruthy();
     await new Promise((r) => setTimeout(r, 20));
     expect(api.calls.some((c) => c.path.startsWith("/api/settings"))).toBe(false);
+  });
+
+  it("a settings role opens Settings, but the Resend key has no paste field (secrets stay owner only)", async () => {
+    boot("/settings/email", { me: { ...member, ...customRole(["settings"]) }, settings: { secrets: { pasteAvailable: true, cf: "missing", resend: "dashboard" } } });
+    expect(await screen.findByRole("heading", { name: "Email" })).toBeTruthy();
+    expect(screen.getByText("Resend API key")).toBeTruthy();
+    expect(document.querySelector("input[type=password]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
   });
 
   it("/settings and unknown sections land on This instance", async () => {
@@ -281,9 +290,9 @@ describe("Settings sections", () => {
 
   it("palette has Settings: <section> for owners only", () => {
     const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
-    const owners = buildCommands(ctx, true).filter((c) => c.label.startsWith("Settings: ")).map((c) => c.label);
+    const owners = buildCommands(ctx, owner).filter((c) => c.label.startsWith("Settings: ")).map((c) => c.label);
     expect(owners).toEqual(["This instance", "Sign-in", "Cloudflare", "Email", "Link defaults", "Data and retention", "Backups and export"].map((s) => `Settings: ${s}`));
-    expect(buildCommands(ctx, false).some((c) => c.label.startsWith("Settings"))).toBe(false);
+    expect(buildCommands(ctx, member).some((c) => c.label.startsWith("Settings"))).toBe(false);
   });
 
   it("at phone width the subnav wraps instead of scrolling and inputs are 16 px", () => {

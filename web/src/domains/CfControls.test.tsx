@@ -5,8 +5,9 @@ import type { Domain, Me } from "../api";
 import { AppProvider } from "../state";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 import { CfControls } from "./CfControls";
+import { OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "o@example.com", name: null, role: "owner" };
+const owner: Me = { id: "uo", email: "o@example.com", name: null, role: "owner", ...OWNER_ROLE };
 const cf = (kind: string, securityLevel: string | null, rateLimit: number | null) => ({ kind, dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, instructions: null, attachOnApproval: false, attached: true, securityLevel, rateLimit });
 const dom = (kind: string, securityLevel: string | null = null, rateLimit: number | null = null): Domain => ({
   id: "d1", host: "go.test", type: "shared", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,

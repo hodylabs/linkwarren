@@ -5,8 +5,9 @@ import App from "../App";
 import type { Domain, KeyItem, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi } from "../test/fakeApi";
+import { MEMBER_ROLE } from "../test/roles";
 
-const member: Me = { id: "um", email: "m@example.com", name: "Mia", role: "member" };
+const member: Me = { id: "um", email: "m@example.com", name: "Mia", role: "member", ...MEMBER_ROLE };
 const dom = (id: string, host: string, o: Partial<Domain> = {}): Domain => ({
   id, host, type: "main", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: false, ...o,

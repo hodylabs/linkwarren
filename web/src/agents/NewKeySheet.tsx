@@ -4,6 +4,7 @@ import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
 import { Chip, Seg } from "../shell/ui";
+import { canUseDomain, isOwner } from "../perms";
 import { useApp } from "../state";
 
 /** New API key sheet hotkeys and their text on the shortcuts sheet. */
@@ -26,9 +27,7 @@ export function NewKeySheet() {
   const app = useApp();
   const { me, domains } = app;
   // Same rule as the server's usable domains (src/perm.ts); the server stays the authority.
-  const usable = domains.filter(
-    (d) => me.role === "owner" || (d.status !== "disabled" && (d.type === "main" || d.isMember || (d.type === "private" && d.ownerId === me.id))),
-  );
+  const usable = domains.filter((d) => isOwner(me) || canUseDomain(me, d));
   const [name, setName] = useState("");
   const [write, setWrite] = useState(false);
   const [del, setDel] = useState(false);

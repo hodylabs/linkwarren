@@ -1,12 +1,13 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { AuditItem, Me, UserItem } from "../api";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const u = (id: string, o: Partial<UserItem> = {}): UserItem => ({
   id, email: `${id}@example.com`, name: id.toUpperCase(), role: "member", roleId: "member", roleName: "Member", perms: [], status: "active", createdAt: 1, linkCount: 2, agentCount: 0, domains: [], ...o,
 });
@@ -200,9 +201,25 @@ describe("People screen", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Something went wrong");
   });
 
+  it("shows each person's role name; people.manage invites, and without audit there is no audit log request", async () => {
+    const { api } = boot({ me: { ...member, ...customRole(["people.manage"]) }, routes: { "GET /api/users": () => ({ body: { items: [...USERS, u("uh", { name: "Hal", roleId: "hl", roleName: "Helper" })] } }) } });
+    await waitFor(() => expect(rows()).toHaveLength(5));
+    expect(within(rows()[4]!).getByText(/Helper/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Invite person/ })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Audit log" })).toBeNull();
+    expect(auditPaths(api)).toHaveLength(0);
+  });
+
+  it("an audit-only role reads the audit log, with no Invite", async () => {
+    const { api } = boot({ me: { ...member, ...customRole(["audit"]) } });
+    await screen.findByRole("complementary", { name: "Audit log" });
+    expect(screen.queryByRole("button", { name: /Invite person/ })).toBeNull();
+    await waitFor(() => expect(auditPaths(api).length).toBeGreaterThan(0));
+  });
+
   it("a member sees the Owner only pane and no users or audit request", async () => {
     const { api } = boot({ me: member });
-    await screen.findByText("Owner only");
+    await screen.findByText("Not in your role");
     expect(api.calls.filter((c) => c.path.startsWith("/api/users") || c.path.startsWith("/api/audit"))).toHaveLength(0);
   });
 });

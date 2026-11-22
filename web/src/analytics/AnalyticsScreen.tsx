@@ -6,6 +6,7 @@ import { navigate, useRoute } from "../router";
 import { switcherDomains } from "../shell/palette";
 import { useOpenSheets } from "../shell/Sheet";
 import { Kbd, ScreenHeader, Seg } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { Breakdowns } from "./Breakdowns";
 import { ClicksChart } from "./ClicksChart";
@@ -43,7 +44,9 @@ const HOURLY_EMPTY = {
 const DEBOUNCE_MS = 250;
 
 export function AnalyticsScreen() {
-  const { domains, overlay } = useApp();
+  const { me, domains: listed, overlay } = useApp();
+  // R10: a domain manager also lists domains they cannot use (canUse false); their analytics need analytics.all.
+  const domains = can(me, "analytics.all") ? listed : listed.filter((d) => d.canUse !== false);
   const sheets = useOpenSheets();
   const { query } = useRoute();
   const today = utcToday();

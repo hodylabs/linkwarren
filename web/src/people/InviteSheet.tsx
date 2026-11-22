@@ -4,6 +4,7 @@ import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
 import { Seg, Switch } from "../shell/ui";
+import { isOwner } from "../perms";
 import { useApp } from "../state";
 
 /** Invite sheet hotkeys and their text on the shortcuts sheet. */
@@ -114,7 +115,8 @@ export function InviteSheet() {
             </div>
             <div className="f">
               <h3 className="lbl">Role</h3>
-              <Seg label="Role" options={ROLES} value={role} onChange={setRole} />
+              {/* Only owners invite owners (R4); the role picker for people managers is its own task. */}
+              {isOwner(app.me) ? <Seg label="Role" options={ROLES} value={role} onChange={setRole} /> : <p>Member</p>}
             </div>
             {role === "member" && (
               <div className="f">

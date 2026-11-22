@@ -5,9 +5,10 @@ import App from "../App";
 import type { Domain, Me, UserItem } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
+import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const dom = (id: string, host: string, type: Domain["type"]): Domain => ({
   id, host, type, status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: true,

@@ -5,6 +5,7 @@ import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Seg } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { apexOf, normalizeHost } from "../../../src/host";
 import { CfStatus } from "./CfStatus";
@@ -17,8 +18,8 @@ type Made = Pick<Domain, "id" | "host"> & { cloudflare?: CfView };
 /** Add domain sheet hotkeys and their text on the shortcuts sheet. */
 export const ADD_DOMAIN_KEYS = {
   "mod+enter": "Add the domain, in the Add a domain sheet",
-  "mod+shift+enter": "Add anyway after the DNS records warning, in the Add a domain sheet (owner)",
-  f: "Finish connecting the new domain, in the Add a domain sheet (owner)",
+  "mod+shift+enter": "Add anyway after the DNS records warning, in the Add a domain sheet",
+  f: "Finish connecting the new domain, in the Add a domain sheet",
 } as const;
 const TYPES: { value: Type; label: string }[] = [
   { value: "main", label: "Main" },
@@ -32,7 +33,7 @@ const APPROVAL_LINE = "You can create links on it straight away. They start work
 
 export function AddDomainSheet() {
   const app = useApp();
-  const isOwner = app.me.role === "owner";
+  const admin = can(app.me, "domains.manage"); // the type picker, Add anyway and Finish connecting (S8 R8)
   const [host, setHost] = useState("");
   const [type, setType] = useState<Type>("private");
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +48,7 @@ export function AddDomainSheet() {
   const latest = connected ?? initial;
   const poll = useCfPoll(made?.id ?? null, latest !== null && !cfSettled(latest), connected);
   const view = poll.view ?? latest;
-  const canFinish = isOwner && view !== null && needsFinish(view);
+  const canFinish = admin && view !== null && needsFinish(view);
 
   const submit = async (confirmTakeover = false) => {
     if (busy.current || made) return;
@@ -58,7 +59,7 @@ export function AddDomainSheet() {
     busy.current = true;
     setError(null);
     try {
-      const body = { host: h, type: isOwner ? type : "private", ...(confirmTakeover ? { confirmTakeover: true } : {}) };
+      const body = { host: h, type: admin ? type : "private", ...(confirmTakeover ? { confirmTakeover: true } : {}) };
       const res = await api<Made>("POST", "/api/domains", body);
       setTakeover(null);
       setMade(res); // a no-op once this sheet is dismissed, so a late answer never steers a newer sheet
@@ -66,7 +67,7 @@ export function AddDomainSheet() {
       app.announce(refreshed ? `Added ${res.host}` : "Added, but the list could not be refreshed");
     } catch (e) {
       const code = e instanceof ApiError ? e.code : "internal";
-      if (code === "dns_record_exists" && isOwner) setTakeover(h);
+      if (code === "dns_record_exists" && admin) setTakeover(h);
       else setError(code); // typed values stay in the form
     } finally {
       busy.current = false;
@@ -112,7 +113,7 @@ export function AddDomainSheet() {
     ? <div className="callout wait">{MANUAL_NOTE}</div>
     : view.kind === "outside"
       ? <div className="callout wait">{outsideNote(apex)}</div>
-      : <div className="callout ok">{`${apex} is in your Cloudflare account, so linkwarren attaches it directly.${isOwner ? "" : " The owner attaches it when they approve the domain."}`}</div>;
+      : <div className="callout ok">{`${apex} is in your Cloudflare account, so linkwarren attaches it directly.${admin ? "" : " The owner attaches it when they approve the domain."}`}</div>;
 
   return (
     <Sheet label="Add a domain" onClose={app.close}>
@@ -134,14 +135,14 @@ export function AddDomainSheet() {
                 {error === "not_verified" ? "Checks have not passed yet" : errorText(error)}
               </p>
             )}
-            {!isOwner && (
+            {!admin && (
               <p className="hint">
                 {view?.kind === "outside" ? "You can create links on it straight away. They start working once the record is found and the owner approves the domain." : APPROVAL_LINE}
               </p>
             )}
           </div>
           <div className="sh-foot">
-            <span className="left">{!isOwner ? "Members' domains need the owner's approval" : view && !cfSettled(view) ? "Checks keep running while this is open" : ""}</span>
+            <span className="left">{!admin ? "Members' domains need the owner's approval" : view && !cfSettled(view) ? "Checks keep running while this is open" : ""}</span>
             {canFinish && (
               <button type="button" className="btn" onClick={() => void connect()} aria-keyshortcuts="F">
                 Finish connecting <kbd>F</kbd>
@@ -183,14 +184,14 @@ export function AddDomainSheet() {
             </div>
             <div className="f">
               <h3 className="lbl">Type</h3>
-              {isOwner ? <Seg label="Type" options={TYPES} value={type} onChange={setType} /> : <p className="hint">Private</p>}
+              {admin ? <Seg label="Type" options={TYPES} value={type} onChange={setType} /> : <p className="hint">Private</p>}
             </div>
             {takeover && (
               <div className="callout wait" role="alert">
                 {`${takeover} already has DNS records in your account. Adding it sends its traffic to linkwarren.`}
               </div>
             )}
-            {!isOwner && <p className="hint">{APPROVAL_LINE}</p>}
+            {!admin && <p className="hint">{APPROVAL_LINE}</p>}
           </div>
           <div className="sh-foot">
             <span className="left">Members' domains need the owner's approval</span>
