@@ -287,7 +287,7 @@ describe("check", () => {
 describe("me", () => {
   it("returns id, email, name and role", async () => {
     await run("UPDATE users SET name = 'Ann' WHERE id = 'ua'");
-    expect(await (await call("a", "GET", "/api/me")).json()).toEqual({ id: "ua", email: EMAIL.a, name: "Ann", role: "member" });
+    expect(await (await call("a", "GET", "/api/me")).json()).toEqual({ id: "ua", email: EMAIL.a, name: "Ann", role: "member", authMode: "access" });
   });
 });
 

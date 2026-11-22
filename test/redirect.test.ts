@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { signedIn } from "./helpers/session";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 let n = 0;
@@ -166,6 +167,25 @@ describe("redirect", () => {
     for (const s of ["app", "qr"]) {
       const r = await get(d.host, `/${s}`, { redirect: "manual" });
       expect([r.status, r.headers.get("location")]).toEqual([302, `https://x.com/${s}`]);
+    }
+  });
+
+  it("short hosts never emit Set-Cookie, even for a request carrying a valid session cookie (app mode)", async () => {
+    const e = env as { AUTH_MODE?: string };
+    const orig = e.AUTH_MODE;
+    e.AUTH_MODE = "app";
+    try {
+      const { cookie } = await signedIn("sc@example.com");
+      const d = await seed();
+      await addLink(d, "c1");
+      const b = await seed({ bare: "https://bare.test/" });
+      for (const [host, path] of [[d.host, "/c1"], [d.host, "/nope"], [d.host, "/"], [b.host, "/"]] as const) {
+        const r = await get(host, path, { redirect: "manual", headers: { cookie } });
+        expect(r.status).not.toBe(500);
+        expect(r.headers.get("set-cookie")).toBeNull();
+      }
+    } finally {
+      e.AUTH_MODE = orig;
     }
   });
 });

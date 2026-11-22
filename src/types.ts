@@ -2,6 +2,8 @@ export type UserRow = {
   id: string; email: string; name: string | null;
   role: "owner" | "member"; status: "invited" | "active" | "disabled"; createdAt: number;
 };
+/** The public side of an app-mode session (never the cookie secret or its hash). */
+export type SessionRef = { id: string; createdAt: number };
 export type DomainRow = {
   id: string; host: string; type: "main" | "shared" | "private";
   status: "pending" | "active" | "disabled"; ownerId: string;
@@ -64,3 +66,9 @@ export const rowToCf = (r: R): CfRow => ({
   checkedAt: r.checked_at as number | null, securityLevel: r.security_level as string | null, rateLimit: r.rate_limit as number | null,
   updatedAt: r.updated_at as number,
 });
+
+/** What the API shows about a passkey (never the credential id, public key or counter). */
+export type PasskeyItem = { id: string; name: string; createdAt: number; lastUsedAt: number | null; backedUp: boolean };
+
+/** One live session of the signed-in person (never the cookie secret or its hash). */
+export type SessionItem = { id: string; current: boolean; method: "email" | "passkey"; createdAt: number; lastSeenAt: number; device: string | null; ipPrefix: string | null };

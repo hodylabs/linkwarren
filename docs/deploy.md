@@ -9,14 +9,16 @@ Copy `wrangler.instance.example.jsonc` to `wrangler.instance.jsonc` (gitignored)
 Required vars:
 
 - `DASHBOARD_HOST`: the hostname that serves the dashboard and API. If it is missing or blank, every request answers `500 {"error":"misconfigured"}`.
-- `ACCESS_TEAM_DOMAIN`: your Cloudflare Access team domain, e.g. `your-team.cloudflareaccess.com`.
-- `ACCESS_AUD`: the audience tag of the Access application that protects the dashboard host.
+- `AUTH_MODE`: how people sign in, `app` (the default) or `access`. See [Sign-in](#sign-in).
+- App mode: `EMAIL_FROM`, the sender address of sign-in emails, e.g. `links@example.com`.
+- Access mode only: `ACCESS_TEAM_DOMAIN` (your Cloudflare Access team domain, e.g. `your-team.cloudflareaccess.com`) and `ACCESS_AUD` (the audience tag of the Access application that protects the dashboard host).
 
-Required secret:
+Required secrets:
 
 - `OWNER_EMAIL`: the email that becomes the owner on first sign-in. Only that email can bootstrap, and only while the users table is empty.
+- App mode: `RESEND_API_KEY`, the Resend API key that sends sign-in emails (`npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`).
 
-Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it to `vars`: a var with the same name replaces the secret on the next deploy.
+Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it (or `RESEND_API_KEY`) to `vars`: a var with the same name replaces the secret on the next deploy.
 
 `ACCESS_JWKS_JSON` is **test-only**. It replaces the real Access signing keys with a local key set. Never set it in production; the app logs a warning if it is set.
 
@@ -98,11 +100,43 @@ In our tests a Worker route created through the API survived `wrangler deploy` w
 
 Disabled domains are skipped. Each call repairs at most 3 domains (in domain id order) so it stays within the Workers Free limit of 50 subrequests per request. The answer is `{ ok, failed, next }`: while `next` is not null, call again with `{ "after": "<next>" }` until it is. Each failure carries one of the codes listed under Status in [domains.md](domains.md). When Cloudflare cannot be reached (`cloudflare_unreachable`) the call stops at that domain and `next` points at it, so the retry starts there; any other code is per domain and the run goes on. The dashboard repeats the calls for you.
 
-## Access
+## Sign-in
 
-Create a Cloudflare Access application on the dashboard host only. Short domains must stay public. Take its audience tag for `ACCESS_AUD`.
+`AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. The value is trimmed and must then be exactly `app` or `access` (lowercase); any other value fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting.
+
+### App mode (default)
+
+linkwarren signs people in itself, with an email link or a passkey. No Access application is needed.
+
+- Set the var `EMAIL_FROM` (e.g. `links@example.com`) and the secret `RESEND_API_KEY`. Without both, `POST /auth/email` answers `503 {"error":"email_not_configured"}`.
+- `/healthz` is public on the dashboard host; no bypass is needed.
+- `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are not used.
+
+#### Email sign-in links (Resend)
+
+Sign-in links are sent through [Resend](https://resend.com) only.
+
+1. Add and verify your sending domain in Resend (the domain of `EMAIL_FROM`).
+2. In the domain's settings, turn **click tracking and open tracking off**. Click tracking would route the sign-in link through a third-party redirect, and open tracking adds an image.
+3. Create an API key with **sending access only**, restricted to that domain.
+4. Store it as a secret: `npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`. Never put it in `vars`.
+5. Set the var `EMAIL_FROM`, e.g. `links@example.com`.
+
+How the link works: a person enters their email, and if it can sign in here (an active or invited person, or `OWNER_EMAIL` while there are no users yet) they get a link to `https://<dashboard host>/sign-in#token=...`. The token is in the URL fragment, so it never reaches server logs or a `Referer`. It works once and expires after 15 minutes. The answer is always the same `202`, whether or not a mail goes out, so the form never tells which addresses have accounts.
+
+Limits (all in D1, no paid features): 5 requests per address and 20 per IP range (/24 or /48) every 15 minutes, 20 failed link checks per IP range every 15 minutes, and at most 50 sign-in emails per hour for the whole instance. The Resend free tier sends 100 emails a day; the hourly cap keeps a flood of requests for known addresses from spending it. At the cap the request still gets the normal answer, no mail is sent, and the Worker logs `email_cap`. Resend errors are logged as `resend_rejected <status>` or `resend_network`, never with the message.
+
+### Access mode
+
+Set `AUTH_MODE` to `access`. Cloudflare Access signs people in, exactly as before this mode switch; `/auth/*` and `/api/account/*` answer 404.
+
+Create a Cloudflare Access application on the dashboard host only. Short domains must stay public. Take its audience tag for `ACCESS_AUD`, and set `ACCESS_TEAM_DOMAIN`.
 
 Health checks: `/healthz` sits behind Access on the dashboard host. Add an Access bypass policy for the path `/healthz`, or give the monitor a service token, otherwise the check gets a login redirect.
+
+### Upgrading an existing instance
+
+Instances deployed before the sign-in modes used Access. The default is now app mode, so **set `AUTH_MODE` to `access` before deploying this version** to keep Access. Without it the dashboard switches to app mode and the Access token is ignored. To move to app mode later, set `EMAIL_FROM` and `RESEND_API_KEY`, apply the migrations, deploy, and then remove the Access application.
 
 ## Behaviour to know
 

@@ -58,3 +58,35 @@ describe("schema", () => {
     expect(await db.prepare("SELECT kind FROM domain_cf WHERE domain_id = 'd5'").first()).toEqual({ kind: "manual" });
   });
 });
+
+describe("sign-in schema", () => {
+  const session = (id: string, hash: string, uid: string, method = "email") =>
+    run("INSERT INTO sessions (id,token_hash,user_id,method,created_at,last_seen_at,expires_at) VALUES (?,?,?,?,1,1,61)", id, hash, uid, method);
+  const passkey = (id: string, cred: string, uid: string) =>
+    run("INSERT INTO passkeys (id,credential_id,user_id,public_key,name,created_at) VALUES (?,?,?,'pk','Key',1)", id, cred, uid);
+  const n = async (t: string, uid: string) =>
+    (await db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE user_id = ?`).bind(uid).first<{ n: number }>())!.n;
+
+  it("deleting a user cascades its sessions and passkeys", async () => {
+    await user("su1", "s1@x.com");
+    await session("ss1", "h1", "su1");
+    await passkey("sp1", "c1", "su1");
+    await run("DELETE FROM users WHERE id = 'su1'");
+    expect(await n("sessions", "su1")).toBe(0);
+    expect(await n("passkeys", "su1")).toBe(0);
+  });
+
+  it("rejects method 'sms' and purpose 'x'", async () => {
+    await user("su2", "s2@x.com");
+    expect(await msg(session("ss2", "h2", "su2", "sms"))).toContain("CHECK");
+    expect(await msg(run("INSERT INTO auth_challenges (challenge,purpose,expires_at) VALUES ('c','x',1)"))).toContain("CHECK");
+  });
+
+  it("rejects a duplicate token_hash and credential_id", async () => {
+    await user("su3", "s3@x.com");
+    await session("ss3", "h3", "su3");
+    expect(await msg(session("ss4", "h3", "su3"))).toContain("UNIQUE");
+    await passkey("sp3", "c3", "su3");
+    expect(await msg(passkey("sp4", "c3", "su3"))).toContain("UNIQUE");
+  });
+});

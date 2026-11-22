@@ -97,3 +97,29 @@ describe("rows outside the target stay identical", () => {
     expect(await others({ user: "ui" })).toEqual(before);
   });
 });
+
+describe("sign-in tables: deletes and renames touch only the target", () => {
+  it("passkey rename and remove, session end, sign-out-everywhere leave a second person's rows alone", async () => {
+    const { signedIn, withCookie } = await import("./helpers/session");
+    const mode = env as { AUTH_MODE?: string };
+    const prev = mode.AUTH_MODE;
+    mode.AUTH_MODE = "app";
+    try {
+      await env.DB.batch(["passkeys", "sessions", "audit_log"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+      const a = await signedIn("sa@example.com"), b = await signedIn("sb@example.com");
+      for (const [id, u] of [["pa", a.user.id], ["pb", b.user.id]] as const)
+        await run("INSERT INTO passkeys (id,credential_id,user_id,public_key,counter,name,created_at) VALUES (?,?,?,'k',0,'n',1)", id, `c${id}`, u);
+      const theirs = { passkeys: await rows("SELECT * FROM passkeys WHERE user_id = ?", b.user.id), sessions: await rows("SELECT * FROM sessions WHERE user_id = ?", b.user.id) };
+      const go = (method: string, path: string, body?: unknown) => dash(path, withCookie(a.cookie, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }));
+      expect((await go("PATCH", "/api/account/passkeys/pb", { name: "x" })).status).toBe(404);
+      expect((await go("PATCH", "/api/account/passkeys/pa", { name: "x" })).status).toBe(200);
+      expect((await go("DELETE", "/api/account/passkeys/pb")).status).toBe(404);
+      expect((await go("DELETE", "/api/account/passkeys/pa")).status).toBe(204);
+      expect((await go("DELETE", `/api/account/sessions/${(theirs.sessions[0] as { id: string }).id}`)).status).toBe(404);
+      expect((await go("POST", "/api/account/sign-out-everywhere")).status).toBe(204);
+      expect({ passkeys: await rows("SELECT * FROM passkeys WHERE user_id = ?", b.user.id), sessions: await rows("SELECT * FROM sessions WHERE user_id = ?", b.user.id) }).toEqual(theirs);
+    } finally {
+      mode.AUTH_MODE = prev;
+    }
+  });
+});

@@ -12,9 +12,13 @@ export default defineConfig(async () => {
           bindings: {
             TEST_MIGRATIONS: migrations,
             DASHBOARD_HOST: "dash.test",
+            // The S1 suites run in access mode; app-mode tests set AUTH_MODE = "app" themselves.
+            AUTH_MODE: "access",
             ACCESS_TEAM_DOMAIN: "team.example.cloudflareaccess.com",
             ACCESS_AUD: "test-aud",
             OWNER_EMAIL: "owner@example.com",
+            EMAIL_FROM: "links@example.com",
+            RESEND_API_KEY: "re_test",
             CF_CNAME_TARGET: "edge.test",
           },
           // Test-only stand-in for the Workers static-assets binding (real one is instance config).

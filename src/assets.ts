@@ -17,5 +17,17 @@ export async function serveDashboard(req: Request, env: Env): Promise<Response> 
     res = await env.ASSETS.fetch(new Request(new URL("/", req.url), { method: req.method, headers: req.headers }));
   const out = new Response(res.body, res);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
+  // R4: the sign-in link token sits in this page's fragment; no Referer may leave it, on any spelling of the path.
+  if (signInPath(url.pathname)) out.headers.set("Referrer-Policy", "no-referrer");
   return out;
+}
+
+/** True for every path that normalizes to /sign-in: percent-decoded, repeated slashes collapsed, trailing slashes dropped. */
+function signInPath(p: string): boolean {
+  try {
+    p = decodeURIComponent(p);
+  } catch {
+    // malformed escapes: compare the raw path
+  }
+  return p.replace(/\/{2,}/g, "/").replace(/\/+$/, "") === "/sign-in";
 }

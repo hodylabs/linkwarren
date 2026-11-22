@@ -15,6 +15,11 @@
   "kv_namespaces": [{ "binding": "CACHE", "id": "<your-kv-namespace-id>" }],
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
+    // "app" (linkwarren's own sign-in, the default) or "access" (Cloudflare Access). See docs/deploy.md "Sign-in".
+    "AUTH_MODE": "app",
+    // App mode: sign-in email sender. The key is a secret: wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc
+    "EMAIL_FROM": "links@example.com",
+    // Access mode only:
     "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
     "ACCESS_AUD": "<your-access-application-aud-tag>",
     // Optional: Cloudflare domain onboarding (see docs/deploy.md). Leave these out to add domains by hand.

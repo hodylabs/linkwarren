@@ -1,0 +1,68 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { emailConfigured, escapeHtml, sendEmail, signInEmail } from "../src/email";
+import type { Env } from "../src/env";
+
+const cfg = (o: Partial<Env> = {}) => ({ EMAIL_FROM: "links@example.com", RESEND_API_KEY: "re_test", ...o }) as Env;
+const mail = { to: "a@example.com", subject: "s", text: "t", html: "<p>t</p>" };
+afterEach(() => { vi.restoreAllMocks(); });
+
+describe("escapeHtml", () => {
+  it("escapes the five HTML metacharacters", () => {
+    expect(escapeHtml(`<a href="x">&'`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&#39;");
+  });
+});
+
+describe("signInEmail", () => {
+  const m = signInEmail({ host: "a<b>.test", url: "https://a<b>.test/sign-in#token=x&y" });
+  it("has the exact subject and text", () => {
+    expect(m.subject).toBe("Your sign-in link for linkwarren");
+    expect(m.text).toBe(
+      "Use this link to sign in to linkwarren at a<b>.test:\n\nhttps://a<b>.test/sign-in#token=x&y\n\n" +
+        "It works once and expires in 15 minutes. If you did not ask for it, ignore this email. Nobody can sign in without it.\n",
+    );
+  });
+  it("escapes every interpolation in the HTML, one link, no images", () => {
+    expect(m.html).not.toContain("a<b>");
+    expect(m.html).toContain("a&lt;b&gt;.test");
+    expect(m.html).toContain('<a href="https://a&lt;b&gt;.test/sign-in#token=x&amp;y">');
+    expect(m.html.match(/<a /g)).toHaveLength(1);
+    expect(m.html).not.toContain("<img");
+    expect(m.html).toContain("<p>It works once and expires in 15 minutes.");
+  });
+});
+
+describe("emailConfigured", () => {
+  it.each([[{}, true], [{ EMAIL_FROM: " " }, false], [{ RESEND_API_KEY: "" }, false], [{ RESEND_API_KEY: undefined }, false]])("%j -> %j", (o, want) => {
+    expect(emailConfigured(cfg(o as Partial<Env>))).toBe(want);
+  });
+});
+
+describe("sendEmail", () => {
+  it("posts the JSON body with the bearer key and a timeout", async () => {
+    const f = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) => Response.json({ id: "1" }));
+    expect(await sendEmail(cfg(), mail, f as typeof fetch)).toEqual({ ok: true });
+    const [u, init] = f.mock.calls[0]!;
+    expect(u).toBe("https://api.resend.com/emails");
+    expect(init!.method).toBe("POST");
+    expect(new Headers(init!.headers).get("authorization")).toBe("Bearer re_test");
+    expect(new Headers(init!.headers).get("content-type")).toBe("application/json");
+    expect(JSON.parse(String(init!.body))).toEqual({ from: "links@example.com", to: ["a@example.com"], subject: "s", text: "t", html: "<p>t</p>" });
+    expect(init!.signal).toBeInstanceOf(AbortSignal);
+  });
+  it("returns not_configured without a fetch when the key is unset", async () => {
+    const f = vi.fn();
+    expect(await sendEmail(cfg({ RESEND_API_KEY: undefined }), mail, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "not_configured" });
+    expect(f).not.toHaveBeenCalled();
+  });
+  it("returns rejected on 422 and logs the status only", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const f = vi.fn(async () => Response.json({ message: "bad re_test a@example.com" }, { status: 422 }));
+    expect(await sendEmail(cfg(), mail, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "rejected" });
+    expect(warn.mock.calls).toEqual([["resend_rejected", 422]]);
+  });
+  it("returns network when fetch throws", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const f = vi.fn(async () => { throw new Error("boom re_test"); });
+    expect(await sendEmail(cfg(), mail, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "network" });
+  });
+});
