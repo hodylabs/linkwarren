@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { api, ApiError, type ConnectionItem, type KeyItem } from "../api";
+import { api, ApiError, type ConnectionItem, type KeyItem, type McpState } from "../api";
 import { errorText } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
@@ -286,7 +286,9 @@ export function AgentsScreen() {
   const [conns, setConns] = useState<ConnectionItem[] | null>(null);
   const [keys, setKeys] = useState<KeyItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mcp, setMcp] = useState<"on" | "off" | null>(null);
+  const [mcpState, setMcpState] = useState<McpState | null>(null);
+  const [mcpError, setMcpError] = useState<string | null>(null);
+  const mcp = mcpState === null ? null : mcpState.on ? "on" : "off";
   const [client, setClient] = useState<Client>("claude");
   const [modal, setModal] = useState(false);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
@@ -323,15 +325,21 @@ export function AgentsScreen() {
     lastOverlay.current = overlay?.kind;
   }, [overlay, load]);
 
-  // MCP off answers JSON 404 on /mcp; on, an unauthenticated GET is a 401. Not api(): a 401 here is not a sign-out.
-  useEffect(() => {
-    const ac = new AbortController();
-    fetch("/mcp", { credentials: "same-origin", signal: ac.signal }).then(
-      (r) => setMcp(r.status === 404 ? "off" : "on"),
-      () => void (!ac.signal.aborted && setMcp("on")),
+  const loadMcp = useCallback(() => api<McpState>("GET", "/api/agents/mcp").then(setMcpState, (e: unknown) => setMcpError(errorText(code(e)))), []);
+  useEffect(() => void loadMcp(), [loadMcp]);
+  const setMcpOn = (on: boolean) => {
+    setMcpError(null);
+    api<McpState>("PUT", "/api/agents/mcp", { on }).then(
+      (st) => {
+        setMcpState(st);
+        app.announce(st.on ? "Agent connections on" : "Agent connections off");
+      },
+      (e: unknown) => {
+        setMcpError(errorText(code(e)));
+        void loadMcp();
+      },
     );
-    return () => ac.abort();
-  }, []);
+  };
 
   const person = (userId: string, email: string | null): Person => {
     if (userId === me.id) return { label: "You", name: me.name, email: me.email, own: true };
@@ -439,7 +447,34 @@ export function AgentsScreen() {
                 never see or change more than you can.
               </p>
             </div>
-            {mcp === "off" && <p className="callout wait">Agent connections are turned off on this instance. The owner turns them on with MCP_ENABLED.</p>}
+            {mcpState && (
+              <div className="toggle">
+                <div id="mcp-hint">
+                  Agent connections (MCP)
+                  <small>
+                    {mcpState.locked
+                      ? "Locked off by the deploy config (MCP_ENABLED=0)."
+                      : mcpState.on
+                        ? "Turning this off does not disconnect agents. Their calls are refused until you turn it back on."
+                        : isOwner
+                          ? "Agents cannot connect until you turn this on."
+                          : "Agent connections are turned off on this instance. Ask the owner."}
+                  </small>
+                </div>
+                {isOwner ? (
+                  <fieldset className="plain" disabled={mcpState.locked}>
+                    <Switch checked={mcpState.on} onChange={setMcpOn} label="Agent connections (MCP)" describedBy="mcp-hint" disabled={mcpState.locked} />
+                  </fieldset>
+                ) : (
+                  <Tag tone={mcpState.on ? "ok" : "off"}>{mcpState.on ? "On" : "Off"}</Tag>
+                )}
+              </div>
+            )}
+            {mcpError && (
+              <p className="err" role="alert">
+                {mcpError}
+              </p>
+            )}
             {mcp === "on" && (
               <>
                 <div className="mcp">

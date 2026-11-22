@@ -33,7 +33,7 @@ function boot(me: Me, routes: FakeRoutes = {}) {
     "GET /api/me": () => ({ body: me }),
     "GET /api/domains": () => ({ body: [MAIN] }),
     "GET /api/users": () => ({ body: { items: [dana] } }),
-    "GET /mcp": () => ({ status: 401, body: { error: "invalid_token" } }),
+    "GET /api/agents/mcp": () => ({ body: { on: true, locked: false } }),
     "GET /api/agents/connections": () => ({ body: { items: [conn({})] } }),
     "GET /api/keys": () => ({ body: { items: [key({})] } }),
     "GET /api/agents/connections/c1/calls": () => ({ body: { items: [{ at: now, tool: "search_links", status: "ok" }, { at: now, tool: "delete_link", status: "refused" }] } }),
@@ -106,10 +106,73 @@ describe("API & agents screen", () => {
     expect(screen.getByText(`codex mcp add linkwarren --url ${mcpUrl()}, then codex mcp login linkwarren`)).toBeTruthy();
   });
 
-  it("shows the off copy when /mcp answers 404", async () => {
-    boot(member, { "GET /mcp": () => ({ status: 404, body: { error: "not_found" } }) });
-    expect(await screen.findByText("Agent connections are turned off on this instance. The owner turns them on with MCP_ENABLED.")).toBeTruthy();
+  const sw = () => screen.findByRole("switch", { name: "Agent connections (MCP)" });
+  const OLD_COPY = "The owner turns them on with MCP_ENABLED.";
+
+  it("the owner's switch reflects the state, and Space turns it off and hides the address", async () => {
+    const { api, user } = boot(owner, { "PUT /api/agents/mcp": () => ({ body: { on: false, locked: false } }) });
+    const s = await sw();
+    expect(s.getAttribute("aria-checked")).toBe("true");
+    expect(s.getAttribute("aria-describedby")).toBeTruthy();
+    expect(await screen.findByText(mcpUrl())).toBeTruthy();
+    expect(screen.getByText("Turning this off does not disconnect agents. Their calls are refused until you turn it back on.")).toBeTruthy();
+    s.focus();
+    await user.keyboard(" ");
+    await waitFor(() => expect(screen.queryByText(mcpUrl())).toBeNull());
+    expect(api.calls.find((c) => c.method === "PUT" && c.path === "/api/agents/mcp")?.body).toEqual({ on: false });
+    expect(screen.getByText("Agent connections off")).toBeTruthy();
+    expect((await sw()).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("owner with MCP off (not locked) sees the switch off and no MCP_ENABLED instruction", async () => {
+    boot(owner, { "GET /api/agents/mcp": () => ({ body: { on: false, locked: false } }) });
+    expect((await sw()).getAttribute("aria-checked")).toBe("false");
     expect(screen.queryByText(mcpUrl())).toBeNull();
+    expect(document.body.textContent).not.toContain("MCP_ENABLED");
+  });
+
+  it("locked off: the switch is disabled with the locked text and Space sends nothing", async () => {
+    const { api, user } = boot(owner, { "GET /api/agents/mcp": () => ({ body: { on: false, locked: true } }) });
+    const s = (await sw()) as HTMLButtonElement;
+    expect(s.disabled).toBe(true);
+    expect(s.closest("fieldset")?.disabled).toBe(true);
+    expect(screen.getByText("Locked off by the deploy config (MCP_ENABLED=0).")).toBeTruthy();
+    s.focus();
+    await user.keyboard(" ");
+    expect(api.calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("a 409 mcp_locked shows its message and reloads the state", async () => {
+    let gets = 0;
+    const { user } = boot(owner, {
+      "GET /api/agents/mcp": () => ({ body: ++gets === 1 ? { on: true, locked: false } : { on: false, locked: true } }),
+      "PUT /api/agents/mcp": () => ({ status: 409, body: { error: "mcp_locked" } }),
+    });
+    await user.click(await sw());
+    expect(await screen.findByText("Locked off by the deploy config (MCP_ENABLED=0).")).toBeTruthy();
+    expect(((await sw()) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("alert").textContent).toBe(errorText("mcp_locked"));
+  });
+
+  it("a member sees a read-only On tag, no switch, and the address", async () => {
+    boot(member);
+    expect(await screen.findByText(mcpUrl())).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: "Agent connections (MCP)" })).toBeNull();
+    expect(screen.getByText("On").className).toContain("t-ok");
+  });
+
+  it("a member with MCP off sees an Off tag and the ask-the-owner copy", async () => {
+    boot(member, { "GET /api/agents/mcp": () => ({ body: { on: false, locked: false } }) });
+    expect(await screen.findByText("Agent connections are turned off on this instance. Ask the owner.")).toBeTruthy();
+    expect(screen.getByText("Off").className).toContain("t-off");
+    expect(screen.queryByText(mcpUrl())).toBeNull();
+    expect(document.body.textContent).not.toContain(OLD_COPY);
+  });
+
+  it("never probes /mcp itself", async () => {
+    const { api } = boot(owner);
+    await sw();
+    expect(api.calls.some((c) => c.path === "/mcp")).toBe(false);
   });
 
   it("J then Shift+D asks, and Enter disconnects", async () => {
@@ -166,7 +229,7 @@ describe("API & agents screen", () => {
     expect(screen.queryByRole("switch", { name: /Read/ })).toBeNull();
     expect(screen.getAllByRole("switch")).toHaveLength(2);
     expect(await screen.findByText("search_links")).toBeTruthy();
-    expect(screen.getByText(/refused/)).toBeTruthy();
+    expect(screen.getByText("refused")).toBeTruthy();
     expect(screen.getByText("Shown in the audit log as Mia via Claude")).toBeTruthy();
   });
 

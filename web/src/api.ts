@@ -7,6 +7,8 @@ export type ConnectionItem = {
   write: boolean; del: boolean; createdAt: number; lastUsedAt: number | null; calls7d: number;
 };
 /** `authMode` and `passkeys` come from /api/me; optional so a Me built without them reads as access mode. */
+/** GET /api/agents/mcp: whether agent connections are on, and whether the deploy config locks them off. */
+export type McpState = { on: boolean; locked: boolean };
 export type Me = Pick<UserRow, "id" | "email" | "name" | "role"> & { authMode?: "app" | "access"; passkeys?: number };
 export type { PasskeyItem, Route, RouteDevice, SessionItem } from "../../src/types";
 export type Link = ApiLink;

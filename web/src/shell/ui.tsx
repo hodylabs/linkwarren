@@ -27,8 +27,8 @@ export const Chip = ({ pressed, onClick, children }: { pressed: boolean; onClick
 );
 
 /** A real button, so Space and Enter toggle it natively. */
-export const Switch = ({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) => (
-  <button type="button" role="switch" aria-checked={checked} aria-label={label} className={checked ? "sw on" : "sw"} disabled={disabled} onClick={() => onChange(!checked)} />
+export const Switch = ({ checked, onChange, label, disabled, describedBy }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean; describedBy?: string }) => (
+  <button type="button" role="switch" aria-checked={checked} aria-label={label} aria-describedby={describedBy} className={checked ? "sw on" : "sw"} disabled={disabled} onClick={() => onChange(!checked)} />
 );
 
 /** Segmented radio group: one tab stop, arrow keys move and select. */

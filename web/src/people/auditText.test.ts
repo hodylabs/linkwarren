@@ -9,6 +9,11 @@ const mk = (o: Partial<AuditItem>): AuditItem => ({
 const d = (o: Partial<AuditItem>, me = "uo") => describeAudit(mk(o), me);
 
 describe("describeAudit", () => {
+  it("settings.update for mcp.enabled", () => {
+    expect(d({ action: "settings.update", targetType: "settings", targetId: "mcp.enabled", detail: { key: "mcp.enabled", value: "1" } }).text).toBe("turned agent connections on");
+    expect(d({ action: "settings.update", targetType: "settings", targetId: "mcp.enabled", detail: { key: "mcp.enabled", value: "0" } }).text).toBe("turned agent connections off");
+    expect(d({ action: "settings.update", targetType: "settings", targetId: "x", detail: { key: "other" } }).text).toBe("settings.update");
+  });
   it("names the actor: You, name, email, or a deleted user", () => {
     expect(d({ actorId: "uo" }).who).toBe("You");
     expect(d({}).who).toBe("Dana R.");

@@ -86,6 +86,8 @@ const ERRORS: Record<string, string> = {
   name_taken: "You already have a key with this name. Pick another.",
   too_many_keys: "You can have at most 20 API keys, expired ones included. Revoke one first.",
   key_name: "Use 1 to 40 lowercase letters, digits or hyphens.",
+  mcp_locked: "Agent connections are locked off by the deploy config (MCP_ENABLED=0). Change the config to use the switch.",
+  unavailable: "Could not read this setting right now. Try again in a moment.",
   email_not_configured: "Sign-in email is not set up on this instance. Use a passkey or ask the owner.",
 };
 

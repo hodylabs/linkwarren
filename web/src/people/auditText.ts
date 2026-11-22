@@ -26,6 +26,9 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     case "domain.disable": return done("disabled", host ?? a.targetId);
     case "domain.update": return done("changed the settings of", host ?? a.targetId);
     case "domain.members": return done("changed who can use", host ?? a.targetId);
+    case "settings.update":
+      if (a.detail.key !== "mcp.enabled") return done(a.action, `${a.targetType} ${a.targetId}`);
+      return done(a.detail.value === "1" ? "turned agent connections on" : "turned agent connections off");
     case "lock.release": {
       // The server writes targetId "<domainId>/<key>" and detail { domainId, slugKeys }.
       const lockHost = domains.find((x) => x.id === str(a.detail.domainId))?.host;
