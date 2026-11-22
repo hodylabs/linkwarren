@@ -260,6 +260,14 @@ describe("passkey sign-in", () => {
     expect(await all("SELECT counter FROM passkeys")).toEqual([{ counter: 1 }]);
   });
 
+  it("one counter-0 assertion submitted twice at once: the single-use challenge lets exactly one make a session", async () => {
+    const { dev, id } = await enrolled();
+    const a = await dev.authenticate(await loginOptions(), { counter: 0 });
+    const rs = await Promise.all([signIn(a), signIn(a)]);
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 400]);
+    expect(await all("SELECT COUNT(*) n FROM sessions WHERE user_id = ? AND method = 'passkey'", id)).toEqual([{ n: 1 }]);
+  });
+
   it("accepts an authenticator that always reports counter 0", async () => {
     const { dev } = await enrolled();
     expect((await signIn(await dev.authenticate(await loginOptions(), { counter: 0 }))).status).toBe(200);
