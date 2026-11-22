@@ -1,8 +1,10 @@
 import type { AppState } from "../state";
 import type { Domain } from "../api";
 import { navigate } from "../router";
+import { SECTIONS } from "../settings/copy";
 
-export type Command = { keys: string; section: "Go to" | "Create" | "Switch" | "Help"; label: string; run: () => void };
+/** `quiet`: left out of the opening list; found by typing its name or its first key. */
+export type Command = { keys: string; section: "Go to" | "Create" | "Switch" | "Help"; label: string; run: () => void; quiet?: true };
 export type PaletteState = { buf: string; text: string };
 type KeyInfo = { key: string; ctrl: boolean; meta: boolean; alt: boolean; composing: boolean };
 
@@ -44,6 +46,7 @@ export function buildCommands(ctx: Ctx, isOwner: boolean, appMode = false): Comm
     go("af", "Filter analytics by domain", "/analytics?pick=1"),
     go("gi", "API & agents", "/agents"),
     ...(isOwner ? [go("gp", "People & audit log", "/people"), go("gs", "Settings", "/settings")] : []),
+    ...(isOwner ? SECTIONS.map((s, i): Command => ({ ...go(`s${i + 1}`, `Settings: ${s.label}`, `/settings/${s.id}`), quiet: true })) : []),
     ...switcherDomains(ctx.domains).slice(0, 9).map((d, i): Command => ({
       keys: `g${i + 1}`, section: "Switch", label: `Switch to ${d.host}`, run: () => ctx.setCurrentDomain(d.id),
     })),

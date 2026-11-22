@@ -17,6 +17,7 @@ import { INVITE_KEYS } from "../people/InviteSheet";
 import { PEOPLE_KEYS } from "../people/PeopleScreen";
 import { PERSON_KEYS } from "../people/PersonSheet";
 import { SETTINGS_KEYS } from "../settings/CloudflareSection";
+import { EXPORT_KEYS } from "../settings/sections";
 import { buildCommands } from "./palette";
 import { OWNER_ONLY, SCREEN_TITLES } from "./Rail";
 import { Kbd } from "./ui";
@@ -94,7 +95,16 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
     ],
   },
   { title: "New API key", rows: rows(NEW_KEY_KEYS) },
-  { title: "Settings", rows: rows(SETTINGS_KEYS) },
+  {
+    title: "Settings",
+    rows: [
+      [["↑", "↓"], "Previous or next section"], // SettingsScreen nav onKeyDown
+      [["Ctrl", "Enter"], "Save the section you are in"], // useEdit and SecretField onKeyDown
+      [["Esc"], "Revert unsaved edits in the section"],
+      ...rows(SETTINGS_KEYS),
+      ...rows(EXPORT_KEYS),
+    ],
+  },
   { title: "Sign-in and security", rows: [...rows(ACCOUNT_KEYS), [["Enter"], "Confirm"], [["Esc"], "Cancel or close"]] },
 ];
 

@@ -1,0 +1,73 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fakeApi } from "../test/fakeApi";
+import { SecretField } from "./SecretField";
+
+const STATUS = { pasteAvailable: true, cf: "missing", resend: "dashboard" } as const;
+afterEach(() => vi.unstubAllGlobals());
+
+describe("SecretField", () => {
+  it("set by a Worker secret: the status line and no input", () => {
+    render(<SecretField name="cf" status="secret" pasteAvailable onSaved={() => {}} />);
+    expect(screen.getByText("Set via Worker secret")).toBeTruthy();
+    expect(document.querySelector("input")).toBeNull();
+  });
+
+  it("missing without pasteAvailable: the wrangler command, no input", () => {
+    render(<SecretField name="resend" status="missing" pasteAvailable={false} onSaved={() => {}} />);
+    expect(screen.getByText("Missing")).toBeTruthy();
+    expect(screen.getByText("npx wrangler secret put RESEND_API_KEY")).toBeTruthy();
+    expect(document.querySelector("input")).toBeNull();
+  });
+
+  it("Ctrl+Enter saves with PUT, clears the input and never renders the value again", async () => {
+    const api = fakeApi({ "PUT /api/settings/secrets/cf": () => ({ body: { ...STATUS, cf: "dashboard" } }) });
+    const onSaved = vi.fn();
+    const user = userEvent.setup();
+    render(<SecretField name="cf" status="missing" pasteAvailable onSaved={onSaved} />);
+    const input = screen.getByLabelText("Cloudflare API token") as HTMLInputElement;
+    expect(input.type).toBe("password");
+    expect(input.getAttribute("autocomplete")).toBe("off");
+    expect(screen.getByText("Stored encrypted with this instance's secret key. It is never shown again.")).toBeTruthy();
+    await user.click(input);
+    await user.keyboard("tok_ABCDEFGHIJKLMNOPQRSTUV{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ ...STATUS, cf: "dashboard" }));
+    expect(api.calls).toEqual([{ method: "PUT", path: "/api/settings/secrets/cf", body: { value: "tok_ABCDEFGHIJKLMNOPQRSTUV" } }]);
+    expect(input.value).toBe("");
+    expect(document.body.innerHTML).not.toContain("tok_ABCDEFGHIJKLMNOPQRSTUV");
+  });
+
+  it("an empty field sends nothing; a refused value shows the copy and the code is not echoed as text", async () => {
+    const api = fakeApi({ "PUT /api/settings/secrets/resend": () => ({ status: 400, body: { error: "bad_key" } }) });
+    const user = userEvent.setup();
+    render(<SecretField name="resend" status="missing" pasteAvailable onSaved={() => {}} />);
+    await user.click(screen.getByRole("button", { name: /Save/ }));
+    expect(api.calls).toHaveLength(0);
+    await user.type(screen.getByLabelText("Resend API key"), "nope");
+    await user.click(screen.getByRole("button", { name: /Save/ }));
+    expect((await screen.findByRole("alert")).textContent).toContain("re_");
+  });
+
+  it("Remove shows only for a dashboard value and sends DELETE", async () => {
+    const api = fakeApi({ "DELETE /api/settings/secrets/resend": () => ({ body: { ...STATUS, resend: "missing" } }) });
+    const onSaved = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<SecretField name="resend" status="missing" pasteAvailable onSaved={onSaved} />);
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+    rerender(<SecretField name="resend" status="dashboard" pasteAvailable onSaved={onSaved} />);
+    expect(screen.getByText("Set in dashboard")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ ...STATUS, resend: "missing" }));
+    expect(api.calls.map((c) => c.method)).toEqual(["DELETE"]);
+  });
+
+  it("Esc clears what was typed", async () => {
+    fakeApi({});
+    const user = userEvent.setup();
+    render(<SecretField name="cf" status="missing" pasteAvailable onSaved={() => {}} />);
+    const input = screen.getByLabelText("Cloudflare API token") as HTMLInputElement;
+    await user.type(input, "abc{Escape}");
+    expect(input.value).toBe("");
+  });
+});

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError, onSignedOut, type Domain, type Me, type UserItem } from "./api";
 import { errorText } from "./copy";
+import { getInstance, type InstanceInfo } from "./settings/api";
 
 export type Overlay =
   | { kind: "palette" }
@@ -24,6 +25,9 @@ export type AppState = {
   setCurrentDomain(id: string | null): void;
   reloadDomains(): Promise<void>;
   reloadUsers(): Promise<void>;
+  /** GET /api/instance; null until loaded or when it failed (the rail then shows linkwarren). */
+  instance: InstanceInfo | null;
+  reloadInstance(): Promise<void>;
   linksVersion: number;
   bumpLinks(): void;
   overlay: Overlay | null;
@@ -67,6 +71,7 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [users, setUsers] = useState<UserItem[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(readDomain);
+  const [instance, setInstance] = useState<InstanceInfo | null>(null);
   const [linksVersion, setLinksVersion] = useState(0);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [announcement, setAnnouncement] = useState({ text: "", n: 0 });
@@ -92,6 +97,15 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
     const { items } = await api<{ items: UserItem[] }>("GET", "/api/users");
     if (g > gen.stored) { gen.stored = g; setUsers(items); }
   }, [me.role]);
+
+  const instanceGen = useRef(0);
+  const reloadInstance = useCallback(async () => {
+    const g = ++instanceGen.current;
+    const v = await getInstance();
+    if (g === instanceGen.current) setInstance(v);
+  }, []);
+  // A missing name or logo is cosmetic: the rail keeps the linkwarren defaults, so a failure here is not a load error.
+  useEffect(() => void reloadInstance().catch(() => undefined), [reloadInstance]);
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadTry, setLoadTry] = useState(0);
@@ -121,6 +135,8 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
       setCurrentDomain,
       reloadDomains,
       reloadUsers,
+      instance,
+      reloadInstance,
       linksVersion,
       bumpLinks: () => setLinksVersion((v) => v + 1),
       overlay,
@@ -131,7 +147,7 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
       loadError,
       retryLoad: () => setLoadTry((n) => n + 1),
     }),
-    [me, domains, users, currentDomainId, setCurrentDomain, reloadDomains, reloadUsers, linksVersion, overlay, signedOut, loadError],
+    [me, domains, users, currentDomainId, setCurrentDomain, reloadDomains, reloadUsers, instance, reloadInstance, linksVersion, overlay, signedOut, loadError],
   );
 
   return (

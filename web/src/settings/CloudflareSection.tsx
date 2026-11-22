@@ -4,8 +4,9 @@ import { plural } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Kbd, Switch } from "../shell/ui";
 import { useApp } from "../state";
-import { checkCloudflare, getCloudflare, PERMISSIONS, resyncBatch, setControls, setupOutside, type CheckResult, type CloudflareSettings } from "./api";
+import { checkCloudflare, getCloudflare, PERMISSIONS, resyncBatch, setControls, setupOutside, type CheckResult, type CloudflareSettings, type SecretStatus } from "./api";
 import { settingsError } from "./copy";
+import { SecretField } from "./SecretField";
 
 /** Settings hotkeys and their text on the shortcuts sheet. */
 export const SETTINGS_KEYS = {
@@ -21,7 +22,7 @@ const SSL_MISSING =
 type Resync = { running: boolean; checked: number; failed: { host: string; error: string }[]; resume: string | undefined; stopped: string | null; done: boolean };
 const IDLE: Resync = { running: false, checked: 0, failed: [], resume: undefined, stopped: null, done: false };
 
-export function CloudflareSection() {
+export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatus; onSecrets: (s: SecretStatus) => void }) {
   const { overlay } = useApp();
   const [s, setS] = useState<CloudflareSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -149,6 +150,14 @@ export function CloudflareSection() {
     overlay === null && (resync.running || !!s?.configured),
   );
 
+  // A new or removed token changes what Cloudflare answers, so the section loads again.
+  const token = (
+    <SecretField name="cf" status={secrets.cf} pasteAvailable={secrets.pasteAvailable} onSaved={(st) => {
+      onSecrets(st);
+      setCheck(null);
+      load().catch((e) => setLoadError(code(e)));
+    }} />
+  );
   if (loadError) return <p className="err" role="alert">{settingsError(loadError)}</p>;
   if (!s) return <p className="muted" role="status">Loading</p>;
   if (!s.configured)
@@ -156,6 +165,7 @@ export function CloudflareSection() {
       <section className="sblock" aria-label="Cloudflare">
         <h2>Cloudflare</h2>
         <div className="callout wait">Cloudflare is not connected. Set the CF_API_TOKEN secret and the Cloudflare variables, then reload. See the deploy guide.</div>
+        {token}
       </section>
     );
 
@@ -169,10 +179,11 @@ export function CloudflareSection() {
         Connected to the account <b>{s.accountName ?? "your Cloudflare account"}</b>. {plural(n, "domain")} in this account {n === 1 ? "is" : "are"} attached directly; outside domains use a CNAME through Cloudflare for SaaS
         {s.hostnames ? ` (${s.hostnames.used} of ${s.hostnames.limit} free hostnames used)` : ""}.
       </div>
+      {token}
       <div className="sfield">
         <div>
-          <b>API token</b>
-          <small>Stored as a Worker secret, never shown again</small>
+          <b>Token permissions</b>
+          <small>What the token may do in this Cloudflare account</small>
         </div>
         <div className="row-actions">
           <span className="muted">{!check ? "Not checked yet" : check.token === "invalid" ? "Not accepted" : `${okCount} of ${PERMISSIONS.length} permissions confirmed`}</span>

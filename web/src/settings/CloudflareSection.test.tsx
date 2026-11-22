@@ -18,12 +18,13 @@ const perms = (ssl: "ok" | "missing") => [
 ];
 
 function boot(o: { me?: Me; cfg?: Partial<CloudflareSettings>; routes?: FakeRoutes } = {}) {
-  history.replaceState(null, "", "/settings");
+  history.replaceState(null, "", "/settings/cloudflare");
   const api = fakeApi({
     "GET /api/me": () => ({ body: o.me ?? owner }),
     "GET /api/domains": () => ({ body: [] }),
     "GET /api/users": () => ({ body: { items: [] } }),
     "GET /api/settings/cloudflare": () => ({ body: { ...CFG, ...o.cfg } }),
+    "GET /api/settings": () => ({ body: { authMode: "app", dashboardHost: "links.example.com", secrets: { pasteAvailable: false, cf: "secret", resend: "missing" } } }),
     ...o.routes,
   });
   const user = userEvent.setup();

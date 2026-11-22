@@ -37,3 +37,30 @@ export const resyncBatch = (after: string | undefined, signal: AbortSignal) =>
   api<ResyncResult>("POST", "/api/settings/cloudflare/resync", after === undefined ? {} : { after }, signal);
 export const patchDomainCf = (id: string, body: ControlsPatch) =>
   api<{ securityLevel: string | null; rateLimit: number | null }>("PATCH", `/api/domains/${encodeURIComponent(id)}/cloudflare`, body);
+
+/** GET /api/instance (any signed-in user): what the rail, the document title and the link form need. */
+export type InstanceInfo = {
+  name: string | null; logoVersion: number | null; configured: boolean; dashboardHost: string; mainDomainId: string | null;
+  linkDefaults: { redirectCode: 301 | 302; passQuery: boolean };
+};
+export type SecretSource = "secret" | "dashboard" | "missing";
+export type SecretStatus = { pasteAvailable: boolean; cf: SecretSource; resend: SecretSource };
+/** GET and PATCH /api/settings (owner). Never carries a secret value, only where each one comes from. */
+export type SettingsBody = {
+  name: string | null; mainDomainId: string | null; dashboardHost: string; authMode: "app" | "access"; teamDomain?: string;
+  emailFrom: string | null; emailConfigured: boolean; secrets: SecretStatus; linkRedirectCode: 301 | 302; linkPassQuery: boolean;
+  retention: { auditDays: number; clickDetailDays: number };
+};
+export type SettingsPatch = Partial<Pick<SettingsBody, "name" | "mainDomainId" | "linkRedirectCode" | "linkPassQuery">>;
+
+/** The logo image URL; the version busts the browser cache after a replace. */
+export const logoUrl = (v: number | null) => (v === null ? "/linkwarren-mark.svg" : `/api/instance/logo?v=${encodeURIComponent(v)}`);
+
+export const getInstance = (signal?: AbortSignal) => api<InstanceInfo>("GET", "/api/instance", undefined, signal);
+export const getSettings = (signal?: AbortSignal) => api<SettingsBody>("GET", "/api/settings", undefined, signal);
+export const patchSettings = (patch: SettingsPatch) => api<SettingsBody>("PATCH", "/api/settings", patch);
+export const putLogo = (logo: { type: string; data: string }) => api<{ logoVersion: number }>("PUT", "/api/settings/logo", logo);
+export const deleteLogo = () => api<{ logoVersion: null }>("DELETE", "/api/settings/logo");
+export const putSecret = (name: "cf" | "resend", value: string) => api<SecretStatus>("PUT", `/api/settings/secrets/${name}`, { value });
+export const deleteSecret = (name: "cf" | "resend") => api<SecretStatus>("DELETE", `/api/settings/secrets/${name}`);
+export const sendTestEmail = () => api<{ ok: true }>("POST", "/api/settings/email/test", {});

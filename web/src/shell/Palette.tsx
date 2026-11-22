@@ -90,7 +90,7 @@ export function Palette() {
   } else if (buf) {
     sections.push(...cmdSections(cmds.filter((c) => c.keys.startsWith(buf.toLowerCase()))));
   } else {
-    sections.push(...cmdSections(cmds.filter((c) => c.section !== "Help")));
+    sections.push(...cmdSections(cmds.filter((c) => c.section !== "Help" && !c.quiet)));
     if (recent.length) sections.push({ title: "Recent links", items: recent.map(linkItem) });
   }
   const flat = sections.flatMap((s) => s.items);

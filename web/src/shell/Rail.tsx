@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api";
 import { errorText } from "../copy";
 import { NavLink, useRoute, type Screen } from "../router";
+import { logoUrl } from "../settings/api";
 import { useApp } from "../state";
 import { PHONE, useMedia } from "./narrow";
 import { Sheet } from "./Sheet";
@@ -76,7 +77,11 @@ function Item({ screen, current }: { screen: Screen; current: Screen }) {
 }
 
 export function Rail() {
-  const { me, domains, currentDomainId, open, close, overlay } = useApp();
+  const { me, domains, currentDomainId, open, close, overlay, instance } = useApp();
+  const name = instance?.name || "linkwarren";
+  useEffect(() => {
+    document.title = name; // R8: the instance name, as in the rail
+  }, [name]);
   const { screen } = useRoute();
   const phone = useMedia(PHONE);
   const menuOpen = overlay?.kind === "menu";
@@ -150,9 +155,9 @@ export function Rail() {
   );
   return (
     <aside className="rail" aria-label="Main">
-      <NavLink to="/links" className="brand" aria-label="linkwarren home">
-        <img src="/linkwarren-mark.svg" alt="" />
-        <span aria-hidden="true">linkwarren</span>
+      <NavLink to="/links" className="brand" aria-label={`${name} home`}>
+        <img src={logoUrl(instance?.logoVersion ?? null)} alt="" />
+        <span aria-hidden="true">{name}</span>
       </NavLink>
       <button type="button" className="switch" aria-label={`Switch domain, current ${current?.host ?? "All domains"}`} onClick={() => open({ kind: "switcher" })}>
         <span className="dot" />

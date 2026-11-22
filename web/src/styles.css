@@ -23,9 +23,9 @@ kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(
 
 /* rail */
 .rail{background:var(--rail);color:var(--rail-text);display:flex;flex-direction:column;padding:14px 10px;gap:14px;height:100vh;position:sticky;top:0}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 8px;text-decoration:none;border-radius:8px;align-self:flex-start}
-.brand img{width:28px;height:28px}
-.brand span{font-family:var(--display);font-weight:500;font-size:17px;letter-spacing:-.03em;color:#fff}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px;text-decoration:none;border-radius:8px;align-self:flex-start;min-width:0;max-width:100%}
+.brand img{width:28px;height:28px;object-fit:contain;flex:none}
+.brand span{font-family:var(--display);font-weight:500;font-size:17px;letter-spacing:-.03em;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .switch{display:flex;align-items:center;gap:8px;width:100%;background:var(--rail-hi);border:1px solid #30363F;border-radius:8px;padding:8px 10px;color:#fff;text-align:left}
 .switch .dot{width:8px;height:8px;border-radius:50%;background:var(--signal);flex:none}
 .switch b{font-family:var(--mono);font-weight:500;font-size:12.5px;flex:1}
@@ -510,9 +510,9 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 /* Settings screen and Cloudflare section */
 .setwrap{display:grid;grid-template-columns:200px minmax(0,1fr);min-height:0;flex:1}
 .subnav{border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:2px;background:var(--panel)}
-.subnav button{border:0;background:transparent;text-align:left;padding:7px 10px;min-height:34px;border-radius:7px;color:var(--text)}
-.subnav button:hover{background:var(--bg)}
-.subnav button[aria-current="page"]{background:var(--signal-wash);box-shadow:inset 2px 0 0 var(--signal)}
+.subnav a{display:flex;align-items:center;padding:7px 10px;min-height:34px;border-radius:7px;color:var(--text);text-decoration:none}
+.subnav a:hover{background:var(--bg)}
+.subnav a[aria-current="page"]{background:var(--signal-wash);box-shadow:inset 2px 0 0 var(--signal)}
 .setmain{padding:0 20px 24px;min-width:0}
 .sblock{max-width:760px;padding:18px 0}
 .sblock .callout{white-space:normal;overflow-wrap:anywhere;margin-bottom:12px}
@@ -521,6 +521,13 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .sfield{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;align-items:center;padding:8px 0}
 .sfield small{display:block;color:var(--faint);font-size:12px;margin-top:2px}
 .sfield b{font-weight:500}
+.sfield .input{width:100%;max-width:360px}
+.secret .row-actions .input{flex:1;min-width:0}
+.logo-up{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.logo-up img{width:40px;height:40px;border:1px solid var(--line);border-radius:8px;padding:4px;background:var(--graphite);object-fit:contain}
+.cmd{font-family:var(--mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line-soft);padding:4px 8px;border-radius:6px;overflow-wrap:anywhere}
+.check{display:flex;align-items:center;gap:8px;margin:10px 0;min-height:34px}
+.save-row{padding:10px 0 4px}
+.block{display:block}
 .row-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .row-actions .btn kbd{margin-left:4px}
 .perms{border:1px solid var(--line);border-radius:10px;overflow:hidden;list-style:none;margin:0;padding:0}
@@ -535,13 +542,15 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .hint{margin:0 0 8px}
 @media (max-width: 1080px){
   .setwrap{grid-template-columns:minmax(0,1fr);grid-template-rows:max-content minmax(0,1fr);align-content:start}
-  .subnav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}
-  .subnav button{white-space:nowrap}
+  .subnav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}
+  .subnav a{white-space:nowrap}
   .sfield{grid-template-columns:minmax(0,1fr);gap:6px}
 }
 @media (max-width: 760px){
-  .sblock .btn,.subnav button{min-height:44px}
-  .sblock input,.sect input{font-size:16px}
+  .sblock .btn,.subnav a,.check{min-height:44px}
+  .sblock input,.sblock select{font-size:16px}
+  .sect input{font-size:16px}
+  .check input{width:22px;height:22px}
   .sect .btn,.seg button{min-height:44px}
 }
 

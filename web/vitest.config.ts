@@ -10,6 +10,8 @@ export default defineConfig({
     environment: "jsdom",
     include: ["web/src/**/*.test.{ts,tsx}"],
     unstubGlobals: true,
+    // Lets a test read styles.css as text (?raw) to check the phone rules jsdom cannot lay out.
+    css: { include: [/styles\.css/] },
     setupFiles: ["web/src/test/setup.ts"],
   },
 });

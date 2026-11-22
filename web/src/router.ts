@@ -25,14 +25,17 @@ const screenOf = (path: string): Screen | null => {
   return (SCREENS as readonly string[]).includes(seg) ? (seg as Screen) : null;
 };
 
-/** The current screen and query. "/" and unknown paths resolve to links and rewrite the URL to /links. */
-export function useRoute(): { screen: Screen; query: URLSearchParams } {
+/** The current screen, the path segment after it (a Settings section) and query. "/" and unknown paths resolve to links and rewrite the URL to /links. */
+export function useRoute(): { screen: Screen; sub: string; query: URLSearchParams } {
   const loc = useSyncExternalStore(subscribe, snapshot);
   const screen = screenOf(loc);
   useEffect(() => {
     if (!screen) navigate("/links", { replace: true });
   }, [screen]);
-  return useMemo(() => ({ screen: screen ?? "links", query: new URLSearchParams(loc.split("?")[1] ?? "") }), [screen, loc]);
+  return useMemo(
+    () => ({ screen: screen ?? "links", sub: loc.split("?")[0]!.split("/")[2] ?? "", query: new URLSearchParams(loc.split("?")[1] ?? "") }),
+    [screen, loc],
+  );
 }
 
 /** A plain link that navigates in-app on an unmodified left click; any other click keeps browser behaviour (new tab and so on). */
