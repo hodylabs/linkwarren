@@ -5,7 +5,9 @@ import type { PasskeyItem, SessionItem } from "../api";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 import { AccountPanel } from "./AccountPanel";
 
-vi.mock("@simplewebauthn/browser", () => ({ browserSupportsWebAuthn: () => true, startRegistration: vi.fn() }));
+const wa = vi.hoisted(() => ({ startRegistration: vi.fn() }));
+vi.mock("@simplewebauthn/browser", () => ({ browserSupportsWebAuthn: () => true, startRegistration: wa.startRegistration }));
+const named = (name: string) => Object.assign(new Error(name), { name });
 
 const pk = (id: string, name: string, o: Partial<PasskeyItem> = {}): PasskeyItem => ({ id, name, createdAt: 1_700_000_000, lastUsedAt: null, backedUp: false, ...o });
 const ses = (id: string, o: Partial<SessionItem> = {}): SessionItem => ({
@@ -114,7 +116,20 @@ describe("AccountPanel", () => {
   it("A with passkey_limit shows its copy", async () => {
     const { user } = await boot({ "POST /api/account/passkeys/options": () => ({ status: 409, body: { error: "passkey_limit" } }) });
     await user.keyboard("a");
-    expect((await screen.findByRole("alert")).textContent).toMatch(/limit of 10 passkeys/);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/at most 10 passkeys\. Remove one first\./);
+  });
+
+  it.each([
+    ["NotAllowedError", "Adding a passkey was cancelled."],
+    ["AbortError", "Adding a passkey was cancelled."],
+    ["InvalidStateError", "This device already has a passkey for this account."],
+    ["SecurityError", "That passkey did not work here. Try again or use an email link."],
+  ])("A with a browser %s shows its own copy", async (name, text) => {
+    wa.startRegistration.mockRejectedValue(named(name));
+    const { api, user } = await boot({ "POST /api/account/passkeys/options": () => ({ body: { challenge: "c" } }) });
+    await user.keyboard("a");
+    expect((await screen.findByRole("alert")).textContent).toBe(text);
+    expect(writes(api).map((c) => c.path)).toEqual(["/api/account/passkeys/options"]);
   });
 
   it("server text is rendered as text", async () => {
