@@ -107,6 +107,14 @@ describe("Person sheet", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("a person gone from the list while their sheet is open: the sheet closes and focus lands on the row in their place", async () => {
+    // The resend reloads the list; meanwhile the invite was revoked elsewhere, so the person is gone.
+    const { user } = await openPerson("jordan@example.com", { "POST /api/users/ui/resend": () => ((list = list.filter((x) => x.id !== "ui")), { body: { emailed: true } }) });
+    await user.keyboard("r");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(row("Xan")));
+  });
+
   it("Shift D then Esc sends nothing; the confirm says agents stop working", async () => {
     const { api, user } = await openPerson("Dana");
     await user.keyboard("{Shift>}D{/Shift}");
