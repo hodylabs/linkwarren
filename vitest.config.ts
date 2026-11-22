@@ -22,6 +22,8 @@ export default defineConfig(async () => {
             CF_CNAME_TARGET: "edge.test",
             MCP_ENABLED: "1",
           },
+          // Test-only database: test/roles-upgrade.test.ts migrates it step by step. Kept out of wrangler.jsonc so a deploy never provisions it.
+          d1Databases: { DB_UPGRADE: "linkwarren-upgrade-test" },
           // Test-only stand-in for the Workers static-assets binding (real one is instance config).
           serviceBindings: {
             ASSETS: async (req: Request) => {

@@ -21,8 +21,9 @@ export function parsePerms(text: unknown): Perm[] {
 
 export const can = (user: UserRow, p: Perm): boolean => user.status === "active" && (user.role === "owner" || user.perms.includes(p));
 
-/** Every key of `perms` is one the actor has (an owner has all). */
-export const within = (perms: readonly Perm[], actor: UserRow): boolean => actor.role === "owner" || perms.every((p) => actor.perms.includes(p));
+/** The actor is active and has every key of `perms` (an owner has all). Same answer as roleWithin. */
+export const within = (perms: readonly Perm[], actor: UserRow): boolean =>
+  actor.status === "active" && (actor.role === "owner" || perms.every((p) => actor.perms.includes(p)));
 
 export type Guard = { sql: string; binds: unknown[] };
 
@@ -40,7 +41,7 @@ export const actorCan = (userId: string, p: Perm): Guard => ({
 export const roleWithin = (roleId: string, actorId: string): Guard => ({
   sql: `EXISTS (SELECT 1 FROM users a JOIN roles ar ON ar.id = COALESCE(a.role_id, a.role) JOIN roles t ON t.id = ?
     WHERE a.id = ? AND a.status = 'active' AND (a.role = 'owner' OR (t.id != 'owner' AND NOT EXISTS (
-      SELECT 1 FROM json_each(${arr("t.perms")}) k WHERE k.value NOT IN (SELECT value FROM json_each(${arr("ar.perms")}))))))`,
+      SELECT 1 FROM json_each(${arr("t.perms")}) k WHERE NOT EXISTS (SELECT 1 FROM json_each(${arr("ar.perms")}) h WHERE h.value = k.value)))))`,
   binds: [roleId, actorId],
 });
 

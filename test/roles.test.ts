@@ -1,8 +1,12 @@
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
+import { Hono, type MiddlewareHandler } from "hono";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { v1 } from "../src/api/v1";
+import type { Env } from "../src/env";
 import { TOOLS } from "../src/mcp/tools";
-import { actorCan, can, MEMBER_DEFAULT, parsePerms, PERMS, ROLE_JOIN, roleWithin, USER_COLS, within, type Perm } from "../src/roles";
+import { actorCan, can, MEMBER_DEFAULT, parsePerms, PERMS, roleWithin, within, type Perm } from "../src/roles";
 import { rowToUser, type UserRow } from "../src/types";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { connectAgent, mcpCall } from "./helpers/oauth";
@@ -58,6 +62,9 @@ describe("roles schema", () => {
     await run("UPDATE users SET role_id = NULL WHERE id = 'c1'");
     await run("UPDATE users SET role = 'owner' WHERE id = 'c1'");
     await run("DELETE FROM roles WHERE id = 'r1'");
+    // Plain owners and members point at the built-in rows only through COALESCE, not the foreign key: deleting one would lock them all out.
+    expect(await msg(run("DELETE FROM roles WHERE id = 'owner'"))).toContain("builtin_role");
+    expect(await msg(run("DELETE FROM roles WHERE id = 'member'"))).toContain("builtin_role");
     expect(await db.prepare("SELECT COUNT(*) n FROM roles").first()).toEqual({ n: 2 });
   });
 });
@@ -88,6 +95,9 @@ describe("roles module", () => {
 
   it("within: owner always; others only for subsets of their own perms", () => {
     expect(within([...PERMS], u("owner", "active", []))).toBe(true);
+    expect(within([], u("owner", "disabled", []))).toBe(false);
+    expect(within([], u("owner", "invited", []))).toBe(false);
+    expect(within([], u("member", "disabled", ["keys"]))).toBe(false);
     const m = u("member", "active", ["keys", "audit"]);
     expect(within([], m)).toBe(true);
     expect(within(["audit"], m)).toBe(true);
@@ -132,6 +142,9 @@ describe("roles module", () => {
     expect(await holds(roleWithin("member", "c1"))).toBe(0);
     expect(await holds(roleWithin("small", "cd"))).toBe(0);
     expect(await holds(roleWithin("missing", "c1"))).toBe(0);
+    await run(`UPDATE roles SET perms = '["audit", null]' WHERE id = 'big'`); // tampered: a JSON null must not make every key look held
+    expect(await holds(roleWithin("other", "c1"))).toBe(0);
+    expect(await holds(roleWithin("small", "c1"))).toBe(1);
   });
 
   it("rowToUser fails closed without the role join", () => {
@@ -185,10 +198,12 @@ describe("every auth path loads the role with the user", () => {
     await custom("pk@example.com");
     const id = (await db.prepare("SELECT id FROM users WHERE email = 'pk@example.com'").first<{ id: string }>())!.id;
     const opts = await (await post("/auth/passkey/options", {})).json();
+    const prep = vi.spyOn(env.DB, "prepare");
     const r = await post("/auth/passkey/verify", { response: await dev.authenticate(opts as never, { userHandle: b64uText(id) }) });
     expect(r.status).toBe(200);
     const fresh = /^([^;]*)/.exec(r.headers.get("set-cookie") ?? "")![1]!;
     expectEditor(await (await dash("/api/me", withCookie(fresh))).json());
+    noRoleQuery(prep);
   });
 
   it("API key: the v1 principal", async () => {
@@ -200,16 +215,21 @@ describe("every auth path loads the role with the user", () => {
     });
     expect(made.status).toBe(201);
     const { secret } = await made.json<{ secret: string }>();
-    // v1 has no route that echoes its principal: a 200 proves the role join (rowToUser throws without it), and the
-    // key query must carry the shared user columns so the perms are the same ones every other path reads.
+    // v1's catch-all 404 is registered before any route a test could add, so the probe reuses v1's own first handler
+    // (the Bearer key middleware) in front of a route that echoes the principal.
+    const auth = v1.routes[0]!;
+    expect([auth.method, auth.path]).toEqual(["ALL", "/*"]);
+    const probe = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
+    probe.use("*", auth.handler as MiddlewareHandler);
+    probe.get("/p", (c) => c.json(c.var.user));
     const prep = vi.spyOn(env.DB, "prepare");
-    const r = await v1Fetch("/api/v1/links", secret);
+    const ctx = createExecutionContext();
+    const r = await probe.fetch(new Request("https://dash.test/p", { headers: { authorization: `Bearer ${secret}` } }), env, ctx);
+    await waitOnExecutionContext(ctx);
     expect(r.status).toBe(200);
-    const keyQuery = prep.mock.calls.map(([sql]) => String(sql)).filter((sql) => /FROM api_keys k/.test(sql));
-    expect(keyQuery).toHaveLength(1);
-    expect(keyQuery[0]).toContain(USER_COLS);
-    expect(keyQuery[0]).toContain(ROLE_JOIN);
+    expectEditor(await r.json());
     noRoleQuery(prep);
+    expect((await v1Fetch("/api/v1/links", secret)).status).toBe(200);
   });
 
   it("MCP: principalFor", async () => {
@@ -218,8 +238,10 @@ describe("every auth path loads the role with the user", () => {
     const { accessToken } = await connectAgent("a1@example.com");
     TOOLS.__probe = { description: "probe", input: z.strictObject({}), run: async (_api, _a, p) => ({ ...p.user }) };
     try {
+      const prep = vi.spyOn(env.DB, "prepare");
       const r = await mcpCall(accessToken, "tools/call", { name: "__probe", arguments: {} });
       expectEditor(r.body.result.structuredContent);
+      noRoleQuery(prep);
     } finally {
       delete TOOLS.__probe;
     }

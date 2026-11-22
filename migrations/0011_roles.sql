@@ -23,3 +23,8 @@ BEGIN SELECT RAISE(ABORT, 'role_id'); END;
 CREATE TRIGGER users_role_id_upd BEFORE UPDATE OF role, role_id ON users
 WHEN NEW.role_id IS NOT NULL AND (NEW.role != 'member' OR NEW.role_id IN ('owner', 'member'))
 BEGIN SELECT RAISE(ABORT, 'role_id'); END;
+-- Plain owners and members reach the built-in rows only through COALESCE(role_id, role), not the foreign key, so deleting one
+-- would lock every one of them out: refuse it.
+CREATE TRIGGER roles_builtin_del BEFORE DELETE ON roles
+WHEN OLD.id IN ('owner', 'member')
+BEGIN SELECT RAISE(ABORT, 'builtin_role'); END;
