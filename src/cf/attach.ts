@@ -184,9 +184,12 @@ function refusal(cfg: CfConfig, host: string, f: AccountFacts, o: { confirmTakeo
   return null;
 }
 
-/** Read-only twin of a fresh attach: the AttachError code syncDomain would throw for `host`, or null. Never writes. */
-export async function takeoverCheck(cfg: CfConfig, host: string, zone: { id: string; name: string }, confirmTakeover = false): Promise<AttachError["code"] | null> {
-  return refusal(cfg, host, await inspectAccount(cfg, host, zone), { confirmTakeover, ownRecordId: null, attached: false });
+/** Read-only twin of a fresh attach: the AttachError code syncDomain would throw for `host`, or null, and for dns_record_exists the records a confirm would replace (type, name, content; at most 5), so the owner sees what they confirm. Never writes. */
+export async function takeoverDetail(cfg: CfConfig, host: string, zone: { id: string; name: string }, confirmTakeover = false) {
+  const f = await inspectAccount(cfg, host, zone);
+  const code = refusal(cfg, host, f, { confirmTakeover, ownRecordId: null, attached: false });
+  const records = code === "dns_record_exists" ? f.covering.slice(0, 5).map((r) => ({ type: r.type, name: r.name, content: r.content })) : undefined;
+  return { code, records };
 }
 
 async function syncAccount(cfg: CfConfig, host: string, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }, made: Made): Promise<Snap> {

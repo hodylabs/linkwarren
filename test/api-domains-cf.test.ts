@@ -143,7 +143,8 @@ describe("create: account", () => {
     const fake = installFakeCloudflare({ zones });
     fake.state.dns.push({ id: "r1", zoneId: "zo", type: "A", name: "www.owned.test", content: "192.0.2.1", proxied: true, comment: null });
     const r = await create("owner", "www.owned.test");
-    expect([r.status, await r.json()]).toEqual([409, { error: "dns_record_exists" }]);
+    // The owner is told what would be replaced: type, name and content of the covering records, nothing else.
+    expect([r.status, await r.json()]).toEqual([409, { error: "dns_record_exists", records: [{ type: "A", name: "www.owned.test", content: "192.0.2.1" }] }]);
     expect(await domainCount()).toBe(0);
     expect(writes(fake.calls)).toEqual([]);
     const ok = await create("owner", "www.owned.test", { confirmTakeover: true });
@@ -163,7 +164,9 @@ describe("create: account", () => {
       const fake = installFakeCloudflare({ zones });
       seed(fake);
       const r = await create("owner", host, { confirmTakeover });
-      expect([host, code, r.status, await r.json()]).toEqual([host, code, 409, { error: code }]);
+      const j = await r.json<Record<string, unknown>>();
+      expect([host, code, r.status, j.error]).toEqual([host, code, 409, code]);
+      expect(j.records).toEqual(code === "dns_record_exists" ? [{ type: "CNAME", name: "*.owned.test", content: "x.example.com" }] : undefined);
       expect(writes(fake.calls)).toEqual([]);
       expect(await domainCount()).toBe(0);
       vi.restoreAllMocks();

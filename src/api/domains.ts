@@ -3,7 +3,7 @@ import { z } from "zod";
 import { auditStmt } from "../audit";
 import { CfError, cfConfigFor, cnameTarget } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
-import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverCheck } from "../cf/attach";
+import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverDetail } from "../cf/attach";
 import type { Env } from "../env";
 import { apexOf, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
@@ -127,9 +127,9 @@ domains.post("/", async (c) => {
       const k = await classify(cfg, host);
       kind = k.kind;
       // R3: only the owner attaches at create, so only the owner is asked about a takeover. Same checks as syncDomain.
-      const code = k.kind === "outside" ? await outsideCheck(cfg, host)
-        : isOwner ? await takeoverCheck(cfg, host, { id: k.zoneId, name: k.zoneName }, confirmTakeover) : null;
-      if (code) return c.json({ error: code }, 409);
+      const { code, records } = k.kind === "outside" ? { code: await outsideCheck(cfg, host), records: undefined }
+        : isOwner ? await takeoverDetail(cfg, host, { id: k.zoneId, name: k.zoneName }, confirmTakeover) : { code: null, records: undefined };
+      if (code) return c.json(records ? { error: code, records } : { error: code }, 409);
     } catch (e) {
       if (!(e instanceof CfError)) throw e;
       return e.status === 0 && e.codes.includes(-1) ? c.json({ error: "outside_not_configured" }, 400) : c.json({ error: "cloudflare_unreachable" }, 502);
