@@ -1,8 +1,8 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
-import type { Domain, Me } from "../api";
+import type { CfView, Domain, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 
@@ -173,14 +173,19 @@ describe("Domain settings (owner)", () => {
   });
 
   it("a case_conflict 409 shows its copy and the switch stays at the saved state; double Enter sends once", async () => {
+    // The answer is held until both Enters are in, so the second one always lands while the first is in flight
+    // (before, a fast 409 closed the confirm between them and the second Enter reopened it, clearing the error).
+    let release!: () => void;
     const { api, user } = boot({
       list: () => [dom("d1", "go.test", { type: "main", caseSensitive: true }), PEND],
-      routes: { "PATCH /api/domains/d1": () => ({ status: 409, body: { error: "case_conflict" } }) },
+      routes: { "PATCH /api/domains/d1": () => new Promise((r) => (release = () => r({ status: 409, body: { error: "case_conflict" } }))) },
       path: "/domains?sel=d1",
     });
     await user.click(await screen.findByRole("switch", { name: "Case-sensitive slugs" }));
     expect(screen.getByRole("dialog").textContent).toContain("Turn off case-sensitive slugs for go.test?");
     await user.keyboard("{Enter}{Enter}");
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    release();
     expect(await screen.findByText(errorText("case_conflict"))).toBeTruthy();
     expect(patches(api)).toHaveLength(1);
     expect(screen.getByRole("switch", { name: "Case-sensitive slugs" }).getAttribute("aria-checked")).toBe("true");
@@ -251,5 +256,123 @@ describe("Domain settings (member)", () => {
     await waitFor(() => expect(patches(api)).toHaveLength(1));
     expect(patches(api)[0]!.body).toEqual({ noindex: false });
     expect(panel().textContent).toContain('Links here show a "not active yet" page until the owner approves the domain.');
+  });
+});
+
+const OUT: CfView = {
+  kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1,
+  instructions: { type: "CNAME", name: "cafe", target: "edge.example.net", apex: false }, attachOnApproval: false,
+};
+const GREEN: CfView = { ...OUT, dns: "found", ownership: "verified", certificate: "issued" };
+const PEND_CF = { ...PEND, cloudflare: GREEN };
+
+describe("Ownership, approve and reject", () => {
+  it("managers see Ownership and certificate; a member who cannot manage does not", async () => {
+    boot({ list: () => [MAIN, { ...PEND, cloudflare: OUT }], path: "/domains?sel=d2" });
+    await screen.findByRole("heading", { name: "Ownership and certificate" });
+    expect(panel().textContent).toContain("cafe → edge.example.net");
+    expect(within(panel()).getByText("DNS record missing")).toBeTruthy();
+    cleanup();
+    boot({ me: member, list: () => [{ ...MAIN, cloudflare: OUT }], path: "/domains?sel=d1" });
+    await screen.findByLabelText("The bare domain");
+    expect(screen.queryByRole("heading", { name: "Ownership and certificate" })).toBeNull();
+  });
+
+  it("A on a pending unverified domain shows the not-verified text and leaves the tag", async () => {
+    const { api, user } = boot({
+      list: () => [MAIN, PEND_CF],
+      routes: { "POST /api/domains/d2/approve": () => ({ status: 409, body: { error: "not_verified", cloudflare: OUT } }) },
+      path: "/domains?sel=d2",
+    });
+    await screen.findByLabelText("The bare domain");
+    await user.keyboard("a");
+    expect(await within(panel()).findByText("Checks have not passed yet")).toBeTruthy();
+    expect(panel().textContent).toContain("Waiting for the DNS record");
+    expect(within(panel()).queryByText("Active")).toBeNull();
+    expect(api.calls.filter((c) => c.path === "/api/domains/d2/approve")[0]!.body).toEqual({});
+  });
+
+  it("A with dns_record_exists asks to confirm the takeover; Enter resends with confirmTakeover", async () => {
+    let cur = PEND_CF;
+    const { api, user } = boot({
+      list: () => [MAIN, cur],
+      routes: {
+        "POST /api/domains/d2/approve": ({ body }) =>
+          (body as { confirmTakeover?: boolean }).confirmTakeover ? ((cur = { ...cur, status: "active" }), { body: cur }) : { status: 409, body: { error: "dns_record_exists" } },
+      },
+      path: "/domains?sel=d2",
+    });
+    await screen.findByLabelText("The bare domain");
+    await user.keyboard("a");
+    expect((await screen.findByRole("dialog")).textContent).toContain("Approve and send cafe.test traffic to linkwarren?");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(within(panel()).getByText("Active")).toBeTruthy());
+    expect(api.calls.filter((c) => c.path === "/api/domains/d2/approve").map((c) => c.body)).toEqual([{}, { confirmTakeover: true }]);
+  });
+
+  it("approve with loopLinks shows the loop notice with a link to those links", async () => {
+    let cur = PEND_CF;
+    const { user } = boot({
+      list: () => [MAIN, cur],
+      routes: { "POST /api/domains/d2/approve": () => ((cur = { ...cur, status: "active" }), { body: { ...cur, loopLinks: 2 } }) },
+      path: "/domains?sel=d2",
+    });
+    await screen.findByLabelText("The bare domain");
+    await user.keyboard("a");
+    expect(await within(panel()).findByText(/2 existing links point at cafe.test and now loop\./)).toBeTruthy();
+    expect(within(panel()).getByRole("link", { name: "Edit them" }).getAttribute("href")).toBe("/links?q=cafe.test");
+    expect(document.querySelector("[aria-live]")!.textContent).toContain("2 existing links point at cafe.test and now loop");
+  });
+
+  it("Shift+R opens the reject confirm: Esc sends nothing, Enter sends DELETE and removes the row", async () => {
+    let list = [MAIN, PEND_CF];
+    const { api, user } = boot({
+      list: () => list,
+      routes: { "DELETE /api/domains/d2": () => ((list = [MAIN]), { status: 204 }) },
+      path: "/domains?sel=d2",
+    });
+    await screen.findByLabelText("The bare domain");
+    await user.keyboard("{Shift>}R{/Shift}");
+    expect(screen.getByRole("dialog").textContent).toContain("Reject cafe.test? Its 4 links are deleted. This cannot be undone.");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(patches(api)).toHaveLength(0);
+    await user.keyboard("{Shift>}R{/Shift}");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(patches(api)).toEqual([{ method: "DELETE", path: "/api/domains/d2", body: undefined }]);
+    expect(location.search).not.toContain("sel=d2");
+  });
+
+  it("Shift+R inside an input types R", async () => {
+    const { api, user } = boot({ list: () => [MAIN, PEND_CF], path: "/domains?sel=d2" });
+    const input = await screen.findByLabelText("The bare domain");
+    await user.type(input, "{Shift>}R{/Shift}");
+    expect((input as HTMLInputElement).value).toBe("R");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(patches(api)).toHaveLength(0);
+  });
+
+  it("members see no Reject and Shift+R does nothing", async () => {
+    const { api, user } = boot({ me: member, list: () => [MAIN, PEND_CF], path: "/domains?sel=d2" });
+    await screen.findByLabelText("The bare domain");
+    expect(screen.queryByRole("button", { name: /Reject/ })).toBeNull();
+    await user.keyboard("{Shift>}R{/Shift}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(patches(api)).toHaveLength(0);
+  });
+
+  it("F finishes connecting an active account domain that is not attached", async () => {
+    const half: CfView = { ...OUT, kind: "account", instructions: null, dns: "missing", ownership: "pending", certificate: "issued" };
+    const { api, user } = boot({
+      list: () => [MAIN, dom("d4", "acc.test", { cloudflare: half })],
+      routes: { "POST /api/domains/d4/approve": () => ({ body: { ...dom("d4", "acc.test"), cloudflare: { ...half, dns: "found", ownership: "verified" } } }) },
+      path: "/domains?sel=d4",
+    });
+    await screen.findByLabelText("The bare domain");
+    expect(within(panel()).getByRole("button", { name: /Finish connecting/ })).toBeTruthy();
+    await user.keyboard("f");
+    await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/domains/d4/approve")).toHaveLength(1));
+    expect(within(panel()).queryByText("Approve domain")).toBeNull();
   });
 });

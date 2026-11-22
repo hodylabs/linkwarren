@@ -1,24 +1,31 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { api, ApiError, type Domain } from "../api";
-import { errorText } from "../copy";
+import { api, ApiError, type CfView, type Domain } from "../api";
+import { errorText, plural } from "../copy";
 import { rebase } from "../draft";
 import { useHotkeys, type Bindings } from "../keys";
+import { NavLink } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { CloseButton, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { DEFAULT_RESERVED } from "../../../src/validate";
 import { shortDate } from "../time";
+import { CfStatus } from "./CfStatus";
 import { MembersEditor } from "./MembersEditor";
 import { canManage, domainDiff, draftOf, ownerLabel, statusTag, type Draft } from "./domainView";
+import { cfSettled, useCfPoll } from "./useCfPoll";
 
-type Confirm = "case" | "disable";
+type Confirm = "case" | "disable" | "reject" | "takeover";
 
 /** Domain detail hotkeys (owner) and their text on the shortcuts sheet. */
 export const DOMAIN_DETAIL_KEYS = {
   a: "Approve or enable the selected domain (owner)",
+  f: "Finish connecting the selected domain to Cloudflare (owner)",
+  "shift+r": "Reject the selected pending domain (owner)",
   "shift+d": "Disable the selected domain (owner)",
 } as const;
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
+const loopText = (n: number, host: string) => `${plural(n, "existing link")} ${n === 1 ? "points" : "point"} at ${host} and now loop${n === 1 ? "s" : ""}.`;
+const editThem = (n: number) => (n === 1 ? "Edit it" : "Edit them");
 
 export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onModal(open: boolean): void; onClose(): void }) {
   const app = useApp();
@@ -31,8 +38,15 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
   const [caseError, setCaseError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [loops, setLoops] = useState(0);
   const busy = useRef(false); // one write at a time: a double Enter or click sends once
-  const tag = statusTag(domain, isOwner);
+  // Latest Cloudflare view from any source: the list, a poll, or an approve answer.
+  const [view, setView] = useState<CfView | null>(domain.cloudflare ?? null);
+  useEffect(() => void (domain.cloudflare && setView(domain.cloudflare)), [domain.cloudflare]);
+  const showCf = canEdit && view !== null && view.kind !== "manual";
+  const poll = useCfPoll(showCf ? domain.id : null, view !== null && !cfSettled(view));
+  useEffect(() => void (poll.view && setView(poll.view)), [poll.view]);
+  const tag = statusTag(view ? { ...domain, cloudflare: view } : domain, isOwner);
   const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
 
   useEffect(() => onModal(confirm !== null), [confirm]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -81,13 +95,19 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
       }
     });
 
-  const post = (verb: "approve" | "disable") =>
+  const canApprove = isOwner && domain.status !== "active";
+  // An active same-account domain that Cloudflare does not serve yet: approve finishes the attach.
+  const canFinish = isOwner && domain.status === "active" && view?.kind === "account" && (view.ownership !== "verified" || view.lastError !== null);
+  const canReject = isOwner && domain.status === "pending";
+  const path = `/api/domains/${encodeURIComponent(domain.id)}`;
+
+  const disable = () =>
     run(async () => {
       setActionError(null);
       try {
-        await api("POST", `/api/domains/${encodeURIComponent(domain.id)}/${verb}`);
+        await api("POST", `${path}/disable`);
         setConfirm(null);
-        app.announce(verb === "approve" ? "Domain enabled" : "Domain disabled");
+        app.announce("Domain disabled");
         await refresh();
       } catch (e) {
         setConfirm(null);
@@ -95,16 +115,85 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
       }
     });
 
-  const canApprove = isOwner && domain.status !== "active";
+  /** Approve, enable, or finish connecting: the same call. A 409 dns_record_exists asks first, then resends with confirmTakeover. */
+  const approve = (confirmTakeover = false) =>
+    run(async () => {
+      setActionError(null);
+      const was = domain.status;
+      try {
+        const res = await api<Domain & { loopLinks?: number }>("POST", `${path}/approve`, confirmTakeover ? { confirmTakeover: true } : {});
+        setConfirm(null);
+        if (res.cloudflare) setView(res.cloudflare);
+        const n = res.loopLinks ?? 0;
+        setLoops(n);
+        app.announce(n > 0 ? `${loopText(n, domain.host)} ${editThem(n)}.` : was === "active" ? "Domain connected" : was === "disabled" ? "Domain enabled" : "Domain approved");
+        await refresh();
+      } catch (e) {
+        setConfirm(null);
+        const c = code(e);
+        if (c === "dns_record_exists") return setConfirm("takeover");
+        if (c === "not_verified") {
+          const v = e instanceof ApiError ? (e.data as { cloudflare?: CfView } | undefined)?.cloudflare : undefined;
+          if (v) setView(v);
+          return setActionError("Checks have not passed yet");
+        }
+        setActionError(errorText(c));
+      }
+    });
+
+  const reject = () =>
+    run(async () => {
+      setActionError(null);
+      try {
+        await api("DELETE", path);
+        setConfirm(null);
+        app.announce(`Rejected ${domain.host}`);
+        onClose();
+        await refresh();
+      } catch (e) {
+        setConfirm(null);
+        setActionError(errorText(code(e)));
+      }
+    });
+
   useHotkeys(
     {
-      a: () => canApprove && void post("approve"),
+      a: () => canApprove && void approve(),
+      f: () => canFinish && void approve(),
+      "shift+r": () => {
+        if (canReject) setConfirm("reject");
+      },
       "shift+d": () => {
         if (isOwner && domain.status !== "disabled") setConfirm("disable");
       },
     } satisfies Bindings<typeof DOMAIN_DETAIL_KEYS>,
     overlay === null && confirm === null,
   );
+
+  const CONFIRMS: Record<Confirm, { title: string; text: string; ok: string; act: () => void }> = {
+    case: {
+      title: "Case-sensitive slugs",
+      text: domain.caseSensitive
+        ? `Turn off case-sensitive slugs for ${domain.host}? Slugs that differ only by case would clash, so this is refused while any exist.`
+        : `Turn on case-sensitive slugs for ${domain.host}? /Menu and /menu become different links, and visits must use the exact spelling.`,
+      ok: "Confirm",
+      act: () => void toggleCase(),
+    },
+    disable: { title: "Disable domain", text: `Disable ${domain.host}? Its short links stop working until you enable it again.`, ok: "Disable", act: () => void disable() },
+    reject: {
+      title: "Reject domain",
+      text: `Reject ${domain.host}? Its ${plural(domain.linkCount, "link")} ${domain.linkCount === 1 ? "is" : "are"} deleted. This cannot be undone.`,
+      ok: "Reject",
+      act: () => void reject(),
+    },
+    takeover: {
+      title: "Send traffic to linkwarren",
+      text: `${domain.status === "active" ? "Connect" : "Approve"} and send ${domain.host} traffic to linkwarren? It already has DNS records in your Cloudflare account.`,
+      ok: "Send traffic",
+      act: () => void approve(true),
+    },
+  };
+  const dlg = confirm ? CONFIRMS[confirm] : null;
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
@@ -155,6 +244,22 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
             </div>
           </div>
         )}
+        {loops > 0 && (
+          <div className="sect">
+            <div className="callout wait">
+              {`${loopText(loops, domain.host)} `}
+              <NavLink to={`/links?q=${encodeURIComponent(domain.host.slice(0, 48))}`}>{editThem(loops)}</NavLink>
+            </div>
+          </div>
+        )}
+        {showCf && view && (
+          <div className="sect">
+            <h3>Ownership and certificate</h3>
+            <CfStatus view={view} />
+            {poll.error && <p className="err">{errorText(poll.error)}</p>}
+          </div>
+        )}
+        {/* Cloudflare controls section (Task 10) goes here, after "Ownership and certificate": <CfControls domain={domain} /> */}
         <fieldset className="plain" disabled={!canEdit}>
           <div className="sect">
             <h3>When someone visits</h3>
@@ -213,8 +318,18 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
               </button>
             )}
             {canApprove && (
-              <button type="button" className="btn" onClick={() => void post("approve")} aria-keyshortcuts="A">
+              <button type="button" className="btn" onClick={() => void approve()} aria-keyshortcuts="A">
                 {domain.status === "disabled" ? "Enable domain" : "Approve domain"} <kbd>A</kbd>
+              </button>
+            )}
+            {canFinish && (
+              <button type="button" className="btn" onClick={() => void approve()} aria-keyshortcuts="F">
+                Finish connecting <kbd>F</kbd>
+              </button>
+            )}
+            {canReject && (
+              <button type="button" className="btn" onClick={() => setConfirm("reject")} aria-keyshortcuts="Shift+R">
+                Reject <kbd>Shift R</kbd>
               </button>
             )}
             {isOwner && domain.status !== "disabled" && (
@@ -228,22 +343,16 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
           <span>Added {shortDate(domain.createdAt)}</span>
         </div>
       </aside>
-      {confirm && (
-        <Sheet label={confirm === "case" ? "Case-sensitive slugs" : "Disable domain"} onClose={() => setConfirm(null)}>
+      {dlg && (
+        <Sheet label={dlg.title} onClose={() => setConfirm(null)}>
           <div className="sh-head">
-            <h2>{confirm === "case" ? "Case-sensitive slugs" : "Disable domain"}</h2>
+            <h2>{dlg.title}</h2>
           </div>
           <div className="sh-body">
-            <p>
-              {confirm === "disable"
-                ? `Disable ${domain.host}? Its short links stop working until you enable it again.`
-                : domain.caseSensitive
-                  ? `Turn off case-sensitive slugs for ${domain.host}? Slugs that differ only by case would clash, so this is refused while any exist.`
-                  : `Turn on case-sensitive slugs for ${domain.host}? /Menu and /menu become different links, and visits must use the exact spelling.`}
-            </p>
+            <p>{dlg.text}</p>
             <div className="actions">
-              <button type="button" className="btn primary" autoFocus onClick={() => void (confirm === "case" ? toggleCase() : post("disable"))}>
-                {confirm === "disable" ? "Disable" : "Confirm"} <span className="k">Enter</span>
+              <button type="button" className="btn primary" autoFocus onClick={dlg.act}>
+                {dlg.ok} <span className="k">Enter</span>
               </button>
               <button type="button" className="btn" onClick={() => setConfirm(null)}>
                 Cancel <kbd>Esc</kbd>

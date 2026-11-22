@@ -6,6 +6,8 @@ import type { Tone } from "../links/linkView";
 export const canManage = (me: Me, d: Domain): boolean => me.role === "owner" || d.ownerId === me.id;
 
 export function statusTag(d: Domain, isOwner: boolean): { label: string; tone: Tone } {
+  const dns = d.cloudflare?.kind === "outside" ? d.cloudflare.dns : null;
+  if (d.status !== "disabled" && (dns === "missing" || dns === "wrong_target")) return { label: "DNS record missing", tone: "bad" };
   if (d.status === "active") return { label: "Active", tone: "ok" };
   if (d.status === "pending") return { label: isOwner ? "Needs your approval" : "Waiting for approval", tone: "wait" };
   return { label: "Disabled", tone: "off" };

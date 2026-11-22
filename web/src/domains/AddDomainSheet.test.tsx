@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
-import type { Domain, Me } from "../api";
+import type { CfView, Domain, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 
@@ -13,7 +13,15 @@ const MAIN: Domain = {
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: true,
 };
 
-function boot(me: Me, routes: FakeRoutes = {}) {
+const OUT: CfView = {
+  kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1,
+  instructions: { type: "CNAME", name: "go", target: "edge.example.net", apex: false }, attachOnApproval: false,
+};
+const GREEN: CfView = { ...OUT, dns: "found", ownership: "verified", certificate: "issued" };
+const ACC: CfView = { ...OUT, kind: "account", instructions: null, attachOnApproval: true };
+const made = (cloudflare?: CfView, host = "go.harbor.com") => ({ status: 201, body: { ...MAIN, id: "d9", host, type: "private" as const, status: "pending" as const, ...(cloudflare ? { cloudflare } : {}) } });
+
+function boot(me: Me, routes: FakeRoutes = {}, fakeTimers = false) {
   history.replaceState(null, "", "/domains");
   const api = fakeApi({
     "GET /api/me": () => ({ body: me }),
@@ -21,17 +29,26 @@ function boot(me: Me, routes: FakeRoutes = {}) {
     "GET /api/users": () => ({ body: { items: [] } }),
     ...routes,
   });
-  const user = userEvent.setup();
+  const user = userEvent.setup(fakeTimers ? { advanceTimers: (ms) => vi.advanceTimersByTime(ms) } : {});
   render(<App />);
   return { api, user };
 }
+const field = () => screen.getByLabelText(/Domain or subdomain/);
+const done = () => screen.findByRole("button", { name: /^Done/ });
+const polls = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.path === "/api/domains/d9/cloudflare");
 const open = async (user: ReturnType<typeof userEvent.setup>) => {
   await screen.findByRole("button", { name: /Add domain/ });
   await user.keyboard("n");
   return screen.findByRole("dialog", { name: "Add a domain" });
 };
 const posts = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.method === "POST");
-afterEach(() => vi.unstubAllGlobals());
+let hidden = false;
+Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  hidden = false;
+});
 
 describe("Add a domain sheet", () => {
   it("owner sees three types, default Private", async () => {
@@ -47,6 +64,7 @@ describe("Add a domain sheet", () => {
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
     expect(within(screen.getByRole("dialog", { name: "Add a domain" })).getByText("Private")).toBeTruthy();
     expect(screen.getByText(/start working once the owner approves the domain/)).toBeTruthy();
+    expect(screen.queryByText(/does not connect domains to Cloudflare/)).toBeNull(); // shown only after create, when not configured
   });
 
   it("Ctrl+Enter sends exactly host and type, normalized like the server, then navigates and reloads", async () => {
@@ -62,6 +80,8 @@ describe("Add a domain sheet", () => {
     await user.type(screen.getByLabelText(/Domain or subdomain/), "Go.Example.com.{Control>}{Enter}{/Control}");
     await waitFor(() => expect(posts(api)).toHaveLength(1));
     expect(posts(api)[0]!.body).toEqual({ host: "go.example.com", type: "private" });
+    await done();
+    await user.keyboard("{Enter}"); // Done has focus
     await waitFor(() => expect(location.search).toContain("sel=d9"));
     expect(screen.queryByRole("dialog", { name: "Add a domain" })).toBeNull();
     expect(api.calls.filter((c) => c.method === "GET" && c.path === "/api/domains").length).toBeGreaterThan(1);
@@ -72,7 +92,7 @@ describe("Add a domain sheet", () => {
     await open(user);
     await user.type(screen.getByLabelText(/Domain or subdomain/), "a.test");
     await user.keyboard("{Control>}{Enter}{Enter}{/Control}");
-    await waitFor(() => expect(location.search).toContain("sel=d9"));
+    await done();
     expect(posts(api)).toHaveLength(1);
   });
 
@@ -101,7 +121,7 @@ describe("Add a domain sheet", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(errorText("invalid_host"));
   });
 
-  it("a failed list refresh after add still closes and announces", async () => {
+  it("a failed list refresh after add still shows the status view and announces", async () => {
     let fail = false;
     const { user } = boot(owner, {
       "GET /api/domains": () => (fail ? { status: 500, body: { error: "internal" } } : { body: [MAIN] }),
@@ -112,7 +132,7 @@ describe("Add a domain sheet", () => {
     });
     await open(user);
     await user.type(screen.getByLabelText(/Domain or subdomain/), "a.test{Control>}{Enter}{/Control}");
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add a domain" })).toBeNull());
+    await done();
     // The refresh failure message is not overwritten by "Added <host>".
     expect(document.querySelector("[aria-live]")!.textContent).toBe("Added, but the list could not be refreshed");
   });
@@ -147,5 +167,157 @@ describe("Add a domain sheet", () => {
     const { user } = boot(owner);
     await open(user);
     expect(screen.getByRole("heading", { name: "Type" })).toBeTruthy();
+  });
+
+  it("success switches to the status view without closing; Enter on Done opens the domain", async () => {
+    const { user } = boot(owner, { "POST /api/domains": () => made(OUT) });
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    const btn = await done();
+    const dlg = screen.getByRole("dialog", { name: "Add a domain" });
+    expect(dlg.textContent).toContain("harbor.com isn't in your Cloudflare account, so it connects with one DNS record at its DNS provider. Cloudflare then checks ownership and issues the certificate.");
+    expect(dlg.textContent).toContain("go → edge.example.net");
+    expect(dlg.textContent).toContain("Waiting for the DNS record");
+    expect(document.activeElement).toBe(btn);
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("dialog", { name: "Add a domain" })).toBeNull();
+    expect(location.search).toContain("sel=d9");
+  });
+
+  it("not configured: the manual setup note shows after create", async () => {
+    const { user } = boot(owner, { "POST /api/domains": () => made({ ...OUT, kind: "manual", instructions: null }) });
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    expect(screen.getByText(/does not connect domains to Cloudflare yet/)).toBeTruthy();
+    expect(screen.queryByText("Check")).toBeNull();
+  });
+
+  it("account, owner: linkwarren attaches it directly", async () => {
+    const { user } = boot(owner, { "POST /api/domains": () => made({ ...ACC, attachOnApproval: false, dns: "found", ownership: "verified", certificate: "issued" }) });
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    expect(screen.getByText("harbor.com is in your Cloudflare account, so linkwarren attaches it directly.")).toBeTruthy();
+  });
+
+  it("account, member: the owner attaches it on approval", async () => {
+    const { user } = boot(member, { "POST /api/domains": () => made(ACC) });
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    expect(screen.getByText("harbor.com is in your Cloudflare account, so linkwarren attaches it directly. The owner attaches it when they approve the domain.")).toBeTruthy();
+  });
+
+  it("a member adding an outside domain sees the record footer line", async () => {
+    const { user } = boot(member, { "POST /api/domains": () => made(OUT) });
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    expect(screen.getByText("You can create links on it straight away. They start working once the record is found and the owner approves the domain.")).toBeTruthy();
+  });
+
+  it("polls every 5 s, one at a time, and stops when all green", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let n = 0;
+    const { api, user } = boot(owner, {
+      "POST /api/domains": () => made(OUT),
+      "GET /api/domains/d9/cloudflare": () => ({ body: ++n >= 2 ? GREEN : OUT }),
+    }, true);
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    expect(polls(api)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(polls(api)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(polls(api)).toHaveLength(2);
+    await waitFor(() => expect(screen.getByText("Record found, ownership verified")).toBeTruthy());
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(polls(api)).toHaveLength(2);
+  });
+
+  it("a slow poll is never stacked: the next one waits for the answer", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let release!: () => void;
+    const { api, user } = boot(owner, {
+      "POST /api/domains": () => made(OUT),
+      "GET /api/domains/d9/cloudflare": () => new Promise((r) => (release = () => r({ body: OUT }))),
+    }, true);
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    await vi.advanceTimersByTimeAsync(5000);
+    hidden = true; // a visibility flip while one is in flight must not start a second loop
+    document.dispatchEvent(new Event("visibilitychange"));
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(polls(api)).toHaveLength(1);
+    release();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(polls(api)).toHaveLength(2);
+  });
+
+  it("Esc closes the status view and no poll is sent after it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { api, user } = boot(owner, { "POST /api/domains": () => made(OUT), "GET /api/domains/d9/cloudflare": () => ({ body: OUT }) }, true);
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(polls(api)).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Add a domain" })).toBeNull();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(polls(api)).toHaveLength(1);
+  });
+
+  it("a hidden tab pauses polling and a visible one resumes it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { api, user } = boot(owner, { "POST /api/domains": () => made(OUT), "GET /api/domains/d9/cloudflare": () => ({ body: OUT }) }, true);
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await done();
+    hidden = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(polls(api)).toHaveLength(0);
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(polls(api)).toHaveLength(1);
+  });
+
+  it("dns_record_exists for the owner shows the takeover text; Ctrl+Shift+Enter resends with confirmTakeover", async () => {
+    const { api, user } = boot(owner, {
+      "POST /api/domains": ({ body }) => ((body as { confirmTakeover?: boolean }).confirmTakeover ? made(GREEN) : { status: 409, body: { error: "dns_record_exists" } }),
+    });
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    expect(await screen.findByText("go.harbor.com already has DNS records in your account. Adding it sends its traffic to linkwarren.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Add anyway/ })).toBeTruthy();
+    await user.keyboard("{Control>}{Shift>}{Enter}{/Shift}{/Control}");
+    await done();
+    expect(posts(api)).toHaveLength(2);
+    expect(posts(api)[1]!.body).toEqual({ host: "go.harbor.com", type: "private", confirmTakeover: true });
+  });
+
+  it("editing the host after a takeover warning drops it: Ctrl+Shift+Enter sends nothing", async () => {
+    const { api, user } = boot(owner, { "POST /api/domains": () => ({ status: 409, body: { error: "dns_record_exists" } }) });
+    await open(user);
+    await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+    await screen.findByRole("button", { name: /Add anyway/ });
+    await user.type(field(), "x");
+    expect(screen.queryByRole("button", { name: /Add anyway/ })).toBeNull();
+    await user.keyboard("{Control>}{Shift>}{Enter}{/Shift}{/Control}");
+    expect(posts(api)).toHaveLength(1);
+  });
+
+  it("pending_limit shows its copy inline", async () => {
+    const { user } = boot(member, { "POST /api/domains": () => ({ status: 409, body: { error: "pending_limit" } }) });
+    await open(user);
+    await user.type(field(), "a.test{Control>}{Enter}{/Control}");
+    expect((await screen.findByRole("alert")).textContent).toBe("You already have 3 domains waiting for approval.");
   });
 });

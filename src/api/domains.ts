@@ -5,7 +5,7 @@ import { CfError, cfConfig } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
-import { normalizeHost } from "../host";
+import { apexOf, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
@@ -39,15 +39,6 @@ export function hostError(host: string, dashboard: string, cnameTarget?: string)
   return null;
 }
 
-// Second-level labels that make a two-letter ccTLD pair (co.uk, com.au) one registrable suffix.
-// shortcut: a fixed list, display only (instructions.name/apex); use the Public Suffix List if users need more.
-const CC_SLD = new Set(["co", "com", "net", "org", "gov", "ac", "edu", "or", "ne"]);
-/** Registrable apex by the simple rule: the last two labels, or three when they are a ccTLD pair like co.uk. */
-export function apexOf(host: string): string {
-  const l = host.split(".");
-  const n = l.length >= 3 && l[l.length - 1]!.length === 2 && CC_SLD.has(l[l.length - 2]!) ? 3 : 2;
-  return l.slice(-n).join(".");
-}
 
 const getCf = async (env: Env, id: string): Promise<CfRow | null> => {
   const r = await env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(id).first();

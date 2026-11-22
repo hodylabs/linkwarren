@@ -139,6 +139,16 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 .callout{border-radius:8px;padding:10px 12px;font-size:12.5px}
 .callout.wait{background:var(--wait-wash);color:#6A4708}
 .callout.ok{background:var(--ok-wash);color:#1F5E39}
+.callout a{color:inherit;font-weight:600}
+/* Ownership and certificate: label, value, optional copy button */
+.dns{font-family:var(--mono);font-size:12px;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:0 0 8px}
+.dns div{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line-soft);align-items:center}
+.dns div:last-child{border-bottom:0}
+.dns dt{color:var(--faint)}
+.dns dd{margin:0;overflow-wrap:anywhere}
+.dns .sel{user-select:all}
+.dns .ok{color:var(--ok)} .dns .wait{color:var(--wait)} .dns .bad{color:var(--bad)}
+.dns .copy{padding:2px 8px;font-size:12px;color:var(--muted)}
 .actions{display:flex;gap:8px;padding:14px 20px}
 .foot{padding:10px 20px;color:var(--faint);font-size:12px;display:flex;gap:16px;border-top:1px solid var(--line);background:var(--panel)}
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Domain, Me, UserItem } from "../api";
+import type { CfView, Domain, Me, UserItem } from "../api";
 import { canManage, domainDiff, draftOf, ownerLabel, parseReserved, sharedWith, statusTag } from "./domainView";
 
 const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner" };
@@ -37,6 +37,20 @@ describe("statusTag", () => {
     expect(statusTag(dom({ status: "pending" }), true)).toEqual({ label: "Needs your approval", tone: "wait" });
     expect(statusTag(dom({ status: "pending" }), false)).toEqual({ label: "Waiting for approval", tone: "wait" });
     expect(statusTag(dom({ status: "disabled" }), false)).toEqual({ label: "Disabled", tone: "off" });
+  });
+
+  const cf = (dns: CfView["dns"], kind: CfView["kind"] = "outside"): CfView => ({
+    kind, dns, ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, instructions: null, attachOnApproval: false,
+  });
+  it("an outside domain whose record is missing or wrong reads DNS record missing", () => {
+    expect(statusTag(dom({ status: "pending", cloudflare: cf("missing") }), true)).toEqual({ label: "DNS record missing", tone: "bad" });
+    expect(statusTag(dom({ cloudflare: cf("wrong_target") }), false)).toEqual({ label: "DNS record missing", tone: "bad" });
+  });
+  it("found, unknown, account and disabled keep the status tag", () => {
+    expect(statusTag(dom({ status: "pending", cloudflare: cf("found") }), true).label).toBe("Needs your approval");
+    expect(statusTag(dom({ cloudflare: cf("unknown") }), true).label).toBe("Active");
+    expect(statusTag(dom({ cloudflare: cf("missing", "account") }), true).label).toBe("Active");
+    expect(statusTag(dom({ status: "disabled", cloudflare: cf("missing") }), true).label).toBe("Disabled");
   });
 });
 

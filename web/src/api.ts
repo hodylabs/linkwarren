@@ -1,5 +1,6 @@
 import type { AuditItem as ServerAuditItem, CfView, DomainRow, LinkRow, UserListItem, UserRow } from "../../src/types";
 
+export type { CfView };
 export type Me = Pick<UserRow, "id" | "email" | "name" | "role">;
 export type Link = LinkRow;
 export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView };
@@ -11,11 +12,14 @@ export type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string) {
+  /** The whole error answer, for codes that carry more (approve's 409 not_verified has `cloudflare`). */
+  readonly data: unknown;
+  constructor(status: number, code: string, data?: unknown) {
     super(code);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -26,9 +30,9 @@ export function onSignedOut(fn: () => void): () => void {
   return () => signedOutListeners.delete(fn);
 }
 
-function fail(status: number, code: string): never {
+function fail(status: number, code: string, data?: unknown): never {
   if (status === 0 || status === 401) signedOutListeners.forEach((fn) => fn());
-  throw new ApiError(status, code);
+  throw new ApiError(status, code, data);
 }
 
 /** Same-origin JSON call. Status 0 / "network" when fetch throws, which is what an expired Access session (login redirect) looks like. */
@@ -54,7 +58,7 @@ export async function api<T>(method: Method, path: string, body?: unknown, signa
   });
   if (!res.ok) {
     const code = (data as { error?: unknown } | undefined)?.error;
-    fail(res.status, typeof code === "string" ? code : `http_${res.status}`);
+    fail(res.status, typeof code === "string" ? code : `http_${res.status}`, data);
   }
   // An OK answer that is not JSON is not the API (for example a sign-in page served in its place).
   if (data === undefined) fail(0, "network");
