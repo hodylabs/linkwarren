@@ -1,0 +1,180 @@
+import { env } from "cloudflare:workers";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { connectAgent, mcpCall } from "./helpers/oauth";
+
+const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
+const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
+const as = async (email: string, path: string, init: RequestInit = {}) =>
+  dash(path, { ...init, headers: { "Cf-Access-Jwt-Assertion": await tokenFor(email), ...(init.body ? { "content-type": "application/json" } : {}) } });
+const patch = (email: string, id: string, body: unknown) => as(email, `/api/agents/connections/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+const del = (email: string, id: string) => as(email, `/api/agents/connections/${id}`, { method: "DELETE" });
+const list = async (email: string, q = "") => (await (await as(email, `/api/agents/connections${q}`)).json<{ items: Item[] }>()).items;
+type Item = { id: string; userId: string; userEmail: string | null; clientName: string; redirectHost: string; write: boolean; del: boolean; createdAt: number; lastUsedAt: number | null; calls7d: number };
+
+const A = "a@example.com", B = "b@example.com", O = "owner@example.com";
+const now = () => Math.floor(Date.now() / 1000);
+const audits = (action: string) => env.DB.prepare("SELECT * FROM audit_log WHERE action = ? ORDER BY id").bind(action).all<Record<string, unknown>>().then((r) => r.results);
+const grantsOf = async (userId: string) => (await env.OAUTH_PROVIDER!.listUserGrants(userId)).items.map((g) => (g.metadata as { connId: string }).connId);
+
+beforeAll(setupAccess);
+beforeEach(async () => {
+  // Grants from earlier tests would still be listed for the same user ids.
+  for (const k of (await env.OAUTH_KV.list()).keys) await env.OAUTH_KV.delete(k.name);
+  await env.DB.batch(["tool_calls", "auth_limits", "audit_log", "agent_connections", "domain_members", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  for (const [id, email, role] of [["uo", O, "owner"], ["ua", A, "member"], ["ub", B, "member"]])
+    await run("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,?,'active',1)", id, email, role);
+});
+afterEach(() => vi.restoreAllMocks());
+
+describe("GET /api/agents/connections", () => {
+  it("members see only their own (?all=1 too); the owner with ?all=1 sees everyone's with userEmail; no secrets", async () => {
+    const a = await connectAgent(A);
+    const b = await connectAgent(B, { write: true });
+    const mine = await list(A);
+    expect(mine.map((i) => i.id)).toEqual([a.connId]);
+    expect(mine[0]).toMatchObject({ userId: "ua", userEmail: null, clientName: "Claude", redirectHost: "claude.ai", write: false, del: false, lastUsedAt: null, calls7d: 0 });
+    expect((await list(A, "?all=1")).map((i) => i.id)).toEqual([a.connId]);
+    expect(await list(O)).toEqual([]);
+    const all = await list(O, "?all=1");
+    expect(all.map((i) => [i.id, i.userEmail, i.write]).sort()).toEqual([[a.connId, A, false], [b.connId, B, true]].sort());
+    const raw = JSON.stringify(all);
+    for (const s of [a.accessToken, a.refreshToken, b.accessToken, a.clientId]) expect(raw).not.toContain(s);
+  });
+
+  it("calls7d counts only the last 7 days; lastUsedAt is the newest call; revoked connections are not listed", async () => {
+    const a = await connectAgent(A);
+    const t = now();
+    for (const at of [t - 100, t - 200, t - 8 * 86400])
+      await run("INSERT INTO tool_calls (at,user_id,via,conn_id,tool,status) VALUES (?,'ua','Claude',?,'server_info','ok')", at, a.connId);
+    expect((await list(A))[0]).toMatchObject({ calls7d: 2, lastUsedAt: t - 100 });
+    await run("UPDATE agent_connections SET revoked_at = 1 WHERE id = ?", a.connId);
+    expect(await list(A)).toEqual([]);
+  });
+});
+
+describe("GET /api/agents/connections/:id/calls", () => {
+  it("newest 20 only, no other columns; own or owner, otherwise the same 404 as an unknown id", async () => {
+    const a = await connectAgent(A);
+    const t = now();
+    for (let i = 0; i < 25; i++)
+      await run("INSERT INTO tool_calls (at,user_id,via,conn_id,tool,status) VALUES (?,'ua','Claude',?,?,'ok')", t - i, a.connId, `t${i}`);
+    const r = await (await as(A, `/api/agents/connections/${a.connId}/calls`)).json<{ items: Record<string, unknown>[] }>();
+    expect(r.items).toHaveLength(20);
+    expect(r.items[0]).toEqual({ at: t, tool: "t0", status: "ok" });
+    expect(r.items.at(-1)).toEqual({ at: t - 19, tool: "t19", status: "ok" });
+    expect((await as(O, `/api/agents/connections/${a.connId}/calls`)).status).toBe(200);
+    for (const path of [`/api/agents/connections/${a.connId}/calls`, "/api/agents/connections/nope/calls"]) {
+      const x = await as(B, path);
+      expect([x.status, await x.json()]).toEqual([404, { error: "not_found" }]);
+    }
+  });
+});
+
+describe("PATCH /api/agents/connections/:id", () => {
+  it("a member raises their own read to write: 200, audit agent.access; the same again writes no audit", async () => {
+    const a = await connectAgent(A);
+    const r = await patch(A, a.connId, { write: true, del: false });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ id: a.connId, write: true, del: false, calls7d: 0 });
+    expect(await one("SELECT can_write, can_delete FROM agent_connections WHERE id = ?", a.connId)).toEqual({ can_write: 1, can_delete: 0 });
+    const rows = await audits("agent.access");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor_id: "ua", via: null, target_type: "agent_connection", target_id: a.connId });
+    expect(JSON.parse(rows[0]!.detail as string)).toEqual({ write: true, del: false });
+    expect((await patch(A, a.connId, { write: true, del: false })).status).toBe(200);
+    expect(await audits("agent.access")).toHaveLength(1);
+  });
+
+  it("validates the body: del needs write, strict shape", async () => {
+    const a = await connectAgent(A);
+    const r = await patch(A, a.connId, { write: false, del: true });
+    expect([r.status, await r.json()]).toEqual([400, { error: "del_needs_write" }]);
+    for (const bad of [{ write: true }, { write: "yes", del: false }, { write: true, del: false, extra: 1 }, null]) {
+      const x = await patch(A, a.connId, bad);
+      expect([bad, x.status]).toEqual([bad, 400]);
+    }
+  });
+
+  it("the owner may lower someone else's connection but never raise it", async () => {
+    const r = await connectAgent(A);
+    const w = await connectAgent(B, { write: true, del: true });
+    const up = await patch(O, r.connId, { write: true, del: false });
+    expect([up.status, await up.json()]).toEqual([403, { error: "owner_cannot_raise" }]);
+    const up2 = await patch(O, w.connId, { write: true, del: false });
+    expect(up2.status).toBe(200); // lowering delete only
+    const down = await patch(O, w.connId, { write: false, del: false });
+    expect(down.status).toBe(200);
+    expect(await down.json()).toMatchObject({ write: false, del: false, userEmail: B });
+    expect(await one("SELECT can_write, can_delete FROM agent_connections WHERE id = ?", w.connId)).toEqual({ can_write: 0, can_delete: 0 });
+    expect(await audits("agent.access")).toHaveLength(2);
+    expect(await audits("agent.access").then((x) => x.map((a) => a.actor_id))).toEqual(["uo", "uo"]);
+  });
+
+  it("another member's, a revoked and an unknown connection all answer the same 404", async () => {
+    const a = await connectAgent(A);
+    const gone = await connectAgent(A, { write: true });
+    await run("UPDATE agent_connections SET revoked_at = 1 WHERE id = ?", gone.connId);
+    for (const [who, id] of [[B, a.connId], [A, gone.connId], [A, "nope"]] as const) {
+      const x = await patch(who, id, { write: true, del: false });
+      expect([x.status, await x.json()]).toEqual([404, { error: "not_found" }]);
+    }
+    expect(await one("SELECT can_write FROM agent_connections WHERE id = ?", a.connId)).toEqual({ can_write: 0 });
+  });
+});
+
+describe("DELETE /api/agents/connections/:id", () => {
+  it("revokes the D1 row and the library grant: the token is refused, audit agent.disconnect, then 404", async () => {
+    const a = await connectAgent(A);
+    expect((await mcpCall(a.accessToken, "tools/call", { name: "server_info", arguments: {} })).status).toBe(200);
+    expect(await grantsOf("ua")).toEqual([a.connId]);
+    expect((await del(A, a.connId)).status).toBe(204);
+    expect((await mcpCall(a.accessToken, "tools/call", { name: "server_info", arguments: {} })).status).toBe(401);
+    expect(await grantsOf("ua")).toEqual([]);
+    expect((await one<{ revoked_at: number | null }>("SELECT revoked_at FROM agent_connections WHERE id = ?", a.connId))!.revoked_at).not.toBeNull();
+    const rows = await audits("agent.disconnect");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor_id: "ua", via: null, target_type: "agent_connection", target_id: a.connId });
+    expect(await list(A)).toEqual([]);
+    expect((await del(A, a.connId)).status).toBe(404);
+    expect(await audits("agent.disconnect")).toHaveLength(1);
+  });
+
+  it("only the matching grant goes; the owner may disconnect anyone's", async () => {
+    const a1 = await connectAgent(A);
+    const a2 = await connectAgent(A);
+    expect((await del(O, a1.connId)).status).toBe(204);
+    expect(await grantsOf("ua")).toEqual([a2.connId]);
+    expect((await mcpCall(a2.accessToken, "tools/call", { name: "server_info", arguments: {} })).status).toBe(200);
+  });
+
+  it("another member's connection answers 404 and stays connected", async () => {
+    const a = await connectAgent(A);
+    const x = await del(B, a.connId);
+    expect([x.status, await x.json()]).toEqual([404, { error: "not_found" }]);
+    expect(await grantsOf("ua")).toEqual([a.connId]);
+    expect((await one<{ revoked_at: number | null }>("SELECT revoked_at FROM agent_connections WHERE id = ?", a.connId))!.revoked_at).toBeNull();
+  });
+
+  it("a KV failure still answers 204 and the D1 check refuses the token (fails closed)", async () => {
+    const a = await connectAgent(A);
+    vi.spyOn(env.OAUTH_KV, "list").mockRejectedValue(new Error("KV list limit"));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await del(A, a.connId)).status).toBe(204);
+    expect(err).toHaveBeenCalled();
+    for (const call of err.mock.calls) expect(JSON.stringify(call)).not.toContain(a.accessToken);
+    vi.restoreAllMocks();
+    const r = await mcpCall(a.accessToken, "tools/call", { name: "server_info", arguments: {} });
+    expect(r.body.result.isError).toBe(true);
+  });
+});
+
+describe("/api/users agentCount", () => {
+  it("counts unrevoked connections: 1, then 0 after disconnect", async () => {
+    const a = await connectAgent(A);
+    const count = async () => (await (await as(O, "/api/users")).json<{ items: { id: string; agentCount: number }[] }>()).items.find((u) => u.id === "ua")!.agentCount;
+    expect(await count()).toBe(1);
+    expect((await del(A, a.connId)).status).toBe(204);
+    expect(await count()).toBe(0);
+  });
+});

@@ -8,7 +8,7 @@ import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
 const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
 const u = (id: string, o: Partial<UserItem> = {}): UserItem => ({
-  id, email: `${id}@example.com`, name: id.toUpperCase(), role: "member", status: "active", createdAt: 1, linkCount: 2, domains: [], ...o,
+  id, email: `${id}@example.com`, name: id.toUpperCase(), role: "member", status: "active", createdAt: 1, linkCount: 2, agentCount: 0, domains: [], ...o,
 });
 const USERS = [
   u("uo", { name: "Olive", role: "owner", linkCount: 9 }),

@@ -22,7 +22,7 @@ export type LinkRow = {
 /** A link as the API returns it: the password hash is replaced by a flag. */
 export type ApiLink = Omit<LinkRow, "passwordHash"> & { hasPassword: boolean };
 export const toApiLink = ({ passwordHash, ...l }: LinkRow): ApiLink => ({ ...l, hasPassword: passwordHash !== null });
-export type UserListItem = UserRow & { linkCount: number; domains: { id: string; host: string; via: "owner" | "member" }[] };
+export type UserListItem = UserRow & { linkCount: number; agentCount: number; domains: { id: string; host: string; via: "owner" | "member" }[] };
 export type AuditItem = {
   id: number; at: number; actorId: string; actorEmail: string | null; actorName: string | null; via: string | null;
   action: string; targetType: string; targetId: string; detail: Record<string, unknown>;

@@ -15,7 +15,7 @@ const dom = (id: string, host: string, type: Domain["type"]): Domain => ({
 const MAIN = dom("d1", "go.test", "main");
 const SHARED = dom("d2", "nw.test", "shared");
 const user = (id: string, email: string, o: Partial<UserItem> = {}): UserItem => ({
-  id, email, name: null, role: "member", status: "active", createdAt: 1, linkCount: 0, domains: [], ...o,
+  id, email, name: null, role: "member", status: "active", createdAt: 1, linkCount: 0, agentCount: 0, domains: [], ...o,
 });
 const UA = user("ua", "a@example.com", { name: "Ann" });
 const UB = user("ub", "b@example.com", { status: "disabled", domains: [{ id: "d2", host: "nw.test", via: "member" }] });

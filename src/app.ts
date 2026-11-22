@@ -18,6 +18,7 @@ import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
 import { keys } from "./api/keys";
+import { agents } from "./api/agents";
 import { nonJsonBody } from "./api/shared";
 import { isV1, v1 } from "./api/v1";
 import { authorize } from "./mcp/authorize";
@@ -90,6 +91,7 @@ app.route("/api/analytics", analytics);
 app.route("/api/settings", settings);
 app.route("/api/account", account);
 app.route("/api/keys", keys);
+app.route("/api/agents", agents);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 
