@@ -253,7 +253,9 @@ domains.patch("/:id", async (c) => {
 });
 
 const approveBody = z.strictObject({ confirmTakeover: z.boolean().optional() });
-const cfIds = (cf: CfRow) => [cf.zoneId, cf.dnsRecordId, cf.routeId, cf.hostnameId];
+// Objects linkwarren created; zone_id is only a lookup.
+const cfIds = (cf: CfRow) => [cf.dnsRecordId, cf.routeId, cf.hostnameId];
+const notConfigured = { error: "cloudflare_not_configured" } as const;
 
 /** Owner-only status change, audit first and both guarded on the status we read: a racing change writes neither a phantom audit nor a stale status. */
 async function setStatus(c: Context<E>, d: DomainRow, verb: "approve" | "disable", to: DomainRow["status"], extra: Record<string, unknown> = {}): Promise<DomainRow | null | "lost"> {
@@ -286,18 +288,24 @@ domains.post("/:id/approve", async (c) => {
   if (cf && cf.kind !== "manual") {
     const cfg = cfConfig(c.env);
     // Without Cloudflare settings nothing can be checked, so nothing is approved.
-    if (!cfg) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
+    if (!cfg) return c.json(notConfigured, 409);
     try {
       cf = await syncDomain(c.env, cfg, d, cf, { attach: cf.kind === "account", confirmTakeover: body.data.confirmTakeover });
     } catch (e) {
       if (e instanceof AttachError) return c.json({ error: e.code }, 409);
-      if (e instanceof CfError) return c.json({ error: "cloudflare_error" }, 502);
+      if (e instanceof CfError) {
+        // syncDomain throws 404 when the domain was deleted under it (a racing reject).
+        if (e.status === 404 && !(await getDomain(c.env, d.id))) return c.json(notFound, 404);
+        return c.json({ error: "cloudflare_error" }, 502);
+      }
       throw e; // syncDomain logged it
     }
     if (finish) {
+      // A route someone else made is never adopted, so nothing was attached: no audit.
+      if (cf.routeId === null) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
       await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
         detail: { host: d.host } }, exists(d.id))]);
-      return c.json({ ...d, cloudflare: cfView(c.env, d, cf) });
+      return c.json({ ...d, cloudflare: cfView(c.env, d, cf), ...(await loopField(c.env, d.host)) });
     }
     if (!isVerified(cf)) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
   }
@@ -331,7 +339,7 @@ domains.delete("/:id", async (c) => {
   // Re-read right before detach, so ids a sync stored earlier in this request's lifetime are included.
   const cf = await getCf(c.env, d.id);
   if (cf && cfIds(cf).some((v) => v)) {
-    if (!cfg) return c.json({ error: "cloudflare_error" }, 502);
+    if (!cfg) return c.json(notConfigured, 409);
     try {
       await detachDomain(c.env, cfg, d, cf);
     } catch (e) {

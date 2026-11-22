@@ -49,20 +49,44 @@ export function routeCovers(pattern: string, host: string): boolean {
 export async function syncDomain(env: Env, cfg: CfConfig, d: DomainRow, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }): Promise<CfRow> {
   if (cf.kind === "manual") return cf;
   const made: Made = {};
+  let saved: CfRow | null;
   try {
     const snap = cf.kind === "outside" ? await syncOutside(cfg, d.host, made) : await syncAccount(cfg, d.host, cf, opts, made);
-    return await save(env, d.id, cf, made, { ...snap, errors: JSON.stringify(snap.errors), last_error: null, checked_at: Math.floor(Date.now() / 1000) });
+    saved = await save(env, d.id, cf, made, { ...snap, errors: JSON.stringify(snap.errors), last_error: null, checked_at: Math.floor(Date.now() / 1000) });
   } catch (e) {
     // checked_at moves only on success; updated_at (bumped by save) is what throttles polls.
     const code = e instanceof AttachError ? e.code : e instanceof CfError ? e.message : "internal_error";
     if (code === "internal_error") logInternal(d.id, e);
     try {
-      await save(env, d.id, cf, made, { last_error: code });
+      await unstored(cfg, d.id, cf, made, await save(env, d.id, cf, made, { last_error: code }));
     } catch {
       // Ids and codes only: never the token or Cloudflare's own text.
       console.warn("linkwarren: could not store domain_cf after a failed sync", JSON.stringify({ domainId: d.id, lastError: code, made }));
     }
     throw e;
+  }
+  await unstored(cfg, d.id, cf, made, saved);
+  if (!saved) throw new CfError(404); // the domain was deleted (rejected) while this sync ran
+  return saved;
+}
+
+/**
+ * Deletes what this sync created but could not store: the row is gone, or another writer's id won the compare-and-set.
+ * Only ids from `made` (this call's creates), never one it read. Best-effort: 404 is gone, failures are logged, never thrown.
+ */
+async function unstored(cfg: CfConfig, domainId: string, cf: CfRow, made: Made, row: CfRow | null): Promise<void> {
+  const zone = cf.zoneId ?? made.zone_id ?? null; // the zone this sync used for an account domain
+  const stored = { dns_record_id: row?.dnsRecordId, route_id: row?.routeId, hostname_id: row?.hostnameId };
+  const del: Record<"dns_record_id" | "route_id" | "hostname_id", (id: string) => Promise<unknown>> = {
+    route_id: (id) => deleteRoute(cfg, (cf.kind === "outside" ? cfg.saasZoneId : zone) ?? "", id),
+    hostname_id: (id) => deleteHostname(cfg, id),
+    dns_record_id: (id) => deleteDns(cfg, zone ?? "", id),
+  };
+  for (const col of ["route_id", "hostname_id", "dns_record_id"] as const) {
+    const id = made[col];
+    if (!id || stored[col] === id) continue;
+    await del[col](id).catch((e) => console.warn("linkwarren: could not delete an unstored Cloudflare object",
+      JSON.stringify({ domainId, [col]: id, error: e instanceof CfError ? e.message : "internal_error" })));
   }
 }
 
@@ -152,7 +176,8 @@ export function logInternal(domainId: string, e: unknown): void {
 }
 
 /** One UPDATE. Each id is compare-and-set against the value this sync read, so a concurrent writer's id is never overwritten. */
-async function save(env: Env, id: string, cf: CfRow, made: Made, fields: Record<string, string | number | null>): Promise<CfRow> {
+/** Null when no domain_cf row matched (the domain was deleted). */
+async function save(env: Env, id: string, cf: CfRow, made: Made, fields: Record<string, string | number | null>): Promise<CfRow | null> {
   const read: Record<IdCol, string | null> = { zone_id: cf.zoneId, dns_record_id: cf.dnsRecordId, route_id: cf.routeId, hostname_id: cf.hostnameId };
   const set = Object.keys(fields).map((k) => `${k} = ?`);
   const binds: (string | number | null)[] = Object.values(fields);
@@ -162,7 +187,7 @@ async function save(env: Env, id: string, cf: CfRow, made: Made, fields: Record<
   }
   const row = await env.DB.prepare(`UPDATE domain_cf SET ${set.join(", ")}, updated_at = ? WHERE domain_id = ? RETURNING *`)
     .bind(...binds, Math.floor(Date.now() / 1000), id).first();
-  return row ? rowToCf(row) : cf;
+  return row ? rowToCf(row) : null;
 }
 
 /** Deletes only ids linkwarren stored; 404 counts as already gone (Task 3 client). Any other failure rejects before later steps. */

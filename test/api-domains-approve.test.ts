@@ -123,7 +123,7 @@ describe("approve gate", () => {
     await run("UPDATE domain_cf SET route_id = NULL WHERE domain_id = ?", id);
     const r = await approve(id);
     expect(r.status).toBe(200);
-    expect(await r.json()).toMatchObject({ status: "active", cloudflare: { kind: "account", ownership: "verified" } });
+    expect(await r.json()).toMatchObject({ status: "active", loopLinks: 0, cloudflare: { kind: "account", ownership: "verified" } });
     expect(fake.state.routes.map((x) => x.pattern)).toEqual(["x.owned.test/*"]);
     expect([await audits("domain.attach"), await audits("domain.approve")]).toEqual([1, 0]);
     const a = await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'domain.attach'");
@@ -240,5 +240,75 @@ describe("approve racing reject", () => {
     expect([await audits("domain.approve"), await audits("domain.reject")]).toEqual([0, 1]);
     expect(await statusOf(id)).toBeNull();
     expect([fake.state.hostnames, fake.state.routes]).toEqual([[], []]);
+  });
+});
+
+describe("syncs clean up what they could not store", () => {
+  it("reject commits while approve's sync is between create and save: the new hostname and route are deleted, approve is 404", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("a", "go.outside.test");
+    fake.state.hostnames.length = 0;
+    fake.state.routes.length = 0;
+    let rejected: Response | null = null;
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      const req = new Request(i as RequestInfo, init);
+      const res = await fake.handle(req);
+      if (!rejected && req.method === "POST" && req.url.includes("/workers/routes")) rejected = await reject(id);
+      return res;
+    });
+    const r = await approve(id);
+    expect(rejected!.status).toBe(204);
+    expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
+    expect([fake.state.hostnames, fake.state.routes]).toEqual([[], []]);
+    expect(await audits("domain.approve")).toBe(0);
+  });
+  it("compare-and-set lost to another writer: the loser's route is deleted, the winner's id stays", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("a", "go.outside.test");
+    fake.state.routes.length = 0;
+    await run("UPDATE domain_cf SET route_id = NULL WHERE domain_id = ?", id);
+    let won = false;
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      const req = new Request(i as RequestInfo, init);
+      const res = await fake.handle(req);
+      if (!won && req.method === "POST" && req.url.includes("/workers/routes")) {
+        won = true;
+        fake.state.routes.push({ id: "winner", zoneId: "zsaas", pattern: "go.outside.test/x*", script: "lw" });
+        await run("UPDATE domain_cf SET route_id = 'winner' WHERE domain_id = ?", id);
+      }
+      return res;
+    });
+    await approve(id);
+    expect(fake.state.routes.map((x) => x.id)).toEqual(["winner"]);
+    expect(await one("SELECT route_id FROM domain_cf WHERE domain_id = ?", id)).toEqual({ route_id: "winner" });
+  });
+});
+
+describe("Cloudflare not configured", () => {
+  it("reject of a member's never-attached account domain (zone id only) is 204", async () => {
+    installFakeCloudflare({ zones });
+    const id = await create("a", "links.owned.test");
+    expect(await one("SELECT zone_id FROM domain_cf WHERE domain_id = ?", id)).toEqual({ zone_id: "zo" });
+    configure(false);
+    expect((await reject(id)).status).toBe(204);
+    expect(await statusOf(id)).toBeNull();
+  });
+  it("approve of a non-manual domain and reject with stored ids are 409 cloudflare_not_configured", async () => {
+    installFakeCloudflare({ zones });
+    const id = await create("a", "go.outside.test");
+    configure(false);
+    for (const r of [await approve(id), await reject(id)])
+      expect([r.status, await r.json()]).toEqual([409, { error: "cloudflare_not_configured" }]);
+    expect(await statusOf(id)).toBe("pending");
+  });
+  it("finish connecting over a hand-made route attaches nothing: 409 not_verified, no attach audit", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("owner", "x.owned.test");
+    await run("UPDATE domain_cf SET route_id = NULL WHERE domain_id = ?", id); // the route stays, now unrecorded
+    const r = await approve(id);
+    expect(r.status).toBe(409);
+    expect((await r.json<Record<string, any>>()).error).toBe("not_verified");
+    expect(await audits("domain.attach")).toBe(0);
+    expect(fake.state.routes).toHaveLength(1);
   });
 });

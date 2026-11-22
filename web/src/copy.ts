@@ -26,6 +26,7 @@ const ERRORS: Record<string, string> = {
   not_verified: "Cloudflare has not confirmed this domain yet. Check the DNS record and try again in a few minutes.",
   not_pending: "Only a domain that is waiting for approval can be rejected.",
   cloudflare_error: "Cloudflare did not finish the change. Nothing else was changed. Try again in a minute.",
+  cloudflare_not_configured: "Cloudflare is not connected. Add the API token in Settings, then try again.",
   conflict: "Someone else changed this at the same time. Reload and try again.",
   invalid_reserved: "Reserved slugs must be valid slugs, at most 100.",
   unknown_user: "One of those people no longer exists. Reload and try again.",
