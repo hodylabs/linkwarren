@@ -641,3 +641,41 @@ main>.an{flex:1;min-height:0}
 .qr>svg{flex:none;width:96px;height:96px;border:1px solid var(--line);border-radius:8px;background:#fff}
 .qr p{margin:0 0 8px;color:var(--muted)}
 .qr .row{display:flex;flex-wrap:wrap;gap:8px}
+
+/* first-run setup wizard (setup.html) */
+.setup{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:100vh}
+.steps{background:var(--rail);color:var(--rail-text);padding:24px 18px;display:flex;flex-direction:column;gap:22px}
+.steps ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.steps li{display:flex;gap:12px;align-items:flex-start;padding:10px;border-radius:8px}
+.steps li.now{background:var(--rail-hi);box-shadow:inset 2px 0 0 var(--signal);color:#fff}
+.steps li.todo{color:var(--rail-dim)}
+.steps .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;border:1px solid #3A404A;flex:none}
+.steps li.done .n{background:var(--ok);border-color:var(--ok);color:#fff}
+.steps li.now .n{background:var(--signal);border-color:var(--signal);color:var(--graphite)}
+.steps small{display:block;color:var(--rail-dim);font-size:12px;overflow-wrap:anywhere}
+.steps p{color:var(--rail-dim);font-size:12.5px;margin:auto 0 0}
+.wiz{padding:48px 56px;max-width:760px;min-width:0}
+.wiz h1{font-family:var(--display);font-weight:500;font-size:26px;letter-spacing:-.02em;margin:0 0 8px}
+.wiz .lead{color:var(--muted);font-size:15px;max-width:62ch;margin:0 0 28px}
+.wiz h3{font-size:13.5px;margin:24px 0 10px}
+.wiz .field.stack{max-width:420px}
+.wiz .field.stack small{margin-top:4px}
+.wiz .callout{margin-top:14px}
+.wiz .row-actions{margin-top:10px}
+.choices{border:0;margin:0;padding:0}
+.choices legend{padding:0;margin-bottom:4px}
+.navrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px;align-items:center}
+.navrow .left{color:var(--faint);font-size:12.5px;margin-right:auto}
+@media (max-width:760px){
+  .setup{grid-template-columns:minmax(0,1fr);min-height:0}
+  .steps{padding:12px 16px;gap:10px}
+  .steps ol{flex-direction:row;flex-wrap:wrap}
+  .steps li{padding:6px}
+  .steps li:not(.now) div{display:none}
+  .wiz{padding:16px 16px 24px}
+  .wiz h1{font-size:22px}
+  .wiz .lead{margin-bottom:18px}
+  .wiz input{font-size:16px}
+  .wiz .btn,.wiz .check{min-height:44px}
+  .navrow .left{display:none}
+}

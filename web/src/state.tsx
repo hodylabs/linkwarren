@@ -25,8 +25,8 @@ export type AppState = {
   setCurrentDomain(id: string | null): void;
   reloadDomains(): Promise<void>;
   reloadUsers(): Promise<void>;
-  /** GET /api/instance; null until loaded or when it failed (the rail then shows linkwarren). */
-  instance: InstanceInfo | null;
+  /** GET /api/instance; undefined until the first answer, null when it failed (the rail then shows linkwarren). */
+  instance: InstanceInfo | null | undefined;
   reloadInstance(): Promise<void>;
   linksVersion: number;
   bumpLinks(): void;
@@ -71,7 +71,7 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [users, setUsers] = useState<UserItem[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(readDomain);
-  const [instance, setInstance] = useState<InstanceInfo | null>(null);
+  const [instance, setInstance] = useState<InstanceInfo | null | undefined>(undefined);
   const [linksVersion, setLinksVersion] = useState(0);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [announcement, setAnnouncement] = useState({ text: "", n: 0 });
@@ -105,7 +105,7 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
     if (g === instanceGen.current) setInstance(v);
   }, []);
   // A missing name or logo is cosmetic: the rail keeps the linkwarren defaults, so a failure here is not a load error.
-  useEffect(() => void reloadInstance().catch(() => undefined), [reloadInstance]);
+  useEffect(() => void reloadInstance().catch(() => setInstance((v) => v ?? null)), [reloadInstance]);
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadTry, setLoadTry] = useState(0);

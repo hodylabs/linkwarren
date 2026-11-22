@@ -46,6 +46,7 @@ export function SecretField({ name, status, pasteAvailable, onSaved, hint }: {
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      if (!input.current?.value.trim()) return; // nothing typed: Ctrl+Enter keeps the page's meaning (the wizard's Continue)
       e.preventDefault();
       save();
     } else if (e.key === "Escape" && input.current?.value) {

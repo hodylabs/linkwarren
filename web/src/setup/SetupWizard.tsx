@@ -1,0 +1,426 @@
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { api, ApiError, type Domain } from "../api";
+import { useHotkeys, type Bindings } from "../keys";
+import { normalizeHost } from "../../../src/host";
+import { navigate } from "../router";
+import { PermList } from "../settings/CloudflareSection";
+import { checkCloudflare, getSettings, logoUrl, patchSettings, sendTestEmail, type CheckResult, type SecretStatus, type SettingsBody } from "../settings/api";
+import { settingsError } from "../settings/copy";
+import { SecretField } from "../settings/SecretField";
+import { addPasskey, passkeysSupported } from "../signin/passkey";
+import { useApp } from "../state";
+import { chunkImport, runImport, type ImportRun } from "./importRun";
+import { parseLinksFile, type ImportBody, type LineError } from "./parseLinks";
+
+/** Wizard hotkeys (the navrow shows them; the shell's shortcuts sheet is not on screen here). */
+export const WIZARD_KEYS = { "mod+enter": "Continue", "alt+arrowleft": "Back" } as const;
+
+type StepKey = "name" | "signIn" | "cloudflare" | "mainDomain" | "email";
+type SetupStatus = { configured: boolean; steps: Record<StepKey, boolean> };
+const STEPS: readonly { key: StepKey | "links"; label: string }[] = [
+  { key: "name", label: "Name it" },
+  { key: "signIn", label: "Sign-in" },
+  { key: "cloudflare", label: "Connect Cloudflare" },
+  { key: "mainDomain", label: "Main domain" },
+  { key: "email", label: "Email" },
+  { key: "links", label: "Bring your links" },
+];
+const MAX_FILE = 10 * 1024 * 1024;
+const MISSING: Record<string, string> = { name: "a name", mainDomain: "a main domain" };
+const SHOWN_ROWS = 20;
+
+const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
+/** Error text for a step: setup's own answers first, then the Settings list. */
+function stepError(e: unknown): string {
+  if (e instanceof ApiError && e.code === "incomplete") {
+    const missing = (e.data as { missing?: unknown } | undefined)?.missing;
+    const names = Array.isArray(missing) ? missing.map((m) => MISSING[String(m)]).filter(Boolean) : [];
+    return `Setup cannot finish yet: add ${names.length ? names.join(" and ") : "a name and a main domain"} first.`;
+  }
+  return settingsError(code(e));
+}
+const counts = (r: ImportRun["report"]) => `${r.skipped} already there, ${r.conflicts.length} conflicts`;
+
+/** Line errors and conflicts as plain text rows (server text is never markup). */
+function Rows({ items }: { items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <ul className="fails">
+      {items.slice(0, SHOWN_ROWS).map((t, i) => <li key={i}>{t}</li>)}
+      {items.length > SHOWN_ROWS && <li>and {items.length - SHOWN_ROWS} more</li>}
+    </ul>
+  );
+}
+
+/** First-run setup (R10). Every save goes through the owner-only Settings APIs; only Finish marks the instance as set up. */
+export function SetupWizard() {
+  const app = useApp();
+  const [settings, setSettings] = useState<SettingsBody | null>(null);
+  const [status, setStatus] = useState<SetupStatus | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadTry, setLoadTry] = useState(0);
+  const [step, setStep] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const working = useRef(false);
+  const body = useRef<HTMLDivElement>(null);
+  const primary = useRef<HTMLButtonElement>(null);
+
+  const [name, setName] = useState("");
+  const [passkey, setPasskey] = useState<string | null>(null);
+  const [check, setCheck] = useState<CheckResult | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const checking = useRef(false);
+  const [host, setHost] = useState("");
+  const [takeover, setTakeover] = useState<string | null>(null);
+  const [choice, setChoice] = useState<string | null>(null);
+  const [mail, setMail] = useState<{ text: string; error: boolean } | null>(null);
+  const [fileErrors, setFileErrors] = useState<LineError[]>([]);
+  const [chunks, setChunks] = useState<ImportBody[] | null>(null);
+  const [preview, setPreview] = useState<ImportRun | null>(null);
+  const [result, setResult] = useState<ImportRun | null>(null);
+  const fileGen = useRef(0); // only the newest chosen file may show its preview
+
+  useEffect(() => {
+    const ac = new AbortController();
+    setLoadError(null);
+    Promise.all([getSettings(ac.signal), api<SetupStatus>("GET", "/api/setup", undefined, ac.signal)]).then(
+      ([s, st]) => {
+        setSettings(s);
+        setStatus(st);
+        setName(s.name ?? "");
+        // Answers are saved as they go: pick up at the first step not done yet.
+        const at = STEPS.findIndex((x) => x.key === "links" || !st.steps[x.key]);
+        setStep(at);
+      },
+      (e) => !ac.signal.aborted && setLoadError(code(e)),
+    );
+    return () => ac.abort();
+  }, [loadTry]);
+
+  const mains = app.domains.filter((d) => d.type === "main" && d.status === "active");
+  const chosen = choice ?? (mains.some((d) => d.id === settings?.mainDomainId) ? settings!.mainDomainId : mains[0]?.id ?? null);
+  const mainHost = app.domains.find((d) => d.id === settings?.mainDomainId)?.host ?? "";
+  const cfSet = settings !== null && settings.secrets.cf !== "missing";
+
+  const go = (i: number) => {
+    setError(null);
+    setStep(i);
+  };
+  const done = (key: StepKey) => setStatus((st) => st && { ...st, steps: { ...st.steps, [key]: true } });
+  const onSecrets = (s: SecretStatus) => setSettings((cur) => cur && { ...cur, secrets: s });
+
+  /** One write at a time: a second Ctrl+Enter or click while saving does nothing. */
+  const run = async (fn: () => Promise<void>) => {
+    if (working.current) return;
+    working.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(stepError(e));
+    } finally {
+      working.current = false;
+      setBusy(false);
+    }
+  };
+
+  const runCheck = useCallback(async () => {
+    if (checking.current) return;
+    checking.current = true;
+    setCheckError(null);
+    try {
+      setCheck(await checkCloudflare());
+    } catch (e) {
+      setCheckError(settingsError(code(e)));
+    } finally {
+      checking.current = false;
+    }
+  }, []);
+  // A token that is set (by any source) is checked when the step opens, and again after a new one is pasted.
+  useEffect(() => {
+    if (step === 2 && cfSet && check === null) void runCheck();
+  }, [step, cfSet, check, runCheck]);
+
+  const addMain = (confirm: boolean) =>
+    run(async () => {
+      const h = normalizeHost(host.trim()); // display only: the server stays the authority
+      setHost(h);
+      if (!h) throw new ApiError(400, "invalid_host");
+      let d: Domain;
+      try {
+        d = await api<Domain>("POST", "/api/domains", { host: h, type: "main", ...(confirm ? { confirmTakeover: true } : {}) });
+      } catch (e) {
+        if (code(e) === "dns_record_exists") setTakeover(h);
+        throw e;
+      }
+      setTakeover(null);
+      // Reload before saving: if the save fails, the new domain is in the choice list for the next try.
+      await app.reloadDomains().catch(() => undefined);
+      const s = await patchSettings({ mainDomainId: d.id });
+      setSettings(s);
+      done("mainDomain");
+      go(4);
+    });
+
+  const finish = () =>
+    run(async () => {
+      try {
+        await api("POST", "/api/setup/complete", {});
+      } catch (e) {
+        if (code(e) !== "already_configured") throw e; // set up elsewhere meanwhile: the shell is the right place now
+      }
+      await app.reloadInstance();
+      navigate("/links", { replace: true });
+    });
+
+  const next = () => {
+    if (!settings) return;
+    if (step === 0) {
+      const v = name.trim();
+      if (!v) return setError(settingsError("bad_name"));
+      return void run(async () => {
+        setSettings(await patchSettings({ name: v }));
+        done("name");
+        go(1);
+      });
+    }
+    if (step === 3) {
+      if (!mains.length) return void addMain(false);
+      return void run(async () => {
+        if (chosen !== settings.mainDomainId) setSettings(await patchSettings({ mainDomainId: chosen }));
+        done("mainDomain");
+        go(4);
+      });
+    }
+    if (step === 5) return void finish();
+    go(step + 1);
+  };
+  const back = () => step > 0 && !working.current && go(step - 1);
+  useHotkeys({ "mod+enter": next, "alt+arrowleft": back } satisfies Bindings<typeof WIZARD_KEYS>, settings !== null);
+
+  // Each step opens on its first field (or its first control, else Continue).
+  useEffect(() => {
+    if (!settings) return;
+    const root = body.current;
+    const el = root?.querySelector<HTMLElement>("input:not([disabled]), select, textarea") ?? root?.querySelector<HTMLElement>("button:not([disabled])") ?? primary.current;
+    el?.focus();
+  }, [step, settings, mains.length]);
+
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const g = ++fileGen.current;
+    const f = e.target.files?.[0];
+    setFileErrors([]);
+    setChunks(null);
+    setPreview(null);
+    setResult(null);
+    if (!f) return;
+    // Checked here for a quick answer; the server checks every request again.
+    if (f.size > MAX_FILE) return setFileErrors([{ line: 0, reason: "The file is larger than 10 MB" }]);
+    const text = await f.text();
+    if (g !== fileGen.current) return;
+    const p = parseLinksFile(f.name, text, mainHost);
+    if (!p.body || p.errors.length) return setFileErrors(p.errors);
+    const c = chunkImport(p.body);
+    setChunks(c);
+    const r = await runImport(c, true);
+    if (g === fileGen.current) setPreview(r);
+  };
+  const doImport = () =>
+    chunks &&
+    run(async () => {
+      const r = await runImport(chunks, false);
+      setResult(r);
+      app.bumpLinks();
+      void app.reloadDomains().catch(() => undefined);
+    });
+
+  if (loadError)
+    return (
+      <div className="gate" role="alert">
+        <img src="/linkwarren-mark.svg" alt="" />
+        <p>{settingsError(loadError)}</p>
+        <button type="button" className="btn" onClick={() => setLoadTry((n) => n + 1)}>Retry</button>
+      </div>
+    );
+  if (!settings || !status) return null;
+
+  const app_ = settings.authMode === "app";
+  let title = STEPS[step]!.label;
+  let lead: ReactNode;
+  let content: ReactNode = null;
+  let skip: string | null = null;
+  if (step === 0) {
+    lead = "The name shows in the dashboard, the browser tab and the emails linkwarren sends.";
+    content = (
+      <div className="field stack">
+        <label htmlFor="wiz-name">Name</label>
+        <input id="wiz-name" className="input sans" value={name} maxLength={60} autoComplete="off" onChange={(e) => setName(e.target.value)} disabled={busy} />
+      </div>
+    );
+  } else if (step === 1) {
+    lead = app_ ? "You signed in with an email link. People you invite sign in the same way." : "Sign-in is handled in front of this dashboard. People you invite sign in the same way.";
+    if (app_)
+      content = (
+        <>
+          <p className="muted">{passkeysSupported() ? "A passkey signs you in with this device, without waiting for an email." : "This browser cannot use passkeys. You can add one later from another device."}</p>
+          <div className="row-actions">
+            <button type="button" className="btn" disabled={busy || !passkeysSupported()} onClick={() => void run(async () => {
+              await addPasskey();
+              setPasskey("Passkey added.");
+            })}>Add a passkey</button>
+            {passkey && <span className="muted" role="status">{passkey}</span>}
+          </div>
+        </>
+      );
+  } else if (step === 2) {
+    lead = "linkwarren runs in your own Cloudflare account. Give it an API token so it can attach your domains and issue certificates.";
+    skip = "Skip for now";
+    content = (
+      <>
+        <SecretField name="cf" status={settings.secrets.cf} pasteAvailable={settings.secrets.pasteAvailable} onSaved={(s) => {
+          onSecrets(s);
+          setCheck(null);
+        }} />
+        <p className="muted hint">CF_ACCOUNT_ID and CF_WORKER_NAME are set in the Worker config.</p>
+        {cfSet && (
+          <>
+            <h3>What the token can do</h3>
+            {check && <PermList check={check} />}
+            {checkError && <p className="err" role="alert">{checkError}</p>}
+            <div className="row-actions gap-top">
+              <button type="button" className="btn" onClick={() => setCheck(null)}>Check again</button>
+            </div>
+          </>
+        )}
+      </>
+    );
+  } else if (step === 3) {
+    lead = "Short links live on the main domain unless you pick another one. You can add more domains later.";
+    content = mains.length ? (
+      <fieldset className="choices">
+        <legend className="muted">Pick the main domain</legend>
+        {mains.map((d) => (
+          <label className="check" key={d.id}>
+            <input type="radio" name="wiz-main" checked={chosen === d.id} onChange={() => setChoice(d.id)} disabled={busy} />
+            <span className="mono">{d.host}</span>
+          </label>
+        ))}
+      </fieldset>
+    ) : (
+      <>
+        <div className="field stack">
+          <label htmlFor="wiz-host">Domain</label>
+          <input id="wiz-host" className="input" value={host} placeholder="go.example.com" autoComplete="off" spellCheck={false} inputMode="url" onChange={(e) => {
+            setHost(e.target.value);
+            setTakeover(null);
+          }} disabled={busy} />
+        </div>
+        {takeover === normalizeHost(host.trim()) && (
+          <div className="row-actions">
+            <button type="button" className="btn" disabled={busy} onClick={() => void addMain(true)}>Replace the record and continue</button>
+          </div>
+        )}
+      </>
+    );
+  } else if (step === 4) {
+    lead = "linkwarren sends sign-in links and invites through Resend.";
+    skip = "Skip for now";
+    content = (
+      <>
+        <div className="sfield">
+          <div><b>Sender</b><small>Set by the EMAIL_FROM variable</small></div>
+          <span className="mono">{settings.emailFrom ?? "Not set"}</span>
+        </div>
+        <SecretField name="resend" status={settings.secrets.resend} pasteAvailable={settings.secrets.pasteAvailable} onSaved={onSecrets}
+          hint="Your sign-in email uses the key that works today; a pasted key replaces it." />
+        <div className="row-actions">
+          <button type="button" className="btn" disabled={busy} onClick={() => void run(async () => {
+            setMail(null);
+            try {
+              await sendTestEmail();
+              setMail({ text: `Sent a test email to ${app.me.email}.`, error: false });
+            } catch (e) {
+              setMail({ text: settingsError(code(e)), error: true });
+            }
+          })}>Send test email</button>
+        </div>
+        {mail && <p className={mail.error ? "err" : "muted"} role={mail.error ? "alert" : "status"}>{mail.text}</p>}
+      </>
+    );
+  } else {
+    title = "Bring your links";
+    lead = "Import short links from a CSV file or a linkwarren or legacy JSON export. Existing slugs are never overwritten, and links that need a password arrive disabled.";
+    skip = result ? null : "Skip";
+    const r = result ?? preview;
+    content = (
+      <>
+        <div className="field stack">
+          <label htmlFor="wiz-file">Links file</label>
+          <input id="wiz-file" type="file" accept=".csv,.json" onChange={(e) => void onFile(e)} disabled={busy} />
+          <small className="muted">CSV columns: slug, destination (or url), and optional host, enabled, start_date and end_date (YYYY-MM-DD HH:MM:SS, UTC). Up to 10 MB.</small>
+        </div>
+        {fileErrors.length > 0 && (
+          <div role="alert">
+            <p className="err">This file cannot be imported. Fix it and choose it again.</p>
+            <Rows items={fileErrors.map((e) => (e.line ? `Line ${e.line}: ${e.reason}` : e.reason))} />
+          </div>
+        )}
+        <div aria-live="polite">
+          {preview && !result && preview.failedAt === null && (
+            <p>{`${preview.report.created} to import, ${counts(preview.report)}, new domains: ${preview.report.domainsCreated.join(", ") || "none"}`}</p>
+          )}
+          {result && result.failedAt === null && <p>{`Imported ${result.report.created}, ${counts(result.report)}.`}</p>}
+          {r && r.failedAt !== null && (
+            <p className="err" role="alert">
+              {`Stopped at part ${r.failedAt + 1} of ${chunks?.length ?? 1}: ${settingsError(r.error ?? "internal")}`}
+              {result && r.failedAt > 0 ? ` The parts before it are imported (${r.report.created} links). Choose the file again to retry: nothing is imported twice.` : ""}
+            </p>
+          )}
+          {r && <Rows items={r.report.conflicts.map((c) => `${c.host}/${c.slug}: ${c.reason}`)} />}
+        </div>
+        {preview && preview.failedAt === null && !result && (
+          <div className="row-actions">
+            <button type="button" className="btn" disabled={busy} onClick={() => void doImport()}>Import</button>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  const last = step === STEPS.length - 1;
+  return (
+    <div className="setup">
+      <aside className="steps" aria-label="Setup steps">
+        <div className="brand"><img src={logoUrl(app.instance?.logoVersion ?? null)} alt="" /><span>{settings.name || "linkwarren"}</span></div>
+        <ol>
+          {STEPS.map((s, i) => {
+            const isDone = i !== step && s.key !== "links" && status.steps[s.key];
+            return (
+              <li key={s.key} className={i === step ? "now" : isDone ? "done" : "todo"} aria-current={i === step ? "step" : undefined}>
+                <span className="n" aria-hidden="true">{isDone ? "✓" : i + 1}</span>
+                <div><b>{s.label}</b>{s.key === "name" && settings.name && <small>{settings.name}</small>}</div>
+              </li>
+            );
+          })}
+        </ol>
+        <p>Everything here can be changed later in Settings. Your answers are saved as you go.</p>
+      </aside>
+      <main className="wiz">
+        <h1>{title}</h1>
+        <p className="lead">{lead}</p>
+        <div ref={body}>{content}</div>
+        {error && <p className="err" role="alert">{error}</p>}
+        <div className="navrow">
+          <span className="left"><kbd>Ctrl</kbd> <kbd>Enter</kbd> continue, <kbd>Alt</kbd> <kbd>←</kbd> back</span>
+          {step > 0 && <button type="button" className="btn" onClick={back} disabled={busy} aria-keyshortcuts="Alt+ArrowLeft">Back</button>}
+          {skip && <button type="button" className="btn ghost" onClick={() => (last ? void finish() : go(step + 1))} disabled={busy}>{skip}</button>}
+          <button ref={primary} type="button" className="btn primary" onClick={next} disabled={busy} aria-keyshortcuts="Control+Enter">
+            {last ? "Finish" : "Continue"}<span className="k">Ctrl Enter</span>
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+}

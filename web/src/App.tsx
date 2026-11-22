@@ -21,6 +21,7 @@ import { InviteSheet } from "./people/InviteSheet";
 import { PersonSheet } from "./people/PersonSheet";
 import { PeopleScreen } from "./people/PeopleScreen";
 import { SettingsScreen } from "./settings/SettingsScreen";
+import { SetupWizard } from "./setup/SetupWizard";
 
 function ScreenView({ screen }: { screen: Screen }) {
   const { me } = useApp();
@@ -86,6 +87,14 @@ function Shell() {
   );
 }
 
+/** R10: an owner of an instance that is not set up yet gets the first-run wizard in place of the shell; members never do. */
+function Root() {
+  const { me, instance } = useApp();
+  if (me.role === "owner" && instance === undefined) return null; // one request: no flash of the shell before the wizard
+  if (me.role === "owner" && instance?.configured === false) return <SetupWizard />;
+  return <Shell />;
+}
+
 export default function App() {
-  return <Gate>{(me) => <AppProvider me={me}><Shell /></AppProvider>}</Gate>;
+  return <Gate>{(me) => <AppProvider me={me}><Root /></AppProvider>}</Gate>;
 }

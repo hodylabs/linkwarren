@@ -22,6 +22,35 @@ const SSL_MISSING =
 type Resync = { running: boolean; checked: number; failed: { host: string; error: string }[]; resume: string | undefined; stopped: string | null; done: boolean };
 const IDLE: Resync = { running: false, checked: 0, failed: [], resume: undefined, stopped: null, done: false };
 
+/** The token check: one row per permission, or the not-accepted callout. Reused by the setup wizard. */
+export function PermList({ check }: { check: CheckResult }) {
+  return (
+    <div aria-live="polite">
+      {check.token === "invalid" ? (
+        <div className="callout wait">Cloudflare does not accept this token. Create a new one and set it as the CF_API_TOKEN secret.</div>
+      ) : (
+        <>
+          <ul className="perms" aria-label="Token permissions">
+            {PERMISSIONS.map((p) => {
+              const st = check.permissions.find((q) => q.key === p.key)?.state ?? "unknown";
+              return (
+                <li className="perm" key={p.key}>
+                  <span className={st === "ok" ? "pk ok" : st === "missing" ? "pk miss" : "pk"} aria-hidden="true">{st === "ok" ? "✓" : st === "missing" ? "!" : "?"}</span>
+                  <div>
+                    <b className="perm-name">{p.label}</b>
+                    <small>{st === "ok" ? "OK" : st === "missing" ? "Missing" : "Checked on first use"}. {p.why}</small>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {check.permissions.find((q) => q.key === "ssl_edit")?.state === "missing" && <div className="callout wait gap">{SSL_MISSING}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
 export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatus; onSecrets: (s: SecretStatus) => void }) {
   const { overlay } = useApp();
   const [s, setS] = useState<CloudflareSettings | null>(null);
@@ -193,31 +222,7 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
         </div>
       </div>
       {checkError && <p className="err" role="alert">{settingsError(checkError)}</p>}
-      {check && (
-        <div aria-live="polite">
-          {check.token === "invalid" ? (
-            <div className="callout wait">Cloudflare does not accept this token. Create a new one and set it as the CF_API_TOKEN secret.</div>
-          ) : (
-            <>
-              <ul className="perms" aria-label="Token permissions">
-                {PERMISSIONS.map((p) => {
-                  const st = check.permissions.find((q) => q.key === p.key)?.state ?? "unknown";
-                  return (
-                    <li className="perm" key={p.key}>
-                      <span className={st === "ok" ? "pk ok" : st === "missing" ? "pk miss" : "pk"} aria-hidden="true">{st === "ok" ? "✓" : st === "missing" ? "!" : "?"}</span>
-                      <div>
-                        <b className="perm-name">{p.label}</b>
-                        <small>{st === "ok" ? "OK" : st === "missing" ? "Missing" : "Checked on first use"}. {p.why}</small>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              {check.permissions.find((q) => q.key === "ssl_edit")?.state === "missing" && <div className="callout wait gap">{SSL_MISSING}</div>}
-            </>
-          )}
-        </div>
-      )}
+      {check && <PermList check={check} />}
       <div className="toggle sfield">
         <div>
           <b>Cloudflare controls in domain settings</b>
