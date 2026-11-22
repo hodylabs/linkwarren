@@ -63,7 +63,8 @@ describe("Domains keyboard", () => {
     expect(location.search).toContain("sel=d1");
     await user.keyboard("{Escape}");
     expect(location.search).not.toContain("sel=");
-    expect(screen.getByText("Select a domain to see it here.")).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Selected domain" })).toBeNull(); // no empty panel
+    expect(document.activeElement).toBe(rows()[0]); // focus back on the row that was selected
   });
 
   it("with the disable confirm open, Ctrl+K and G L do nothing, and one Esc closes only the confirm", async () => {

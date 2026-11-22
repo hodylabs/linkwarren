@@ -241,7 +241,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         <div className="f">
           <label htmlFor="nl-slug">
             Short link{" "}
-            <span>
+            <span className="kh">
               <kbd>Alt</kbd> <kbd>D</kbd> change domain
             </span>
           </label>
@@ -280,7 +280,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
                   {s}
                 </button>
               ))}
-              <span>
+              <span className="kh">
                 <kbd>Tab</kbd> to pick
               </span>
             </div>
@@ -369,7 +369,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         )}
       </div>
       <div className="sh-foot">
-        <span className="left">Rule keys T S work outside text boxes</span>
+        <span className="left kh">Rule keys T S work outside text boxes</span>
         <button type="button" className="btn" disabled={busy || !domainId} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
           Create and copy <span className="k2">Ctrl ⇧ Enter</span>
         </button>

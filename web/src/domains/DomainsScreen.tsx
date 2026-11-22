@@ -4,6 +4,7 @@ import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
+import { BackBar, useDetailView } from "../shell/narrow";
 import { DomainDetail } from "./DomainDetail";
 import { ownerLabel, sharedWith, statusTag } from "./domainView";
 
@@ -31,6 +32,7 @@ export function DomainsScreen() {
   const { query } = useRoute();
   const q = (query.get("q") ?? "").toLowerCase();
   const sel = query.get("sel");
+  const { open, show, back } = useDetailView("/domains");
   const [filter, setFilter] = useState<(typeof FILTERS)[number][0]>("all");
   const [modal, setModal] = useState(false);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
@@ -48,9 +50,18 @@ export function DomainsScreen() {
     focusRow.current = focus;
     const p = new URLSearchParams(location.search);
     if (id) p.set("sel", id);
-    else p.delete("sel");
+    else {
+      p.delete("sel");
+      p.delete("view"); // nothing selected: no detail view either
+    }
     const s = p.toString();
     navigate(`/domains${s ? `?${s}` : ""}`, { replace: true });
+  };
+  // Esc or the panel close button: back to the list on narrow screens, else close the panel; focus goes to the row that was selected.
+  const closeDetail = () => {
+    if (open) return back();
+    if (sel) rowRefs.current.get(sel)?.focus();
+    select(null);
   };
   useEffect(() => {
     if (focusRow.current && sel) rowRefs.current.get(sel)?.focus();
@@ -69,7 +80,7 @@ export function DomainsScreen() {
       j: () => move(1),
       k: () => move(-1),
       escape: (e) => {
-        if (!isTypingTarget(e.target) && sel) select(null);
+        if (!isTypingTarget(e.target) && sel) closeDetail();
       },
     } satisfies Bindings<typeof DOMAINS_KEYS>,
     overlay === null && !modal,
@@ -93,7 +104,7 @@ export function DomainsScreen() {
         {isOwner && waiting > 0 && <span className="note">{waiting} waiting for you</span>}
         <PrimaryButton label="Add domain" shortcut="N" onClick={() => app.open({ kind: "addDomain" })} />
       </ScreenHeader>
-      <div className="body">
+      <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className="list" aria-label="Domains">
           <table>
             <thead>
@@ -115,8 +126,8 @@ export function DomainsScreen() {
                     ref={(el) => void (el ? rowRefs.current.set(d.id, el) : rowRefs.current.delete(d.id))}
                     aria-selected={d.id === sel}
                     tabIndex={d.id === sel || (!selected && i === 0) ? 0 : -1}
-                    onClick={() => select(d.id)}
-                    onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && select(d.id)}
+                    onClick={() => show(d.id) || select(d.id)}
+                    onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), show(d.id) || select(d.id))}
                   >
                     <td className="short">
                       <span className={`dot2 ${tag.tone}`} aria-hidden="true" />
@@ -128,9 +139,9 @@ export function DomainsScreen() {
                     <td>
                       <Tag tone={tag.tone}>{tag.label}</Tag>
                     </td>
-                    <td>{ownerLabel(d, me, users)}</td>
-                    {isOwner && <td>{sharedWith(d, users, me)}</td>}
-                    <td className="num">{d.linkCount}</td>
+                    <td data-label="Owner">{ownerLabel(d, me, users)}</td>
+                    {isOwner && <td data-label="Shared with">{sharedWith(d, users, me)}</td>}
+                    <td className="num" data-label="Links">{d.linkCount}</td>
                   </tr>
                 );
               })}
@@ -144,13 +155,8 @@ export function DomainsScreen() {
             </Empty>
           )}
         </section>
-        {selected ? (
-          <DomainDetail key={selected.id} domain={selected} onModal={setModal} />
-        ) : (
-          <aside className="detail" aria-label="Selected domain">
-            <p className="empty pad">Select a domain to see it here.</p>
-          </aside>
-        )}
+        {open && <BackBar label="All domains" onBack={back} />}
+        {selected && <DomainDetail key={selected.id} domain={selected} onModal={setModal} onClose={closeDetail} />}
       </div>
     </>
   );

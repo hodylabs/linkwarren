@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { PHONE, useMedia } from "./narrow";
 
 // Set when a sheet closes so a sheet opened in the same tick (palette -> switcher) returns focus to the original opener.
 let carried: Element | null = null;
@@ -25,6 +26,7 @@ const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:n
  */
 export function Sheet({ label, onClose, children, cls = "sheet" }: { label: string; onClose: () => void; children: ReactNode; cls?: string }) {
   const panel = useRef<HTMLDivElement>(null);
+  const phone = useMedia(PHONE);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   // Read during the first render: a child's autoFocus has moved focus by the time effects run.
@@ -84,6 +86,14 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
     <div className="scrim on" onMouseDown={(e) => e.target === e.currentTarget && closeRef.current()}>
       <div ref={panel} className={cls} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
         {children}
+        {/* Phones have no Esc key and the panel can cover the scrim: a close button, last so first focus and autoFocus are unchanged. */}
+        {phone && (
+          <button type="button" className="btn ghost sheet-x" aria-label={`Close ${label.toLowerCase()}`} onClick={() => closeRef.current()}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );

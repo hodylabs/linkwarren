@@ -320,7 +320,8 @@ describe("Link detail", () => {
     await user.click(rows()[0]!);
     await user.keyboard("{Escape}");
     expect(location.search).not.toContain("sel=");
-    expect(screen.getByText("Select a link to see it here.")).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Selected link" })).toBeNull(); // no empty panel
+    expect(document.activeElement).toBe(rows()[0]); // focus back on the row that was selected
   });
 
   it("Shift+D then Enter deletes and removes the row", async () => {

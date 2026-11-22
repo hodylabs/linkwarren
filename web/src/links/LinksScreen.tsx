@@ -6,6 +6,7 @@ import { navigate, useRoute } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
+import { BackBar, useDetailView } from "../shell/narrow";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { creatorLabel, linkState, linksQuery, type LinksFilter } from "./linkView";
 
@@ -28,6 +29,7 @@ export function LinksScreen() {
   const { query } = useRoute();
   const q = query.get("q") ?? "";
   const sel = query.get("sel");
+  const { open, show, back } = useDetailView("/links");
   const [status, setStatus] = useState<LinksFilter["status"]>("all");
   const [mine, setMine] = useState(false);
   const [items, setItems] = useState<Link[]>([]);
@@ -102,9 +104,18 @@ export function LinksScreen() {
     focusRow.current = focus;
     const p = new URLSearchParams(location.search);
     if (id) p.set("sel", id);
-    else p.delete("sel");
+    else {
+      p.delete("sel");
+      p.delete("view"); // nothing selected: no detail view either
+    }
     const s = p.toString();
     navigate(`/links${s ? `?${s}` : ""}`, { replace: true });
+  };
+  // Esc or the panel close button: back to the list on narrow screens, else close the panel; focus goes to the row that was selected.
+  const closeDetail = () => {
+    if (open) return back();
+    if (sel) rowRefs.current.get(sel)?.focus();
+    select(null);
   };
 
   useEffect(() => {
@@ -160,7 +171,7 @@ export function LinksScreen() {
       },
       n: () => app.open({ kind: "newLink" }),
       escape: (e) => {
-        if (!isTypingTarget(e.target) && sel) select(null);
+        if (!isTypingTarget(e.target) && sel) closeDetail();
       },
     } satisfies Bindings<typeof LINKS_KEYS>,
     overlay === null && !confirming,
@@ -195,7 +206,7 @@ export function LinksScreen() {
         )}
         <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />
       </ScreenHeader>
-      <div className="body">
+      <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className="list" aria-label="Links">
           {loadError && (
             <p className="err pad" role="alert">
@@ -222,8 +233,8 @@ export function LinksScreen() {
                     ref={(el) => void (el ? rowRefs.current.set(l.id, el) : rowRefs.current.delete(l.id))}
                     aria-selected={isSel}
                     tabIndex={isSel || (!selected && i === 0) ? 0 : -1}
-                    onClick={() => select(l.id)}
-                    onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && select(l.id)}
+                    onClick={() => show(l.id) || select(l.id)}
+                    onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), show(l.id) || select(l.id))}
                   >
                     <td className="short">
                       <span className={`dot2 ${st.tone}`} aria-hidden="true" />
@@ -246,7 +257,7 @@ export function LinksScreen() {
                     <td>
                       <Tag tone={st.tone}>{st.label}</Tag>
                     </td>
-                    <td>{creatorLabel(l.createdBy, me, users)}</td>
+                    <td data-label="By">{creatorLabel(l.createdBy, me, users)}</td>
                   </tr>
                 );
               })}
@@ -270,7 +281,8 @@ export function LinksScreen() {
             </div>
           )}
         </section>
-        {selected ? (
+        {open && <BackBar label="All links" onBack={back} />}
+        {selected && (
           <LinkDetail
             key={selected.id}
             ref={detailRef}
@@ -278,15 +290,12 @@ export function LinksScreen() {
             domain={domainOf(selected.domainId)}
             canEdit={canEdit(selected)}
             onSaved={(l) => setItems((cur) => cur.map((x) => (x.id === l.id ? l : x)))}
+            onClose={closeDetail}
             onDelete={() => {
               setDeleteError(null);
               setConfirming(true);
             }}
           />
-        ) : (
-          <aside className="detail" aria-label="Selected link">
-            <p className="empty pad">Select a link to see it here.</p>
-          </aside>
         )}
       </div>
       {confirming && selected && (

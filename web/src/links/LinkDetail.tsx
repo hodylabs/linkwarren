@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Keyb
 import { api, ApiError, type Domain, type Link } from "../api";
 import { errorText } from "../copy";
 import { rebase } from "../draft";
-import { Seg, Switch, Tag } from "../shell/ui";
+import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
 import { creatorLabel, linkState, shortUrl } from "./linkView";
@@ -24,8 +24,8 @@ function diff(l: Link, d: Draft): Record<string, unknown> {
   return out;
 }
 
-export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void }>(
-  function LinkDetail({ link, domain, canEdit, onSaved, onDelete }, ref) {
+export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void; onClose(): void }>(
+  function LinkDetail({ link, domain, canEdit, onSaved, onDelete, onClose }, ref) {
     const app = useApp();
     const [draft, setDraft] = useState(() => draftOf(link));
     const [error, setError] = useState<{ code: string } | null>(null);
@@ -90,6 +90,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; domain: Domain 
     return (
       <aside className="detail" aria-label="Selected link" onKeyDown={onKeyDown}>
         <div className="d-head">
+          <CloseButton label="Close link details" onClick={onClose} />
           <div className="short">
             <span className="host">{host}/</span>
             <span className="slug">{link.slug}</span>

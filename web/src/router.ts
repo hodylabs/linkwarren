@@ -7,9 +7,10 @@ const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((fn) => fn());
 if (typeof window !== "undefined") window.addEventListener("popstate", emit);
 
-export function navigate(to: string, opts: { replace?: boolean } = {}): void {
-  if (opts.replace) history.replaceState(null, "", to);
-  else history.pushState(null, "", to);
+/** A replace keeps the entry's history state (a pushed detail view stays marked as pushed); a push sets `opts.state`. */
+export function navigate(to: string, opts: { replace?: boolean; state?: unknown } = {}): void {
+  if (opts.replace) history.replaceState(history.state, "", to);
+  else history.pushState(opts.state ?? null, "", to);
   emit();
 }
 

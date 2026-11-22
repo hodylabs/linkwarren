@@ -5,6 +5,7 @@ import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Empty, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
+import { BackBar, useDetailView } from "../shell/narrow";
 import { clock } from "../time";
 import { describeAudit } from "./auditText";
 
@@ -54,6 +55,7 @@ export function PeopleScreen() {
   const { query } = useRoute();
   const q = (query.get("q") ?? "").toLowerCase();
   const sel = query.get("sel");
+  const { open, show, back } = useDetailView("/people");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("everyone");
   const [kind, setKind] = useState<Kind>("all");
   const [items, setItems] = useState<AuditItem[]>([]);
@@ -128,7 +130,10 @@ export function PeopleScreen() {
     focusRow.current = focus;
     const p = new URLSearchParams(location.search);
     if (id) p.set("sel", id);
-    else p.delete("sel");
+    else {
+      p.delete("sel");
+      p.delete("view"); // nothing selected: no detail view either
+    }
     const s = p.toString();
     navigate(`/people${s ? `?${s}` : ""}`, { replace: true });
   };
@@ -149,7 +154,7 @@ export function PeopleScreen() {
       k: () => move(-1),
       escape: (e) => {
         if (isTypingTarget(e.target)) return;
-        if (sel) select(null);
+        if (sel) (open ? back() : select(null));
       },
     } satisfies Bindings<typeof PEOPLE_KEYS>,
     overlay === null,
@@ -171,7 +176,7 @@ export function PeopleScreen() {
           ))}
         </div>
       </ScreenHeader>
-      <div className="body people">
+      <div className={open ? "body people open" : "body people"}>
         <section className="list" aria-label="People">
           <table>
             <thead>
@@ -189,8 +194,8 @@ export function PeopleScreen() {
                   ref={(el) => void (el ? rowRefs.current.set(u.id, el) : rowRefs.current.delete(u.id))}
                   aria-selected={u.id === sel}
                   tabIndex={u.id === sel || (at < 0 && i === 0) ? 0 : -1}
-                  onClick={() => select(u.id)}
-                  onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && select(u.id)}
+                  onClick={() => show(u.id) || select(u.id)}
+                  onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), show(u.id) || select(u.id))}
                 >
                   <td>
                     <span className={u.id === me.id ? "who me" : "who"}>
@@ -208,14 +213,15 @@ export function PeopleScreen() {
                     {u.status === "invited" && <Tag tone="wait">Invited</Tag>}
                     {u.status === "disabled" && <Tag tone="off">Disabled</Tag>}
                   </td>
-                  <td>{domainsCell(u, domains.length)}</td>
-                  <td className="num">{u.linkCount}</td>
+                  <td data-label="Domains">{domainsCell(u, domains.length)}</td>
+                  <td className="num" data-label="Links">{u.linkCount}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {users !== null && list.length === 0 && <Empty title="No people match." text="Try another filter or search." />}
         </section>
+        {open && <BackBar label="All people" onBack={back} />}
         <aside className="detail" aria-label="Audit log">
           <div className="d-head">
             <div className="title">Activity across every domain</div>

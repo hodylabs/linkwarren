@@ -4,7 +4,7 @@ import { errorText } from "../copy";
 import { rebase } from "../draft";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
-import { Switch, Tag } from "../shell/ui";
+import { CloseButton, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { DEFAULT_RESERVED } from "../../../src/validate";
 import { shortDate } from "../time";
@@ -20,7 +20,7 @@ export const DOMAIN_DETAIL_KEYS = {
 } as const;
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
 
-export function DomainDetail({ domain, onModal }: { domain: Domain; onModal(open: boolean): void }) {
+export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onModal(open: boolean): void; onClose(): void }) {
   const app = useApp();
   const { me, users, domains, overlay } = app;
   const isOwner = me.role === "owner";
@@ -137,6 +137,7 @@ export function DomainDetail({ domain, onModal }: { domain: Domain; onModal(open
     <>
       <aside className="detail" aria-label="Selected domain" onKeyDown={onKeyDown}>
         <div className="d-head">
+          <CloseButton label="Close domain details" onClick={onClose} />
           <div className="short">
             <span className="slug">{domain.host}</span>
           </div>

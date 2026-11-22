@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { NavLink, useRoute, type Screen } from "../router";
 import { useApp } from "../state";
+import { PHONE, useMedia } from "./narrow";
+import { Sheet } from "./Sheet";
 
 // Paths copied from the mockup's <symbol> set.
 const ICONS: Record<Screen, ReactNode> = {
@@ -72,22 +74,19 @@ function Item({ screen, current }: { screen: Screen; current: Screen }) {
 }
 
 export function Rail() {
-  const { me, domains, currentDomainId, open } = useApp();
+  const { me, domains, currentDomainId, open, close, overlay } = useApp();
   const { screen } = useRoute();
+  const phone = useMedia(PHONE);
+  const menuOpen = overlay?.kind === "menu";
+  // The drawer only exists on phones: widening the window with it open closes it.
+  useEffect(() => {
+    if (!phone && menuOpen) close();
+  }, [phone, menuOpen, close]);
   const current = domains.find((d) => d.id === currentDomainId);
   const isOwner = me.role === "owner";
-  return (
-    <aside className="rail" aria-label="Main">
-      <NavLink to="/links" className="brand" aria-label="linkwarren home">
-        <img src="/linkwarren-mark.svg" alt="" />
-        <span aria-hidden="true">linkwarren</span>
-      </NavLink>
-      <button type="button" className="switch" aria-label={`Switch domain, current ${current?.host ?? "All domains"}`} onClick={() => open({ kind: "switcher" })}>
-        <span className="dot" />
-        <b>{current?.host ?? "All domains"}</b>
-        {current && <small>{TYPE_LABEL[current.type]}</small>}
-      </button>
-      <nav className="nav">
+  const navBody = (
+    <>
+      <nav className="nav" aria-label="Screens">
         <Item screen="links" current={screen} />
         <Item screen="domains" current={screen} />
         <Item screen="analytics" current={screen} />
@@ -113,6 +112,35 @@ export function Rail() {
         </div>
       </div>
       <div className="ver">Dashboard v{__APP_VERSION__}</div>
+    </>
+  );
+  return (
+    <aside className="rail" aria-label="Main">
+      <NavLink to="/links" className="brand" aria-label="linkwarren home">
+        <img src="/linkwarren-mark.svg" alt="" />
+        <span aria-hidden="true">linkwarren</span>
+      </NavLink>
+      <button type="button" className="switch" aria-label={`Switch domain, current ${current?.host ?? "All domains"}`} onClick={() => open({ kind: "switcher" })}>
+        <span className="dot" />
+        <b>{current?.host ?? "All domains"}</b>
+        {current && <small>{TYPE_LABEL[current.type]}</small>}
+      </button>
+      {!phone && navBody}
+      {phone && (
+        <button type="button" className="menu-btn" aria-label="Menu" aria-expanded={menuOpen} aria-controls="nav-drawer" onClick={() => open({ kind: "menu" })}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+      )}
+      {phone && menuOpen && (
+        <Sheet label="Menu" onClose={close} cls="drawer">
+          {/* Picking a screen (even the current one) closes the drawer. */}
+          <div id="nav-drawer" className="drawer-in" onClick={(e) => (e.target as Element).closest("a[href]") && close()}>
+            {navBody}
+          </div>
+        </Sheet>
+      )}
     </aside>
   );
 }

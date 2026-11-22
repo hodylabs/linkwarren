@@ -101,3 +101,12 @@ export function Empty({ title, text, children }: { title: string; text: string; 
     </div>
   );
 }
+
+/** The detail panel's close (X) button; Esc does the same. */
+export const CloseButton = ({ label, onClick }: { label: string; onClick: () => void }) => (
+  <button type="button" className="btn ghost x-btn" aria-label={label} aria-keyshortcuts="Escape" onClick={onClick}>
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  </button>
+);

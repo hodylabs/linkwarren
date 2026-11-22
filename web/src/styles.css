@@ -276,3 +276,119 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .empty-state .tile svg{width:20px;height:20px;stroke:var(--muted);fill:none;stroke-width:1.8;stroke-linecap:round}
 .empty-state .et{margin:0;font-weight:600;font-size:14.5px}
 .empty-state .ed{margin:0 0 10px;color:var(--muted);max-width:44ch}
+
+/* app: the detail panel exists only with a selection; without one the list takes the full width */
+.body.solo{grid-template-columns:minmax(0,1fr)}
+.d-head{position:relative}
+.d-head>.short{padding-right:40px}
+.x-btn{position:absolute;top:10px;right:10px;width:34px;padding:0;justify-content:center}
+.x-btn svg,.backbar svg,.menu-btn svg,.sheet-x svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+@media (prefers-reduced-motion:no-preference){
+  .body>.detail{animation:detail-in .16s ease-out}
+  @keyframes detail-in{from{opacity:0;transform:translateX(12px)}}
+}
+.drawer-in{display:contents}
+.sheet,.palette{position:relative}
+.sheet-x{position:absolute;top:0;right:0;width:44px;padding:0;justify-content:center;color:var(--muted)}
+
+/* app: responsive. Keep the widths in step with NARROW and PHONE in shell/narrow.tsx. */
+/* Tablets and phones: list and detail share one column; the detail is a pushed view with a Back bar. */
+@media (max-width:1080px){
+  .body,.body.people,.body.solo{display:block;overflow:auto}
+  .list,.detail{overflow:visible}
+  .detail{border-left:0}
+  .body.people>.detail{border-top:1px solid var(--line)}
+  .body:not(.people):not(.open)>.detail{display:none}
+  .body.open>.list{display:none}
+  main:has(.body.open)>.top{display:none}
+  .body>.detail{animation:none}
+  .d-head .x-btn{display:none}
+  .d-head>.short{padding-right:0}
+  .backbar{position:sticky;top:0;z-index:2;background:var(--panel);border-bottom:1px solid var(--line);padding:6px 12px}
+  .backbar .btn{color:var(--text);padding:0 10px 0 6px}
+}
+
+/* Phones: the rail is a top bar with a menu drawer, tables are stacked rows, sheets rise from the bottom. */
+@media (max-width:760px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);height:100dvh}
+  .rail{flex-direction:row;align-items:center;gap:8px;height:auto;position:static;padding:calc(6px + env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) 6px max(12px,env(safe-area-inset-left))}
+  .brand{align-self:center;min-height:44px;padding:4px}
+  .switch{flex:1;min-width:0;width:auto;min-height:44px}
+  .switch b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .menu-btn{display:grid;place-items:center;flex:none;width:44px;height:44px;border:1px solid #30363F;border-radius:8px;background:var(--rail-hi);color:#fff}
+  main{height:auto;min-height:0;overflow-y:auto;padding-bottom:env(safe-area-inset-bottom)}
+  .body,.body.people,.body.solo{overflow:visible}
+  .banner{flex-wrap:wrap;padding:8px 16px}
+
+  /* header and toolbar: search and the page action share a row, the filter chips scroll in one row under them */
+  .top{padding:14px 16px 12px}
+  .top h1{font-size:19px}
+  .t-row{flex-wrap:wrap;row-gap:0}
+  .toolbar>*{order:4}
+  .toolbar .search{order:1;flex:1 1 0;width:auto;min-width:0}
+  .toolbar .act{order:2;margin-left:0;padding:0 12px}
+  .toolbar .chips{order:3;flex:1 0 100%;flex-wrap:nowrap;overflow-x:auto;margin:0 -16px;padding:2px 16px;scrollbar-width:none}
+  .chips .chip{flex:none}
+
+  /* tables become stacked rows: the slug or host chip on top, the other cells as one muted line under it */
+  .list thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .list table,.list tbody,.list td{display:block}
+  .list tbody tr{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+  .list td,.list td:first-child{padding:0;border:0;white-space:normal;min-width:0;color:var(--muted)}
+  .list td:first-child{flex:1 0 100%;color:var(--text)}
+  .list td:empty{display:none}
+  .list td.short{display:flex;align-items:center}
+  .list .mchip{min-width:0;word-break:break-all}
+  .list td.dest{flex:1 0 100%;max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .list td.num{text-align:left}
+  .list td[data-label]::before{content:attr(data-label) " ";font-size:12px}
+
+  /* detail panel */
+  .pad{padding:12px 16px}
+  .d-head,.sect{padding-left:16px;padding-right:16px}
+  .field{grid-template-columns:92px minmax(0,1fr)}
+  .actions{padding:14px 16px;flex-wrap:wrap}
+  .foot{flex-wrap:wrap;gap:4px 16px;padding:10px 16px}
+  .log li{padding:10px 16px}
+  .log li::before{left:79px}
+  .log li::after{left:75px}
+
+  /* touch: 44px targets, 16px text in fields (no iOS zoom on focus) */
+  .btn,.chip,.nav a,.search,.sug,.p-item,.seg button{min-height:44px}
+  .chip.only .btn{min-height:44px;min-width:44px}
+  .sw{width:44px;height:26px}
+  .sw::after{width:22px;height:22px}
+  .sw.on::after{left:20px}
+  input,select,textarea,.input,.ctl input,.ctl select,.ctl .pre,.p-in input,.sched input,.utm .ctl input{font-size:16px}
+  .input,.ctl{min-height:44px}
+  .utm,.sched{grid-template-columns:minmax(0,1fr)}
+  .sh-foot{flex-wrap:wrap}
+
+  /* overlays: sheets rise from the bottom at full width; the palette and switcher hang from the top so the keyboard never covers the box */
+  .scrim{padding:0;align-items:flex-end}
+  .scrim:has(>.palette){align-items:flex-start}
+  .sheet,.palette,.palette.narrow{width:100%;max-width:none}
+  .sheet{border-radius:14px 14px 0 0;max-height:calc(100dvh - 24px - env(safe-area-inset-top));padding-bottom:env(safe-area-inset-bottom)}
+  .palette{border-radius:0 0 14px 14px;display:flex;flex-direction:column;max-height:calc(100dvh - 56px);padding-top:env(safe-area-inset-top)}
+  .p-list{max-height:none;flex:1;min-height:0}
+  .sh-head,.p-in{padding-right:52px}
+  .sheet-x{top:env(safe-area-inset-top)}
+  .sheet .sheet-x{top:0}
+  .p-in{min-height:52px}
+
+  /* the nav drawer slides from the left over the scrim */
+  .scrim:has(>.drawer){align-items:stretch;justify-content:flex-start}
+  .drawer{position:relative;width:min(300px,86vw);height:100%;overflow-y:auto;background:var(--rail);color:var(--rail-text);display:flex;flex-direction:column;gap:14px;padding:calc(14px + env(safe-area-inset-top)) 10px calc(14px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
+  .drawer .sheet-x{color:var(--rail-text);top:calc(6px + env(safe-area-inset-top));right:6px}
+  .drawer .sheet-x:hover{background:var(--rail-hi)}
+  .drawer .nav{margin-top:40px}
+  .drawer .nav a{min-height:44px}
+  .rail .me a{display:inline-flex;align-items:center;min-height:44px}
+}
+@media (max-width:400px){.brand span{display:none}}
+
+/* touch screens: no keyboard hint chips (the shortcuts sheet itself keeps its keys) */
+@media (hover:none) and (pointer:coarse){
+  kbd,.k,.k2,.kh,.p-foot,.sh-head .x,.p-item .keys,.nav a .k{display:none}
+  .sc-row kbd{display:inline}
+}
