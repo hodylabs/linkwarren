@@ -94,3 +94,15 @@ export type PasskeyItem = { id: string; name: string; createdAt: number; lastUse
 
 /** One live session of the signed-in person (never the cookie secret or its hash). */
 export type SessionItem = { id: string; current: boolean; method: "email" | "passkey"; createdAt: number; lastSeenAt: number; device: string | null; ipPrefix: string | null };
+
+/** A personal API key as the dashboard sees it (never the secret or its hash). `userEmail` only in the owner's all-keys view. */
+export type KeyItem = {
+  id: string; userId: string; userEmail: string | null; name: string; prefix: string; write: boolean; del: boolean;
+  domainIds: string[]; createdAt: number; lastUsedAt: number | null; expiresAt: number;
+};
+export const rowToKey = (r: R, withEmail = false): KeyItem => ({
+  id: r.id as string, userId: r.user_id as string, userEmail: withEmail ? (r.email as string | null) : null,
+  name: r.name as string, prefix: r.prefix as string, write: r.can_write === 1, del: r.can_delete === 1,
+  domainIds: JSON.parse((r.domain_ids as string) || "[]"), createdAt: r.created_at as number,
+  lastUsedAt: r.last_used_at as number | null, expiresAt: r.expires_at as number,
+});

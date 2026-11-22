@@ -17,6 +17,7 @@ import { settings } from "./api/settings";
 import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
+import { keys } from "./api/keys";
 
 export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>();
 
@@ -85,6 +86,7 @@ app.route("/api/audit", audit);
 app.route("/api/analytics", analytics);
 app.route("/api/settings", settings);
 app.route("/api/account", account);
+app.route("/api/keys", keys);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 

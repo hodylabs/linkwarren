@@ -130,13 +130,14 @@ export async function purgeAudit(env: Env, nowSec: number): Promise<number> {
 }
 
 export const PRUNE_MAX = 2000; // rows deleted per table per run; a backlog clears over the next runs
-/** Expired rows of the sign-in and unlock tables; auth_limits windows are at most an hour (LIMITS.instance), except the day keys. */
+/** Expired rows of the sign-in and unlock tables and the 90-day MCP tool-call log; auth_limits windows are at most an hour (LIMITS.instance), except the day keys. */
 const PRUNES: readonly (readonly [table: string, col: string, age: number, where?: string])[] = [
   ["auth_limits", "window_start", 3600, `NOT (${DAY_KEYS_SQL})`],
   ["auth_limits", "window_start", 86400, DAY_KEYS_SQL],
   ["login_tokens", "expires_at", 0],
   ["auth_challenges", "expires_at", 0],
   ["sessions", "expires_at", 0],
+  ["tool_calls", "at", 7_776_000], // MCP tool-call log: 90 days
 ];
 
 /**
