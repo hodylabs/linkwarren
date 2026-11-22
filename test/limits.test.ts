@@ -122,6 +122,12 @@ describe("hitAll", () => {
     expect([(await rowOf("a"))!.count, (await rowOf("b"))!.count]).toEqual([3, 5]);
   });
 
+  it("a check-only key with no room at all refuses even before its window has a row", async () => {
+    const r = await hitAll(env, [{ key: "a", limit: A }, { key: "z", limit: { n: 0, s: 900 }, charge: 0 }]);
+    expect(r).toMatchObject({ ok: false, key: "z" });
+    expect(await all()).toEqual([]);
+  });
+
   it("refuses with zero writes when any key would pass its limit, and names the first key over", async () => {
     await hitBy(env, "b", B, 4);
     const before = await all();
