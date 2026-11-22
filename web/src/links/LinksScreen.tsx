@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { api, ApiError, type Link, type LinkStats, type Page } from "../api";
+import { api, ApiError, type BulkOp, type Link, type LinkStats, type Page } from "../api";
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
@@ -8,9 +8,11 @@ import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../
 import { useApp } from "../state";
 import { BackBar, PHONE, useDetailView, useMedia } from "../shell/narrow";
 import { BULK_KEYS, BulkBar, type BulkAction } from "./BulkBar";
+import { csvName, downloadCsv, shortUrls, toCsv } from "./bulk";
+import { BulkSheet, type BulkMode, type BulkRun } from "./BulkSheet";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { Sparkline } from "./Sparkline";
-import { creatorLabel, linkState, linksQuery, shortUrl, type LinksFilter, type StatsLive } from "./linkView";
+import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
 import { all, EMPTY_SEL, extend, keepOnly, range, toggle, type Sel } from "./selection";
 
 const STATS_CHUNK = 50; // the server takes at most 50 ids per request
@@ -63,7 +65,7 @@ export function LinksScreen() {
   const sheets = useOpenSheets();
   // Many-link selection (R12: loaded rows only, cleared on a scope change). Separate from `sel`, the row the detail shows.
   const [picked, setPicked] = useState<Sel>(EMPTY_SEL);
-  const [bulk, setBulk] = useState<BulkAction | null>(null);
+  const [bulk, setBulk] = useState<BulkMode | null>(null);
   const press = useRef<{ x: number; y: number; t: number } | null>(null); // a touch held on a row
   const pressed = useRef(false); // a long-press just fired: swallow the click that ends it
 
@@ -219,16 +221,35 @@ export function LinksScreen() {
     select(r.cursor, true);
   };
 
+  const hostOf = (domainId: string) => domainOf(domainId)?.host ?? "";
   const onAction = (a: BulkAction) => {
+    if (a === "export") {
+      downloadCsv(toCsv(pickedLinks, hostOf, (id) => creatorLabel(id, me, users)), csvName());
+      return app.announce(`Exported ${plural(pickedLinks.length, "link")}`);
+    }
     if (a !== "copy") return setBulk(a);
-    const urls = pickedLinks.flatMap((l) => {
-      const h = domainOf(l.domainId)?.host;
-      return h ? [shortUrl(h, l.slug)] : [];
-    });
-    navigator.clipboard.writeText(urls.join("\n")).then(
-      () => app.announce(`Copied ${plural(urls.length, "short link")}`),
+    const text = shortUrls(pickedLinks, hostOf);
+    navigator.clipboard.writeText(text).then(
+      () => app.announce(`Copied ${plural(text ? text.split("\n").length : 0, "short link")}`),
       () => app.announce("Could not copy"),
     );
+  };
+
+  // After a run: changed rows patched (a copy leaves its source as it was), deleted rows removed, and the selection becomes the
+  // failed links that are still loaded (R12), so Retry or another action works on exactly those.
+  const afterRun = (op: BulkOp, r: BulkRun) => {
+    const copy = op.action === "move" && op.oldAddress === "copy";
+    const left = items.flatMap((l) => {
+      if (!r.ok.has(l.id)) return [l];
+      if (op.action === "delete") return [];
+      const fresh = r.ok.get(l.id);
+      return [fresh && !copy ? fresh : l];
+    });
+    setItems(left);
+    const loadedIds = new Set(left.map((l) => l.id));
+    setPicked({ ids: new Set([...r.failed.keys()].filter((id) => loadedIds.has(id))), anchor: null });
+    app.reloadDomains().catch(() => undefined); // link counts
+    app.announce(`${plural(r.ok.size, "link")} changed, ${r.failed.size} not changed`);
   };
 
   const endPress = () => {
@@ -327,7 +348,7 @@ export function LinksScreen() {
         <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />
       </ScreenHeader>
       {picking && !open && (
-        <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l)).length} onAction={onAction} onClear={() => setPicked(EMPTY_SEL)} />
+        <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l) || l.forwardTo).length} onAction={onAction} onClear={() => setPicked(EMPTY_SEL)} />
       )}
       <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className={`list${picking ? " picking" : ""}`} aria-label="Links">
@@ -396,8 +417,13 @@ export function LinksScreen() {
                     </td>
                     <td className="dest">{l.url}</td>
                     <td>
-                      {(l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
+                      {(l.forwardTo || l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
                         <span className="icons">
+                          {l.forwardTo && (
+                            <svg role="img" aria-label="Forwards to another link" viewBox="0 0 24 24">
+                              <path d="M4 12h14M13 6l6 6-6 6" />
+                            </svg>
+                          )}
                           {(l.startsAt !== null || l.expiresAt !== null) && (
                             <svg role="img" aria-label="Has a schedule" viewBox="0 0 24 24">
                               <circle cx="12" cy="12" r="9" />
@@ -421,7 +447,7 @@ export function LinksScreen() {
                       <Tag tone={st.tone}>{st.label}</Tag>
                     </td>
                     <td className="num spk" data-label="7 days">
-                      {stats[l.id] && <Sparkline days={stats[l.id]!.days} clicks={stats[l.id]!.clicks} active={st.tone === "ok"} live={stats[l.id]!.live} />}
+                      {stats[l.id] && !l.forwardTo && <Sparkline days={stats[l.id]!.days} clicks={stats[l.id]!.clicks} active={st.tone === "ok"} live={stats[l.id]!.live} />}
                     </td>
                     <td data-label="By">{creatorLabel(l.createdBy, me, users)}</td>
                   </tr>
@@ -458,6 +484,11 @@ export function LinksScreen() {
             domain={domainOf(selected.domainId)}
             canEdit={canEdit(selected)}
             onSaved={(l) => setItems((cur) => cur.map((x) => (x.id === l.id ? l : x)))}
+            onOpenTarget={() => {
+              const to = selected.forwardTo;
+              if (to && items.some((x) => x.id === to)) select(to, true);
+              else navigate(`/links?q=${encodeURIComponent(selected.url.slice(selected.url.lastIndexOf("/") + 1))}`);
+            }}
             onClose={closeDetail}
             onDelete={() => {
               setDeleteError(null);
@@ -466,22 +497,7 @@ export function LinksScreen() {
           />
         )}
       </div>
-      {bulk && (
-        // Placeholder until the bulk action sheets land (S6b Task 9).
-        <Sheet label="Bulk action" onClose={() => setBulk(null)}>
-          <div className="sh-head">
-            <h2>{plural(pickedLinks.length, "link")} selected</h2>
-          </div>
-          <div className="sh-body">
-            <p>This action is not available yet.</p>
-            <div className="actions">
-              <button type="button" className="btn" onClick={() => setBulk(null)}>
-                Close <kbd>Esc</kbd>
-              </button>
-            </div>
-          </div>
-        </Sheet>
-      )}
+      {bulk && <BulkSheet mode={bulk} links={pickedLinks} onRun={afterRun} onClose={() => setBulk(null)} />}
       {confirming && selected && (
         <Sheet label="Delete link" onClose={() => setConfirming(false)}>
           <div className="sh-head">

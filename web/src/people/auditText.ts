@@ -14,7 +14,11 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
   const link = host && slug ? `${host}/${slug}` : `${a.targetType} ${a.targetId}`;
   const done = (text: string, code: string | null = null, suffix = ""): AuditText => ({ who, via, text, code, suffix });
   switch (a.action) {
-    case "link.create": return done("created", link);
+    case "link.create": return str(a.detail.copiedFrom) && host && slug ? done("copied", slug, ` to ${host}`) : done("created", link);
+    case "link.move": {
+      const from = str(a.detail.fromHost), to = str(a.detail.toHost);
+      return done("moved", from && slug ? `${from}/${slug}` : link, `${to ? ` to ${to}` : ""}, the old address forwards`);
+    }
     case "link.update": return done("changed", link); // detail does not say which field changed
     case "link.delete": return done("deleted", link, ". The slug is locked, visits go to the domain's not-found page");
     case "domain.create": return done("added the domain", host ?? a.targetId);

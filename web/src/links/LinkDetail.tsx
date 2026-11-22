@@ -7,7 +7,7 @@ import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
 import { QrPanel } from "./QrPanel";
 import { readUtm } from "./compose";
-import { creatorLabel, linkState, shortUrl, type StatsLive } from "./linkView";
+import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from "./linkView";
 import { RoutesEditor } from "./RoutesEditor";
 import { parseCountries, passwordProblem, routeSummary } from "./rules";
 
@@ -51,8 +51,8 @@ function diff(l: Link, d: Draft): Record<string, unknown> {
 
 const LIVE_HINT = { off: "Live clicks are off on this instance.", unavailable: "Recent clicks could not be loaded." } as const;
 
-export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStats | undefined; live: StatsLive; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void; onClose(): void }>(
-  function LinkDetail({ link, stats, live, domain, canEdit, onSaved, onDelete, onClose }, ref) {
+export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStats | undefined; live: StatsLive; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void; onClose(): void; onOpenTarget(): void }>(
+  function LinkDetail({ link, stats, live, domain, canEdit, onSaved, onDelete, onClose, onOpenTarget }, ref) {
     const app = useApp();
     const [draft, setDraft] = useState(() => draftOf(link));
     const [error, setError] = useState<{ code: string } | null>(null);
@@ -134,6 +134,38 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     };
 
     const state = linkState(link, domain, Math.floor(Date.now() / 1000));
+    // A forwarder is never edited (R5): its target and Delete only.
+    if (link.forwardTo)
+      return (
+        <aside className="detail" aria-label="Selected link">
+          <div className="d-head">
+            <CloseButton label="Close link details" onClick={onClose} />
+            <div className="short">
+              <span className="host">{host}/</span>
+              <span className="slug">{link.slug}</span>
+            </div>
+            <div className="row">
+              <Tag tone={state.tone}>{state.label}</Tag>
+              <button type="button" className="btn ghost" onClick={copy} disabled={!host} aria-keyshortcuts="C">
+                Copy <kbd>C</kbd>
+              </button>
+            </div>
+          </div>
+          <div className="sect">
+            <p className="hint">This old address was kept when its link moved. Visitors are forwarded to {forwardTarget(link)}, where the click is counted.</p>
+            <button type="button" className="btn" onClick={onOpenTarget}>
+              Open the link it forwards to
+            </button>
+          </div>
+          {canEdit && (
+            <div className="actions">
+              <button type="button" className="btn" onClick={onDelete} aria-keyshortcuts="Shift+D">
+                Delete <kbd>Shift D</kbd>
+              </button>
+            </div>
+          )}
+        </aside>
+      );
     const who = (id: string) => creatorLabel(id, app.me, app.users);
     const created = who(link.createdBy);
     const utm = readUtm(draft.url);

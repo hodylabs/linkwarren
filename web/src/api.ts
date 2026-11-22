@@ -10,6 +10,18 @@ export type ConnectionItem = {
 export type Me = Pick<UserRow, "id" | "email" | "name" | "role"> & { authMode?: "app" | "access"; passkeys?: number };
 export type { PasskeyItem, Route, RouteDevice, SessionItem } from "../../src/types";
 export type Link = ApiLink;
+/** One bulk action as POST /api/links/bulk takes it (src/api/bulk.ts), without the ids. Absent fields are kept. */
+export type BulkOp =
+  | { action: "delete" }
+  | { action: "schedule"; startsAt?: number | null; expiresAt?: number | null; endNow?: true }
+  | { action: "redirect"; redirectCode?: 301 | 302; passQuery?: boolean }
+  | { action: "password"; password: string | null }
+  | { action: "move"; domainId: string; oldAddress: "forward" | "copy" };
+export type BulkBody = BulkOp & { ids: string[] };
+/** Per link; a copy answers with the new link under the source id, a delete with no link. */
+export type BulkResult = { id: string; ok: true; link?: Link } | { id: string; ok: false; error: string };
+/** `pending`: accepted password links not hashed yet (one per request), to send again. */
+export type BulkResponse = { results: BulkResult[]; pending: string[] };
 export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView };
 export type UserItem = UserListItem;
 export type AuditItem = ServerAuditItem;

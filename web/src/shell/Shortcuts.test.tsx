@@ -10,6 +10,7 @@ import { DOMAIN_DETAIL_KEYS } from "../domains/DomainDetail";
 import { DOMAINS_KEYS } from "../domains/DomainsScreen";
 import { keyLabels } from "../keys";
 import { BULK_KEYS } from "../links/BulkBar";
+import { BULK_SHEET_KEYS } from "../links/BulkSheet";
 import { LINKS_KEYS } from "../links/LinksScreen";
 import { NEW_LINK_KEYS } from "../links/NewLinkSheet";
 import { PEOPLE_KEYS } from "../people/PeopleScreen";
@@ -45,7 +46,7 @@ describe("Shortcuts sheet", () => {
     const dlg = await openSheet();
     expect(sheetRows(dlg, "Everywhere")).toEqual(expect.arrayContaining(expected(GLOBAL_KEYS)));
     expect(sheetRows(dlg, "Links")).toEqual(expect.arrayContaining(expected(LINKS_KEYS)));
-    expect(sheetRows(dlg, "Selected links")).toEqual(expected(BULK_KEYS));
+    expect(sheetRows(dlg, "Selected links")).toEqual([...expected(BULK_KEYS), ...expected(BULK_SHEET_KEYS)]);
     expect(sheetRows(dlg, "New link")).toEqual(expected(NEW_LINK_KEYS));
     expect(sheetRows(dlg, "Domains")).toEqual(expect.arrayContaining([...expected(DOMAINS_KEYS), ...expected(DOMAIN_DETAIL_KEYS), ...expected(ADD_DOMAIN_KEYS)]));
     expect(sheetRows(dlg, "People")).toEqual(expect.arrayContaining(expected(PEOPLE_KEYS)));

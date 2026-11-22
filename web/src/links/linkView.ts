@@ -4,12 +4,16 @@ import { shortDate } from "../time";
 export type Tone = "ok" | "wait" | "bad" | "off";
 
 export function linkState(l: Link, d: Domain | undefined, now: number): { label: string; tone: Tone } {
+  if (l.forwardTo) return { label: `Forwards to ${forwardTarget(l)}`, tone: "off" };
   if (d?.status === "pending") return { label: "Not active yet", tone: "wait" };
   if (d?.status === "disabled") return { label: "Domain disabled", tone: "off" };
   if (l.startsAt !== null && l.startsAt > now) return { label: `Starts ${shortDate(l.startsAt)}`, tone: "wait" };
   if (l.expiresAt !== null && l.expiresAt <= now) return { label: "Expired", tone: "off" };
   return { label: "Active", tone: "ok" };
 }
+
+/** "host/slug" of the short link a forwarder sends visitors to (its url is always https://<host>/<slug>, built by the server). */
+export const forwardTarget = (l: Link): string => l.url.replace(/^https:\/\//, "");
 
 export const shortUrl = (host: string, slug: string): string => `https://${host}/${slug}`;
 

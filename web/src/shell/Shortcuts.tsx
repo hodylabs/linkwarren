@@ -10,6 +10,7 @@ import { ADD_DOMAIN_KEYS } from "../domains/AddDomainSheet";
 import { DOMAIN_DETAIL_KEYS } from "../domains/DomainDetail";
 import { DOMAINS_KEYS } from "../domains/DomainsScreen";
 import { BULK_KEYS } from "../links/BulkBar";
+import { BULK_SHEET_KEYS } from "../links/BulkSheet";
 import { LINKS_KEYS } from "../links/LinksScreen";
 import { NEW_LINK_KEYS } from "../links/NewLinkSheet";
 import { PEOPLE_KEYS } from "../people/PeopleScreen";
@@ -62,7 +63,7 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
     ],
   },
   { title: "Links", rows: [...rows(LINKS_KEYS), OPEN_ROW, ...SAVE_REVERT] },
-  { title: "Selected links", rows: rows(BULK_KEYS) },
+  { title: "Selected links", rows: [...rows(BULK_KEYS), ...rows(BULK_SHEET_KEYS)] },
   { title: "New link", rows: rows(NEW_LINK_KEYS) },
   { title: "Domains", rows: [...rows(DOMAINS_KEYS), ...rows(DOMAIN_DETAIL_KEYS), OPEN_ROW, ...SAVE_REVERT, ...rows(ADD_DOMAIN_KEYS)] },
   { title: "People", rows: [...rows(PEOPLE_KEYS), OPEN_ROW] },

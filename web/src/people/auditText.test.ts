@@ -27,6 +27,15 @@ describe("describeAudit", () => {
     });
     expect(d({ action: "link.delete", detail: { host: "go.test", slug: "x" } }).text).toBe("deleted");
   });
+  it("link.move names both hosts and says the old address forwards", () => {
+    expect(d({ action: "link.move", detail: { fromHost: "go.test", toHost: "b.test", slug: "spring", oldAddress: "forward" } })).toMatchObject({
+      text: "moved", code: "go.test/spring", suffix: " to b.test, the old address forwards",
+    });
+  });
+  it("link.create with copiedFrom says copied ... to ...", () => {
+    expect(d({ action: "link.create", detail: { host: "b.test", slug: "spring", copiedFrom: "l1" } })).toMatchObject({ text: "copied", code: "spring", suffix: " to b.test" });
+    expect(d({ action: "link.create", detail: { host: "b.test", slug: "spring" } }).text).toBe("created");
+  });
   it("link.delete adds the locked slug sentence", () => {
     expect(d({ action: "link.delete", detail: { host: "a", slug: "b" } }).suffix).toBe(". The slug is locked, visits go to the domain's not-found page");
   });
