@@ -16,9 +16,15 @@ export function cfSettled(v: CfView): boolean {
 /**
  * Polls GET /api/domains/:id/cloudflare every 5 s while `enabled` and the tab is visible. One request at a time (the next
  * waits for the answer), aborted on unmount or id change, stopped once the view is settled or on a 4xx (gone, forbidden, signed out).
+ * A new `since` (a view another call returned, such as Finish connecting) drops older poll results and restarts polling from it.
  */
-export function useCfPoll(domainId: string | null, enabled: boolean): { view: CfView | null; error: string | null } {
+export function useCfPoll(domainId: string | null, enabled: boolean, since: unknown = null): { view: CfView | null; error: string | null } {
   const [got, setGot] = useState<{ id: string; view: CfView | null; error: string | null } | null>(null);
+  const [seen, setSeen] = useState(since);
+  if (since !== seen) {
+    setSeen(since);
+    setGot(null);
+  }
   const mine = got && got.id === domainId ? got : null;
   const on = domainId !== null && enabled && !(mine?.view && cfSettled(mine.view));
 
@@ -57,7 +63,7 @@ export function useCfPoll(domainId: string | null, enabled: boolean): { view: Cf
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [domainId, on]);
+  }, [domainId, on, since]);
 
   return { view: mine?.view ?? null, error: mine?.error ?? null };
 }

@@ -243,6 +243,25 @@ describe("Add a domain sheet", () => {
       expect(within(dlg).queryByRole("button", { name: /Finish connecting/ })).toBeNull();
     });
 
+    it("an unsettled view from Finish connecting is polled until a newer poll result settles it", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const WAITING: CfView = { ...HALF, attached: true, lastError: null, dns: "missing", ownership: "verified" };
+      const { api, user } = boot(owner, {
+        "POST /api/domains": activeMade,
+        "POST /api/domains/d9/approve": () => ({ body: { ...activeMade().body, cloudflare: WAITING } }),
+        "GET /api/domains/d9/cloudflare": () => ({ body: CONNECTED }),
+      }, true);
+      await open(user);
+      await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+      await done();
+      await user.keyboard("f");
+      await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/domains/d9/approve")).toHaveLength(1));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(polls(api)).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(polls(api)).toHaveLength(1); // settled: polling stops
+    });
+
     it("409 dns_record_exists opens the takeover confirm on Cancel; Enter on Send traffic resends with confirmTakeover", async () => {
       const bodies: unknown[] = [];
       const { user } = boot(owner, {

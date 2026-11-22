@@ -41,8 +41,10 @@ export function AddDomainSheet() {
   const busy = useRef(false); // a double Ctrl+Enter sends once
 
   const initial = made?.cloudflare ?? null;
-  const poll = useCfPoll(made?.id ?? null, initial !== null && !cfSettled(initial));
-  const view = connected ?? poll.view ?? initial;
+  // Polls while the view the sheet last got from a call (create, then Finish connecting) is unsettled; newer poll results win.
+  const latest = connected ?? initial;
+  const poll = useCfPoll(made?.id ?? null, latest !== null && !cfSettled(latest), connected);
+  const view = poll.view ?? latest;
   const canFinish = isOwner && view !== null && needsFinish(view);
 
   const submit = async (confirmTakeover = false) => {
