@@ -53,6 +53,10 @@ const ERRORS: Record<string, string> = {
   invalid_body: "The request was not understood. Reload and try again.",
   forbidden_origin: "This request came from another site and was refused.",
   unsupported_media_type: "The request was not understood. Reload and try again.",
+  passkey_limit: "You have reached the limit of 10 passkeys. Remove one to add another.",
+  passkey_failed: "That passkey could not be added. Try again.",
+  invalid_name: "Use a name of 1 to 40 characters.",
+  too_many_attempts: "Too many attempts. Try again in a few minutes.",
   network: "You are signed out. Reload the page to sign in.",
   unauthenticated: "You are signed out. Reload the page to sign in.",
 };

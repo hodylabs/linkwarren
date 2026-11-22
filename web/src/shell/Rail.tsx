@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { api } from "../api";
 import { NavLink, useRoute, type Screen } from "../router";
 import { useApp } from "../state";
 import { PHONE, useMedia } from "./narrow";
@@ -84,6 +85,12 @@ export function Rail() {
   }, [phone, menuOpen, close]);
   const current = domains.find((d) => d.id === currentDomainId);
   const isOwner = me.role === "owner";
+  const appMode = me.authMode === "app";
+  // Back to the sign-in screen even if the request fails: the cookie is cleared server side, and a stale one is refused anyway.
+  const signOut = async () => {
+    await api("POST", "/api/account/sign-out", {}).catch(() => undefined);
+    location.assign("/");
+  };
   const navBody = (
     <>
       <nav className="nav" aria-label="Screens">
@@ -106,9 +113,21 @@ export function Rail() {
         <div>
           {isOwner ? "Owner" : "Member"}
           <br />
-          <small>Signed in with Cloudflare Access</small>
-          <br />
-          <a href="/cdn-cgi/access/logout">Sign out</a>
+          {appMode ? (
+            <>
+              <small>Signed in to linkwarren</small>
+              <br />
+              <button type="button" className="linkbtn" onClick={() => open({ kind: "account" })}>Sign-in and security</button>
+              <br />
+              <button type="button" className="linkbtn" onClick={() => void signOut()}>Sign out</button>
+            </>
+          ) : (
+            <>
+              <small>Signed in with Cloudflare Access</small>
+              <br />
+              <a href="/cdn-cgi/access/logout">Sign out</a>
+            </>
+          )}
         </div>
       </div>
       <div className="ver">Dashboard v{__APP_VERSION__}</div>

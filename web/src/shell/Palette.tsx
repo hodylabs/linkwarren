@@ -29,7 +29,7 @@ export function Palette() {
   const app = useApp();
   const { me, domains, users, currentDomainId, close } = app;
   const isOwner = me.role === "owner";
-  const cmds = useMemo(() => buildCommands(app, isOwner), [app.domains, app.open, app.setCurrentDomain, isOwner]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cmds = useMemo(() => buildCommands(app, isOwner, app.me.authMode === "app"), [app.domains, app.open, app.setCurrentDomain, isOwner, app.me.authMode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [buf, setBuf] = useState("");
   const [text, setText] = useState("");
   const [sel, setSel] = useState(0);

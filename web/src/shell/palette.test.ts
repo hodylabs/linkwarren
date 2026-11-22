@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paletteKey, type Command, type PaletteState } from "./palette";
+import { buildCommands, paletteKey, type Command, type PaletteState } from "./palette";
 
 const cmd = (keys: string): Command => ({ keys, section: "Go to", label: keys, run: () => {} });
 const cmds = [cmd("gl"), cmd("gd"), cmd("cl"), cmd("sd"), cmd("?")];
@@ -55,5 +55,14 @@ describe("paletteKey", () => {
   });
   it("? runs the help command at once", () => {
     expect(press(empty, "?").run?.keys).toBe("?");
+  });
+});
+
+describe("buildCommands: sign-in and security", () => {
+  const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
+  it("ys exists in app mode only", () => {
+    expect(buildCommands(ctx, true, true).find((c) => c.keys === "ys")?.label).toBe("Sign-in and security");
+    expect(buildCommands(ctx, true).some((c) => c.keys === "ys")).toBe(false);
+    expect(buildCommands(ctx, false, false).some((c) => c.keys === "ys")).toBe(false);
   });
 });

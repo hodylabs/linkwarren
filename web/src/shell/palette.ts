@@ -34,7 +34,8 @@ export function switcherDomains(domains: Domain[]): Domain[] {
 
 type Ctx = Pick<AppState, "domains" | "open" | "setCurrentDomain">;
 
-export function buildCommands(ctx: Ctx, isOwner: boolean): Command[] {
+/** `appMode`: linkwarren signs people in itself (not Cloudflare Access), so the account sheet exists. */
+export function buildCommands(ctx: Ctx, isOwner: boolean, appMode = false): Command[] {
   const go = (keys: string, label: string, to: string): Command => ({ keys, section: "Go to", label, run: () => navigate(to) });
   return [
     go("gl", "Links", "/links"),
@@ -47,6 +48,7 @@ export function buildCommands(ctx: Ctx, isOwner: boolean): Command[] {
     { keys: "cl", section: "Create", label: "New link", run: () => ctx.open({ kind: "newLink" }) },
     { keys: "cd", section: "Create", label: "Add a domain", run: () => ctx.open({ kind: "addDomain" }) },
     { keys: "sd", section: "Switch", label: "Switch domain", run: () => ctx.open({ kind: "switcher" }) },
+    ...(appMode ? [{ keys: "ys", section: "Help" as const, label: "Sign-in and security", run: () => ctx.open({ kind: "account" }) }] : []),
     { keys: "?", section: "Help", label: "All keyboard shortcuts", run: () => ctx.open({ kind: "shortcuts" }) },
   ];
 }

@@ -1,7 +1,9 @@
 import type { AuditItem as ServerAuditItem, CfView, DomainRow, LinkRow, UserListItem, UserRow } from "../../src/types";
 
 export type { CfView };
-export type Me = Pick<UserRow, "id" | "email" | "name" | "role">;
+/** `authMode` and `passkeys` come from /api/me; optional so a Me built without them reads as access mode. */
+export type Me = Pick<UserRow, "id" | "email" | "name" | "role"> & { authMode?: "app" | "access"; passkeys?: number };
+export type { PasskeyItem, SessionItem } from "../../src/types";
 export type Link = LinkRow;
 export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView };
 export type UserItem = UserListItem;

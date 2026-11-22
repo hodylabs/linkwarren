@@ -1,6 +1,7 @@
 import { useApp } from "../state";
 import { keyLabels } from "../keys";
 import type { Screen } from "../router";
+import { ACCOUNT_KEYS } from "../account/AccountPanel";
 import { ADD_DOMAIN_KEYS } from "../domains/AddDomainSheet";
 import { DOMAIN_DETAIL_KEYS } from "../domains/DomainDetail";
 import { DOMAINS_KEYS } from "../domains/DomainsScreen";
@@ -31,7 +32,7 @@ const OPEN_ROW: Row = [["Enter"], "Select the focused row"]; // row onKeyDown in
 
 const owner = (s: Screen) => (OWNER_ONLY.has(s) ? " (owner)" : "");
 // Palette letter commands come from the palette itself; switching domains needs real domains, so it is one row.
-const paletteCmds = buildCommands({ domains: [], open: () => undefined, setCurrentDomain: () => undefined }, true);
+const paletteCmds = buildCommands({ domains: [], open: () => undefined, setCurrentDomain: () => undefined }, true, true);
 
 export const GROUPS: { title: string; rows: Row[] }[] = [
   {
@@ -60,6 +61,7 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
   { title: "Domains", rows: [...rows(DOMAINS_KEYS), ...rows(DOMAIN_DETAIL_KEYS), OPEN_ROW, ...SAVE_REVERT, ...rows(ADD_DOMAIN_KEYS)] },
   { title: "People", rows: [...rows(PEOPLE_KEYS), OPEN_ROW] },
   { title: "Settings", rows: rows(SETTINGS_KEYS) },
+  { title: "Sign-in and security", rows: [...rows(ACCOUNT_KEYS), [["Enter"], "Confirm"], [["Esc"], "Cancel or close"]] },
 ];
 
 export function Shortcuts() {

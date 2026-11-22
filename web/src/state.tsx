@@ -8,6 +8,7 @@ export type Overlay =
   | { kind: "shortcuts" }
   | { kind: "newLink"; slug?: string }
   | { kind: "addDomain" }
+  | { kind: "account" }
   | { kind: "menu" }; // the phone nav drawer
 
 export type AppState = {

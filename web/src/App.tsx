@@ -9,6 +9,7 @@ import { useOpenSheets } from "./shell/Sheet";
 import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
+import { AccountSheet } from "./account/AccountSheet";
 import { AddDomainSheet } from "./domains/AddDomainSheet";
 import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
@@ -75,6 +76,7 @@ function Shell() {
       {overlay?.kind === "palette" && <Palette />}
       {overlay?.kind === "switcher" && <DomainSwitcher />}
       {overlay?.kind === "shortcuts" && <Shortcuts />}
+      {overlay?.kind === "account" && <AccountSheet />}
       {overlay?.kind === "addDomain" && <AddDomainSheet />}
       {overlay?.kind === "newLink" && <NewLinkSheet slug={overlay.slug} />}
     </div>

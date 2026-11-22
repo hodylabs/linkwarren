@@ -62,4 +62,19 @@ describe("describeAudit", () => {
   it("detail with the wrong shape never throws", () => {
     expect(d({ action: "link.create", detail: { host: 5, slug: null } }).code).toBe("link l1");
   });
+  it("sign-in, session and passkey actions", () => {
+    expect(d({ action: "auth.sign_in", detail: { method: "email" } }).text).toBe("signed in with an email link");
+    expect(d({ action: "auth.sign_in", detail: { method: "passkey" } }).text).toBe("signed in with a passkey");
+    expect(d({ action: "auth.sign_out" }).text).toBe("signed out");
+    expect(d({ action: "auth.sign_out_all", detail: { count: 2 } }).text).toBe("signed out everywhere");
+    expect(d({ action: "session.end", targetType: "session" }).text).toBe("ended a session");
+    expect(d({ action: "passkey.add", detail: { name: "Laptop" } })).toMatchObject({ text: "added the passkey", code: "Laptop" });
+    expect(d({ action: "passkey.rename", detail: { name: "Desk" } })).toMatchObject({ text: "renamed a passkey to", code: "Desk" });
+    expect(d({ action: "passkey.remove" }).text).toBe("removed a passkey");
+  });
+  it("session.end_all names the person by email, else their id", () => {
+    const row = mk({ action: "session.end_all", targetType: "user", targetId: "u9", detail: { count: 3 } });
+    expect(describeAudit(row, "uo", [], [{ id: "u9", email: "pat@example.com" }])).toMatchObject({ text: "signed", code: "pat@example.com", suffix: " out everywhere" });
+    expect(describeAudit(row, "uo").code).toBe("u9");
+  });
 });

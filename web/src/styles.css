@@ -227,6 +227,15 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 /* app: shell pieces the mockup does not have */
 .rail .me a{color:var(--rail-dim);font-size:12px}
 .rail .me a:hover{color:#fff}
+.linkbtn{background:none;border:0;padding:0;color:var(--rail-dim);font-size:12px;text-decoration:underline;cursor:pointer}
+.linkbtn:hover{color:#fff}
+.acct-list{list-style:none;margin:0 0 10px;padding:0}
+.acct-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 16px;border-bottom:1px solid var(--line-soft);cursor:default}
+.acct-row[aria-current=true]{background:var(--bg)}
+.acct{padding-bottom:14px}
+.acct>.btn{margin:0 16px 8px}
+.acct>.err{margin:8px 16px}
+.acct-empty{padding:0 16px;margin:4px 0 8px}
 .soon{padding:28px 20px;color:var(--muted);max-width:72ch}
 .soon p{margin:0}
 .gate{min-height:100%;display:grid;place-content:center;justify-items:center;gap:14px;padding:24px;text-align:center;color:var(--text)}
@@ -395,7 +404,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .drawer .sheet-x:hover{background:var(--rail-hi)}
   .drawer .nav{margin-top:40px}
   .drawer .nav a{min-height:44px}
-  .rail .me a{display:inline-flex;align-items:center;min-height:44px}
+  .rail .me a,.linkbtn{display:inline-flex;align-items:center;min-height:44px;font-size:14px}
 }
 @media (max-width:400px){.brand span{display:none}}
 
