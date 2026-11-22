@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { MCP_KEY, MCP_TTL_MS, mcpState, resetMcpCache } from "../src/mcp/switch";
+import { MCP_KEY, MCP_TTL_MS, mcpState, rememberMcp, resetMcpCache } from "../src/mcp/switch";
 import { OAUTH_PATHS } from "../src/oauth";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { connectAgent, mcpCall } from "./helpers/oauth";
@@ -90,6 +90,18 @@ describe("mcpState (R10)", () => {
     await setRow("0");
     const other = { ...env, DASHBOARD_HOST: "other.test" } as typeof env;
     expect((await mcpState(other)).on).toBe(false);
+  });
+
+  it("a slow read that started before a save never overwrites the saved value", async () => {
+    await setRow("1");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const slow = { ...env, DB: { prepare: () => ({ bind: () => ({ first: async () => { await gate; return { value: "1" }; } }) }) } } as unknown as typeof env;
+    const reading = mcpState(slow);
+    rememberMcp(env, "0");
+    release();
+    expect((await reading).on).toBe(true); // that caller saw the old row
+    expect(await mcpState(env)).toEqual({ on: false, locked: false }); // the save still holds in this isolate
   });
 
   it("a D1 error throws (callers fail closed)", async () => {
