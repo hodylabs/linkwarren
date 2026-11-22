@@ -108,11 +108,15 @@ describe("GET /authorize, access mode", () => {
   it("refuses a confidential client without a code_challenge and the plain method", async () => {
     const auth = await signInHeaders("acc5@example.com");
     const none = await request({ auth: "client_secret_post", challenge: false, method: null });
-    const r1 = await openConsent(none.path, auth);
-    expect(r1.res.status).toBe(400);
-    expect(r1.html).toContain("PKCE required");
-    const plain = await request({ method: "plain" });
-    expect((await openConsent(plain.path, auth)).res.status).toBe(400);
+    // The client and redirect are validated by then, so the error goes back to the client (RFC 6749 4.1.2.1, RFC 9207 iss).
+    for (const path of [none.path, (await request({ method: "plain" })).path]) {
+      const r = await openConsent(path, auth);
+      expect(r.res.status).toBe(302);
+      expect(r.handle).toBe("");
+      const to = new URL(r.res.headers.get("location")!);
+      expect(to.origin + to.pathname).toBe(CLAUDE_CB);
+      expect([to.searchParams.get("error"), to.searchParams.get("state"), to.searchParams.get("iss")]).toEqual(["invalid_request", "st-1", "https://dash.test"]);
+    }
   });
 
   it("answers 400 for an unknown client and a malformed request", async () => {
@@ -164,6 +168,7 @@ describe("POST /authorize", () => {
     expect(to.origin + to.pathname).toBe(CLAUDE_CB);
     expect(to.searchParams.get("error")).toBe("access_denied");
     expect(to.searchParams.get("state")).toBe("st-1");
+    expect(to.searchParams.get("iss")).toBe("https://dash.test"); // RFC 9207
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(p.clientId).first("n")).toBe(0);
   });
 
@@ -358,5 +363,21 @@ describe("final fix wave", () => {
     const g = await openConsent(path, auth);
     expect(g.res.status).toBe(503);
     expect(g.handle).toBe("");
+  });
+
+  it("appends iss (RFC 9207) to the success redirect", async () => {
+    const p = await ready("iss@example.com");
+    const r = await postConsent(p.auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" });
+    const to = new URL(r.headers.get("location")!);
+    expect(to.searchParams.get("code")).toBeTruthy();
+    expect(to.searchParams.get("iss")).toBe("https://dash.test");
+  });
+
+  it("keeps errors local when the client or its redirect is not validated", async () => {
+    const auth = await signInHeaders("iss-local@example.com");
+    const { clientId } = await registerClient();
+    const r = await openConsent(authorizePath({ response_type: "code", client_id: clientId, redirect_uri: "https://evil.test/cb", state: "s" }), auth);
+    expect(r.res.status).toBe(400);
+    expect(r.res.headers.get("location")).toBeNull();
   });
 });

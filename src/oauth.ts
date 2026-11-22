@@ -19,13 +19,18 @@ export const OAUTH_PATHS: readonly string[] = [
 export const isOAuthPath = (p: string) =>
   OAUTH_PATHS.includes(p) || p.startsWith("/mcp/") || p.startsWith("/.well-known/oauth-protected-resource/");
 
-const CLAUDE_CALLBACK = "https://claude.ai/api/mcp/auth_callback";
+/** Hosted agent callbacks, exact strings only. */
+const CALLBACKS: readonly string[] = [
+  "https://claude.ai/api/mcp/auth_callback",
+  "https://claude.com/api/mcp/auth_callback",
+  "https://chatgpt.com/connector_platform_oauth_redirect",
+];
 const LOOPBACK_CALLBACK = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9]\d{0,4})\/callback$/;
 
-/** The only redirect URIs a client may register: the claude.ai callback exactly, or a loopback /callback on port 1-65535. */
+/** The only redirect URIs a client may register: one of CALLBACKS exactly, or a loopback /callback on port 1-65535. */
 export function allowedRedirect(u: unknown): boolean {
   if (typeof u !== "string") return false;
-  if (u === CLAUDE_CALLBACK) return true;
+  if (CALLBACKS.includes(u)) return true;
   const m = LOOPBACK_CALLBACK.exec(u);
   return !!m && Number(m[1]) <= 65535;
 }
@@ -34,7 +39,7 @@ export function allowedRedirect(u: unknown): boolean {
 const checkRegistration = ({ clientMetadata }: { clientMetadata: Record<string, unknown> }) => {
   const uris = clientMetadata.redirect_uris;
   if (!Array.isArray(uris) || uris.length === 0 || !uris.every(allowedRedirect))
-    return { code: "invalid_redirect_uri", description: "Only the claude.ai callback and http://localhost|127.0.0.1:<port>/callback are accepted" };
+    return { code: "invalid_redirect_uri", description: `Only ${CALLBACKS.join(", ")} and http://localhost|127.0.0.1:<port>/callback are accepted` };
 };
 
 let cached: { host: string; p: OAuthProvider<Env> } | undefined;

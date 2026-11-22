@@ -65,6 +65,12 @@ describe("oauth front door on the dashboard host", () => {
     expect(m.scopes_supported).toContain("offline_access");
   });
 
+  it("advertises RFC 9207 with the dashboard origin as issuer", async () => {
+    const m = await (await fetchW(`${DASH}/.well-known/oauth-authorization-server`)).json<Record<string, unknown>>();
+    expect(m.issuer).toBe(DASH);
+    expect(m.authorization_response_iss_parameter_supported).toBe(true);
+  });
+
   it("registers a client by DCR", async () => {
     const res = await register("198.51.100.7");
     expect(res.status).toBe(201);
@@ -138,10 +144,10 @@ describe("oauth front door on the dashboard host", () => {
     expect(keys.sort()).toEqual(["api:day", "api:ud:u1", "reg:day"]);
   });
 
-  it("accepts only the claude.ai callback and loopback /callback redirect URIs at registration", async () => {
+  it("accepts only the Claude and ChatGPT callbacks and loopback /callback redirect URIs at registration", async () => {
     let n = 0;
     const ip = () => `10.${++n}.0.1`; // a fresh IP range each, so the per-range limit never interferes
-    for (const ok of [[CLAUDE_CB], ["http://localhost:33418/callback"], ["http://127.0.0.1:1/callback", "http://localhost:65535/callback"]])
+    for (const ok of [[CLAUDE_CB], ["https://claude.com/api/mcp/auth_callback"], ["https://chatgpt.com/connector_platform_oauth_redirect"], ["http://localhost:33418/callback"], ["http://127.0.0.1:1/callback", "http://localhost:65535/callback"]])
       expect([ok, (await register(ip(), ok)).status]).toEqual([ok, 201]);
     const kvBefore = (await env.OAUTH_KV.list()).keys.length;
     for (const bad of [
@@ -150,6 +156,12 @@ describe("oauth front door on the dashboard host", () => {
       "https://claude.ai/api/mcp/auth_callback/",
       "https://claude.ai/api/mcp/auth_callback?x=1",
       "https://claude.ai/api/mcp/auth_callback#f",
+      "https://claude.com/api/mcp/auth_callback/",
+      "https://www.claude.com/api/mcp/auth_callback",
+      "https://chatgpt.com/connector_platform_oauth_redirect/",
+      "https://chatgpt.com/connector/oauth/abc123",
+      "https://chat.openai.com/connector_platform_oauth_redirect",
+      "http://chatgpt.com/connector_platform_oauth_redirect",
       "https://user@claude.ai/api/mcp/auth_callback",
       "https://claude.ai:443/api/mcp/auth_callback",
       "http://claude.ai/api/mcp/auth_callback",

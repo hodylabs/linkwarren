@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { AuthorizationError, authorizationErrorRedirect, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { auditStmt } from "../audit";
 import { authenticate, authMode } from "../auth";
 import type { Env } from "../env";
@@ -103,11 +103,15 @@ authorize.get("/", async (c) => {
   let req;
   try {
     req = await oauth.parseAuthRequest(c.req.raw);
-  } catch {
+  } catch (e) {
+    // Once the client and its redirect are validated the library gives the error redirect (state and RFC 9207 iss);
+    // before that it must stay local.
+    if (e instanceof AuthorizationError && e.redirectTo) return html(null, 302, { location: e.redirectTo });
     return msg(400, "Invalid request", "Invalid authorization request");
   }
   // B4: the library only forces PKCE on public clients; require S256 for every client.
-  if (!req.codeChallenge || req.codeChallengeMethod !== "S256") return msg(400, "PKCE required", "PKCE required");
+  if (!req.codeChallenge || req.codeChallengeMethod !== "S256")
+    return html(null, 302, { location: authorizationErrorRedirect(req, "invalid_request", "PKCE with S256 is required") });
   let d;
   try {
     d = await oauth.describeConsent(req);
