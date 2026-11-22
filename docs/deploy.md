@@ -163,7 +163,7 @@ Sign-in links are sent through [Resend](https://resend.com) only.
 1. Add and verify your sending domain in Resend (the domain of `EMAIL_FROM`).
 2. In the domain's settings, turn **click tracking and open tracking off**. Click tracking would route the sign-in link through a third-party redirect, and open tracking adds an image.
 3. Create an API key with **sending access only**, restricted to that domain.
-4. Give the key to linkwarren one of two ways: as a Worker secret (`npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`, never in `vars`; it wins when set), or pasted by the owner in the setup wizard, which stores it encrypted in the database (needs `SECRETS_KEY`).
+4. Give the key to linkwarren one of two ways: as a Worker secret (`npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`, never in `vars`; it wins when set), or, after your first sign-in, pasted by the owner in the setup wizard or Settings, which stores it encrypted in the database (needs `SECRETS_KEY`). The first key of a fresh app-mode instance must be the Worker secret (see above).
 5. Set the var `EMAIL_FROM` to an address on that verified domain, e.g. `links@example.com`. Mail is sent as `<instance name> <EMAIL_FROM>`.
 6. In Settings, use **Send test email**: it mails the signed-in owner only, at most once a minute, and counts against the hourly instance cap.
 
@@ -204,6 +204,10 @@ Order matters. The new Worker reads `forward_to` on every link query and uses `s
 ### Upgrading to people and setup (migration 0009)
 
 This version adds migration `0009_links_created_by.sql`, one index (`links_created_by`) that removing a person uses to count and move their links. Apply it before or after deploying; without it removal still works but reads every link. Same commands as above.
+
+Owners of an instance deployed before this version see the setup wizard once, on their next visit. The name and the main domain are required (an existing main domain is offered as the choice); the other steps, including the import, can be skipped.
+
+Write costs: the index adds one D1 row written per link created and per change of a link's creator. Removing a person moves all their links to the person you choose in one batch, about 3 rows written per link, so removing someone who created tens of thousands of links can use a large share of the Free plan's 100,000 rows written per day (or fail when the day's budget is gone, leaving nothing changed). Remove such a person early in the UTC day.
 
 ## Password-protected links
 
