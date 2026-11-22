@@ -21,6 +21,8 @@ export const LIMITS = {
   inviteResend: { n: 1, s: 60 },
   /** Invite emails per hour, instance wide: their own budget, so invites never starve sign-in links (LIMITS.instance). */
   inviteHour: { n: 20, s: 3600 },
+  /** Invite emails per UTC day, instance wide: at most 40 of Resend's free 100 a day, so at least 60 stay for sign-in links. */
+  inviteDay: { n: 40, s: 86400, utc: true },
   /** Logo uploads and removals per UTC day: each spends one of the account's 1,000 KV writes. */
   logoDay: { n: 20, s: 86400, utc: true },
   /** KV deletes spent by bulk edits per UTC day: half the account's 1,000, the rest stays for single edits and OAuth. */
@@ -30,7 +32,7 @@ export const LIMITS = {
 export type Limit = { n: number; s: number; utc?: boolean };
 
 /** Windows longer than an hour: the hourly prunes keep these keys for a day (SQL on auth_limits.key). */
-export const DAY_KEYS_SQL = "(key IN ('reg:day', 'api:day', 'bulk:kv', 'logo:day') OR key LIKE 'api:ud:%')";
+export const DAY_KEYS_SQL = "(key IN ('reg:day', 'api:day', 'bulk:kv', 'logo:day', 'invite:day') OR key LIKE 'api:ud:%')";
 
 /** A window_start at or below this is outside the current window. */
 const since = (l: Limit, now: number) => (l.utc ? now - (now % l.s) - 1 : now - l.s);
@@ -55,6 +57,7 @@ export const limitKey = {
   /** By normalized address, not user id: a revoke and re-invite of the same address shares the minute. */
   invite: async (email: string) => `invite:${await sha256Hex(email.trim().toLowerCase())}`,
   inviteHour: "invite:hour",
+  inviteDay: "invite:day",
   /** Instance KV deletes spent by bulk edits, per UTC day (LIMITS.bulkKvDay). */
   bulkKv: "bulk:kv",
   logoDay: "logo:day",

@@ -32,10 +32,14 @@ const inviteBody = z.strictObject({
 
 type Invitee = { id: string; email: string; role: "owner" | "member" };
 
-/** R12: the per-address minute and the invite hour, charged together or not at all. Invites have their own hourly
- * budget (not the sign-in links' LIMITS.instance), so a burst of invites never locks people out of signing in. */
+/** R12: the per-address minute, the invite hour and the invite UTC day, charged together or not at all. The day cap keeps
+ * invites to 40 of Resend's free 100 mails a day (shared by all mail), so sign-in links keep the rest. */
 const charge = async (env: Env, email: string) =>
-  hitAll(env, [{ key: await limitKey.invite(email), limit: LIMITS.inviteResend }, { key: limitKey.inviteHour, limit: LIMITS.inviteHour }]);
+  hitAll(env, [
+    { key: await limitKey.invite(email), limit: LIMITS.inviteResend },
+    { key: limitKey.inviteHour, limit: LIMITS.inviteHour },
+    { key: limitKey.inviteDay, limit: LIMITS.inviteDay },
+  ]);
 
 /** The invite mail; the only link is https://<DASHBOARD_HOST>/. Never throws. */
 async function deliver(env: Env, inviter: UserRow, u: Invitee): Promise<InviteResult> {

@@ -96,6 +96,22 @@ describe("POST /api/users/invite", () => {
     expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "too_many" }]);
     expect(fake.sent).toHaveLength(0);
   });
+  it("the daily invite budget (40 per UTC day) at its cap: 201 emailed false too_many, hour untouched", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('invite:day', ?, 40)", now - (now % 86400));
+    const fake = fakeResend();
+    const r = await invite({ email: "new@example.com", role: "member" });
+    expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "too_many" }]);
+    expect(fake.sent).toHaveLength(0);
+    expect(await all("SELECT key FROM auth_limits WHERE key = 'invite:hour'")).toEqual([]);
+  });
+  it("a sent invite counts once in the hour and once in the UTC day", async () => {
+    fakeResend();
+    expect((await invite({ email: "new@example.com", role: "member" })).status).toBe(201);
+    expect(await all("SELECT key, count FROM auth_limits WHERE key IN ('invite:hour', 'invite:day') ORDER BY key")).toEqual([
+      { key: "invite:day", count: 1 }, { key: "invite:hour", count: 1 },
+    ]);
+  });
   it("a Resend rejection still keeps the invite: emailed false rejected", async () => {
     const fake = fakeResend();
     fake.failNext(422);

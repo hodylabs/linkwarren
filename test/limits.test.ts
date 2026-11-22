@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pruneExpired, RUN_WRITE_BUDGET } from "../src/cron";
-import { LIMITS, blocked, fits, hit, hitAll, hitBy, hitCount, limitKey } from "../src/limits";
+import { DAY_KEYS_SQL, LIMITS, blocked, fits, hit, hitAll, hitBy, hitCount, limitKey } from "../src/limits";
 import { sha256Hex } from "../src/session";
 
 beforeEach(async () => { await env.DB.prepare("DELETE FROM auth_limits").run(); });
@@ -45,6 +45,15 @@ describe("limitKey", () => {
     expect(limitKey.ip(null)).toBe("ip:none");
     expect(limitKey.fail(null)).toBe("fail:none");
     expect(limitKey.inst).toBe("inst");
+  });
+});
+
+describe("DAY_KEYS_SQL", () => {
+  it("keeps the daily invite budget for a day, not an hour", async () => {
+    const r = await env.DB.prepare(`SELECT ${DAY_KEYS_SQL} AS d FROM (SELECT 'invite:day' AS key)`).first<{ d: number }>();
+    expect(r?.d).toBe(1);
+    expect(LIMITS.inviteDay).toEqual({ n: 40, s: 86400, utc: true });
+    expect(limitKey.inviteDay).toBe("invite:day");
   });
 });
 
