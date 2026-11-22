@@ -3,10 +3,10 @@ import { api, ApiError, type AuditItem, type Page, type UserItem } from "../api"
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
-import { Chip, Empty, ScreenHeader, SearchButton, Tag } from "../shell/ui";
+import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { BackBar, useDetailView } from "../shell/narrow";
-import { clock } from "../time";
+import { clock, shortDate } from "../time";
 import { describeAudit } from "./auditText";
 
 const FILTERS = ["everyone", "invited", "disabled"] as const;
@@ -16,6 +16,7 @@ export const PEOPLE_KEYS = {
   j: "Next person",
   k: "Previous person",
   escape: "Clear the selected person",
+  n: "Invite a person",
 } as const;
 const KINDS = [
   ["all", "All"],
@@ -55,7 +56,8 @@ export function PeopleScreen() {
   const { query } = useRoute();
   const q = (query.get("q") ?? "").toLowerCase();
   const sel = query.get("sel");
-  const { open, show, back } = useDetailView("/people");
+  const { open, back } = useDetailView("/people");
+  const isOwner = me.role === "owner";
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("everyone");
   const [kind, setKind] = useState<Kind>("all");
   const [items, setItems] = useState<AuditItem[]>([]);
@@ -156,6 +158,7 @@ export function PeopleScreen() {
         if (isTypingTarget(e.target)) return;
         if (sel) (open ? back() : select(null));
       },
+      n: (e) => void (!e.shiftKey && isOwner && app.open({ kind: "invite" })),
     } satisfies Bindings<typeof PEOPLE_KEYS>,
     overlay === null,
   );
@@ -175,6 +178,7 @@ export function PeopleScreen() {
             </Chip>
           ))}
         </div>
+        {isOwner && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
       </ScreenHeader>
       <div className={open ? "body people open" : "body people"}>
         <section className="list" aria-label="People">
@@ -195,8 +199,8 @@ export function PeopleScreen() {
                   ref={(el) => void (el ? rowRefs.current.set(u.id, el) : rowRefs.current.delete(u.id))}
                   aria-selected={u.id === sel}
                   tabIndex={u.id === sel || (at < 0 && i === 0) ? 0 : -1}
-                  onClick={() => show(u.id) || select(u.id)}
-                  onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), show(u.id) || select(u.id))}
+                  onClick={() => app.open({ kind: "person", id: u.id })}
+                  onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), app.open({ kind: "person", id: u.id }))}
                 >
                   <td>
                     <span className={u.id === me.id ? "who me" : "who"}>
@@ -211,7 +215,7 @@ export function PeopleScreen() {
                   </td>
                   <td>
                     {u.role === "owner" ? "Owner" : "Member"}{" "}
-                    {u.status === "invited" && <Tag tone="wait">Invited</Tag>}
+                    {u.status === "invited" && <Tag tone="wait">Invited {shortDate(u.createdAt)}</Tag>}
                     {u.status === "disabled" && <Tag tone="off">Disabled</Tag>}
                   </td>
                   <td data-label="Domains">{domainsCell(u, domains.length)}</td>

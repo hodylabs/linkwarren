@@ -5,7 +5,7 @@ import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { initials } from "../shell/Rail";
 import { BackBar, useDetailView } from "../shell/narrow";
-import { Sheet } from "../shell/Sheet";
+import { Confirm } from "../shell/Sheet";
 import { Chip, CloseButton, PrimaryButton, ScreenHeader, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, shortDate } from "../time";
@@ -47,28 +47,6 @@ const Who = ({ p }: { p: Person }) => (
     <span>{p.label}</span>
   </span>
 );
-
-function Confirm({ title, text, ok, onOk, onCancel }: { title: string; text: string; ok: string; onOk(): void; onCancel(): void }) {
-  return (
-    <Sheet label={title} onClose={onCancel}>
-      <div className="sh-head">
-        <h2>{title}</h2>
-      </div>
-      <div className="sh-body">
-        <p>{text}</p>
-        <div className="actions">
-          {/* Key autorepeat never confirms, as in the domain detail. */}
-          <button type="button" className="btn primary" autoFocus onClick={onOk} onKeyDown={(e) => e.repeat && e.preventDefault()}>
-            {ok} <span className="k">Enter</span>
-          </button>
-          <button type="button" className="btn" onClick={onCancel}>
-            Cancel <kbd>Esc</kbd>
-          </button>
-        </div>
-      </div>
-    </Sheet>
-  );
-}
 
 type Call = { at: number; tool: string; status: string };
 type DetailProps<T> = { item: T; person: Person; onModal(open: boolean): void; onClose(): void; onGone(): void };

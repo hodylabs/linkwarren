@@ -26,6 +26,8 @@ export type BulkResult = { id: string; ok: true; link?: Link } | { id: string; o
 export type BulkResponse = { results: BulkResult[]; pending: string[] };
 export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView };
 export type UserItem = UserListItem;
+/** POST /api/users/invite and /api/users/:id/resend (src/api/invites.ts): the invite stands whether or not the mail went out. */
+export type InviteResult = { emailed: boolean; emailReason?: "not_configured" | "rejected" | "network" | "settings" | "too_many" };
 export type AuditItem = ServerAuditItem;
 export type Page<T> = { items: T[]; next: string | null };
 type Count = { value: string; clicks: number };

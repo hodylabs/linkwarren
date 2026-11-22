@@ -50,6 +50,7 @@ export function buildCommands(ctx: Ctx, isOwner: boolean, appMode = false): Comm
     { keys: "cl", section: "Create", label: "New link", run: () => ctx.open({ kind: "newLink" }) },
     { keys: "cd", section: "Create", label: "Add a domain", run: () => ctx.open({ kind: "addDomain" }) },
     { keys: "ck", section: "Create", label: "New API key", run: () => ctx.open({ kind: "newKey" }) },
+    ...(isOwner ? [{ keys: "cp", section: "Create" as const, label: "Invite a person", run: () => ctx.open({ kind: "invite" }) }] : []),
     { keys: "sd", section: "Switch", label: "Switch domain", run: () => ctx.open({ kind: "switcher" }) },
     ...(appMode ? [{ keys: "ys", section: "Help" as const, label: "Sign-in and security", run: () => ctx.open({ kind: "account" }) }] : []),
     { keys: "?", section: "Help", label: "All keyboard shortcuts", run: () => ctx.open({ kind: "shortcuts" }) },

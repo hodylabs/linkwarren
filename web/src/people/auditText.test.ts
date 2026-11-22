@@ -12,7 +12,7 @@ describe("describeAudit", () => {
   it("settings.update for mcp.enabled", () => {
     expect(d({ action: "settings.update", targetType: "settings", targetId: "mcp.enabled", detail: { key: "mcp.enabled", value: "1" } }).text).toBe("turned agent connections on");
     expect(d({ action: "settings.update", targetType: "settings", targetId: "mcp.enabled", detail: { key: "mcp.enabled", value: "0" } }).text).toBe("turned agent connections off");
-    expect(d({ action: "settings.update", targetType: "settings", targetId: "x", detail: { key: "other" } }).text).toBe("settings.update");
+    expect(d({ action: "settings.update", targetType: "settings", targetId: "x", detail: { key: "other" } }).text).toBe("changed instance settings");
   });
   it("names the actor: You, name, email, or a deleted user", () => {
     expect(d({ actorId: "uo" }).who).toBe("You");
@@ -118,5 +118,48 @@ describe("describeAudit agents and keys", () => {
   it("key.create and key.revoke", () => {
     expect(d({ action: "key.create", targetType: "api_key", detail: { name: "zapier", prefix: "lw_abc" } })).toMatchObject({ text: "created the API key", code: "zapier" });
     expect(d({ action: "key.revoke", targetType: "api_key", detail: { name: "zapier" } })).toMatchObject({ text: "revoked an API key", code: null });
+  });
+
+  const users = [{ id: "ub", email: "bea@example.com", name: "Bea" }];
+  const pd = (o: Partial<AuditItem>) => describeAudit(mk(o), "uo", [], users);
+  it("user.invite names the email and the domains, or the main domain", () => {
+    expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "member", domains: ["nw.link", "qr.test"] } }))
+      .toMatchObject({ text: "invited", code: "jo@example.com", suffix: " with access to nw.link, qr.test" });
+    expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "member", domains: [] } }).suffix).toBe(" with access to the main domain");
+    expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "owner", domains: [] } }).suffix).toBe(" as an owner");
+  });
+  it("user.invite_resend and user.revoke", () => {
+    expect(pd({ action: "user.invite_resend", detail: { email: "jo@example.com", emailed: true } })).toMatchObject({ text: "re-sent the invite to", code: "jo@example.com" });
+    expect(pd({ action: "user.revoke", detail: { email: "jo@example.com" } })).toMatchObject({ text: "revoked the invite for", code: "jo@example.com" });
+  });
+  it("user.role, user.disable and user.enable name the person", () => {
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "member", to: "owner", movedDomains: [] } })).toMatchObject({ text: "made", code: "bea@example.com", suffix: " an owner" });
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "owner", to: "member", movedDomains: [] } }).suffix).toBe(" a member");
+    expect(pd({ action: "user.disable", targetId: "ub" })).toMatchObject({ text: "turned off access for", code: "bea@example.com" });
+    expect(pd({ action: "user.enable", targetType: "user", targetId: "gone" })).toMatchObject({ text: "turned on access for", code: "user gone" });
+  });
+  it("user.remove names who got their links", () => {
+    expect(pd({ action: "user.remove", detail: { email: "jo@example.com", role: "member", transferTo: "ub", links: 3, domains: [] } }))
+      .toMatchObject({ text: "removed", code: "jo@example.com", suffix: ", moving their links to Bea" });
+    expect(pd({ action: "user.remove", detail: { email: "jo@example.com", transferTo: "uo", links: 0, domains: [] } }).suffix).toBe(", moving their links to you");
+  });
+  it("settings.update per key", () => {
+    const s = (key: string) => pd({ action: "settings.update", targetType: "settings", targetId: key, detail: { key, value: "x" } }).text;
+    expect(s("instance.name")).toBe("renamed the instance");
+    expect(s("instance.mainDomainId")).toBe("changed the main domain");
+    expect(s("links.defaultRedirectCode")).toBe("changed link defaults");
+    expect(s("links.defaultPassQuery")).toBe("changed link defaults");
+    expect(s("instance.logoVersion")).toBe("changed instance settings");
+  });
+  it("secret, logo, setup, export and email texts", () => {
+    expect(pd({ action: "secret.update", detail: { name: "CF_API_TOKEN" } }).text).toBe("saved the Cloudflare token");
+    expect(pd({ action: "secret.update", detail: { name: "RESEND_API_KEY" } }).text).toBe("saved the Resend key");
+    expect(pd({ action: "secret.delete", detail: { name: "CF_API_TOKEN" } }).text).toBe("removed the saved Cloudflare token");
+    expect(pd({ action: "secret.delete", detail: { name: "RESEND_API_KEY" } }).text).toBe("removed the saved Resend key");
+    expect(pd({ action: "logo.update", detail: { type: "image/png", bytes: 10 } }).text).toBe("changed the logo");
+    expect(pd({ action: "logo.remove" }).text).toBe("removed the logo");
+    expect(pd({ action: "setup.complete" }).text).toBe("finished the first-run setup");
+    expect(pd({ action: "export.run" }).text).toBe("downloaded a full export");
+    expect(pd({ action: "email.test" }).text).toBe("sent a test email");
   });
 });

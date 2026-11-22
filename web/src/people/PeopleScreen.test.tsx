@@ -81,10 +81,11 @@ describe("People screen", () => {
     await waitFor(() => expect(auditPaths(api)).toContain("/api/audit?target=user"));
   });
 
-  it("selecting a person adds actor=<id> with a chip, Esc outside inputs removes it", async () => {
+  it("a person's Activity adds actor=<id> with a chip, Esc outside inputs removes it", async () => {
     const { api, user } = boot();
     await waitFor(() => expect(rows()).toHaveLength(4));
     await user.click(rows()[1]!);
+    await user.click(await screen.findByRole("button", { name: /Activity/ }));
     await waitFor(() => expect(auditPaths(api)).toContain("/api/audit?actor=ud"));
     expect(location.search).toContain("sel=ud");
     expect(screen.getByText("Only Dana")).toBeTruthy();

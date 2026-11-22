@@ -13,7 +13,9 @@ import { BULK_KEYS } from "../links/BulkBar";
 import { BULK_SHEET_KEYS } from "../links/BulkSheet";
 import { LINKS_KEYS } from "../links/LinksScreen";
 import { NEW_LINK_KEYS } from "../links/NewLinkSheet";
+import { INVITE_KEYS } from "../people/InviteSheet";
 import { PEOPLE_KEYS } from "../people/PeopleScreen";
+import { PERSON_KEYS } from "../people/PersonSheet";
 import { SETTINGS_KEYS } from "../settings/CloudflareSection";
 import { buildCommands } from "./palette";
 import { OWNER_ONLY, SCREEN_TITLES } from "./Rail";
@@ -66,7 +68,10 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
   { title: "Selected links", rows: [...rows(BULK_KEYS), ...rows(BULK_SHEET_KEYS)] },
   { title: "New link", rows: rows(NEW_LINK_KEYS) },
   { title: "Domains", rows: [...rows(DOMAINS_KEYS), ...rows(DOMAIN_DETAIL_KEYS), OPEN_ROW, ...SAVE_REVERT, ...rows(ADD_DOMAIN_KEYS)] },
-  { title: "People", rows: [...rows(PEOPLE_KEYS), OPEN_ROW] },
+  {
+    title: "People",
+    rows: [...rows(PEOPLE_KEYS), [["Enter"], "Open the focused person"], ...rows(PERSON_KEYS), [["Enter"], "Confirm"], ...rows(INVITE_KEYS)],
+  },
   {
     title: "Analytics",
     rows: [

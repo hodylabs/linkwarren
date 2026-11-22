@@ -17,6 +17,8 @@ import { AddDomainSheet } from "./domains/AddDomainSheet";
 import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
 import { NewLinkSheet } from "./links/NewLinkSheet";
+import { InviteSheet } from "./people/InviteSheet";
+import { PersonSheet } from "./people/PersonSheet";
 import { PeopleScreen } from "./people/PeopleScreen";
 import { SettingsScreen } from "./settings/SettingsScreen";
 
@@ -78,6 +80,8 @@ function Shell() {
       {overlay?.kind === "addDomain" && <AddDomainSheet />}
       {overlay?.kind === "newLink" && <NewLinkSheet slug={overlay.slug} />}
       {overlay?.kind === "newKey" && <NewKeySheet />}
+      {overlay?.kind === "invite" && me.role === "owner" && <InviteSheet />}
+      {overlay?.kind === "person" && me.role === "owner" && <PersonSheet id={overlay.id} />}
     </div>
   );
 }

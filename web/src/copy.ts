@@ -89,6 +89,20 @@ const ERRORS: Record<string, string> = {
   key_name: "Use 1 to 40 lowercase letters, digits or hyphens.",
   mcp_locked: "Agent connections are locked off by the deploy config (MCP_ENABLED=0). Change the config to use the switch.",
   email_not_configured: "Sign-in email is not set up on this instance. Use a passkey or ask the owner.",
+  self: "You cannot change your own role or access, or remove yourself. Ask another owner.",
+  last_owner: "linkwarren needs at least one active owner. Make someone else an owner first.",
+  too_soon: "The invite was just sent. Wait a minute before sending it again.",
+  invite_too_many: "Too many emails were sent this hour. Try again later.",
+  invite_email_off: "Email is not set up yet. Set it up in Settings, or send them the dashboard address.",
+  not_sent: "The invite email was not sent. Check the email settings and try again.",
+  transfer_needs_owner: "They own a main or shared domain, so their links and domains must move to an owner.",
+  bad_transfer: "Pick an active person to move their links and domains to.",
+  not_invited_state: "This person has already signed in, so there is no invite left. Reload to see the latest.",
+  bad_state: "Their access already changed. Reload to see the latest.",
+  changed: "Someone else changed this person at the same time. Reload and try again.",
+  invite_email: "Enter a full email address, like jordan@example.com.",
+  email_taken: "This email is already in linkwarren.",
+  bad_domain: "One of those domains is no longer shared. Reload and try again.",
 };
 
 /** "1 link", "2 links"; pass `many` for irregular plurals. */

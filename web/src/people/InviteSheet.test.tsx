@@ -1,0 +1,182 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import App from "../App";
+import type { Me, UserItem } from "../api";
+import { buildCommands } from "../shell/palette";
+import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", authMode: "app" };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", authMode: "app" };
+const USERS: UserItem[] = [
+  { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", status: "active", createdAt: 1, linkCount: 0, agentCount: 0, domains: [] },
+];
+const DOMAINS = [
+  { id: "d0", host: "go.test", type: "main", status: "active" },
+  { id: "ds1", host: "nw.link", type: "shared", status: "active" },
+  { id: "ds2", host: "qr.test", type: "shared", status: "active" },
+  { id: "dp", host: "mine.test", type: "private", status: "active", ownerId: "uo" },
+];
+const SETTINGS = { emailFrom: "links@example.com", emailConfigured: true, dashboardHost: "links.example.com" };
+
+function boot(opts: { me?: Me; invite?: (body: unknown) => FakeRes; settings?: unknown; routes?: FakeRoutes } = {}) {
+  history.replaceState(null, "", "/people");
+  const api = fakeApi({
+    "GET /api/me": () => ({ body: opts.me ?? owner }),
+    "GET /api/domains": () => ({ body: DOMAINS }),
+    "GET /api/users": () => ({ body: { items: USERS } }),
+    "GET /api/audit": () => ({ body: { items: [], next: null } }),
+    "GET /api/settings": () => ({ body: opts.settings ?? SETTINGS }),
+    "POST /api/users/invite": ({ body }) => (opts.invite ? opts.invite(body) : { status: 201, body: { user: {}, emailed: true } }),
+    ...opts.routes,
+  });
+  const user = userEvent.setup();
+  render(<App />);
+  return { api, user };
+}
+const ready = () => screen.findByRole("button", { name: /Invite person/ });
+const sheet = () => screen.getByRole("dialog", { name: "Invite a person" });
+const posts = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.method === "POST" && c.path === "/api/users/invite");
+afterEach(() => vi.unstubAllGlobals());
+
+async function openInvite() {
+  const t = boot();
+  await ready();
+  await waitFor(() => expect(document.querySelectorAll("tbody tr")).toHaveLength(1));
+  await t.user.keyboard("n");
+  await screen.findByRole("dialog", { name: "Invite a person" });
+  return t;
+}
+
+describe("Invite sheet", () => {
+  it("N opens it for an owner with the email box focused", async () => {
+    await openInvite();
+    expect(document.activeElement).toBe(within(sheet()).getByLabelText("Email"));
+    expect(within(sheet()).getByText("Esc")).toBeTruthy();
+  });
+
+  it("N typed in the search box does not open it", async () => {
+    const { user } = boot();
+    await ready();
+    await user.keyboard("{Control>}k{/Control}");
+    await screen.findByRole("dialog", { name: "Search and go" });
+    await user.keyboard("n");
+    expect(screen.queryByRole("dialog", { name: "Invite a person" })).toBeNull();
+  });
+
+  it("a member has no invite button and N does nothing", async () => {
+    const { user } = boot({ me: member });
+    await screen.findByText("Owner only");
+    expect(screen.queryByRole("button", { name: /Invite person/ })).toBeNull();
+    await user.keyboard("n");
+    expect(screen.queryByRole("dialog", { name: "Invite a person" })).toBeNull();
+  });
+
+  it("main domains are fixed rows, shared are switches; Space on the first switch then Ctrl+Enter sends exactly that", async () => {
+    const { api, user } = await openInvite();
+    const s = sheet();
+    expect(within(s).getByText("Main, always included")).toBeTruthy();
+    expect(within(s).getAllByRole("switch").map((x) => x.getAttribute("aria-label"))).toEqual(["nw.link", "qr.test"]);
+    expect(within(s).queryByText("mine.test")).toBeNull();
+    await user.keyboard("jordan@example.com");
+    await user.tab(); // role
+    await user.tab(); // first shared switch (the main row is not focusable)
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("nw.link");
+    await user.keyboard(" ");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", role: "member", domainIds: ["ds1"] });
+  });
+
+  it("success closes the sheet, reloads people and announces", async () => {
+    const { api, user } = await openInvite();
+    const before = api.calls.filter((c) => c.path === "/api/users").length;
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Invite a person" })).toBeNull());
+    expect(api.calls.filter((c) => c.path === "/api/users").length).toBeGreaterThan(before);
+    expect(document.querySelector("[aria-live]")!.textContent).toBe("Invited jordan@example.com");
+  });
+
+  it("Owner hides the domains and sends no domain ids", async () => {
+    const { api, user } = await openInvite();
+    await user.keyboard("jordan@example.com");
+    await user.click(within(sheet()).getByRole("radio", { name: "Owner" }));
+    expect(within(sheet()).queryByText("Domains they can use")).toBeNull();
+    expect(within(sheet()).queryAllByRole("switch")).toHaveLength(0);
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", role: "owner", domainIds: [] });
+  });
+
+  it("409 email_taken shows its copy and keeps the values", async () => {
+    const { user } = boot({ invite: () => ({ status: 409, body: { error: "email_taken" } }) });
+    await ready();
+    await user.keyboard("n");
+    await screen.findByRole("dialog", { name: "Invite a person" });
+    await user.keyboard("jordan@example.com");
+    await user.click(within(sheet()).getByRole("switch", { name: "qr.test" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect((await within(sheet()).findByRole("alert")).textContent).toBe("This email is already in linkwarren.");
+    expect((within(sheet()).getByLabelText("Email") as HTMLInputElement).value).toBe("jordan@example.com");
+    expect(within(sheet()).getByRole("switch", { name: "qr.test" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("not emailed: shows the dashboard address, C copies it", async () => {
+    const { user } = boot({ invite: () => ({ status: 201, body: { user: {}, emailed: false, emailReason: "not_configured" } }) });
+    await ready();
+    await user.keyboard("n");
+    await screen.findByRole("dialog", { name: "Invite a person" });
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    await within(sheet()).findByText(/Invite saved/);
+    expect(sheet().textContent).toContain("Invite saved. No email was sent. Send them this address: https://links.example.com/");
+    expect(within(sheet()).getByRole("button", { name: /Close/ })).toBeTruthy();
+    await user.keyboard("c");
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("https://links.example.com/"));
+  });
+
+  it("the footer says who sends it, or that email is not set up", async () => {
+    await openInvite();
+    expect(await within(sheet()).findByText("Sent from links@example.com")).toBeTruthy();
+  });
+
+  it("without email set up the footer says so", async () => {
+    const { user } = boot({ settings: { ...SETTINGS, emailConfigured: false } });
+    await ready();
+    await user.keyboard("n");
+    expect(await within(await screen.findByRole("dialog", { name: "Invite a person" })).findByText("Email is not set up yet")).toBeTruthy();
+  });
+
+  it("Esc sends nothing", async () => {
+    const { api, user } = await openInvite();
+    await user.keyboard("jordan@example.com{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Invite a person" })).toBeNull();
+    expect(posts(api)).toHaveLength(0);
+  });
+
+  it("no text mentions Google, a one-time code or Access", async () => {
+    await openInvite();
+    await within(sheet()).findByText("Sent from links@example.com");
+    const t = sheet().textContent!;
+    expect(t).toContain("They get an email with a link to sign in. They sign in with their email, and can add a passkey and their own private domains.");
+    expect(t).not.toMatch(/Google|one-time|Access/i);
+  });
+
+  it("at 360 px it is a full-width sheet with 44 px buttons and a close button", async () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("760px") || q.includes("1080px"), media: q, addEventListener() {}, removeEventListener() {} }));
+    await openInvite();
+    expect(sheet().className).toBe("sheet");
+    expect(within(sheet()).getByRole("button", { name: "Close invite a person" }).className).toContain("btn");
+    expect(within(sheet()).getByRole("button", { name: /Send invite/ }).className).toContain("btn");
+  });
+});
+
+describe("palette cp", () => {
+  const ctx = { domains: [], open: vi.fn(), setCurrentDomain: () => {} };
+  it("Invite a person, owner only", () => {
+    const cp = buildCommands(ctx, true).find((c) => c.keys === "cp")!;
+    expect(cp).toMatchObject({ section: "Create", label: "Invite a person" });
+    cp.run();
+    expect(ctx.open).toHaveBeenCalledWith({ kind: "invite" });
+    expect(buildCommands(ctx, false).some((c) => c.keys === "cp")).toBe(false);
+  });
+});

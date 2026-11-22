@@ -98,3 +98,27 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
     </div>
   );
 }
+
+/** A yes or no question over the current sheet: Enter (the focused primary button) confirms, Esc cancels. `children` go above the buttons. */
+export function Confirm({ title, text, ok, onOk, onCancel, children }: { title: string; text: string; ok: string; onOk(): void; onCancel(): void; children?: ReactNode }) {
+  return (
+    <Sheet label={title} onClose={onCancel}>
+      <div className="sh-head">
+        <h2>{title}</h2>
+      </div>
+      <div className="sh-body">
+        {children}
+        <p>{text}</p>
+        <div className="actions">
+          {/* Key autorepeat never confirms, as in the domain detail. */}
+          <button type="button" className="btn primary" autoFocus onClick={onOk} onKeyDown={(e) => e.repeat && e.preventDefault()}>
+            {ok} <span className="k">Enter</span>
+          </button>
+          <button type="button" className="btn" onClick={onCancel}>
+            Cancel <kbd>Esc</kbd>
+          </button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}

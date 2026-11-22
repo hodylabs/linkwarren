@@ -10,6 +10,8 @@ export type Overlay =
   | { kind: "addDomain" }
   | { kind: "account" }
   | { kind: "newKey" }
+  | { kind: "invite" }
+  | { kind: "person"; id: string }
   | { kind: "menu" }; // the phone nav drawer
 
 export type AppState = {
