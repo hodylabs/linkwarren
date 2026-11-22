@@ -38,6 +38,8 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
     }
     return miss(domain.notfoundRedirect);
   }
+  // A forwarder: one hop to the new short link with the raw query (lw=qr kept), so that link records the one click.
+  if (link.forwardTo) return post ? notAllowed() : redirect(link.url + url.search, 302, domain);
 
   // Same predicate as the API's hasPassword: any stored hash, even a malformed one, gates the link (fails closed).
   if (link.passwordHash !== null) return handleProtected(req, env, link, domain, url, now, ctx);

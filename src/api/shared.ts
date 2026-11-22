@@ -48,7 +48,7 @@ export async function destination(env: Env, raw: string, also: string[] = [], ho
  */
 export async function loopLinks(env: Env, host: string): Promise<number> {
   const p = ["http", "https"].flatMap((s) => [host, `${host}.`].flatMap((h) => [`${s}://${h}/`, `${s}://${h}:`]));
-  const r = await env.DB.prepare(`SELECT COUNT(*) n FROM links WHERE ${p.map(() => "substr(url, 1, ?) = ?").join(" OR ")}`)
+  const r = await env.DB.prepare(`SELECT COUNT(*) n FROM links WHERE forward_to IS NULL AND (${p.map(() => "substr(url, 1, ?) = ?").join(" OR ")})`)
     .bind(...p.flatMap((x) => [x.length, x])).first<{ n: number }>();
   return r?.n ?? 0;
 }

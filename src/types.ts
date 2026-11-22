@@ -17,6 +17,8 @@ export type LinkRow = {
   redirectCode: 301 | 302; startsAt: number | null; expiresAt: number | null; passQuery: boolean;
   /** Worker-only (redirect path and KV); never sent to a client, see toApiLink. */
   passwordHash: string | null; routes: Route[];
+  /** Set on a forwarder: the id of the link it forwards to (one hop, never another forwarder). Test by truthiness: cached rows may lack it. */
+  forwardTo: string | null;
   createdBy: string; updatedBy: string; createdAt: number; updatedAt: number;
 };
 /** A link as the API returns it: the password hash is replaced by a flag. */
@@ -46,6 +48,7 @@ export const rowToLink = (r: R): LinkRow => ({
   url: r.url as string, redirectCode: r.redirect_code as 301 | 302,
   startsAt: r.starts_at as number | null, expiresAt: r.expires_at as number | null, passQuery: r.pass_query === 1,
   passwordHash: (r.password_hash as string | null) ?? null, routes: parseRoutes(r.routes),
+  forwardTo: (r.forward_to as string | null) ?? null,
   createdBy: r.created_by as string, updatedBy: r.updated_by as string,
   createdAt: r.created_at as number, updatedAt: r.updated_at as number,
 });

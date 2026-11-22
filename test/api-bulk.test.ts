@@ -118,10 +118,10 @@ describe("schedule", () => {
     expect(await one("SELECT starts_at, expires_at FROM links WHERE id = 'o1'")).toEqual({ starts_at: 70, expires_at: 90 });
   });
 
-  it("invalid bodies: no field, endNow with expiresAt, unknown key, move until Task 4", async () => {
+  it("invalid bodies: no field, endNow with expiresAt, unknown key", async () => {
     for (const b of [
       { action: "schedule", ids: ["o1"] }, { action: "schedule", ids: ["o1"], endNow: true, expiresAt: 5 },
-      { action: "schedule", ids: ["o1"], endNow: true, evil: 1 }, { action: "move", ids: ["o1"], domainId: "da", oldAddress: "copy" },
+      { action: "schedule", ids: ["o1"], endNow: true, evil: 1 },
       { action: "nuke", ids: ["o1"] }, { action: "delete", ids: [] }, { action: "delete", ids: ["bad id"] },
     ]) {
       const r = await bulk("owner", b);

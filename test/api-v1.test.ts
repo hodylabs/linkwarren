@@ -298,6 +298,24 @@ describe("callApi (in-process seam)", () => {
     expect((await callApi(env, ctx, ro, "GET", "/analytics")).status).toBe(404);
   });
 
+  it("bulk: a write-only grant cannot delete, a read-only one cannot write (key and in-process); nothing written", async () => {
+    const ctx = createExecutionContext();
+    const ro = { user: await userA(), grant: { write: false, del: false, domains: null, via: "Claude" }, limiterKey: "api:c:c1" };
+    const wo = { ...ro, grant: { ...ro.grant, write: true } };
+    const del = { action: "delete", ids: ["la"] }, edit = { action: "redirect", ids: ["la"], passQuery: false };
+    expect(await callApi(env, ctx, wo, "POST", "/links/bulk", del)).toEqual({ status: 403, json: { error: "delete_not_allowed" } });
+    expect(await callApi(env, ctx, ro, "POST", "/links/bulk", edit)).toEqual({ status: 403, json: { error: "read_only" } });
+    for (const [i, [o, body, error]] of ([[{ write: true }, del, "delete_not_allowed"], [{}, edit, "read_only"], [{}, del, "read_only"]] as const).entries()) {
+      const k = await key("ua", { ...o, name: `bulk${i}` });
+      const r = await v1(k.secret, "/links/bulk", { method: "POST", json: body });
+      expect([r.status, await r.json()]).toEqual([403, { error }]);
+    }
+    await waitOnExecutionContext(ctx);
+    expect(await one("SELECT pass_query FROM links WHERE id = 'la'")).toEqual({ pass_query: 1 });
+    expect(await count("slug_locks")).toBe(0);
+    expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
+  });
+
   it("an outside request can never carry an in-process principal", async () => {
     // A fresh Request that merely looks like a callApi one is unauthenticated.
     const r = await exports.default.fetch("https://dash.test/api/v1/links");

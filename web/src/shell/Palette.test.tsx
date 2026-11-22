@@ -14,7 +14,7 @@ const dom = (id: string, host: string, type: Domain["type"]): Domain => ({
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 3, isMember: false,
 });
 const domains = [dom("d1", "go.example.com", "main"), dom("d2", "team.example.com", "shared")];
-const link = (id: string, slug: string) => ({ id, domainId: "d1", slug, slugKey: slug, url: "https://example.com/" + slug, redirectCode: 302, startsAt: null, expiresAt: null, passQuery: true, hasPassword: false, routes: [], createdBy: "uo", updatedBy: "uo", createdAt: 1, updatedAt: 1 });
+const link = (id: string, slug: string) => ({ id, domainId: "d1", slug, slugKey: slug, url: "https://example.com/" + slug, redirectCode: 302, startsAt: null, expiresAt: null, passQuery: true, hasPassword: false, routes: [], forwardTo: null, createdBy: "uo", updatedBy: "uo", createdAt: 1, updatedAt: 1 });
 
 async function boot(me: Me, extra: FakeRoutes = {}, path = "/links") {
   history.replaceState(null, "", path);

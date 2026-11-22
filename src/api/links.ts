@@ -203,7 +203,7 @@ links.post("/", async (c) => {
   const link: LinkRow = {
     id: crypto.randomUUID(), domainId: domain.id, slug: b.slug, slugKey: key, url: dest.href,
     redirectCode, startsAt, expiresAt, passQuery: b.passQuery ?? true,
-    passwordHash, routes: rt.routes,
+    passwordHash, routes: rt.routes, forwardTo: null,
     createdBy: user.id, updatedBy: user.id, createdAt: now, updatedAt: now,
   };
   try {
@@ -250,6 +250,8 @@ links.patch("/:id", async (c) => {
   const found = await editable(c, c.req.param("id"));
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain } = found;
+  // A forwarder is never edited: it can only be deleted.
+  if (link.forwardTo) return c.json({ error: "forwarder" }, 409);
   let url = link.url;
   if (b.url !== undefined) {
     const dest = await destination(c.env, b.url);
