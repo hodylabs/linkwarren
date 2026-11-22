@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -305,9 +305,29 @@ describe("Ownership, approve and reject", () => {
     await screen.findByLabelText("The bare domain");
     await user.keyboard("a");
     expect((await screen.findByRole("dialog")).textContent).toContain("Approve and send cafe.test traffic to linkwarren?");
+    const dlg = await screen.findByRole("dialog");
+    expect(document.activeElement).toBe(within(dlg).getByRole("button", { name: /^Cancel/ })); // a stray Enter cancels
+    const send = within(dlg).getByRole("button", { name: /^Send traffic/ });
+    send.focus();
+    expect(fireEvent.keyDown(send, { key: "Enter", repeat: true })).toBe(false); // autorepeat is swallowed
     await user.keyboard("{Enter}");
     await waitFor(() => expect(within(panel()).getByText("Active")).toBeTruthy());
     expect(api.calls.filter((c) => c.path === "/api/domains/d2/approve").map((c) => c.body)).toEqual([{}, { confirmTakeover: true }]);
+  });
+
+  it("Enter on Approve then an immediate second Enter does not confirm the takeover", async () => {
+    const { api, user } = boot({
+      list: () => [MAIN, PEND_CF],
+      routes: { "POST /api/domains/d2/approve": () => ({ status: 409, body: { error: "dns_record_exists" } }) },
+      path: "/domains?sel=d2",
+    });
+    await screen.findByLabelText("The bare domain");
+    (within(panel()).getByRole("button", { name: /^Approve/ }) as HTMLElement).focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog");
+    await user.keyboard("{Enter}"); // the double tap lands on Cancel
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.calls.filter((c) => c.path === "/api/domains/d2/approve").map((c) => c.body)).toEqual([{}]);
   });
 
   it("approve with loopLinks shows the loop notice with a link to those links", async () => {

@@ -40,6 +40,17 @@ describe("CfControls", () => {
     expect(patches(api)[0]!.body).toEqual({ securityLevel: "high" });
   });
 
+  it("Ctrl+Enter stays inside the controls and does not reach a parent form", async () => {
+    const outer = vi.fn();
+    const api = fakeApi({ "GET /api/domains": () => ({ body: [] }), "PATCH /api/domains/d1/cloudflare": () => ({ body: { securityLevel: "high", rateLimit: null } }) });
+    const user = userEvent.setup();
+    render(<AppProvider me={owner}><div onKeyDown={outer}><CfControls domain={dom("account")} controlsEnabled={true} /></div></AppProvider>);
+    await user.click(screen.getByRole("radio", { name: "High" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(patches(api)).toHaveLength(1));
+    expect(outer.mock.calls.filter(([e]) => e.key === "Enter")).toHaveLength(0);
+  });
+
   it("a rate of 5 shows the range error and sends nothing", async () => {
     const { api, user } = boot(dom("account"), true);
     await user.type(screen.getByLabelText("Rate limit"), "5{Control>}{Enter}{/Control}");
@@ -65,7 +76,7 @@ describe("CfControls", () => {
   it("shows the plan-limit copy", async () => {
     const { user } = boot(dom("account"), true, { "PATCH /api/domains/d1/cloudflare": () => ({ status: 409, body: { error: "cloudflare_plan_limit" } }) });
     await user.type(screen.getByLabelText("Rate limit"), "20{Control>}{Enter}{/Control}");
-    expect((await screen.findByRole("alert")).textContent).toBe("Your Cloudflare plan allows no more rate limit rules in this zone.");
+    expect((await screen.findByRole("alert")).textContent).toBe("Your Cloudflare plan allows no more rate limit rules in this zone. Free plans allow one per zone.");
   });
 
   it("starts from the stored values and an unchanged Save sends nothing", async () => {

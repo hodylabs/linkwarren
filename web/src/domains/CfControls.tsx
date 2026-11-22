@@ -59,6 +59,7 @@ export function CfControls({ domain, controlsEnabled }: { domain: Domain; contro
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
       e.preventDefault();
+      e.stopPropagation(); // the detail form must not also save
       void save();
     }
   };

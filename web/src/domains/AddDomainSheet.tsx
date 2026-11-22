@@ -71,7 +71,7 @@ export function AddDomainSheet() {
 
   useHotkeys({
     "mod+enter": () => void submit(),
-    "mod+shift+enter": () => void (takeover && submit(true)),
+    "mod+shift+enter": (e) => void (takeover && !e.repeat && submit(true)), // a held chord never confirms
   } satisfies Bindings<typeof ADD_DOMAIN_KEYS>);
 
   const apex = made ? apexOf(made.host) : "";

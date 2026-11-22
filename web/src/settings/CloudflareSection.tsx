@@ -96,7 +96,8 @@ export function CloudflareSection() {
     try {
       for (;;) {
         const r = await resyncBatch(after, ac.signal);
-        failed = [...failed.filter((f) => f.host !== pending), ...r.failed];
+        const now = new Set(r.failed.map((f) => f.host)); // one row per host, the latest error
+        failed = [...failed.filter((f) => f.host !== pending && !now.has(f.host)), ...r.failed];
         checked += r.ok;
         const unreachable = r.failed.find((f) => UNREACHABLE.has(f.error));
         if (r.next === null) return view({ running: false, done: true });

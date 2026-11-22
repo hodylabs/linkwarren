@@ -33,7 +33,7 @@ const ERRORS: Record<string, string> = {
   controls_off: "Cloudflare controls are turned off. The owner can turn them on in Settings.",
   not_same_account: "Security level and rate limit work only for domains in your own Cloudflare account that linkwarren has connected.",
   cloudflare_forbidden: "The Cloudflare API token is missing a permission for this. Check the token in Settings.",
-  cloudflare_plan_limit: "Your Cloudflare plan does not allow another rule here. The Free plan allows one rate limit per zone.",
+  cloudflare_plan_limit: "Your Cloudflare plan allows no more rate limit rules in this zone. Free plans allow one per zone.",
   cloudflare_not_configured: "Cloudflare is not connected. Add the API token in Settings, then try again.",
   conflict: "Someone else changed this at the same time. Reload and try again.",
   invalid_reserved: "Reserved slugs must be valid slugs, at most 100.",

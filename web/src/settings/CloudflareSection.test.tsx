@@ -135,6 +135,17 @@ describe("Resync", () => {
     expect(screen.getAllByText("a.test")).toHaveLength(1);
   });
 
+  it("Retry after a stall does not duplicate the stalled host", async () => {
+    const down = { host: "a.test", error: "cloudflare_0" };
+    const b = batches([{ next: "d2", failed: [down] }, { next: "d3", failed: [down] }, { next: "d3", failed: [down] }]);
+    const { user } = boot({ routes: { "POST /api/settings/cloudflare/resync": b.route } });
+    await user.click(await screen.findByRole("button", { name: "Resync domains" }));
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(b.sent).toHaveLength(3));
+    await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getAllByText("a.test")).toHaveLength(1);
+  });
+
   it("lists failures", async () => {
     const b = batches([{ next: null, ok: 1, failed: [{ host: "x.test", error: "not_verified" }] }]);
     const { user } = boot({ routes: { "POST /api/settings/cloudflare/resync": b.route } });

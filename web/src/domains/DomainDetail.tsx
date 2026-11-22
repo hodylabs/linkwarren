@@ -363,10 +363,12 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
           <div className="sh-body">
             <p>{dlg.text}</p>
             <div className="actions">
-              <button type="button" className="btn primary" autoFocus onClick={dlg.act}>
+              {/* Takeover is hard to undo: focus starts on Cancel so a stray or held Enter cancels, and key autorepeat never confirms. */}
+              <button type="button" className="btn primary" autoFocus={confirm !== "takeover"} onClick={dlg.act}
+                onKeyDown={(e) => e.repeat && e.preventDefault()}>
                 {dlg.ok} <span className="k">Enter</span>
               </button>
-              <button type="button" className="btn" onClick={() => setConfirm(null)}>
+              <button type="button" className="btn" autoFocus={confirm === "takeover"} onClick={() => setConfirm(null)}>
                 Cancel <kbd>Esc</kbd>
               </button>
             </div>
