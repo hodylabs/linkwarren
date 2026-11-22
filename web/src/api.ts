@@ -9,7 +9,19 @@ export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudfl
 export type UserItem = UserListItem;
 export type AuditItem = ServerAuditItem;
 export type Page<T> = { items: T[]; next: string | null };
-export type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+type Count = { value: string; clicks: number };
+/** GET /api/analytics. Same shape as the server's report (src/analytics.ts). */
+export type AnalyticsReport = {
+  from: string; to: string; unit: "day" | "hour"; live: "ok" | "off" | "unavailable"; truncated: boolean;
+  totals: { clicks: number; qr: number; typed: number; bots: number; visitors: number | null; prevClicks: number | null };
+  series: { bucket: string; qr: number; typed: number }[];
+  links: { linkId: string; domainId: string; host: string; slug: string; clicks: number }[];
+  domains: { domainId: string; host: string; clicks: number }[];
+  countries: Count[]; devices: Count[]; referrers: Count[];
+};
+/** One item of GET /api/analytics/links: `days` are today-6..today (UTC), oldest first. */
+export type LinkStats = { linkId: string; days: number[]; clicks: number; qr: number; topCountry: string | null };
+export type Method ="GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export class ApiError extends Error {
   readonly status: number;

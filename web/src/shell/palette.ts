@@ -41,6 +41,7 @@ export function buildCommands(ctx: Ctx, isOwner: boolean, appMode = false): Comm
     go("gl", "Links", "/links"),
     go("gd", "Domains", "/domains"),
     go("ga", "Analytics", "/analytics"),
+    go("af", "Filter analytics by domain", "/analytics?pick=1"),
     ...(isOwner ? [go("gp", "People & audit log", "/people"), go("gi", "API & agents", "/agents"), go("gs", "Settings", "/settings")] : []),
     ...switcherDomains(ctx.domains).slice(0, 9).map((d, i): Command => ({
       keys: `g${i + 1}`, section: "Switch", label: `Switch to ${d.host}`, run: () => ctx.setCurrentDomain(d.id),

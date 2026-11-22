@@ -66,3 +66,13 @@ describe("buildCommands: sign-in and security", () => {
     expect(buildCommands(ctx, false, false).some((c) => c.keys === "ys")).toBe(false);
   });
 });
+
+describe("buildCommands: analytics domain filter", () => {
+  it("af opens the analytics domain picker for everyone", () => {
+    const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
+    const af = buildCommands(ctx, false).find((c) => c.keys === "af")!;
+    expect(af).toMatchObject({ section: "Go to", label: "Filter analytics by domain" });
+    af.run();
+    expect(location.pathname + location.search).toBe("/analytics?pick=1");
+  });
+});

@@ -9,6 +9,7 @@ import { useOpenSheets } from "./shell/Sheet";
 import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
 import { AppProvider, useApp } from "./state";
 import { errorText } from "./copy";
+import { AnalyticsScreen } from "./analytics/AnalyticsScreen";
 import { AccountSheet } from "./account/AccountSheet";
 import { AddDomainSheet } from "./domains/AddDomainSheet";
 import { DomainsScreen } from "./domains/DomainsScreen";
@@ -18,7 +19,6 @@ import { PeopleScreen } from "./people/PeopleScreen";
 import { SettingsScreen } from "./settings/SettingsScreen";
 
 const SOON: Partial<Record<Screen, string>> = {
-  analytics: "Clicks, countries, devices and referrers arrive in a later version.",
   agents: "Agent connections and API keys arrive in a later version.",
 };
 
@@ -31,6 +31,7 @@ function ScreenView({ screen }: { screen: Screen }) {
   if (screen === "links") return <LinksScreen />;
   if (screen === "domains") return <DomainsScreen />;
   if (screen === "settings") return <SettingsScreen />;
+  if (screen === "analytics") return <AnalyticsScreen />;
   return <PeopleScreen />;
 }
 

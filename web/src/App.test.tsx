@@ -57,9 +57,10 @@ describe("App shell", () => {
     await waitFor(() => expect(calls.some((c) => c.path === "/api/users")).toBe(true));
   });
 
-  it("/analytics shows its coming-soon text", async () => {
-    boot(member, {}, "/analytics");
-    expect(await screen.findByText("Clicks, countries, devices and referrers arrive in a later version.")).toBeTruthy();
+  it("/analytics shows the Analytics screen", async () => {
+    boot(member, { "GET /api/analytics": () => ({ status: 500, body: { error: "internal_error" } }) }, "/analytics");
+    expect(await screen.findByRole("heading", { name: "Analytics" })).toBeTruthy();
+    expect(screen.queryByText("Clicks, countries, devices and referrers arrive in a later version.")).toBeNull();
     expect(screen.getByRole("link", { name: /Analytics/ }).getAttribute("aria-current")).toBe("page");
   });
 

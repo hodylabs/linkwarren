@@ -476,3 +476,59 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .sblock input,.sect input{font-size:16px}
   .sect .btn,.seg button{min-height:44px}
 }
+
+/* analytics: mockup #s-analytics rules verbatim; .empty is scoped to .an because the app already has a global .empty */
+.an{overflow:auto;padding:12px 20px 24px;display:grid;gap:14px;align-content:start}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.tile2{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile2 small{color:var(--muted)}.tile2 b{display:block;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;margin:2px 0}
+.delta{font-size:12px;color:var(--muted)}.delta.up{color:var(--ok)}
+.card2{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.card2-h{display:flex;align-items:center;gap:14px;margin-bottom:8px}.card2-h h3{margin:0;font-size:13px;font-weight:600}
+.legend{display:flex;gap:14px;color:var(--muted);font-size:12px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.fbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.seg2{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.seg2 button{border:0;border-right:1px solid var(--line);background:transparent;padding:5px 11px;font-size:12.5px;color:var(--muted)}
+.seg2 button:last-child{border-right:0}
+.seg2 button[aria-checked="true"]{background:var(--graphite);color:#fff}
+.custom{display:flex;gap:8px;align-items:center}
+.custom label{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12.5px}
+.custom input{font-family:var(--mono);font-size:12.5px;border:1px solid var(--line);border-radius:7px;padding:4px 6px;background:var(--panel);color:var(--text)}
+.ddwrap{position:relative}
+.chip.dd{display:inline-flex;align-items:center;gap:6px}.chip.dd .car{font-size:10px}.chip.dd kbd{margin-left:2px}
+.chip.dd.set{background:var(--signal-wash);border-color:var(--signal);color:var(--text)}
+.dd-pop{position:absolute;top:calc(100% + 6px);left:0;width:300px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.16);z-index:15;overflow:hidden}
+.dd-s{padding:8px;border-bottom:1px solid var(--line-soft)}
+.dd-s input{width:100%;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:inherit;outline:0}
+.dd-s input:focus{border-color:var(--signal)}
+.dd-list{max-height:260px;overflow:auto;padding:4px 0}
+.dd-it{display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-family:var(--mono);font-size:12.5px}
+.dd-it[aria-current="true"]{background:var(--signal-wash)}
+.dd-it .cb{width:14px;height:14px;border:1.5px solid var(--faint);border-radius:3px;display:grid;place-items:center;font-size:10px;color:#fff;flex:none}
+.dd-it[aria-selected="true"] .cb{background:var(--graphite);border-color:var(--graphite)}
+.dd-it .ty{margin-left:auto;font-family:var(--sans);font-size:11.5px;color:var(--faint)}
+.dd-f{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-top:1px solid var(--line-soft);font-size:11.5px;color:var(--faint)}
+.active{display:flex;gap:6px;flex-wrap:wrap;min-height:0}
+.active:empty{display:none}
+.fpill{display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px;font-size:12.5px}
+.fpill b{font-weight:500}.fpill button{border:0;background:var(--bg);border-radius:50%;width:18px;height:18px;line-height:1;color:var(--muted);padding:0}
+.an .empty{padding:28px;text-align:center;color:var(--muted)}
+.fbar .count{margin-left:auto;color:var(--faint);font-size:12.5px}
+/* app additions: the screen scrolls inside main; the link search is a real input inside the .search box */
+main>.an{flex:1;min-height:0}
+.search input{border:0;outline:0;background:transparent;font:inherit;flex:1;min-width:0;color:var(--text)}
+.search:focus-within{border-color:var(--signal)}
+.btn .k2{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-left:4px}
+.btn[disabled]{opacity:.6}
+.an>.note,.an>.err{margin:0}
+@media (max-width:1080px){.tiles{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:760px){
+  .an{padding:12px 16px 24px}
+  .fbar .seg2{max-width:100%;overflow-x:auto}
+  .seg2 button{flex:none}
+  .custom{flex-wrap:wrap}
+  .dd-pop{width:min(300px,calc(100vw - 32px))}
+  .dd-it{min-height:44px}
+  .fpill button{width:44px;height:44px}
+  .fbar .count{margin-left:0}
+}

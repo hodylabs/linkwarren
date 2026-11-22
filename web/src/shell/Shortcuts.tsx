@@ -2,6 +2,7 @@ import { useApp } from "../state";
 import { keyLabels } from "../keys";
 import type { Screen } from "../router";
 import { ACCOUNT_KEYS } from "../account/AccountPanel";
+import { ANALYTICS_KEYS } from "../analytics/AnalyticsScreen";
 import { ADD_DOMAIN_KEYS } from "../domains/AddDomainSheet";
 import { DOMAIN_DETAIL_KEYS } from "../domains/DomainDetail";
 import { DOMAINS_KEYS } from "../domains/DomainsScreen";
@@ -60,6 +61,16 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
   { title: "New link", rows: rows(NEW_LINK_KEYS) },
   { title: "Domains", rows: [...rows(DOMAINS_KEYS), ...rows(DOMAIN_DETAIL_KEYS), OPEN_ROW, ...SAVE_REVERT, ...rows(ADD_DOMAIN_KEYS)] },
   { title: "People", rows: [...rows(PEOPLE_KEYS), OPEN_ROW] },
+  {
+    title: "Analytics",
+    rows: [
+      ...rows(ANALYTICS_KEYS),
+      [["←", "→"], "Change the date range"], // Seg onKeyDown
+      [["↑", "↓"], "Move in the domain list"], // DomainPicker onKeyDown
+      [["Space"], "Pick or unpick a domain"],
+      [["Esc"], "Close the domain list"],
+    ],
+  },
   { title: "Settings", rows: rows(SETTINGS_KEYS) },
   { title: "Sign-in and security", rows: [...rows(ACCOUNT_KEYS), [["Enter"], "Confirm"], [["Esc"], "Cancel or close"]] },
 ];

@@ -32,13 +32,15 @@ export const Switch = ({ checked, onChange, label }: { checked: boolean; onChang
 );
 
 /** Segmented radio group: one tab stop, arrow keys move and select. */
-export function Seg<V extends string | number>({ options, value, onChange, label, wrap }: {
+export function Seg<V extends string | number>({ options, value, onChange, label, wrap, cls }: {
   options: { value: V; label: string }[];
   value: V;
   onChange: (v: V) => void;
   label: string;
   /** Options may wrap onto several rows (narrow panels): each button is its own rounded box. */
   wrap?: boolean;
+  /** Extra class names after `seg` (the analytics range uses `seg2`). */
+  cls?: string;
 }) {
   const group = useRef<HTMLDivElement>(null);
   const onKeyDown = (e: KeyboardEvent) => {
@@ -50,7 +52,7 @@ export function Seg<V extends string | number>({ options, value, onChange, label
     group.current?.querySelectorAll<HTMLButtonElement>("[role=radio]")[i]?.focus();
   };
   return (
-    <div className={wrap ? "seg wrap" : "seg"} role="radiogroup" aria-label={label} ref={group} onKeyDown={onKeyDown}>
+    <div className={["seg", wrap && "wrap", cls].filter(Boolean).join(" ")} role="radiogroup" aria-label={label} ref={group} onKeyDown={onKeyDown}>
       {options.map((o) => (
         <button key={o.value} type="button" role="radio" aria-checked={o.value === value} tabIndex={o.value === value ? 0 : -1} onClick={() => onChange(o.value)}>
           {o.label}

@@ -43,6 +43,7 @@ const ERRORS: Record<string, string> = {
   unknown_user: "One of those people no longer exists. Reload and try again.",
   main_domain: "Everyone can use the main domain, so it has no member list.",
   no_changes: "Nothing changed.",
+  bad_range: "Pick dates up to today, the start on or before the end, at most 366 days apart.",
   q_too_long: "Search for at most 48 characters.",
   bad_status: "Unknown status filter.",
   bad_query: "That search could not be read.",
