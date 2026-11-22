@@ -8,12 +8,13 @@ const SHORT = "https://short.test";
 const PR_SUFFIX = "/.well-known/oauth-protected-resource/mcp";
 const PR_BARE = "/.well-known/oauth-protected-resource";
 const fetchW = (url: string, init?: RequestInit) => exports.default.fetch(url, init);
-const register = (ip: string) =>
+const CLAUDE_CB = "https://claude.ai/api/mcp/auth_callback";
+const register = (ip: string, redirect_uris: unknown = [CLAUDE_CB]) =>
   fetchW(`${DASH}/register`, {
     method: "POST",
     headers: { "content-type": "application/json", "cf-connecting-ip": ip },
     body: JSON.stringify({
-      redirect_uris: ["https://claude.ai/api/mcp/auth_callback"],
+      redirect_uris,
       client_name: "Test client",
       grant_types: ["authorization_code", "refresh_token"],
       token_endpoint_auth_method: "none",
@@ -132,5 +133,102 @@ describe("oauth front door on the dashboard host", () => {
     await worker.scheduled!({ cron: "15 * * * *", scheduledTime: now * 1000, noRetry() {} } as ScheduledController, env, {} as ExecutionContext);
     const keys = (await env.DB.prepare("SELECT key FROM auth_limits").all<{ key: string }>()).results.map((r) => r.key);
     expect(keys).toEqual(["reg:day"]);
+  });
+
+  it("accepts only the claude.ai callback and loopback /callback redirect URIs at registration", async () => {
+    let n = 0;
+    const ip = () => `10.${++n}.0.1`; // a fresh IP range each, so the per-range limit never interferes
+    for (const ok of [[CLAUDE_CB], ["http://localhost:33418/callback"], ["http://127.0.0.1:1/callback", "http://localhost:65535/callback"]])
+      expect([ok, (await register(ip(), ok)).status]).toEqual([ok, 201]);
+    const kvBefore = (await env.OAUTH_KV.list()).keys.length;
+    for (const bad of [
+      "https://claude.ai.evil.example/api/mcp/auth_callback",
+      "https://claude-ai.example/api/mcp/auth_callback",
+      "https://claude.ai/api/mcp/auth_callback/",
+      "https://claude.ai/api/mcp/auth_callback?x=1",
+      "https://claude.ai/api/mcp/auth_callback#f",
+      "https://user@claude.ai/api/mcp/auth_callback",
+      "https://claude.ai:443/api/mcp/auth_callback",
+      "http://claude.ai/api/mcp/auth_callback",
+      "http://localhost/callback",
+      "http://localhost:0/callback",
+      "http://localhost:65536/callback",
+      "http://localhost:8080/callback/",
+      "http://localhost:8080/callback?x=1",
+      "http://localhost:8080/other",
+      "http://localhost.evil.example:8080/callback",
+      "http://user@localhost:8080/callback",
+      "https://localhost:8080/callback",
+      "http://[::1]:8080/callback",
+      "http://127.0.0.2:8080/callback",
+    ]) {
+      const res = await register(ip(), [CLAUDE_CB, bad]);
+      expect([bad, res.status]).toEqual([bad, 400]);
+      // The library refuses a fragment, userinfo or an out-of-range port itself, before the callback, with its own RFC 7591 code.
+      const code = /#|@|:65536\//.test(bad) ? "invalid_client_metadata" : "invalid_redirect_uri";
+      expect([bad, (await res.json<{ error: string }>()).error]).toEqual([bad, code]);
+    }
+    for (const bad of ["x", [], [42], null]) expect((await register(ip(), bad)).status).toBe(400);
+    expect((await env.OAUTH_KV.list()).keys.length).toBe(kvBefore); // refused registrations write nothing
+  });
+
+  it("refuses an authorization request whose redirect_uri the client did not register", async () => {
+    const { client_id } = await (await register("10.200.0.1", ["http://localhost:4000/callback"])).json<{ client_id: string }>();
+    const helpers = env.OAUTH_PROVIDER!; // injected on env by the provider on the requests above
+    const auth = (redirect: string) => {
+      const q = new URLSearchParams({ response_type: "code", client_id, redirect_uri: redirect, code_challenge: "x".repeat(43), code_challenge_method: "S256", state: "s" });
+      return helpers.parseAuthRequest(new Request(`${DASH}/authorize?${q}`));
+    };
+    await expect(auth("http://localhost:4000/callback")).resolves.toMatchObject({ clientId: client_id });
+    await expect(auth("http://localhost:5000/callback")).resolves.toMatchObject({ clientId: client_id }); // loopback: any port (RFC 8252)
+    await expect(auth(CLAUDE_CB)).rejects.toThrow();
+    await expect(auth("http://localhost:4000/other")).rejects.toThrow();
+  });
+
+  it("answers JSON 503 when the provider throws (for example the KV daily write cap)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(env.OAUTH_KV, "put").mockRejectedValue(new Error("KV put() limit exceeded for the day."));
+    const res = await register("10.201.0.1");
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+  });
+
+  it("fails closed with 503 when the D1 limiter is unavailable on /register", async () => {
+    vi.spyOn(env.DB, "prepare").mockImplementation(() => { throw new Error("D1 down"); });
+    const res = await register("10.202.0.1");
+    vi.restoreAllMocks();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+  });
+
+  it("keeps subpaths and preflights behind MCP_ENABLED", async () => {
+    setMcp("0");
+    for (const p of ["/mcp/x", "/mcp/", "/.well-known/oauth-protected-resource/x"])
+      expect([p, (await fetchW(`${DASH}${p}`)).status]).toEqual([p, 404]);
+    for (const p of OAUTH_PATHS) {
+      const res = await fetchW(`${DASH}${p}`, { method: "OPTIONS", headers: { origin: "https://x.example", "access-control-request-method": "POST" } });
+      expect([p, res.status, res.headers.get("access-control-allow-origin")]).toEqual([p, 404, null]);
+    }
+  });
+
+  it("never reaches the provider with a blank DASHBOARD_HOST", async () => {
+    const e = env as { DASHBOARD_HOST: string };
+    const saved = e.DASHBOARD_HOST;
+    e.DASHBOARD_HOST = " ";
+    try {
+      for (const p of ["/register", "/.well-known/oauth-authorization-server", "/mcp"]) {
+        const res = await fetchW(`${DASH}${p}`, { method: p === "/register" ? "POST" : "GET" });
+        expect([p, res.status, await res.json()]).toEqual([p, 500, { error: "misconfigured" }]);
+      }
+    } finally {
+      e.DASHBOARD_HOST = saved;
+    }
+  });
+
+  it("treats the dashboard host case-insensitively, with a port or a trailing dot", async () => {
+    for (const host of ["DASH.TEST", "dash.test:8443", "dash.test."]) {
+      const res = await fetchW(`${DASH}/mcp`, { method: "POST", headers: { host, "content-type": "application/json" }, body: "{}" });
+      expect([host, res.status]).toEqual([host, 401]);
+    }
   });
 });
