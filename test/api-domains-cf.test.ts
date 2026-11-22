@@ -58,7 +58,7 @@ describe("create: outside", () => {
   });
   it("apex hosts get @ and apex: true, ccTLD pairs included", async () => {
     installFakeCloudflare({ zones });
-    for (const [host, name, apex] of [["outside.test", "@", true], ["example.co.uk", "@", true], ["go.example.co.uk", "go", false], ["a.b.outside.test", "a.b", false]] as const) {
+    for (const [host, name, apex] of [["outside.test", "@", true], ["example.co.uk", "@", true], ["go.example.co.uk", "go", false], ["a.b.outside.test", "a.b", false], ["go.example.or.jp", "go", false], ["example.ne.jp", "@", true]] as const) {
       await run("DELETE FROM domains");
       const j = await (await create("a", host)).json<Record<string, any>>();
       expect([host, j.cloudflare.instructions]).toEqual([host, { type: "CNAME", name, target: "edge.test", apex }]);
@@ -97,6 +97,24 @@ describe("create: outside", () => {
     expect(p.status).toBe(200);
     expect(await p.json()).toMatchObject({ kind: "outside", lastError: null, ownership: "pending" });
     expect(fake.state.hostnames).toHaveLength(1);
+  });
+});
+
+describe("internal errors", () => {
+  it("a plain Error inside syncDomain gives 201 with internal_error and one console.error without the token", async () => {
+    const fake = installFakeCloudflare({ zones });
+    // A non-Response from fetch makes cf() throw a TypeError: a bug, not a Cloudflare answer.
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      const req = new Request(i as RequestInfo, init);
+      return req.url.includes("custom_hostnames?hostname=") ? ({} as Response) : fake.handle(req);
+    });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await create("a", "go.outside.test");
+    expect(r.status).toBe(201);
+    expect((await r.json<Record<string, any>>()).cloudflare).toMatchObject({ kind: "outside", lastError: "internal_error" });
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(err.mock.calls)).not.toContain("tok-SECRET");
+    expect(JSON.stringify(err.mock.calls)).toContain("TypeError");
   });
 });
 
@@ -217,6 +235,31 @@ describe("GET /api/domains/:id/cloudflare", () => {
     installFakeCloudflare({ zones });
     const { id } = await (await create("a", "go.outside.test")).json<{ id: string }>();
     expect([(await poll("b", id)).status, (await poll("b", "nope")).status, (await poll("owner", id)).status]).toEqual([403, 404, 200]);
+  });
+  it("a domain whose sync keeps failing makes one round across 3 polls within 10 s, and a new round after 10 s", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.routes.push({ id: "rt", zoneId: "zsaas", pattern: "go.outside.test/*", script: "other" });
+    const { id, cloudflare } = await (await create("a", "go.outside.test")).json<{ id: string; cloudflare: { lastError: string } }>();
+    expect(cloudflare.lastError).toBe("route_in_use");
+    advance(11);
+    await poll("a", id);
+    const afterFirst = fake.calls.length;
+    for (const s of [3, 3]) { advance(s); expect(await (await poll("a", id)).json()).toMatchObject({ lastError: "route_in_use" }); }
+    expect(fake.calls).toHaveLength(afterFirst);
+    advance(5);
+    await poll("a", id);
+    expect(fake.calls.length).toBeGreaterThan(afterFirst);
+  });
+  it("a disabled domain is never repaired by a poll", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { id } = await (await create("a", "go.outside.test")).json<{ id: string }>();
+    await run("UPDATE domains SET status = 'disabled' WHERE id = ?", id);
+    fake.state.hostnames.length = 0;
+    const n = fake.calls.length;
+    advance(11);
+    expect((await poll("a", id)).status).toBe(200);
+    expect(fake.calls).toHaveLength(n);
+    expect(fake.state.hostnames).toEqual([]);
   });
   it("a Cloudflare failure during refresh answers 200 with the stored view and lastError", async () => {
     const fake = installFakeCloudflare({ zones });

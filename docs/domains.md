@@ -27,7 +27,7 @@ Records include a wildcard at any parent name inside the zone (`*.example.com` c
 
 ## Status
 
-Every domain in `GET /api/domains` carries a `cloudflare` object from the last stored check. `GET /api/domains/:id/cloudflare` (owner, or the member who added the domain) is the live check: it answers the stored state when it is under 10 seconds old, otherwise it asks Cloudflare again and re-creates any missing piece linkwarren made before. It never attaches a new account domain and never takes over a record. A Cloudflare failure during the check answers `200` with the stored state and `lastError`.
+Every domain in `GET /api/domains` carries a `cloudflare` object from the last stored check. `GET /api/domains/:id/cloudflare` (owner, or the member who added the domain) is the live check: it answers the stored state when the last attempt (failed ones included) was under 10 seconds ago, otherwise it asks Cloudflare again and re-creates any missing piece linkwarren made before. It never attaches a new account domain and never takes over a record. A disabled domain is never rechecked. A Cloudflare failure during the check answers `200` with the stored state and `lastError`.
 
 | Field | Values |
 | --- | --- |

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import { CfError, cfConfig } from "../cf/api";
-import { classify, syncDomain, takeoverCheck } from "../cf/attach";
+import { classify, logInternal, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
@@ -39,7 +39,8 @@ export function hostError(host: string, dashboard: string, cnameTarget?: string)
 }
 
 // Second-level labels that make a two-letter ccTLD pair (co.uk, com.au) one registrable suffix.
-const CC_SLD = new Set(["co", "com", "net", "org", "gov", "ac", "edu"]);
+// shortcut: a fixed list, display only (instructions.name/apex); use the Public Suffix List if users need more.
+const CC_SLD = new Set(["co", "com", "net", "org", "gov", "ac", "edu", "or", "ne"]);
 /** Registrable apex by the simple rule: the last two labels, or three when they are a ccTLD pair like co.uk. */
 export function apexOf(host: string): string {
   const l = host.split(".");
@@ -73,9 +74,14 @@ async function trySync(env: Env, d: DomainRow, cf: CfRow, opts: { attach: boolea
   const cfg = cfConfig(env);
   if (!cfg || cf.kind === "manual") return cf;
   try {
-    return await syncDomain(env, cfg, d, cf, opts);
+    return await syncDomain(env, cfg, d, cf, opts); // logs internal errors itself
   } catch {
-    return (await getCf(env, d.id)) ?? cf;
+    try {
+      return (await getCf(env, d.id)) ?? cf;
+    } catch (e) {
+      logInternal(d.id, e);
+      return { ...cf, lastError: "internal_error" };
+    }
   }
 }
 
@@ -152,9 +158,11 @@ domains.post("/", async (c) => {
   }
   if (res[0]!.meta.changes === 0) return c.json({ error: "pending_limit" }, 409);
   await purge(c.env, host); // clears a 60 s cached miss for this host
-  let cf = await getCf(c.env, d.id);
+  // The row exactly as inserted, so nothing after the committed batch can turn this into a 500.
+  const inserted: CfRow = { kind, zoneId: null, dnsRecordId: null, routeId: null, hostnameId: null, dns: "unknown", ownership: "unknown",
+    certificate: "unknown", errors: [], lastError: null, checkedAt: null, securityLevel: null, rateLimit: null, updatedAt: d.createdAt };
   // A member's same-account create runs read-only (attach false): R3, no Cloudflare write.
-  if (cf) cf = await trySync(c.env, d, cf, { attach: kind === "outside" || isOwner, confirmTakeover });
+  const cf = await trySync(c.env, d, inserted, { attach: kind === "outside" || isOwner, confirmTakeover });
   const out = { ...d, cloudflare: cfView(c.env, d, cf) };
   return c.json(isOwner ? { ...out, ...(await loopField(c.env, host)) } : out, 201);
 });
@@ -165,8 +173,10 @@ domains.get("/:id/cloudflare", async (c) => {
   if (!d) return c.json(notFound, 404);
   if (!canManageDomain(c.var.user, d)) return c.json(forbidden, 403);
   let cf = await getCf(c.env, d.id);
-  const fresh = cf?.checkedAt != null && Math.floor(Date.now() / 1000) - cf.checkedAt < 10;
-  if (cf && !fresh) cf = await trySync(c.env, d, cf, { attach: false });
+  // Throttled on the last attempt, failed ones included, so a failing domain cannot drain the shared API budget.
+  const fresh = !!cf && Math.floor(Date.now() / 1000) - Math.max(cf.checkedAt ?? 0, cf.updatedAt) < 10;
+  // A disabled domain is never repaired: no Cloudflare calls.
+  if (cf && !fresh && (d.status === "pending" || d.status === "active")) cf = await trySync(c.env, d, cf, { attach: false });
   return c.json(cfView(c.env, d, cf));
 });
 

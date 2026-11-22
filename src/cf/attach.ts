@@ -53,8 +53,9 @@ export async function syncDomain(env: Env, cfg: CfConfig, d: DomainRow, cf: CfRo
     const snap = cf.kind === "outside" ? await syncOutside(cfg, d.host, made) : await syncAccount(cfg, d.host, cf, opts, made);
     return await save(env, d.id, cf, made, { ...snap, errors: JSON.stringify(snap.errors), last_error: null, checked_at: Math.floor(Date.now() / 1000) });
   } catch (e) {
-    // checked_at stays as it was so the next poll retries at once.
+    // checked_at moves only on success; updated_at (bumped by save) is what throttles polls.
     const code = e instanceof AttachError ? e.code : e instanceof CfError ? e.message : "internal_error";
+    if (code === "internal_error") logInternal(d.id, e);
     try {
       await save(env, d.id, cf, made, { last_error: code });
     } catch {
@@ -142,6 +143,12 @@ async function syncAccount(cfg: CfConfig, host: string, cf: CfRow, opts: { attac
     certificate: host.split(".").length - z.name.split(".").length <= 1 ? "issued" : "not_covered",
     errors: [],
   };
+}
+
+/** A bug, not a Cloudflare answer: name and a capped message only (CfError messages are code-only, the token lives in a header). */
+export function logInternal(domainId: string, e: unknown): void {
+  const err = e as { name?: unknown; message?: unknown } | null;
+  console.error("linkwarren: internal error during domain sync", JSON.stringify({ domainId, name: String(err?.name), message: String(err?.message).slice(0, 200) }));
 }
 
 /** One UPDATE. Each id is compare-and-set against the value this sync read, so a concurrent writer's id is never overwritten. */

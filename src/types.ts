@@ -46,6 +46,8 @@ export type CfRow = {
   ownership: "unknown" | "pending" | "verified" | "failed";
   certificate: "unknown" | "pending" | "issued" | "failed" | "not_covered";
   errors: string[]; lastError: string | null; checkedAt: number | null; securityLevel: string | null; rateLimit: number | null;
+  /** Bumped on every sync attempt, failed ones included (checkedAt moves only on success). */
+  updatedAt: number;
 };
 /** What the API shows about a domain's Cloudflare state. `instructions` only for `outside`. */
 export type CfView = Pick<CfRow, "kind" | "dns" | "ownership" | "certificate" | "errors" | "lastError" | "checkedAt"> & {
@@ -58,4 +60,5 @@ export const rowToCf = (r: R): CfRow => ({
   ownership: r.ownership as CfRow["ownership"], certificate: r.certificate as CfRow["certificate"],
   errors: JSON.parse((r.errors as string) || "[]"), lastError: r.last_error as string | null,
   checkedAt: r.checked_at as number | null, securityLevel: r.security_level as string | null, rateLimit: r.rate_limit as number | null,
+  updatedAt: r.updated_at as number,
 });
