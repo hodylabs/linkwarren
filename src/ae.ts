@@ -77,6 +77,31 @@ function idClause(col: string, prefix: string, ids: string[] | null, params: Par
   return ` AND (${parts.join(" OR ")})`;
 }
 
+/** Analytics Engine caps a statement at 10 KiB; stay well under it. */
+export const MAX_SQL = 8192;
+const SQL_OVERHEAD = 1000; // select, group by and fixed where terms of the longest statement
+
+/**
+ * Split ids so each statement stays under MAX_SQL, given the other id clause already in it. Chunks partition the ids,
+ * so rows from different chunks never overlap and can simply be concatenated. Worst case (R5: 500 link ids, 17-18
+ * bytes per term) is 2 chunks, i.e. 10 queries per report and 2 for the sparkline, far under 50 Free subrequests.
+ */
+function chunkIds(ids: string[], col: string, otherClauseLen: number): string[][] {
+  const budget = MAX_SQL - SQL_OVERHEAD - otherClauseLen;
+  const chunks: string[][] = [];
+  let cur: string[] = [];
+  let len = 0;
+  for (const id of ids) {
+    const term = ` OR ${col} = $l${cur.length}`.length;
+    if (cur.length && len + term > budget) (chunks.push(cur), (cur = []), (len = 0));
+    cur.push(id);
+    len += ` OR ${col} = $l${cur.length - 1}`.length;
+  }
+  if (cur.length) chunks.push(cur);
+  if (budget < 64) throw new AeError("too_large");
+  return chunks;
+}
+
 const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
 
 /** `2026-11-19 13:00:00` / ISO / bare date to `YYYY-MM-DD` (day) or `YYYY-MM-DDTHH:00:00Z` (hour). */
@@ -92,25 +117,29 @@ const str = (v: unknown) => (typeof v === "string" ? v : String(v ?? ""));
 export async function aeAggregate(env: Env, from: Date, to: Date, unit: Unit, scope: Scope): Promise<{ tot: TotRow[]; dims: DimRow[] }> {
   if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0) return { tot: [], dims: [] };
   const params: Params = { account: trim(env.CF_ACCOUNT_ID) ?? "", from: iso(from), to: iso(to), human: "human", typed: "typed", none: "" };
-  const where =
-    "WHERE accountTag = $account AND timestamp >= $from AND timestamp < $to" +
-    idClause("blob1", "d", scope.domainIds, params) +
-    idClause("blob2", "l", scope.linkIds, params);
+  const base = "WHERE accountTag = $account AND timestamp >= $from AND timestamp < $to" + idClause("blob1", "d", scope.domainIds, params);
   const b = unit === "day" ? "toStartOfDay(timestamp)" : "toStartOfHour(timestamp)";
-  const ds = `events.analyticsEngine.${dataset(env)}`; // validated by aeConfigured inside aeQuery
+  const ds = `events.analyticsEngine."${dataset(env)}"`; // validated by aeConfigured inside aeQuery
   const keys = `${b} AS bucket, blob1 AS domainId, blob2 AS linkId`;
   const group = `GROUP BY ${b}, blob1, blob2`;
-  const q = (select: string, extra: string, groupMore: string) => aeQuery(env, `SELECT ${keys}, ${select} FROM ${ds} ${where}${extra} ${group}${groupMore}`, params);
-  const dim = (col: string, extra: string) => q(`${col} AS value, COUNT(*) AS n`, extra, `, ${col}`);
   const human = " AND blob8 = $human";
+  const chunks = scope.linkIds ? chunkIds(scope.linkIds, "blob2", base.length) : [null];
 
-  const [tots, vis, country, device, referrer] = await Promise.all([
-    q("blob3 AS slug, blob7 AS source, blob8 AS kind, COUNT(*) AS n", "", ", blob3, blob7, blob8"),
-    q("COUNT(DISTINCT blob9) AS n", `${human} AND blob9 != $none`, ""),
-    dim("blob4", human),
-    dim("blob5", human),
-    dim("blob6", `${human} AND blob7 = $typed`),
-  ]);
+  const runChunk = (links: string[] | null) => {
+    const p: Params = { ...params };
+    const where = base + idClause("blob2", "l", links, p);
+    const q = (select: string, extra: string, groupMore: string) => aeQuery(env, `SELECT ${keys}, ${select} FROM ${ds} ${where}${extra} ${group}${groupMore}`, p);
+    const dim = (col: string, extra: string) => q(`${col} AS value, COUNT(*) AS n`, extra, `, ${col}`);
+    return Promise.all([
+      q("blob3 AS slug, blob7 AS source, blob8 AS kind, COUNT(*) AS n", "", ", blob3, blob7, blob8"),
+      q("COUNT(DISTINCT blob9) AS n", `${human} AND blob9 != $none`, ""),
+      dim("blob4", human),
+      dim("blob5", human),
+      dim("blob6", `${human} AND blob7 = $typed`),
+    ]);
+  };
+  const parts = await Promise.all(chunks.map(runChunk));
+  const [tots, vis, country, device, referrer] = [0, 1, 2, 3, 4].map((i) => parts.flatMap((p) => p[i]));
 
   const tot = new Map<string, TotRow>();
   const row = (r: Record<string, unknown>) => {
@@ -140,13 +169,19 @@ export async function aeAggregate(env: Env, from: Date, to: Date, unit: Unit, sc
   return { tot: sorted, dims };
 }
 
-/** Human clicks per link and UTC day for the Links sparkline: one query, ids validated and bound. */
+/** Human clicks per link and UTC day for the Links sparkline: one query per id chunk (see chunkIds), ids validated and bound. */
 export async function aeLinkDays(env: Env, from: Date, to: Date, linkIds: string[]): Promise<{ bucket: string; linkId: string; qr: number; typed: number }[]> {
   if (linkIds.length === 0) return [];
-  const params: Params = { account: trim(env.CF_ACCOUNT_ID) ?? "", from: iso(from), to: iso(to), human: "human" };
-  const where = "WHERE accountTag = $account AND timestamp >= $from AND timestamp < $to AND blob8 = $human" + idClause("blob2", "l", linkIds, params);
-  const ds = `events.analyticsEngine.${dataset(env)}`; // validated by aeConfigured inside aeQuery
-  const rows = await aeQuery(env, `SELECT toStartOfDay(timestamp) AS bucket, blob2 AS linkId, blob7 AS source, COUNT(*) AS n FROM ${ds} ${where} GROUP BY toStartOfDay(timestamp), blob2, blob7`, params);
+  const ds = `events.analyticsEngine."${dataset(env)}"`; // validated by aeConfigured inside aeQuery
+  const rows = (
+    await Promise.all(
+      chunkIds(linkIds, "blob2", 0).map((ids) => {
+        const params: Params = { account: trim(env.CF_ACCOUNT_ID) ?? "", from: iso(from), to: iso(to), human: "human" };
+        const where = "WHERE accountTag = $account AND timestamp >= $from AND timestamp < $to AND blob8 = $human" + idClause("blob2", "l", ids, params);
+        return aeQuery(env, `SELECT toStartOfDay(timestamp) AS bucket, blob2 AS linkId, blob7 AS source, COUNT(*) AS n FROM ${ds} ${where} GROUP BY toStartOfDay(timestamp), blob2, blob7`, params);
+      }),
+    )
+  ).flat();
   return rows.map((r) => ({
     bucket: bucketOf(r.bucket, "day"),
     linkId: str(r.linkId),

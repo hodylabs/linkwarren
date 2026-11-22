@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aeAggregate, aeConfigured, AeError, aeQuery, sqlId } from "../src/ae";
+import { aeAggregate, aeConfigured, AeError, aeLinkDays, aeQuery, MAX_SQL, sqlId } from "../src/ae";
 import type { Env } from "../src/env";
 
 const TOKEN = "ae-SECRET-tok";
@@ -100,14 +100,14 @@ describe("aeAggregate", () => {
     for (const s of f.sent) {
       expect(s.auth).toBe(`Bearer ${TOKEN}`);
       const q = s.body.query;
-      expect(q).toContain("FROM events.analyticsEngine.linkwarren_clicks");
+      expect(q).toContain(`FROM events.analyticsEngine."linkwarren_clicks"`);
       expect(q).toContain("accountTag = $account");
       expect(q).toContain("timestamp >= $from AND timestamp < $to");
       expect(q).toContain("(blob1 = $d0 OR blob1 = $d1)");
       expect(q).toContain("(blob2 = $l0)");
       expect(q).toContain("toStartOfDay(timestamp)");
       // No literals at all: no quotes, only the SQL alphabet, and no input value outside a $param name.
-      expect(q).toMatch(/^[A-Za-z0-9_ ,.()$=<>!*]+$/);
+      expect(q).toMatch(/^[A-Za-z0-9_ ,.()$=<>!*"]+$/);
       for (const v of ["d1", "d2", "l1", "acc1", "2026"]) expect(q).not.toMatch(new RegExp(`(?<![$\\w])${v}(?!\\w)`));
       expect(s.body.params).toMatchObject({ account: "acc1", from: "2026-11-18T00:00:00Z", to: "2026-11-20T00:00:00Z", d0: "d1", d1: "d2", l0: "l1" });
     }
@@ -118,7 +118,7 @@ describe("aeAggregate", () => {
     await aeAggregate({ ...env, AE_DATASET: "other_ds" }, from, to, "hour", all);
     expect(f.sent).toHaveLength(5);
     for (const s of f.sent) {
-      expect(s.body.query).toContain("FROM events.analyticsEngine.other_ds");
+      expect(s.body.query).toContain(`FROM events.analyticsEngine."other_ds"`);
       expect(s.body.query).toContain("toStartOfHour(timestamp)");
       expect(s.body.query).not.toMatch(/blob[12] = /);
     }
@@ -181,5 +181,33 @@ describe("aeAggregate", () => {
   it("any query failing rejects with an AeError", async () => {
     fake(() => [], 403);
     await expect(aeAggregate(env, from, to, "day", all)).rejects.toMatchObject({ name: "AeError", message: "ae_403" });
+  });
+});
+
+describe("statement size limit", () => {
+  const ids = Array.from({ length: 500 }, (_, i) => `link${String(i).padStart(4, "0")}`);
+  const linkOf = (p: Record<string, unknown>) => Object.entries(p).filter(([k]) => /^l\d+$/.test(k)).map(([, v]) => String(v));
+
+  it("a 500-id scope splits into statements under the budget and merges the rows", async () => {
+    const f = fake((q) => {
+      const n = q.includes("blob3 AS slug") ? 1 : 0;
+      return n ? [{ bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "x", slug: "s", source: "typed", kind: "human", n: 1 }] : [];
+    });
+    const out = await aeAggregate(env, from, to, "day", { domainIds: ["d1"], linkIds: ids });
+    for (const s of f.sent) expect(s.body.query.length).toBeLessThan(MAX_SQL);
+    expect(f.sent.length).toBeLessThanOrEqual(10);
+    expect(f.sent.length % 5).toBe(0);
+    const seen = f.sent.flatMap((s) => linkOf(s.body.params));
+    expect(new Set(seen).size).toBe(500);
+    expect(out.tot.reduce((a, r) => a + r.typed, 0)).toBe(f.sent.length / 5);
+  });
+
+  it("aeLinkDays chunks the same way and concatenates", async () => {
+    const f = fake(() => [{ bucket: "2026-11-18 00:00:00", linkId: "a", source: "qr", n: 2 }]);
+    const rows = await aeLinkDays(env, from, to, ids);
+    expect(f.sent.length).toBeGreaterThan(1);
+    for (const s of f.sent) expect(s.body.query.length).toBeLessThan(MAX_SQL);
+    expect(new Set(f.sent.flatMap((s) => linkOf(s.body.params))).size).toBe(500);
+    expect(rows).toHaveLength(f.sent.length);
   });
 });
