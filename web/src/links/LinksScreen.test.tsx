@@ -1077,6 +1077,29 @@ describe("unsaved draft guard (S2 ruling)", () => {
     expect(api.calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 
+  it("J that loads the next page stays put when the form became dirty while the page loaded", async () => {
+    let n = 0, release: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: async () => {
+        if (++n === 1) return { body: { items: [L1], next: "100.l1" } };
+        await gate;
+        return { body: { items: [L2], next: null } };
+      },
+    });
+    await ready();
+    rows()[0]!.focus();
+    await user.keyboard("j");
+    await user.type(urlInput(), "x");
+    release!();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(location.search).toContain("sel=l1");
+    expect(urlInput().value).toBe("https://example.com/springx");
+    expect(screen.getAllByText(UNSAVED).length).toBeGreaterThan(0);
+  });
+
   it("after Esc in the form discards the draft, J moves again", async () => {
     const { user } = boot({ path: "/links?sel=l2" });
     await ready();

@@ -187,6 +187,8 @@ export function LinksScreen() {
     if (to) return select(to.id, true);
     if (step === 1 && next) {
       const more = await loadMore();
+      // The form may have become dirty while the page loaded.
+      if (hasUnsaved()) return app.announce(UNSAVED);
       if (more[0]) select(more[0].id, true);
     }
   };
