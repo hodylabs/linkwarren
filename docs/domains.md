@@ -6,7 +6,9 @@ A domain is a hostname that serves short links, for example `go.example.com`. Wh
 - **Add own domains** (`domains.own`; on for Member) adds private domains only; they start `pending` until a domain manager approves them, at most 3 pending at a time.
 - Without either, adding a domain is `403 forbidden`, answered before the body is read. Anyone keeps the settings and live check of a domain they own.
 
-Each permission is checked again in the same database step as the write, and before every Cloudflare change, so a role edited at the same moment changes nothing and answers `403 forbidden`.
+In the dashboard list (`GET /api/domains`) a domain manager who is not an owner sees every domain, each with `canUse` (whether they can create links on it); owners can use every domain and everyone else sees only the domains they can use, both without that field (read a missing `canUse` as `true`). A key or agent limited to some domains still lists only those. The API list (`GET /api/v1/domains`) always has only usable domains.
+
+Each permission is checked again in the same database step as the write, and before every Cloudflare change, so a role edited at the same moment changes nothing and answers `403 forbidden`. A Cloudflare change that already landed is always stored and audited: a controls change that loses the permission between its two steps answers `409 conflict` with the stored controls (see below), and a create whose permission is gone right after the domain was saved keeps the domain but connects nothing in Cloudflare (a domain manager connects it later with Finish connecting or the status check).
 
 ## How a domain connects
 

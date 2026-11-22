@@ -47,6 +47,30 @@ function beforeQuery(match: string, fn: () => Promise<unknown>) {
   vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => (done || !q.includes(match) ? real(q) : wrap(real(q))));
 }
 
+/** Runs `fn` once, right after the Worker's `nth` D1 batch committed. Returns a restore function; call it in a finally. */
+function afterBatch(nth: number, fn: () => Promise<unknown>): () => void {
+  const real = env.DB;
+  let n = 0;
+  (env as { DB: D1Database }).DB = new Proxy(real, {
+    get(t, p) {
+      if (p === "batch") return async (s: D1PreparedStatement[]) => { const r = await t.batch(s); if (++n === nth) await fn(); return r; };
+      const v = Reflect.get(t, p);
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+  return () => { (env as { DB: D1Database }).DB = real; };
+}
+/** Runs `fn` once, right after the fake Cloudflare answered the first request matching `when`. */
+function afterCloudflare(fake: ReturnType<typeof installFakeCloudflare>, when: (r: Request) => boolean, fn: () => Promise<unknown>) {
+  let done = false;
+  vi.mocked(fetch).mockImplementation(async (i, init) => {
+    const req = new Request(i as RequestInfo, init);
+    const res = await fake.handle(req.clone());
+    if (!done && when(req)) { done = true; await fn(); }
+    return res;
+  });
+}
+
 beforeAll(setupAccess);
 beforeEach(async () => {
   await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domain_cf", "domains", "users", "locks", "settings"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
@@ -141,6 +165,30 @@ describe("POST /api/domains", () => {
     expect(fake.state.routes.map((x) => x.pattern)).toEqual(["s.owned.test/*"]);
   });
 
+  it("race: domains.manage lost after the insert committed: the domain is kept but nothing is attached in Cloudflare", async () => {
+    configure();
+    const fake = installFakeCloudflare({ zones });
+    const restore = afterBatch(1, lose);
+    let r;
+    try { r = await call("d", "POST", "/api/domains", { host: "late.owned.test", type: "shared" }); } finally { restore(); }
+    expect(r.status).toBe(201);
+    expect(await r.json()).toMatchObject({ status: "active", ownerId: "owner", cloudflare: { kind: "account", attached: false } });
+    expect(writes(fake.calls)).toEqual([]);
+    expect(await one("SELECT route_id FROM domain_cf d JOIN domains x ON x.id = d.domain_id WHERE x.host = 'late.owned.test'")).toEqual({ route_id: null });
+  });
+
+  it("race: domains.own lost after the insert of an outside domain: no custom hostname is made", async () => {
+    configure();
+    e.CF_CNAME_TARGET = "edge.test";
+    const fake = installFakeCloudflare({ zones });
+    const restore = afterBatch(1, () => setPerms("member", []));
+    let r;
+    try { r = await call("a", "POST", "/api/domains", { host: "go.outside.test", type: "private" }); } finally { restore(); e.CF_CNAME_TARGET = undefined; }
+    expect(r.status).toBe(201);
+    expect(await r.json()).toMatchObject({ status: "pending", cloudflare: { kind: "outside" } });
+    expect(writes(fake.calls)).toEqual([]);
+  });
+
   it("with Cloudflare, a takeover is asked of a domains.manage holder", async () => {
     configure();
     const fake = installFakeCloudflare({ zones });
@@ -180,6 +228,19 @@ describe("approve, disable, reject", () => {
     expect(writes(fake.calls)).toEqual([]);
     expect(await statusOf(id)).toBe("pending");
     expect(await count("audit_log WHERE action = 'domain.approve'")).toBe(0);
+  });
+
+  it("race: Finish connecting with domains.manage lost after the route was attached: the route is stored and audited", async () => {
+    configure();
+    const fake = installFakeCloudflare({ zones });
+    await run("UPDATE domains SET host = 'x.owned.test' WHERE id = 'ds'");
+    await run("INSERT INTO domain_cf (domain_id, kind, zone_id, updated_at) VALUES ('ds', 'account', 'zo', 1)");
+    afterCloudflare(fake, (q) => q.method === "POST" && q.url.includes("/workers/routes"), lose);
+    const r = await call("d", "POST", "/api/domains/ds/approve");
+    expect(fake.state.routes.map((x) => x.pattern)).toEqual(["x.owned.test/*"]);
+    expect(await one("SELECT route_id IS NOT NULL AS has FROM domain_cf WHERE domain_id = 'ds'")).toEqual({ has: 1 });
+    expect(await one("SELECT actor_id FROM audit_log WHERE action = 'domain.attach'")).toEqual({ actor_id: "d" });
+    expect(r.status).toBe(200);
   });
 
   it("race: approve of a manual domain with domains.manage lost before the status write changes nothing", async () => {
@@ -226,12 +287,11 @@ describe("PUT /api/domains/:id/members", () => {
     expect(await answer(await call("a", "PUT", "/api/domains/ds/members", { userIds: ["a"] }))).toEqual(forbidden);
     expect(await answer(await call("a", "PUT", "/api/domains/ds/members", "{nope"))).toEqual(forbidden);
     expect(await count("domain_members")).toBe(0);
-    const before = await (await call("d", "GET", "/api/domains")).json<{ id: string }[]>();
-    expect(before.map((x) => x.id)).not.toContain("ds");
+    const use = async () => (await (await call("d", "GET", "/api/domains")).json<{ id: string; canUse: boolean }[]>()).find((x) => x.id === "ds")!.canUse;
+    expect(await use()).toBe(false);
     expect(await answer(await call("d", "PUT", "/api/domains/ds/members", { userIds: ["a", "d"] }))).toEqual([200, { userIds: ["a", "d"] }]);
     expect(await one("SELECT actor_id, detail FROM audit_log WHERE action = 'domain.members'")).toEqual({ actor_id: "d", detail: JSON.stringify({ host: "shared.test", userIds: ["a", "d"] }) });
-    const after = await (await call("d", "GET", "/api/domains")).json<{ id: string }[]>();
-    expect(after.map((x) => x.id)).toContain("ds");
+    expect(await use()).toBe(true);
   });
 
   it("race: domains.manage removed between the read and the batch writes nothing and answers 403", async () => {
@@ -316,5 +376,37 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     expect(writes(fake.calls).length).toBe(before);
     expect(await one("SELECT security_level FROM domain_cf WHERE domain_id = ?", id)).toEqual({ security_level: null });
     expect(await count("audit_log WHERE action = 'domain.cloudflare'")).toBe(0);
+  });
+
+  it("race: step 1 landed, domains.manage lost before step 2: 409 conflict with the stored controls, step 1 stored and audited, step 2 not sent", async () => {
+    configure();
+    const fake = installFakeCloudflare({ zones });
+    await controls();
+    const id = (await (await call("owner", "POST", "/api/domains", { host: "c.owned.test", type: "shared" })).json<{ id: string }>()).id;
+    afterCloudflare(fake, (q) => q.method !== "GET" && q.url.includes("http_config_settings") || (q.method === "POST" && q.url.endsWith("/rulesets")), lose);
+    expect(await answer(await call("d", "PATCH", `/api/domains/${id}/cloudflare`, { securityLevel: "high", rateLimit: 40 })))
+      .toEqual([409, { error: "conflict", securityLevel: "high", rateLimit: null }]);
+    expect(fake.state.rulesets["zo/http_ratelimit"]).toBeUndefined();
+    expect(await one("SELECT security_level, rate_limit FROM domain_cf WHERE domain_id = ?", id)).toEqual({ security_level: "high", rate_limit: null });
+    const a = await one<{ actor_id: string; detail: string }>("SELECT actor_id, detail FROM audit_log WHERE action = 'domain.cloudflare'");
+    expect([a!.actor_id, JSON.parse(a!.detail)]).toEqual(["d", { host: "c.owned.test", securityLevel: "high" }]);
+  });
+});
+
+describe("GET /api/domains for a domains.manage holder", () => {
+  it("lists every domain with canUse; a Member's list is unchanged and has no canUse", async () => {
+    type L = { id: string; canUse?: boolean }[];
+    const d = await (await call("d", "GET", "/api/domains")).json<L>();
+    expect(d.map((x) => [x.id, x.canUse])).toEqual([["dm", true], ["dp", false], ["ds", false]]);
+    const m = await (await call("a", "GET", "/api/domains")).json<L>();
+    expect(m.map((x) => x.id)).toEqual(["dm", "dp"]);
+    expect(m.every((x) => !("canUse" in x))).toBe(true);
+  });
+
+  it("administering never makes a domain usable: a link on a listed but unusable domain is refused", async () => {
+    await setPerms("dmg", ["domains.manage", "links.create"]);
+    expect(await answer(await call("d", "POST", "/api/links", { domainId: "ds", slug: "x", url: "https://x.com" }))).toEqual(forbidden);
+    expect(await answer(await call("d", "POST", "/api/links", { domainId: "dp", slug: "x", url: "https://x.com" }))).toEqual(forbidden);
+    expect((await call("d", "POST", "/api/links", { domainId: "dm", slug: "x", url: "https://x.com" })).status).toBe(201);
   });
 });

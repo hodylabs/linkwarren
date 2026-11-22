@@ -50,7 +50,9 @@ async function administer(c: Context<E>, id: string, fn: (lease: Lease, lock: Le
     sql: `${lock.sql} AND ${g.sql}`, binds: [...lock.binds, ...g.binds],
     held: async () => (await lock.held()) && (await holds(c.env, g)),
   }, lock));
-  if (res && res.status !== 409) return res;
+  // Only a bare conflict is rewritten: a 409 that carries more (the controls stored after a partial change) is kept.
+  const bare = !res || (res.status === 409 && Object.keys(await res.clone().json<object>().catch(() => ({ x: 1 }))).join() === "error");
+  if (!bare) return res!;
   return (await holds(c.env, g)) ? res ?? c.json(busy, 409) : c.json(forbidden, 403);
 }
 
@@ -124,9 +126,13 @@ export async function listDomains(c: Context<E>, dashboard: boolean) {
   ) : null;
   const cfs = dashboard ? new Map((await c.env.DB.prepare("SELECT * FROM domain_cf").all()).results.map((r) => [r.domain_id as string, rowToCf(r)])) : null;
   // shortcut: no pagination, the domain list is small; add a cursor if an instance ever hosts thousands.
+  // R8: a non-owner domain manager's dashboard list has every domain (to administer them), each with canUse; using one still
+  // needs canUseDomain. An owner can use every domain, so their list (and its shape) is unchanged. A grant's restriction still narrows.
+  const only = c.var.grant.domains, all = dashboard && user.role !== "owner" && can(user, "domains.manage");
   const items = (await c.env.DB.prepare("SELECT * FROM domains ORDER BY host").all()).results.map(rowToDomain)
-    .filter((d) => canUseDomain(user, d, members.has(d.id), c.var.grant.domains))
-    .map((d) => ({ ...d, ...(counts ? { linkCount: counts.get(d.id) ?? 0 } : {}), isMember: members.has(d.id),
+    .map((d) => ({ d, use: canUseDomain(user, d, members.has(d.id), only) }))
+    .filter((x) => x.use || (all && (!only || only.includes(x.d.id))))
+    .map(({ d, use }) => ({ ...d, ...(counts ? { linkCount: counts.get(d.id) ?? 0 } : {}), isMember: members.has(d.id), ...(all ? { canUse: use } : {}),
       ...(cfs ? { cloudflare: cfView(c.env, d, cfs.get(d.id) ?? null, canManageDomain(user, d)) } : {}) }));
   return c.json(items);
 }
@@ -199,8 +205,11 @@ domains.post("/", async (c) => {
   // The row exactly as inserted, so nothing after the committed batch can turn this into a 500.
   const inserted: CfRow = { kind, zoneId: null, dnsRecordId: null, routeId: null, hostnameId: null, dns: "unknown", ownership: "unknown",
     certificate: "unknown", errors: [], lastError: null, checkedAt: null, securityLevel: null, rateLimit: null, updatedAt: d.createdAt };
-  // A domains.own create in the same account runs read-only (attach false): R3, no Cloudflare write.
-  const cf = await trySync(c.env, d, inserted, { attach: kind === "outside" || manager, confirmTakeover });
+  // A domains.own create in the same account runs read-only (attach false): R3, no Cloudflare write. Any create-time
+  // Cloudflare write (an attach, or an outside hostname) first re-checks the permission used: lost after the insert, the
+  // domain stays as saved and unconnected (a domain manager connects it later), and nothing is written to Cloudflare.
+  const writesCf = kind === "outside" || (kind === "account" && manager);
+  const cf = writesCf && !(await holds(c.env, g)) ? inserted : await trySync(c.env, d, inserted, { attach: kind === "outside" || manager, confirmTakeover });
   const out = { ...d, cloudflare: cfView(c.env, d, cf) };
   return c.json(manager ? { ...out, ...(await loopField(c.env, host)) } : out, 201);
 });
@@ -416,7 +425,7 @@ domains.post("/:id/approve", async (c) => {
   const raw = await c.req.json().catch(() => null);
   const body = approveBody.safeParse(raw ?? {});
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
-  return administer(c, c.req.param("id"), async (lease) => {
+  return administer(c, c.req.param("id"), async (lease, lock) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     let cf = await getCf(c.env, d.id);
@@ -443,10 +452,11 @@ domains.post("/:id/approve", async (c) => {
       if (finish) {
         // A route someone else made is never adopted, so nothing was attached: no audit.
         if (cf.routeId === null) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
-        // The route ids are system state that syncDomain already stored; the audit is guarded on that stored route on this row.
+        // The route ids are system state that syncDomain already stored; the audit is guarded on that stored route on this row,
+        // and on the lock alone: a route attached in Cloudflare is audited even if domains.manage was lost meanwhile.
         const [a] = await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
-          detail: { host: d.host, ...confirmed } }, { sql: `EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ? AND route_id = ?) AND ${lease.sql}`, binds: [d.id, cf.routeId, ...lease.binds] })]);
-        if (!a!.meta.changes && !(await lease.held())) return c.json(busy, 409);
+          detail: { host: d.host, ...confirmed } }, { sql: `EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ? AND route_id = ?) AND ${lock.sql}`, binds: [d.id, cf.routeId, ...lock.binds] })]);
+        if (!a!.meta.changes && !(await lock.held())) return c.json(busy, 409);
         return c.json({ ...d, cloudflare: cfView(c.env, d, cf), ...(await loopField(c.env, d.host)) });
       }
       if (!isVerified(cf)) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);

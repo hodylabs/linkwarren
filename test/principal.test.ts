@@ -89,6 +89,18 @@ describe("restricted grant: domains", () => {
     expect(((await r.json()) as { id: string }[]).map((d) => d.id).sort()).toEqual(["dA", "dS"]);
   });
 
+  it("a domains.manage holder's full list is narrowed by the grant too", async () => {
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('dmg','Dmg','[\"domains.manage\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('ud','d@example.com','member','dmg','active',1)");
+    try {
+      const r = await as("ud", restricted(["dA", "dS"]))("GET", "/api/domains");
+      expect(((await r.json()) as { id: string; canUse: boolean }[]).map((d) => [d.id, d.canUse])).toEqual([["dA", true], ["dS", false]]);
+    } finally {
+      await run("DELETE FROM users WHERE id = 'ud'");
+      await run("DELETE FROM roles WHERE id = 'dmg'");
+    }
+  });
+
   it("analytics/links?ids= for a link on a disallowed domain is refused", async () => {
     const call = as("uo", restricted(["dA"]));
     expect((await call("GET", "/api/analytics/links?ids=lb")).status).toBe(403);
