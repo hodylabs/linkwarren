@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type InviteResult, type UserItem } from "../api";
+import { api, ApiError, type InviteResult, type Me, type UserItem } from "../api";
 import { notSent } from "./InviteSheet";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
@@ -29,6 +29,15 @@ type Ask = "revoke" | "disable" | "signout" | "remove" | "promote" | "demote";
 
 const label = (u: UserItem) => u.name || u.email;
 const peopleError = (code: string) => errorText({ too_many: "invite_too_many", email_not_configured: "invite_email_off" }[code] ?? code);
+
+/** Who may receive a removed person's links and domains: an owner picks anyone active (themselves first, only owners when
+ * main or shared domains move); anyone else only an active owner, the first owner first (S8 R4, as the server checks). */
+export function transferTargets(users: UserItem[], me: Me, id: string, needsOwner: boolean): UserItem[] {
+  const owner = me.role === "owner";
+  return users
+    .filter((x) => x.id !== id && x.status === "active" && ((owner && !needsOwner) || x.role === "owner"))
+    .sort(owner ? (a, b) => Number(b.id === me.id) - Number(a.id === me.id) : (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
 
 /** R6: role and access here; who can use a domain is set on the domain. The owner never acts on themselves (R4). */
 export function PersonSheet({ id }: { id: string }) {
@@ -82,9 +91,9 @@ export function PersonSheet({ id }: { id: string }) {
     remove: () => run(() => api("DELETE", `${path}?transferTo=${encodeURIComponent(to)}`).then(() => null), { msg: `Removed ${email}`, close: true }),
     role: (role: "member" | "owner") => run(() => patch({ roleId: role }), { msg: `Made ${email} ${role === "owner" ? "an owner" : "a member"}` }),
   };
-  // The transfer target starts at you each time, so a target removed or disabled since never lingers.
+  // The transfer target starts at you (a non-owner: the first owner) each time, so a target removed or disabled since never lingers.
   const askRemove = () => {
-    setTo(me.id);
+    setTo(me.role === "owner" ? me.id : transferTargets(users ?? [], me, id, true)[0]?.id ?? "");
     setAsk("remove");
   };
   const activity = () => {
@@ -112,9 +121,7 @@ export function PersonSheet({ id }: { id: string }) {
   // R5: main and shared domains may only move to an owner.
   const moving = u.domains.filter((d) => d.via === "owner" && (domains.find((x) => x.id === d.id)?.type ?? "main") !== "private").map((d) => d.host);
   const needsOwner = moving.length > 0;
-  const targets = (users ?? [])
-    .filter((x) => x.id !== id && x.status === "active" && (!needsOwner || x.role === "owner"))
-    .sort((a, b) => Number(b.id === me.id) - Number(a.id === me.id));
+  const targets = transferTargets(users ?? [], me, id, needsOwner);
   const target = targets.find((x) => x.id === to) ?? null;
   const choice = !target || target.id === me.id ? "you" : label(target);
   const btn = (text: string, keys: string, aria: string, onClick: () => void, cls = "btn", autoFocus = false) => (

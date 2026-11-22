@@ -99,8 +99,10 @@ invites.post("/invite", manager, async (c) => {
   }
   if (!done[0]!.meta.changes) {
     const a = actorCan(me.id, "people.manage"), w = roleWithin(r.id, me.id), d = actorCan(me.id, "domains.manage");
-    const x = await c.env.DB.prepare(`SELECT ${a.sql} a, ${w.sql} w, ${d.sql} d`).bind(...a.binds, ...w.binds, ...d.binds).first<{ a: number; w: number; d: number }>();
+    const x = await c.env.DB.prepare(`SELECT ${a.sql} a, ${w.sql} w, ${d.sql} d, EXISTS (SELECT 1 FROM roles WHERE id = ?) r`)
+      .bind(...a.binds, ...w.binds, ...d.binds, r.id).first<{ a: number; w: number; d: number; r: number }>();
     if (!x?.a || (ids.length && !x.d)) return c.json({ error: "forbidden" }, 403);
+    if (!x.r) return c.json({ error: "bad_role" }, 400); // deleted in between
     return x.w ? c.json({ error: "bad_domain" }, 400) : c.json(above, 403);
   }
   const user: UserListItem = {

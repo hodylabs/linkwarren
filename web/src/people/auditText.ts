@@ -46,7 +46,9 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     case "email.test": return done("sent a test email");
     case "user.invite": {
       const hosts = Array.isArray(a.detail.domains) ? a.detail.domains.filter((h): h is string => typeof h === "string") : [];
-      return done("invited", person, a.detail.role === "owner" ? " as an owner" : ` with access to ${hosts.length ? hosts.join(", ") : "the main domain"}`);
+      const custom = str(a.detail.roleId) && a.detail.roleId !== "member" && str(a.detail.roleName);
+      return done("invited", person, a.detail.role === "owner" ? " as an owner"
+        : `${custom ? ` as ${custom}` : ""} with access to ${hosts.length ? hosts.join(", ") : "the main domain"}`);
     }
     case "user.invite_resend": return done("re-sent the invite to", person);
     case "user.revoke": return done("revoked the invite for", person);

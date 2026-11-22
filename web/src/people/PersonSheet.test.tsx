@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import { transferTargets } from "./PersonSheet";
 import type { Me, UserItem } from "../api";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
 
@@ -277,5 +278,18 @@ describe("Person sheet", () => {
     expect(dlg.className).toBe("sheet");
     expect(within(dlg).getByRole("button", { name: "Close dana" }).className).toContain("btn");
     for (const b of within(dlg).getAllByRole("button")) expect(b.className).toMatch(/\bbtn\b|^$/);
+  });
+});
+
+describe("transferTargets (S8 R4: a manager's removal goes to an owner)", () => {
+  const manager: Me = { id: "um", email: "m@example.com", name: "Mo", role: "member", authMode: "app" };
+  const people = [u("um"), u("ua"), u("ob", { role: "owner", createdAt: 5 }), u("oa", { role: "owner", createdAt: 5 }), u("o1", { role: "owner", createdAt: 2 }), u("od", { role: "owner", status: "disabled", createdAt: 1 })];
+  it("a non-owner gets only active owners, first owner first, never themselves", () => {
+    expect(transferTargets(people, manager, "ua", false).map((x) => x.id)).toEqual(["o1", "oa", "ob"]);
+  });
+  it("an owner keeps the free choice, themselves first", () => {
+    const me: Me = { ...owner, id: "oa" };
+    expect(transferTargets(people, me, "ua", false).map((x) => x.id)).toEqual(["oa", "um", "ob", "o1"]);
+    expect(transferTargets(people, me, "ua", true).map((x) => x.id)).toEqual(["oa", "ob", "o1"]);
   });
 });

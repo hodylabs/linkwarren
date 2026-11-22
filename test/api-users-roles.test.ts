@@ -2,7 +2,6 @@ import { env } from "cloudflare:workers";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MEMBER_DEFAULT } from "../src/roles";
 import { dash } from "./helpers/access";
-import { connectAgent } from "./helpers/oauth";
 import { beforeBatch } from "./helpers/race";
 import { fakeResend } from "./helpers/resend";
 import { signedIn, withCookie } from "./helpers/session";
@@ -78,8 +77,6 @@ describe("people.manage holders manage people within their role", () => {
     expect((await patch(M.cookie, P.user.id, { status: "disabled" })).status).toBe(200);
     expect((await patch(M.cookie, P.user.id, { status: "active" })).status).toBe(200);
     expect((await call(M.cookie, "DELETE", `/api/users/${P.user.id}/sessions`)).status).toBe(204);
-    expect((await call(M.cookie, "DELETE", `/api/users/${P.user.id}`)).status).toBe(200);
-    expect(await who(P.user.id)).toBeNull();
   });
 
   it("assigning Owner, or a role with a key the manager lacks, is 403 role_above_you and writes nothing", async () => {
@@ -125,6 +122,56 @@ describe("people.manage holders manage people within their role", () => {
   });
 });
 
+describe("removal by a people manager transfers to an owner, never to the manager", () => {
+  const owned = async (id: string) => ({
+    links: (await rows("SELECT created_by FROM links WHERE id IN ('l1','l2') ORDER BY id")).map((r) => r.created_by),
+    domain: (await one<{ owner_id: string }>("SELECT owner_id FROM domains WHERE id = 'dp'"))?.owner_id,
+    person: await who(id),
+  });
+  let B: Awaited<ReturnType<typeof signedIn>>;
+  beforeEach(async () => {
+    B = await signedIn("b@example.com", { role: "owner", createdAt: 5 }); // O (createdAt 1) is the first owner
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dp','p.test','private','active',?,1), ('dm','m.test','main','active',?,1)", P.user.id, O.user.id);
+    for (const l of ["l1", "l2"]) await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?,'dm',?,?,'https://x.test/',?,?,1,1)", l, l, l, P.user.id, P.user.id);
+  });
+  const remove = (to?: string) => call(M.cookie, "DELETE", `/api/users/${P.user.id}${to === undefined ? "" : `?transferTo=${encodeURIComponent(to)}`}`);
+
+  it("by default the links and private domains go to the first active owner", async () => {
+    expect((await remove()).status).toBe(200);
+    expect(await owned(P.user.id)).toEqual({ links: [O.user.id, O.user.id], domain: O.user.id, person: null });
+    expect((await audits("user.remove"))[0]!.detail).toMatchObject({ transferTo: O.user.id });
+  });
+
+  it("a chosen other owner gets them", async () => {
+    expect((await remove(B.user.id)).status).toBe(200);
+    expect(await owned(P.user.id)).toEqual({ links: [B.user.id, B.user.id], domain: B.user.id, person: null });
+  });
+
+  it("the manager themselves or any non-owner as the target is 400 bad_transfer and nothing moves", async () => {
+    const X = await signedIn("x@example.com");
+    for (const to of [M.user.id, X.user.id]) expect(await answer(await remove(to))).toEqual([400, { error: "bad_transfer" }]);
+    expect(await owned(P.user.id)).toEqual({ links: [P.user.id, P.user.id], domain: P.user.id, person: { role: "member", role_id: null, status: "active" } });
+    expect(await audits()).toEqual([]);
+  });
+
+  it("an owner may still pick any active person (today's free choice)", async () => {
+    const X = await signedIn("x@example.com");
+    expect((await call(O.cookie, "DELETE", `/api/users/${P.user.id}?transferTo=${X.user.id}`)).status).toBe(200);
+    expect(await owned(P.user.id)).toEqual({ links: [X.user.id, X.user.id], domain: X.user.id, person: null });
+  });
+
+  for (const [what, sql] of [["demoted", "UPDATE users SET role = 'member' WHERE id = ?"], ["disabled", "UPDATE users SET status = 'disabled' WHERE id = ?"]] as const) {
+    it(`the chosen owner is ${what} between read and batch: 400 bad_transfer and nothing written`, async () => {
+      const restore = beforeBatch(1, () => run(sql, B.user.id));
+      let r: Response;
+      try { r = await remove(B.user.id); } finally { restore(); }
+      expect(await answer(r)).toEqual([400, { error: "bad_transfer" }]);
+      expect(await owned(P.user.id)).toEqual({ links: [P.user.id, P.user.id], domain: P.user.id, person: { role: "member", role_id: null, status: "active" } });
+      expect(await audits()).toEqual([]);
+    });
+  }
+});
+
 describe("owners with roleId", () => {
   it("promoting a member on a custom role clears role_id in the same statement (no trigger 500)", async () => {
     const r = await patch(O.cookie, M.user.id, { roleId: "owner" });
@@ -168,6 +215,20 @@ describe("races: every R4 check is re-done in the batch", () => {
     try { r = await patch(M.cookie, P.user.id, { roleId: "hl" }); } finally { restore(); }
     expect(await answer(r)).toEqual([403, above]);
     expect(await who(P.user.id)).toEqual({ role: "member", role_id: null, status: "active" });
+    expect(await audits()).toEqual([]);
+  });
+
+  it("the new role is deleted between read and batch: 400 bad_role on PATCH and invite, nothing written", async () => {
+    await role("gone", "Gone", ["links.create"]);
+    for (const go of [() => patch(M.cookie, P.user.id, { roleId: "gone" }), () => call(M.cookie, "POST", "/api/users/invite", { email: "new@example.com", roleId: "gone" })]) {
+      await run("INSERT OR IGNORE INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('gone','Gone','[\"links.create\"]',0,1,1)");
+      const restore = beforeBatch(1, () => run("DELETE FROM roles WHERE id = 'gone'"));
+      let r: Response;
+      try { r = await go(); } finally { restore(); }
+      expect(await answer(r)).toEqual([400, { error: "bad_role" }]);
+    }
+    expect(await who(P.user.id)).toEqual({ role: "member", role_id: null, status: "active" });
+    expect(await one("SELECT 1 x FROM users WHERE email = 'new@example.com'")).toBeNull();
     expect(await audits()).toEqual([]);
   });
 
@@ -285,64 +346,5 @@ describe("invites by a people manager", () => {
     expect(mail.sent[0]!.text).toContain("You will join with the role <b>Ops</b>.");
     expect(mail.sent[0]!.html).toContain("You will join with the role &lt;b&gt;Ops&lt;/b&gt;.");
     expect(mail.sent[0]!.html).not.toContain("<b>Ops");
-  });
-});
-
-describe("other people's API keys and agent connections", () => {
-  const key = async (cookie: string, name: string) => {
-    const r = await call(cookie, "POST", "/api/keys", { name, write: false, del: false, domainIds: [], expiresInDays: 90 });
-    expect(r.status).toBe(201);
-    return ((await r.json()) as { key: { id: string } }).key.id;
-  };
-  const revoked = async (id: string) => (await one<{ r: number | null }>("SELECT revoked_at r FROM api_keys WHERE id = ?", id))!.r !== null;
-  beforeEach(() => { // connectAgent signs in by email link
-    e.EMAIL_FROM = "links@example.com";
-    e.RESEND_API_KEY = "re_testkey12345";
-  });
-
-  it("keys ?all=1 lists own and within; revoking within is 204; an owner's or a stronger person's is 403", async () => {
-    const X = await signedIn("x@example.com", { roleId: "au" });
-    const ko = await key(O.cookie, "own"), kp = await key(P.cookie, "pk"), kx = await key(X.cookie, "xk"), km = await key(M.cookie, "mk");
-    const l = (await (await call(M.cookie, "GET", "/api/keys?all=1")).json()) as { items: { id: string; userEmail: string | null }[] };
-    expect(l.items.map((k) => [k.id, k.userEmail]).sort()).toEqual([[km, "manager@example.com"], [kp, "p@example.com"]].sort());
-    for (const id of [ko, kx]) expect(await answer(await call(M.cookie, "DELETE", `/api/keys/${id}`))).toEqual([403, above]);
-    expect(await revoked(ko)).toBe(false);
-    expect(await revoked(kx)).toBe(false);
-    expect((await call(M.cookie, "DELETE", `/api/keys/${kp}`)).status).toBe(204);
-    expect(await revoked(kp)).toBe(true);
-    // a plain member still gets 404 for someone else's key (no existence oracle)
-    expect(await answer(await call(P.cookie, "DELETE", `/api/keys/${ko}`))).toEqual([404, { error: "not_found" }]);
-  });
-
-  it("a manager losing people.manage between read and batch revokes nothing", async () => {
-    const kp = await key(P.cookie, "pk");
-    const restore = beforeBatch(1, () => setPerms("mg", MEMBER_DEFAULT));
-    let r: Response;
-    try { r = await call(M.cookie, "DELETE", `/api/keys/${kp}`); } finally { restore(); }
-    expect(await answer(r)).toEqual([403, { error: "forbidden" }]);
-    expect(await revoked(kp)).toBe(false);
-    expect(await audits("key.revoke")).toEqual([]);
-  });
-
-  it("connections: ?all=1 lists within; lower and disconnect within; raise refused; an owner's is 403", async () => {
-    const p = await connectAgent("p@example.com", { write: true });
-    const o = await connectAgent("owner@example.com");
-    const l = (await (await call(M.cookie, "GET", "/api/agents/connections?all=1")).json()) as { items: { id: string; userEmail: string | null }[] };
-    expect(l.items.map((i) => [i.id, i.userEmail])).toEqual([[p.connId, "p@example.com"]]);
-    expect(await answer(await call(M.cookie, "PATCH", `/api/agents/connections/${o.connId}`, { write: false, del: false }))).toEqual([403, above]);
-    expect(await answer(await call(M.cookie, "DELETE", `/api/agents/connections/${o.connId}`))).toEqual([403, above]);
-    expect(await answer(await call(M.cookie, "PATCH", `/api/agents/connections/${p.connId}`, { write: true, del: true }))).toEqual([403, { error: "owner_cannot_raise" }]);
-    expect((await call(M.cookie, "PATCH", `/api/agents/connections/${p.connId}`, { write: false, del: false })).status).toBe(200);
-    expect((await call(M.cookie, "DELETE", `/api/agents/connections/${p.connId}`)).status).toBe(204);
-    expect(await rows("SELECT id FROM agent_connections WHERE revoked_at IS NULL")).toEqual([{ id: o.connId }]);
-  });
-
-  it("a connection whose person moves to a stronger role between read and batch is not disconnected", async () => {
-    const p = await connectAgent("p@example.com");
-    const restore = beforeBatch(1, () => run("UPDATE users SET role_id = 'st' WHERE id = ?", P.user.id));
-    let r: Response;
-    try { r = await call(M.cookie, "DELETE", `/api/agents/connections/${p.connId}`); } finally { restore(); }
-    expect(await answer(r)).toEqual([403, above]);
-    expect(await rows("SELECT id FROM agent_connections WHERE revoked_at IS NULL")).toEqual([{ id: p.connId }]);
   });
 });

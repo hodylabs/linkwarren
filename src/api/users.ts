@@ -3,7 +3,7 @@ import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { clearCookie, endSessionStmt } from "../session";
-import { actorCan, can, parsePerms, personWithin, reaches, ROLE_JOIN, roleWithin, USER_COLS, within, type Guard } from "../roles";
+import { actorCan, can, FIRST_OWNER, parsePerms, personWithin, reaches, ROLE_JOIN, roleWithin, USER_COLS, within, type Guard } from "../roles";
 import { rowToUser, type UserListItem, type UserRow } from "../types";
 import type { Grant } from "../principal";
 import { purgeHost } from "./shared";
@@ -27,10 +27,12 @@ export const OTHER_OWNER = "(SELECT COUNT(*) FROM users WHERE role = 'owner' AND
 const SHARED = "type IN ('main','shared')";
 /** R4 in the batch: the actor still holds people.manage and the target's current role is still within theirs (an owner: anyone). */
 export const peopleOk = (actorId: string, targetId: string): Guard => and(actorCan(actorId, "people.manage"), personWithin(targetId, actorId));
-/** Why a guarded write wrote nothing: a = still a people manager, w = target still within, n = the new role still within. */
+/** Why a guarded write wrote nothing: a = still a people manager, w = target still within, n = the new role still within,
+ * r = the new role still exists. */
 async function refusal(env: Env, actorId: string, targetId: string, roleId: string | null = null) {
   const a = actorCan(actorId, "people.manage"), w = personWithin(targetId, actorId), n = roleWithin(roleId ?? "", actorId);
-  return (await env.DB.prepare(`SELECT ${a.sql} a, ${w.sql} w, ${n.sql} n`).bind(...a.binds, ...w.binds, ...n.binds).first<{ a: number; w: number; n: number }>())!;
+  return (await env.DB.prepare(`SELECT ${a.sql} a, ${w.sql} w, ${n.sql} n, EXISTS (SELECT 1 FROM roles WHERE id = ?) r`)
+    .bind(...a.binds, ...w.binds, ...n.binds, roleId).first<{ a: number; w: number; n: number; r: number }>())!;
 }
 
 /** Best effort after a committed D1 write: the per-call checks already refuse the person, this only clears OAUTH_KV. */
@@ -176,6 +178,7 @@ users.patch("/:id", async (c) => {
     ]);
     if (!w.a) return c.json(forbidden, 403);
     if (!x?.e) return c.json(notFound, 404);
+    if (next && !w.r) return c.json({ error: "bad_role" }, 400); // deleted in between
     if (!w.w || (next && !w.n)) return c.json(above, 403);
     if (losesOwner && !x.o) return c.json({ error: "last_owner" }, 409);
     return c.json({ error: "changed" }, 409);
@@ -190,7 +193,10 @@ users.delete("/:id", async (c) => {
   if (!can(me, "people.manage")) return c.json(forbidden, 403);
   const id = c.req.param("id");
   if (id === me.id) return c.json({ error: "self" }, 409);
-  const to = c.req.query("transferTo") || me.id;
+  const owner = me.role === "owner";
+  // R4: a non-owner never takes over the removed person's links or domains: they go to an owner (the first one by default).
+  const to = c.req.query("transferTo") || (owner ? me.id
+    : (await env.DB.prepare(`SELECT ${FIRST_OWNER} id`).first<{ id: string | null }>())?.id ?? "");
   const [pr, tr, doms, ln] = await Promise.all([
     env.DB.prepare(BY_ID).bind(id).first(),
     env.DB.prepare(BY_ID).bind(to).first(),
@@ -200,7 +206,7 @@ users.delete("/:id", async (c) => {
   if (!pr) return c.json(notFound, 404);
   const p = rowToUser(pr), t = tr ? rowToUser(tr) : null;
   if (!reaches(me, p)) return c.json(above, 403);
-  if (to === id || !t || t.status !== "active") return c.json({ error: "bad_transfer" }, 400);
+  if (to === id || !t || t.status !== "active" || (!owner && t.role !== "owner")) return c.json({ error: "bad_transfer" }, 400);
   const needsOwner = doms.results.some((d) => d.type !== "private");
   if (needsOwner && t.role !== "owner") return c.json({ error: "transfer_needs_owner" }, 400);
   const hosts = doms.results.map((d) => d.host);
@@ -234,7 +240,7 @@ users.delete("/:id", async (c) => {
     if (!r.a) return c.json(forbidden, 403);
     if (!w?.e) return c.json(notFound, 404);
     if (!r.w) return c.json(above, 403);
-    if (!w.t) return c.json({ error: "bad_transfer" }, 400);
+    if (!w.t || (!owner && !w.tOwner)) return c.json({ error: "bad_transfer" }, 400);
     if (w.needs && !w.tOwner) return c.json({ error: "transfer_needs_owner" }, 400);
     if (!w.o) return c.json({ error: "last_owner" }, 409);
     return c.json({ error: "changed" }, 409);

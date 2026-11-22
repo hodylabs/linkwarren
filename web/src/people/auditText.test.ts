@@ -128,6 +128,12 @@ describe("describeAudit agents and keys", () => {
     expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "member", domains: [] } }).suffix).toBe(" with access to the main domain");
     expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "owner", domains: [] } }).suffix).toBe(" as an owner");
   });
+  it("user.invite names a custom role (S8)", () => {
+    expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "member", roleId: "hl", roleName: "Helper", domains: [] } }).suffix)
+      .toBe(" as Helper with access to the main domain");
+    expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "member", roleId: "member", roleName: "Member", domains: [] } }).suffix)
+      .toBe(" with access to the main domain");
+  });
   it("user.invite_resend and user.revoke", () => {
     expect(pd({ action: "user.invite_resend", detail: { email: "jo@example.com", emailed: true } })).toMatchObject({ text: "re-sent the invite to", code: "jo@example.com" });
     expect(pd({ action: "user.revoke", detail: { email: "jo@example.com" } })).toMatchObject({ text: "revoked the invite for", code: "jo@example.com" });

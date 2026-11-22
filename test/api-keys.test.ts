@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KEY_SHAPE } from "../src/keys";
+import { MEMBER_DEFAULT } from "../src/roles";
+import { beforeBatch } from "./helpers/race";
 import { sha256Hex } from "../src/session";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 
@@ -125,5 +127,41 @@ describe("DELETE /api/keys/:id", () => {
   it("a member revokes their own key", async () => {
     const { key } = (await (await create(A, { name: "one" })).json()) as { key: KeyItem };
     expect((await as(A, `/api/keys/${key.id}`, { method: "DELETE" })).status).toBe(204);
+  });
+});
+
+describe("a people manager and other people's keys (S8 R4)", () => {
+  const M = "manager@example.com", X = "x@example.com";
+  const revoked = async (id: string) => (await env.DB.prepare("SELECT revoked_at r FROM api_keys WHERE id = ?").bind(id).first<{ r: number | null }>())!.r !== null;
+  const key = async (email: string, name: string) => ((await (await create(email, { name })).json()) as { key: KeyItem }).key.id;
+  beforeEach(async () => {
+    await run("DELETE FROM roles WHERE builtin = 0");
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('mg','Manager',?,0,1,1), ('au','Auditors','[\"audit\"]',0,1,1)", JSON.stringify([...MEMBER_DEFAULT, "people.manage"]));
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('um',?,'member','mg','active',1), ('ux',?,'member','au','active',1)", M, X);
+  });
+
+  it("?all=1 lists own and within; revoking within is 204; an owner's or a stronger person's is 403; a member still gets 404", async () => {
+    const ko = await key(O, "own"), ka = await key(A, "ak"), kx = await key(X, "xk"), km = await key(M, "mk");
+    const l = (await (await as(M, "/api/keys?all=1")).json()) as { items: KeyItem[] };
+    expect(l.items.map((k) => [k.id, k.userEmail]).sort()).toEqual([[ka, A], [km, M]].sort());
+    for (const id of [ko, kx]) {
+      const r = await as(M, `/api/keys/${id}`, { method: "DELETE" });
+      expect([r.status, await r.json()]).toEqual([403, { error: "role_above_you" }]);
+      expect(await revoked(id)).toBe(false);
+    }
+    expect((await as(M, `/api/keys/${ka}`, { method: "DELETE" })).status).toBe(204);
+    expect(await revoked(ka)).toBe(true);
+    const r = await as(B, `/api/keys/${ko}`, { method: "DELETE" });
+    expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
+  });
+
+  it("people.manage removed between read and batch: 403 and nothing revoked or audited", async () => {
+    const ka = await key(A, "ak");
+    const restore = beforeBatch(1, () => run("UPDATE roles SET perms = ? WHERE id = 'mg'", JSON.stringify(MEMBER_DEFAULT)));
+    let r: Response;
+    try { r = await as(M, `/api/keys/${ka}`, { method: "DELETE" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await revoked(ka)).toBe(false);
+    expect((await env.DB.prepare("SELECT 1 FROM audit_log WHERE action = 'key.revoke'").all()).results).toEqual([]);
   });
 });
