@@ -11,6 +11,7 @@ import { domains } from "./api/domains";
 import { importApi } from "./api/import";
 import { users } from "./api/users";
 import { audit } from "./api/audit";
+import { analytics } from "./api/analytics";
 import { settings } from "./api/settings";
 import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
@@ -81,6 +82,7 @@ app.route("/api/locks", locks);
 app.route("/api/import", importApi);
 app.route("/api/users", users);
 app.route("/api/audit", audit);
+app.route("/api/analytics", analytics);
 app.route("/api/settings", settings);
 app.route("/api/account", account);
 
