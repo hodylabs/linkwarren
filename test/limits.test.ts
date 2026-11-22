@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pruneExpired, RUN_WRITE_BUDGET } from "../src/cron";
-import { LIMITS, blocked, fits, hit, hitBy, hitCount, limitKey } from "../src/limits";
+import { LIMITS, blocked, fits, hit, hitAll, hitBy, hitCount, limitKey } from "../src/limits";
 import { sha256Hex } from "../src/session";
 
 beforeEach(async () => { await env.DB.prepare("DELETE FROM auth_limits").run(); });
@@ -98,5 +98,72 @@ describe("hitBy and fits", () => {
     await env.DB.prepare("UPDATE auth_limits SET window_start = ? WHERE key = 'bulk:kv'").bind(T - 86401).run();
     await pruneExpired(env, T, RUN_WRITE_BUDGET);
     expect(await rowOf("bulk:kv")).toBeNull();
+  });
+});
+
+describe("hitAll", () => {
+  const A = { n: 3, s: 900 }, B = { n: 5, s: 900 }, D = { n: 10, s: 86400, utc: true };
+  const all = async () => (await env.DB.prepare("SELECT key, window_start, count FROM auth_limits ORDER BY key").all()).results;
+
+  it("charges every key in one statement and counts to n", async () => {
+    for (let i = 0; i < 2; i++) expect(await hitAll(env, [{ key: "a", limit: A }, { key: "b", limit: B, charge: 2 }])).toEqual({ ok: true });
+    expect((await rowOf("a"))!.count).toBe(2);
+    expect((await rowOf("b"))!.count).toBe(4);
+    expect(await hitAll(env, [{ key: "a", limit: A }, { key: "b", limit: B, charge: 1 }])).toEqual({ ok: true });
+    expect([(await rowOf("a"))!.count, (await rowOf("b"))!.count]).toEqual([3, 5]);
+  });
+
+  it("refuses with zero writes when any key would pass its limit, and names the first key over", async () => {
+    await hitBy(env, "b", B, 4);
+    const before = await all();
+    const r = await hitAll(env, [{ key: "a", limit: A }, { key: "b", limit: B, charge: 2 }, { key: "d", limit: D }]);
+    expect(r).toEqual({ ok: false, key: "b", counts: [0, 4, 0] });
+    expect(await all()).toEqual(before);
+  });
+
+  it("names the first key in checks order when several are over", async () => {
+    await hitBy(env, "a", A, 3);
+    await hitBy(env, "b", B, 5);
+    expect(await hitAll(env, [{ key: "b", limit: B }, { key: "a", limit: A }])).toMatchObject({ ok: false, key: "b" });
+    expect(await hitAll(env, [{ key: "a", limit: A }, { key: "b", limit: B }])).toMatchObject({ ok: false, key: "a" });
+  });
+
+  it("charge 0 only checks (refused once the window holds n) and writes nothing for that key", async () => {
+    expect(await hitAll(env, [{ key: "c", limit: A, charge: 0 }, { key: "a", limit: A }])).toEqual({ ok: true });
+    expect(await rowOf("c")).toBeNull();
+    await hitBy(env, "c", A, 3);
+    expect(await hitAll(env, [{ key: "c", limit: A, charge: 0 }, { key: "a", limit: A }])).toMatchObject({ ok: false, key: "c" });
+    expect((await rowOf("a"))!.count).toBe(1);
+  });
+
+  it("restarts an expired window at the charge, and a utc window at the day boundary", async () => {
+    await hitBy(env, "a", A, 3);
+    await env.DB.prepare("UPDATE auth_limits SET window_start = window_start - 900 WHERE key = 'a'").run();
+    expect(await hitAll(env, [{ key: "a", limit: A, charge: 2 }])).toEqual({ ok: true });
+    expect((await rowOf("a"))!.count).toBe(2);
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES ('d', ?, 10)").bind(now - (now % 86400) - 1).run();
+    expect(await hitAll(env, [{ key: "d", limit: D }])).toEqual({ ok: true });
+    expect((await rowOf("d"))!.count).toBe(1);
+  });
+
+  it("is atomic: two concurrent requests at the edge never both pass", async () => {
+    for (let round = 0; round < 5; round++) {
+      await env.DB.prepare("DELETE FROM auth_limits").run();
+      await hitBy(env, "a", A, 2);
+      const r = await Promise.all([hitAll(env, [{ key: "b", limit: B }, { key: "a", limit: A }]), hitAll(env, [{ key: "b", limit: B }, { key: "a", limit: A }])]);
+      expect(r.filter((x) => x.ok)).toHaveLength(1);
+      expect((await rowOf("a"))!.count).toBe(3);
+      expect((await rowOf("b"))!.count).toBe(1);
+    }
+  });
+
+  it("throws (fail closed for callers) on a D1 error, duplicate keys or no charge", async () => {
+    await expect(hitAll(env, [{ key: "a", limit: A }, { key: "a", limit: A }])).rejects.toThrow();
+    await expect(hitAll(env, [{ key: "a", limit: A, charge: 0 }])).rejects.toThrow();
+    await expect(hitAll(env, [{ key: "a", limit: A, charge: 1.5 }])).rejects.toThrow();
+    const broken = { ...env, DB: { prepare: () => { throw new Error("D1 down"); } } } as unknown as typeof env;
+    await expect(hitAll(broken, [{ key: "a", limit: A }])).rejects.toThrow("D1 down");
+    expect(await all()).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../env";
 import { hashKey, KEY_SHAPE } from "../keys";
-import { blocked, hit, LIMITS, limitKey } from "../limits";
+import { hitAll, LIMITS, limitKey } from "../limits";
 import type { Grant } from "../principal";
 import { rowToUser, type UserRow } from "../types";
 import { linkStats } from "./analytics";
@@ -60,14 +60,12 @@ v1.use("*", async (c, next) => {
   }
   if (!row) return c.json(invalidKey, 401);
   const user = rowToUser(row);
-  const keys = [
-    [limitKey.apiUser(user.id), LIMITS.apiUser], [limitKey.apiKey(row.key_id), LIMITS.apiKey], [limitKey.apiDay(user.id), LIMITS.apiDay],
-    [limitKey.apiInstanceDay, LIMITS.apiInstanceDay],
-  ] as const;
   try {
-    // Reads first, so a refused call writes nothing.
-    if ((await Promise.all(keys.map(([k, l]) => blocked(c.env, k, l)))).some(Boolean) ||
-      !(await Promise.all(keys.map(([k, l]) => hit(c.env, k, l)))).every(Boolean))
+    // One atomic statement: a refused call writes nothing.
+    if (!(await hitAll(c.env, [
+      { key: limitKey.apiUser(user.id), limit: LIMITS.apiUser }, { key: limitKey.apiKey(row.key_id), limit: LIMITS.apiKey },
+      { key: limitKey.apiDay(user.id), limit: LIMITS.apiDay }, { key: limitKey.apiInstanceDay, limit: LIMITS.apiInstanceDay },
+    ])).ok)
       return c.json({ error: "rate_limited" }, 429);
   } catch {
     return c.json({ error: "unavailable" }, 503); // fail closed: no limiter, no call

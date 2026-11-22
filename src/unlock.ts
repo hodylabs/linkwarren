@@ -1,7 +1,7 @@
 import { type Ctx } from "./cache";
 import { splitQrMarker } from "./clicks";
 import type { Env } from "./env";
-import { blocked, hit, LIMITS, refund } from "./limits";
+import { hit, hitAll, LIMITS, refund } from "./limits";
 import { passwordPage } from "./pages";
 import { verifyPassword } from "./password";
 import { destinationOf, recordClick, robots } from "./redirect";
@@ -60,13 +60,8 @@ export async function handleProtected(req: Request, env: Env, link: LinkRow, dom
   const unlockKey = `unlock:${link.id}:${prefix}`;
   const okKey = `unlockok:${link.id}:${prefix}`;
   try {
-    // Reads first: a limited range costs no D1 write. Then the atomic hit reserves a slot, so parallel guesses stay bounded.
-    if (
-      (await blocked(env, failKey, LIMITS.failIp)) ||
-      (await blocked(env, unlockKey, UNLOCK)) ||
-      (await blocked(env, okKey, UNLOCK_OK)) ||
-      !(await hit(env, unlockKey, UNLOCK))
-    )
+    // One atomic statement: checks failKey and okKey (charge 0) and reserves an unlockKey slot, or writes nothing when limited.
+    if (!(await hitAll(env, [{ key: failKey, limit: LIMITS.failIp, charge: 0 }, { key: unlockKey, limit: UNLOCK }, { key: okKey, limit: UNLOCK_OK, charge: 0 }])).ok)
       return show("limited", 429, { "retry-after": String(UNLOCK.s) });
   } catch {
     return show("unavailable", 503); // fail closed: no limiter, no password check

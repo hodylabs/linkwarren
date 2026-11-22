@@ -187,7 +187,7 @@ A link with a password answers its short URL with a small form page instead of a
 
 Limits (D1, the same table as sign-in, global across Cloudflare locations, no paid features), all checked before any hashing work:
 
-- 5 unlock attempts per link per IP range (/24 or /48) every 15 minutes. Each attempt reserves a slot with one atomic upsert before the password is checked, so parallel guesses cannot slip past it; a right password gives its slot back, so people behind one office network can all open the link.
+- 5 unlock attempts per link per IP range (/24 or /48) every 15 minutes. Each attempt reserves a slot in one atomic statement (which also checks the two limits below) before the password is checked, so parallel guesses cannot slip past it; a right password gives its slot back, so people behind one office network can all open the link.
 - 30 right unlocks per link per IP range every 15 minutes (key `unlockok:`). It is read before any write, so a script that loops one known password stops costing writes and hashing after 30. Parallel bursts can pass it by a few, because the count is written after the password check.
 - 20 wrong passwords per IP range every 15 minutes, across all links.
 
@@ -289,7 +289,7 @@ D1 costs of the OAuth steps, on top of the limits below: each `/authorize` reque
 
 ### Limits
 
-MCP tool calls (`/mcp`) and machine API requests (`/api/v1`) share the D1 limiter (table `auth_limits`, no paid features). Limits, all checked read-only before anything is written:
+MCP tool calls (`/mcp`) and machine API requests (`/api/v1`) share the D1 limiter (table `auth_limits`, no paid features). Each request checks and charges all of its keys in one atomic D1 statement: either every key has room and all are charged, or nothing is written. Concurrent requests cannot overshoot a limit. Limits:
 
 - 120 calls per minute per person (`api:u:`), 60 per minute per MCP connection (`api:c:`) or API key (`api:k:`).
 - 1000 calls per UTC day per person (`api:ud:`).
@@ -302,8 +302,7 @@ Bulk edits (`POST /api/v1/links/bulk`, the MCP tool `bulk_links` and the dashboa
 - The per-minute keys count a bulk request **once**.
 - The daily caps (`api:ud:`, `api:day`) count **one unit per link processed**, for keys and MCP: refused links and ids that do not exist count, links returned in `pending` do not. The middleware already charged one unit, the route charges the rest. So 100 links use a tenth of a person's daily cap. Over the cap the answer is `429 rate_limited`, and the middleware's unit is not refunded.
 - `bulk:kv` (see [KV budget](#kv-budget)): 500 KV deletes per UTC day for every caller, `429 kv_budget` when a request does not fit.
-- Budgets are checked before any daily unit is charged, so a request refused with `429 kv_budget` or `rate_limited` spends nothing beyond the one unit the middleware already charged. Nothing is refunded afterwards: a later `409 conflict` keeps its charge.
-- Checking and charging are two steps, not one atomic operation: concurrent requests can overshoot a cap by at most one request's units. That is accepted.
+- The daily units and `bulk:kv` are checked and charged in one atomic statement, so a request refused with `429 kv_budget` or `rate_limited` spends nothing beyond the one unit the middleware already charged, and concurrent requests cannot overshoot a cap. When both would refuse, `rate_limited` wins. Nothing is refunded afterwards: a later `409 conflict` keeps its charge.
 - Over MCP the route's `429` reaches the agent as the tool error `rate_limited`, not as the "Daily limit reached" text.
 - A request in which every link is refused reads rows but charges nothing on `bulk:kv`.
 

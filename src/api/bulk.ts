@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { z } from "zod";
 import { auditManyStmt } from "../audit";
 import type { Env } from "../env";
-import { fits, hitBy, LIMITS, limitKey } from "../limits";
+import { hitAll, LIMITS, limitKey, type Check } from "../limits";
 import { passwordRule } from "../password-rule";
 import { actor, type Grant } from "../principal";
 import { rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
@@ -168,25 +168,24 @@ export async function bulk(c: Context<E>) {
   }
 
   // R3: the daily caps count one unit per link processed (refused ones too, pending ones not) for /api/v1 and MCP; the key
-  // middleware or runTool already charged one (not refunded on a refusal, D7). Read-only first so a refused request writes
-  // nothing; fits then hitBy is not atomic, so concurrent requests may overshoot by at most one request's units (accepted).
-  // Every check (the daily caps, then bulk:kv below) reads before any charge is written.
+  // middleware or runTool already charged one (not refunded on a refusal, D7).
   const extra = order.length - pending.length - 1;
-  const caps = isV1(c.req.path) && extra > 0 ? [[limitKey.apiDay(user.id), LIMITS.apiDay], [limitKey.apiInstanceDay, LIMITS.apiInstanceDay]] as const : [];
-  if (!(await Promise.all(caps.map(([k, l]) => fits(env, k, l, extra)))).every(Boolean)) return c.json({ error: "rate_limited" }, 429);
-  const charge = () => Promise.all(caps.map(([k, l]) => hitBy(env, k, l, extra)));
-
-  const results = () => order.flatMap((id) => out.get(id) ?? []);
-  if (!accepted.length) {
-    await charge();
-    return c.json({ results: results(), pending });
-  }
-
-  // R4: one KV delete per written link (a forward move: old and new key plus each forwarder it repoints), checked read-only
-  // first so a refused request writes nothing.
+  const checks: Check[] = isV1(c.req.path) && extra > 0
+    ? [{ key: limitKey.apiDay(user.id), limit: LIMITS.apiDay, charge: extra }, { key: limitKey.apiInstanceDay, limit: LIMITS.apiInstanceDay, charge: extra }]
+    : [];
+  // R4: one KV delete per written link (a forward move: old and new key plus each forwarder it repoints).
   const cost = b.action === "move" && b.oldAddress === "forward" ? 2 * accepted.length + [...older.values()].reduce((a, n) => a + n, 0)
     : b.action === "delete" ? accepted.reduce((a, { link }) => a + 1 + fwdCount.get(link.id)!, 0) : accepted.length;
-  if (!(await fits(env, limitKey.bulkKv, LIMITS.bulkKvDay, cost))) return c.json({ error: "kv_budget" }, 429);
+  if (cost) checks.push({ key: limitKey.bulkKv, limit: LIMITS.bulkKvDay, charge: cost });
+  // The daily caps and bulk:kv in one atomic statement: a refused request writes nothing; the caps refuse first.
+  if (checks.length) {
+    const r = await hitAll(env, checks);
+    if (!r.ok) return c.json({ error: r.key === limitKey.bulkKv ? "kv_budget" : "rate_limited" }, 429);
+  }
+
+  const results = () => order.flatMap((id) => out.get(id) ?? []);
+  if (!accepted.length) return c.json({ results: results(), pending });
+
   // One hash per link, each with its own salt (hashPassword draws one per call); null clears, undefined does not occur here.
   const hashes = b.action === "password"
     ? await Promise.all(accepted.map(async () => {
@@ -195,7 +194,6 @@ export async function bulk(c: Context<E>) {
       return pw.hash ?? null;
     }))
     : [];
-  await Promise.all([charge(), hitBy(env, limitKey.bulkKv, LIMITS.bulkKvDay, cost)]);
 
   const base = { ...actor(c), targetType: "link" };
   const rows = accepted.map(({ link }, i) => ({ t: link.id, r: link.updatedAt, h: hashes[i] ?? null }));

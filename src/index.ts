@@ -2,7 +2,7 @@ import { app } from "./app";
 import { scheduled } from "./cron";
 import type { Env } from "./env";
 import { normalizeHost } from "./host";
-import { blocked, hit, LIMITS, limitKey } from "./limits";
+import { hitAll, LIMITS, limitKey } from "./limits";
 import { mcpState } from "./mcp/switch";
 import { isOAuthPath, provider } from "./oauth";
 import { ipPrefix } from "./session";
@@ -18,16 +18,11 @@ const decoded = (p: string) => {
 };
 const notFound = () => Response.json({ error: "not_found" }, { status: 404 });
 
-/** POST /register spends a KV write: D1 limits per IP range and per UTC day, reads first so a refused call writes nothing. */
+/** POST /register spends a KV write: D1 limits per IP range and per UTC day, one atomic statement so a refused call writes nothing. */
 async function registerLimited(req: Request, env: Env): Promise<Response | null> {
   const ipKey = limitKey.reg(ipPrefix(req.headers.get("cf-connecting-ip")));
   try {
-    if (
-      (await blocked(env, ipKey, LIMITS.reg)) ||
-      (await blocked(env, limitKey.regDay, LIMITS.regDay)) ||
-      !(await hit(env, ipKey, LIMITS.reg)) ||
-      !(await hit(env, limitKey.regDay, LIMITS.regDay))
-    )
+    if (!(await hitAll(env, [{ key: ipKey, limit: LIMITS.reg }, { key: limitKey.regDay, limit: LIMITS.regDay }])).ok)
       return Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "3600" } });
   } catch {
     return Response.json({ error: "unavailable" }, { status: 503 }); // fail closed: no limiter, no registration

@@ -4,7 +4,7 @@ import { auditStmt } from "../audit";
 import { authenticate, authMode } from "../auth";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
-import { blocked, hit, LIMITS, limitKey } from "../limits";
+import { hitAll, LIMITS, limitKey } from "../limits";
 import { safeNext } from "../session";
 import { mcpState } from "./switch";
 import { messagePage, renderApproval } from "./approval-page";
@@ -80,11 +80,11 @@ const helpers = (env: Env): OAuthHelpers | null => env.OAUTH_PROVIDER ?? null;
 
 /** The library falls back to the client id when a client gave no name; that is not a name to show or audit. */
 const nameOf = (d: { clientName: string; clientId: string }) => cleanClientName(d.clientName === d.clientId ? undefined : d.clientName);
-/** I3: 10 consent requests per person per hour, read first so a refused one writes nothing; no limiter, no consent. */
+/** I3: 10 consent requests per person per hour, one atomic statement so a refused one writes nothing; no limiter, no consent. */
 async function limitedFor(env: Env, userId: string): Promise<Response | null> {
   const k = limitKey.authz(userId);
   try {
-    if ((await blocked(env, k, LIMITS.authz)) || !(await hit(env, k, LIMITS.authz)))
+    if (!(await hitAll(env, [{ key: k, limit: LIMITS.authz }])).ok)
       return msg(429, "Too many attempts", "Too many connection attempts. Try again in an hour.");
   } catch {
     return msg(503, "Unavailable", "Connecting agents is unavailable right now.");

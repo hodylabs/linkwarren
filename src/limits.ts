@@ -67,7 +67,46 @@ export async function hitBy(env: Env, key: string, l: Limit, n: number): Promise
   return r ? r.count : Number.POSITIVE_INFINITY; // no row back: treat as over
 }
 
-/** Read only: true when n more events still fit the current window. Not atomic with a later hitBy (concurrent callers may overshoot slightly). */
+/** One check of hitAll: `charge` events (default 1) on `key`; charge 0 only checks that one more event would fit. */
+export type Check = { key: string; limit: Limit; charge?: number };
+export type HitAll = { ok: true } | { ok: false; key: string; counts: number[] };
+
+/**
+ * Checks and charges every key of a request in one atomic statement: it writes only when every key has room
+ * (count + max(charge, 1) <= n in its current window), otherwise it writes nothing. A refusal then reads the counts
+ * (in checks order) to name the first key over. Keys must be distinct, and at least one check must charge.
+ */
+export async function hitAll(env: Env, checks: Check[]): Promise<HitAll> {
+  if (new Set(checks.map((c) => c.key)).size !== checks.length) throw new RangeError("hitAll: duplicate key");
+  const charges = checks.map((c) => c.charge ?? 1);
+  if (charges.some((n) => !Number.isSafeInteger(n) || n < 0) || !charges.some((n) => n > 0))
+    throw new RangeError("hitAll: each charge must be a whole number, and one above 0");
+  const now = Math.floor(Date.now() / 1000);
+  const binds = checks.flatMap((c, i) => [c.key, since(c.limit, now), c.limit.n, charges[i]]);
+  // The SELECT reads auth_limits before any row is upserted (SQLite buffers an INSERT that reads its own table).
+  const r = await env.DB.prepare(
+    `WITH k(key, since, n, c) AS (VALUES ${checks.map(() => "(?, ?, ?, ?)").join(", ")})
+     INSERT INTO auth_limits (key, window_start, count)
+     SELECT key, ?, c FROM k WHERE c > 0 AND NOT EXISTS
+       (SELECT 1 FROM k b JOIN auth_limits a ON a.key = b.key AND a.window_start > b.since WHERE a.count + max(b.c, 1) > b.n)
+     ON CONFLICT(key) DO UPDATE SET
+       count = CASE WHEN window_start <= (SELECT since FROM k WHERE k.key = excluded.key) THEN excluded.count ELSE count + excluded.count END,
+       window_start = CASE WHEN window_start <= (SELECT since FROM k WHERE k.key = excluded.key) THEN excluded.window_start ELSE window_start END
+     RETURNING key`,
+  ).bind(...binds, now).all();
+  if (r.results.length) return { ok: true };
+  const rows = await env.DB.prepare("SELECT key, window_start, count FROM auth_limits WHERE key IN (SELECT value FROM json_each(?))")
+    .bind(JSON.stringify(checks.map((c) => c.key))).all<{ key: string; window_start: number; count: number }>();
+  const counts = checks.map((c) => {
+    const row = rows.results.find((x) => x.key === c.key);
+    return row && row.window_start > since(c.limit, now) ? row.count : 0;
+  });
+  // A window that rolled over or a refund between the two reads leaves no key over: name the first.
+  const i = checks.findIndex((c, i) => counts[i]! + Math.max(charges[i]!, 1) > c.limit.n);
+  return { ok: false, key: checks[Math.max(i, 0)]!.key, counts };
+}
+
+/** Read only: true when n more events still fit the current window. Not atomic with a later hitBy; hitAll is. */
 export async function fits(env: Env, key: string, l: Limit, n: number): Promise<boolean> {
   return (await windowCount(env, key, l)) + n <= l.n;
 }

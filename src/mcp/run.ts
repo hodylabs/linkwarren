@@ -1,7 +1,7 @@
 import { getMcpAuthContext } from "agents/mcp/server";
 import type { Principal } from "../call";
 import type { Env } from "../env";
-import { hitCount, LIMITS, limitKey, windowCount } from "../limits";
+import { hitAll, hitCount, LIMITS, limitKey } from "../limits";
 import { rowToUser } from "../types";
 
 export const REFUSED = "This connection was disconnected or its person no longer has access.";
@@ -54,8 +54,8 @@ type Key = readonly [string, { n: number; s: number; utc?: boolean }, boolean];
 
 /**
  * Over a limit: the message and whether to log the call, or null when it may run.
- * Reads first. Only the first refused call in a window (count exactly n) is counted (n + 1) and logged;
- * later ones are read only and write nothing, so a retry loop costs no D1 writes.
+ * One atomic statement charges every key or none. Only the first refused call in a window (count exactly n) is counted
+ * (n + 1) and logged; later ones are read only and write nothing, so a retry loop costs no D1 writes.
  */
 async function limited(env: Env, p: Principal): Promise<{ msg: string; log: boolean } | null> {
   const keys: Key[] = [
@@ -63,17 +63,13 @@ async function limited(env: Env, p: Principal): Promise<{ msg: string; log: bool
     [limitKey.apiDay(p.user.id), LIMITS.apiDay, true], [limitKey.apiInstanceDay, LIMITS.apiInstanceDay, true],
   ];
   const msg = (over: Key[]) => ({ msg: over.some((k) => k[2]) ? DAILY : RATE });
-  const counts = await Promise.all(keys.map(([k, l]) => windowCount(env, k, l)));
-  const over = keys.filter((k, i) => counts[i]! >= k[1].n);
-  if (over.length) {
-    const first = keys.filter((k, i) => counts[i] === k[1].n);
-    const now = await Promise.all(first.map(([k, l]) => hitCount(env, k, l)));
-    // Calls racing at the threshold all read n: only the one whose atomic increment returned n + 1 logs.
-    return { ...msg(over), log: first.some((k, i) => now[i] === k[1].n + 1) };
-  }
-  const after = await Promise.all(keys.map(([k, l]) => hitCount(env, k, l)));
-  const crossed = keys.filter((k, i) => after[i]! > k[1].n); // a concurrent call took the last slot
-  return crossed.length ? { ...msg(crossed), log: keys.some((k, i) => after[i] === k[1].n + 1) } : null;
+  const r = await hitAll(env, keys.map(([key, limit]) => ({ key, limit })));
+  if (r.ok) return null;
+  const over = keys.filter((k, i) => r.counts[i]! >= k[1].n);
+  const first = keys.filter((k, i) => r.counts[i] === k[1].n);
+  const now = await Promise.all(first.map(([k, l]) => hitCount(env, k, l)));
+  // Calls racing at the threshold all read n: only the one whose atomic increment returned n + 1 logs.
+  return { ...msg(over), log: first.some((k, i) => now[i] === k[1].n + 1) };
 }
 
 /**
