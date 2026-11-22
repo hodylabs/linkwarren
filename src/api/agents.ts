@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
+import { MCP_KEY, mcpState, rememberMcp } from "../mcp/switch";
 import { actor, type Grant } from "../principal";
 import type { UserRow } from "../types";
 
@@ -105,4 +106,29 @@ agents.delete("/connections/:id", async (c) => {
     console.error("grant revoke failed", err instanceof Error ? err.name : "unknown"); // D1 already blocks the tools
   }
   return c.body(null, 204);
+});
+
+/** The owner's switch for agent connections (R9, R10). Everyone signed in may read it; only the owner changes it. */
+agents.get("/mcp", async (c) => c.json(await mcpState(c.env)));
+
+const mcpBody = z.strictObject({ on: z.boolean() });
+agents.put("/mcp", async (c) => {
+  const u = c.var.user;
+  if (u.role !== "owner") return c.json({ error: "forbidden" }, 403);
+  const body = mcpBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  const { on } = body.data;
+  const state = await mcpState(c.env);
+  if (state.locked) return c.json({ error: "mcp_locked" }, 409);
+  if (state.on === on) return c.json(state);
+  const value = on ? "1" : "0";
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+    ).bind(MCP_KEY, value, now(), u.id),
+    auditStmt(c.env, { actorId: u.id, action: "settings.update", targetType: "settings", targetId: MCP_KEY, detail: { key: MCP_KEY, value } },
+      { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [MCP_KEY, value] }),
+  ]);
+  rememberMcp(value);
+  return c.json({ on, locked: false });
 });

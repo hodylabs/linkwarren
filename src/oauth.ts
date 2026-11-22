@@ -4,7 +4,7 @@ import { normalizeHost } from "./host";
 import { app } from "./app";
 import { mcpHandler } from "./mcp/server";
 
-/** Every path the OAuth provider answers; all of them are JSON 404 unless MCP_ENABLED is "1". */
+/** Every path the OAuth provider answers; all of them are JSON 404 while agent connections are off (mcpState). */
 export const OAUTH_PATHS: readonly string[] = [
   "/mcp",
   "/authorize",

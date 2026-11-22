@@ -45,9 +45,10 @@
     // "Password-protected links"). Keep the default on the Workers Free plan (10 ms CPU); Workers Paid may raise it to 100000.
     // "PASSWORD_HASH_ITERATIONS": "10000",
     // Analytics: must match the dataset above. Reports also need CF_ACCOUNT_ID.
-    "AE_DATASET": "linkwarren_clicks",
-    // Agents (MCP at https://<DASHBOARD_HOST>/mcp with OAuth): off unless "1". API keys on /api/v1 work either way.
-    "MCP_ENABLED": "0"
+    "AE_DATASET": "linkwarren_clicks"
+    // Agents (MCP at https://<DASHBOARD_HOST>/mcp with OAuth): the owner turns them on and off on the API & agents screen.
+    // Leave MCP_ENABLED out for that. "MCP_ENABLED": "0" locks agent connections off; "1" turns them on until the owner
+    // saves a choice. API keys on /api/v1 work either way.
     // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
     // CF_API_TOKEN is a secret, never a var: wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc
     // AE_READ_TOKEN and VISITOR_SALT are secrets, never vars: wrangler secret put AE_READ_TOKEN (and VISITOR_SALT) -c wrangler.instance.jsonc

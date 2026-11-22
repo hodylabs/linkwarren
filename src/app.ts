@@ -95,7 +95,7 @@ app.route("/api/agents", agents);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 
-// OAuth consent (MCP agents). Reached only through the wrapper, which 404s it unless MCP_ENABLED is "1".
+// OAuth consent (MCP agents). Reached only through the wrapper, which 404s it while agent connections are off.
 app.route("/authorize", authorize);
 
 // Dashboard files: GET/HEAD only, never under /api (unknown API paths stay JSON 404).

@@ -6,6 +6,7 @@ import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { blocked, hit, LIMITS, limitKey } from "../limits";
 import { safeNext } from "../session";
+import { mcpState } from "./switch";
 import { messagePage, renderApproval } from "./approval-page";
 
 /**
@@ -51,10 +52,18 @@ const EXPIRED = () => msg(400, "Approval expired", "Approval expired, start agai
 type Ctx = { Bindings: Env };
 export const authorize = new Hono<Ctx>();
 
-// The wrapper's MCP_ENABLED gate sees the raw path, Hono routes on the decoded one (/%61uthorize): gate here too, and
-// serve only the canonical path.
-authorize.use("*", (c, next) =>
-  c.env.MCP_ENABLED === "1" && new URL(c.req.url).pathname === "/authorize" ? next() : Promise.resolve(c.json({ error: "not_found" }, 404)));
+// The wrapper's switch gate sees the raw path, Hono routes on the decoded one (/%61uthorize): gate here too (same helper),
+// and serve only the canonical path.
+authorize.use("*", async (c, next) => {
+  let on: boolean;
+  try {
+    on = (await mcpState(c.env)).on;
+  } catch {
+    return c.json({ error: "unavailable" }, 503); // fail closed
+  }
+  if (!on || new URL(c.req.url).pathname !== "/authorize") return c.json({ error: "not_found" }, 404);
+  await next();
+});
 
 /** Who is signed in right now, or the refusal page (same status as the API would give). */
 async function who(req: Request, env: Env) {

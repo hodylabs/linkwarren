@@ -7,7 +7,7 @@ export type Env = {
   OAUTH_KV: KVNamespace;
   /** Injected by the OAuth provider for the handlers behind it. */
   OAUTH_PROVIDER?: OAuthHelpers;
-  /** MCP and the OAuth endpoints are off unless this is exactly "1". */
+  /** "0" locks MCP and the OAuth endpoints off; unset or "1" lets the owner's D1 setting decide (no setting yet: on only with "1"). */
   MCP_ENABLED?: string;
   DASHBOARD_HOST: string;
   /** "app" (default when unset or blank) or "access"; any other value fails closed with 500 misconfigured. */
