@@ -181,6 +181,22 @@ describe("Settings sections", () => {
     expect(screen.getByText(/About 2 rows to read, 0% of the free daily D1 reads/)).toBeTruthy();
   });
 
+  it("Cancel works while the export is starting: the Download button is disabled, Esc aborts /start and nothing downloads", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    let release = () => undefined as void;
+    const { api, user } = boot("/settings/backups", {
+      routes: { "POST /api/export/start": () => new Promise((r) => (release = () => r({ body: { format: "linkwarren-export", version: 1, exportedAt: 1, run: "r", includeAnalytics: false, estimatedReads: 2, logo: null, tables: [{ name: "users", columns: ["id"], rows: 2 }] } }))) },
+    });
+    await user.click(await screen.findByRole("button", { name: "Download full export" }));
+    expect((screen.getByRole("button", { name: "Download full export" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: /Cancel/ })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    release();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Download full export" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(writes(api).map((c) => c.path)).toEqual(["/api/export/start"]);
+    expect(click).not.toHaveBeenCalled();
+  });
+
   it("a large export asks first; Cancel reads no page", async () => {
     const { api, user } = boot("/settings/backups", {
       routes: { "POST /api/export/start": () => ({ body: { format: "linkwarren-export", version: 1, exportedAt: 1, run: "r", includeAnalytics: true, estimatedReads: 2_000_000, logo: null, tables: [{ name: "users", columns: ["id"], rows: 2 }] } }) },
@@ -277,5 +293,31 @@ describe("Settings sections", () => {
     expect(subnav).not.toContain("overflow-x");
     expect(narrow).toContain("grid-template-rows:max-content minmax(0,1fr)");
     expect(/\.sblock input,\.sblock select\{font-size:16px\}/.test(css)).toBe(true);
+  });
+});
+
+describe("Settings: unsaved drafts and section keys (Task 11)", () => {
+  const UNSAVED = "Unsaved changes: save with Ctrl+Enter or discard with Esc in the form first.";
+  it("a section switch (click or arrow) with an unsaved edit stays and says why; the edit is kept", async () => {
+    const { user } = boot("/settings/instance");
+    const name = (await screen.findByLabelText("Name")) as HTMLInputElement;
+    await user.type(name, " x");
+    await user.click(screen.getByRole("link", { name: "Email" }));
+    expect(location.pathname).toBe("/settings/instance");
+    screen.getByRole("link", { name: "This instance" }).focus();
+    await user.keyboard("{ArrowDown}");
+    expect(location.pathname).toBe("/settings/instance");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Northwind x");
+    expect(screen.getAllByText(UNSAVED).length).toBeGreaterThan(0);
+  });
+
+  it("arrow keys switch sections without adding a history entry per step", async () => {
+    const { user } = boot("/settings/instance");
+    await screen.findByLabelText("Name");
+    const before = history.length;
+    screen.getByRole("link", { name: "This instance" }).focus();
+    for (let i = 0; i < 3; i++) await user.keyboard("{ArrowDown}");
+    await waitFor(() => expect(location.pathname).toBe("/settings/email"));
+    expect(history.length).toBe(before);
   });
 });

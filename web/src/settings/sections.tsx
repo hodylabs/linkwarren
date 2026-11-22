@@ -5,6 +5,7 @@ import { errorText, plural } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Kbd, Seg, Switch } from "../shell/ui";
 import { useApp } from "../state";
+import { useUnsaved } from "../unsaved";
 import { deleteLogo, logoUrl, patchSettings, putLogo, sendTestEmail, type SecretStatus, type SettingsBody, type SettingsPatch } from "./api";
 import { settingsError } from "./copy";
 import { exportEstimate, exportFileName, runExport, saveBlob, startExport, type ExportStart } from "./exportRun";
@@ -42,6 +43,7 @@ function useEdit<K extends Key>(s: SettingsBody, keys: readonly K[], onSaved: (b
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
   const changed = keys.filter((k) => !same(draft[k], s[k]));
+  useUnsaved(changed.length > 0);
   const save = async () => {
     if (busy.current) return;
     if (!changed.length) return setMsg({ text: errorText("no_changes"), error: false });
@@ -239,7 +241,7 @@ export function DataSection({ s }: { s: SettingsBody }) {
 }
 
 type Progress = Record<string, number>;
-type Run = { phase: "idle" } | { phase: "confirm"; start: ExportStart } | { phase: "running" | "done"; start: ExportStart; progress: Progress };
+type Run = { phase: "idle" | "starting" } | { phase: "confirm"; start: ExportStart } | { phase: "running" | "done"; start: ExportStart; progress: Progress };
 
 /** "About N rows to read, X% of the free daily D1 reads for the whole Cloudflare account." */
 function estimateText(start: ExportStart) {
@@ -251,6 +253,7 @@ export function BackupsSection() {
   const { overlay } = useApp();
   const [analytics, setAnalytics] = useState(false);
   const [run, setRun] = useState<Run>({ phase: "idle" });
+  const starting = run.phase === "starting";
   const [error, setError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
   useEffect(() => () => abort.current?.abort(), []); // leaving the section cancels a running export
@@ -263,30 +266,35 @@ export function BackupsSection() {
         progress[p.table] = p.rows;
         setRun({ phase: "running", start, progress: { ...progress } });
       }, ac.signal);
+      if (ac.signal.aborted) return;
       saveBlob(blob, exportFileName(new Date()));
       setRun({ phase: "done", start, progress: { ...progress } });
     } catch (e) {
       setRun({ phase: "idle" });
       if (!ac.signal.aborted) setError(code(e));
     } finally {
-      abort.current = null;
+      if (abort.current === ac) abort.current = null;
     }
   };
   const begin = async () => {
     if (abort.current) return;
     const ac = (abort.current = new AbortController());
     setError(null);
+    setRun({ phase: "starting" });
     try {
       const start = await startExport(api, { includeAnalytics: analytics }, ac.signal);
+      if (ac.signal.aborted) return; // cancelled while /start was on its way
       if (exportEstimate(start).confirm) {
         abort.current = null;
         return setRun({ phase: "confirm", start });
       }
       await page(start, ac);
     } catch (e) {
-      abort.current = null;
-      setRun({ phase: "idle" });
-      if (!ac.signal.aborted) setError(code(e));
+      if (abort.current === ac) abort.current = null;
+      if (!ac.signal.aborted) {
+        setRun({ phase: "idle" });
+        setError(code(e));
+      }
     }
   };
   const cont = (start: ExportStart) => {
@@ -295,9 +303,10 @@ export function BackupsSection() {
   };
   const cancel = () => {
     abort.current?.abort();
+    abort.current = null;
     setRun({ phase: "idle" });
   };
-  useHotkeys({ escape: cancel } satisfies Bindings<typeof EXPORT_KEYS>, overlay === null && (run.phase === "running" || run.phase === "confirm"));
+  useHotkeys({ escape: cancel } satisfies Bindings<typeof EXPORT_KEYS>, overlay === null && (starting || run.phase === "running" || run.phase === "confirm"));
 
   const progress = run.phase === "running" || run.phase === "done" ? run.progress : null;
   const cont0 = useRef<HTMLButtonElement>(null);
@@ -313,8 +322,8 @@ export function BackupsSection() {
         Include click analytics (daily totals; can be many rows)
       </label>
       <div className="row-actions save-row">
-        <button type="button" className="btn" onClick={() => void begin()} disabled={run.phase === "running" || run.phase === "confirm"}>Download full export</button>
-        {run.phase === "running" && <button type="button" className="btn ghost" onClick={cancel} aria-keyshortcuts="Escape">Cancel<Kbd>Esc</Kbd></button>}
+        <button type="button" className="btn" onClick={() => void begin()} disabled={starting || run.phase === "running" || run.phase === "confirm"}>Download full export</button>
+        {(starting || run.phase === "running") && <button type="button" className="btn ghost" onClick={cancel} aria-keyshortcuts="Escape">Cancel<Kbd>Esc</Kbd></button>}
       </div>
       {run.phase === "confirm" && (
         <div className="callout wait gap" role="alert">
@@ -326,7 +335,7 @@ export function BackupsSection() {
         </div>
       )}
       <div aria-live="polite">
-        {run.phase !== "idle" && run.phase !== "confirm" && <p className="muted">{estimateText(run.start)}</p>}
+        {(run.phase === "running" || run.phase === "done") && <p className="muted">{estimateText(run.start)}</p>}
         {progress && (
           <ul className="fails">
             {Object.entries(progress).map(([t, n]) => <li key={t}><span className="mono">{t}</span>: {plural(n, "row")}</li>)}

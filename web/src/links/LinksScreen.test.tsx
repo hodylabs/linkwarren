@@ -1058,3 +1058,32 @@ describe("Links selection", () => {
     });
   });
 });
+
+describe("unsaved draft guard (S2 ruling)", () => {
+  const UNSAVED = "Unsaved changes: save with Ctrl+Enter or discard with Esc in the form first.";
+  it("J, K and Esc outside a dirty detail panel do nothing and say why; the typed URL stays", async () => {
+    const { api, user } = boot({ path: "/links?sel=l2" });
+    await ready();
+    await user.clear(urlInput());
+    await user.type(urlInput(), "https://changed.test/");
+    rows()[1]!.focus();
+    for (const k of ["j", "k", "{Escape}"]) {
+      await user.keyboard(k);
+      expect(rows()[1]!.getAttribute("aria-selected")).toBe("true");
+      expect(location.search).toContain("sel=l2");
+      expect(urlInput().value).toBe("https://changed.test/");
+    }
+    expect(screen.getAllByText(UNSAVED).length).toBeGreaterThan(0);
+    expect(api.calls.filter((c) => c.method !== "GET")).toEqual([]);
+  });
+
+  it("after Esc in the form discards the draft, J moves again", async () => {
+    const { user } = boot({ path: "/links?sel=l2" });
+    await ready();
+    await user.type(urlInput(), "x");
+    await user.keyboard("{Escape}");
+    rows()[1]!.focus();
+    await user.keyboard("j");
+    expect(rows()[2]!.getAttribute("aria-selected")).toBe("true");
+  });
+});

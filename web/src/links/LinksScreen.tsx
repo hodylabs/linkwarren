@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { api, ApiError, type BulkOp, type Link, type LinkStats, type Page } from "../api";
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
+import { hasUnsaved, UNSAVED } from "../unsaved";
 import { navigate, useRoute } from "../router";
 import { Sheet, useOpenSheets } from "../shell/Sheet";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
@@ -314,8 +315,8 @@ export function LinksScreen() {
     "shift+e": () => onAction("export"),
   } satisfies Bindings<typeof BULK_KEYS>;
   const linkKeys = {
-      j: () => void move(1),
-      k: () => void move(-1),
+      j: () => (hasUnsaved() ? app.announce(UNSAVED) : void move(1)),
+      k: () => (hasUnsaved() ? app.announce(UNSAVED) : void move(-1)),
       c: () => detailRef.current?.copy(),
       q: () => detailRef.current?.focusQr(),
       e: () => detailRef.current?.focusUrl(),
@@ -335,6 +336,7 @@ export function LinksScreen() {
       "mod+a": () => pick(all(order)),
       escape: (e) => {
         if (isTypingTarget(e.target)) return;
+        if (hasUnsaved()) return app.announce(UNSAVED);
         if (open || !picking) {
           if (sel) closeDetail(); // the pushed detail first: the selection behind it is not on screen
         } else clearPick();

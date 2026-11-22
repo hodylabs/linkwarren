@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Keyb
 import { api, ApiError, type Domain, type Link, type LinkStats, type Route } from "../api";
 import { errorText } from "../copy";
 import { rebase } from "../draft";
+import { useUnsaved } from "../unsaved";
 import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
@@ -63,6 +64,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     const qrRef = useRef<HTMLButtonElement>(null);
     const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
     const host = domain?.host ?? "";
+    useUnsaved(canEdit && !link.forwardTo && Object.keys(diff(link, draft)).length > 0);
 
     // A new revision (after a save or a reload) replaces the form; typing never triggers this.
     // After this form's own save, fields edited while it was pending keep what was typed.
