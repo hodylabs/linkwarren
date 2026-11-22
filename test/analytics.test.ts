@@ -6,20 +6,22 @@ import type { UserRow } from "../src/types";
 
 const SQL_URL = "https://api.cloudflare.com/client/v4/analytics/sql";
 const NOW = Date.parse("2026-11-20T12:34:00Z") / 1000;
-const ae: Env = { ...env, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: "tok" };
+const ae: Env = { ...env, CLICKS: { writeDataPoint() {} }, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: "tok" };
 const D = (s: string) => new Date(s);
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const user = (id: string, role: "owner" | "member"): UserRow => ({ id, email: `${id}@example.com`, name: null, role, status: "active", createdAt: 1 });
 
-function stubAe(rows: unknown[], status = 200) {
+/** `rows` answer the series query (bucket, qr, typed, bots); `links` the per-link query. */
+function stubAe(rows: unknown[], status = 200, links: unknown[] = []) {
   const bodies: { query: string; params: Record<string, string> }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (String(input) !== SQL_URL) throw new Error("unexpected fetch");
     const b = JSON.parse(String(init?.body));
     bodies.push(b);
     if (status !== 200) return new Response("no", { status });
-    return Response.json({ data: b.query.includes("blob7 AS source") ? rows : [] });
+    const q = b.query as string;
+    return Response.json({ data: q.includes("AS bucket, countIf") ? rows : q.includes("blob2 AS linkId") ? links : [] });
   });
   return bodies;
 }
@@ -136,9 +138,10 @@ describe("resolveScope", () => {
 
 describe("loadRows (Review Focus 4)", () => {
   const aeRows = [
-    { bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", slug: "spring", source: "typed", kind: "human", n: 99 },
-    { bucket: "2026-11-19 00:00:00", domainId: "d1", linkId: "l1", slug: "spring", source: "typed", kind: "human", n: 7 },
+    { bucket: "2026-11-18 00:00:00", qr: 0, typed: 99, bots: 0 },
+    { bucket: "2026-11-19 00:00:00", qr: 0, typed: 7, bots: 0 },
   ];
+  const aeLinks = [{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 7 }];
   const seedD1 = async () => {
     await run("INSERT INTO clicks_daily (day, link_id, domain_id, slug, qr, typed, bots, visitors) VALUES ('2026-11-18','l1','d1','spring',0,5,0,1)");
     await run("INSERT INTO clicks_daily_dim (day, link_id, domain_id, dim, value, clicks) VALUES ('2026-11-18','l1','d1','country','CA',5)");
@@ -151,14 +154,14 @@ describe("loadRows (Review Focus 4)", () => {
   it("days up to the watermark come from D1 only, later days from AE", async () => {
     await seedD1();
     await run("INSERT INTO analytics_state (k, v) VALUES ('rolled_through', '2026-11-18')");
-    const bodies = stubAe(aeRows);
+    const bodies = stubAe(aeRows, 200, aeLinks);
     const r = await loadRows(ae, r1820, all, NOW);
     expect(sum(r.days)).toBe(12);
     expect(r.live).toBe("ok");
     expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 12 }]);
     expect(r.dims).toEqual([{ dim: "country", value: "CA", clicks: 5 }]);
-    expect(bodies).toHaveLength(5);
-    expect(bodies.every((b) => b.params.from === "2026-11-19T00:00:00Z")).toBe(true);
+    expect(bodies).toHaveLength(6);
+    expect(bodies.every((b) => b.params.from === "2026-11-19T00:00:00Z" && b.params.cur === "2026-11-19T00:00:00Z")).toBe(true);
   });
   it("no watermark: everything in range comes from AE", async () => {
     await seedD1();
@@ -196,6 +199,21 @@ describe("loadRows (Review Focus 4)", () => {
     expect([sum(r.days), r.live, bodies.length]).toEqual([5, "unavailable", 0]);
     expect(log).toHaveBeenCalledWith("analytics live read failed", "bad_sql_id");
     expect(JSON.stringify(log.mock.calls)).not.toContain("odd id!");
+  });
+  it("CLICKS binding missing with a token set: off, not unavailable, no fetch (M1)", async () => {
+    await seedD1();
+    await run("INSERT INTO analytics_state (k, v) VALUES ('rolled_through', '2026-11-18')");
+    const bodies = stubAe(aeRows);
+    const r = await loadRows({ ...ae, CLICKS: undefined }, r1820, all, NOW);
+    expect([sum(r.days), r.live, bodies.length]).toEqual([5, "off", 0]);
+  });
+  it("a capped Analytics Engine answer degrades to unavailable with the D1 rows (I1)", async () => {
+    await seedD1();
+    await run("INSERT INTO analytics_state (k, v) VALUES ('rolled_through', '2026-11-18')");
+    stubAe(Array.from({ length: 2001 }, () => aeRows[1]));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await loadRows(ae, r1820, all, NOW);
+    expect([sum(r.days), r.live]).toEqual([5, "unavailable"]);
   });
   it("AE not configured: D1 rows and off, no fetch", async () => {
     await seedD1();
@@ -263,9 +281,9 @@ describe("loadRows (Review Focus 4)", () => {
   });
   it("hourly reads AE only", async () => {
     await seedD1();
-    const bodies = stubAe([{ bucket: "2026-11-20 10:00:00", domainId: "d1", linkId: "l1", slug: "spring", source: "qr", kind: "human", n: 2 }]);
+    const bodies = stubAe([{ bucket: "2026-11-20 10:00:00", qr: 2, typed: 0, bots: 0 }], 200, [{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 2 }]);
     const r = await loadRows(ae, span("2026-11-19T13:00:00Z", "2026-11-20T13:00:00Z", "hour"), all, NOW);
-    expect(r.days).toEqual([{ bucket: "2026-11-20T10:00:00Z", domainId: "d1", linkId: "l1", slug: "spring", qr: 2, typed: 0, bots: 0, visitors: 0 }].map(({ bucket, qr, typed, bots, visitors }) => ({ bucket, qr, typed, bots, visitors })));
+    expect(r.days).toEqual([{ bucket: "2026-11-20T10:00:00Z", qr: 2, typed: 0, bots: 0, visitors: 0 }]);
     expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 2 }]);
     expect(bodies[0].query).toContain("toStartOfHour");
   });

@@ -1,4 +1,4 @@
-import { aeAggregate, aeConfigured, AeError, type DimRow, type Scope, type TotRow, type Unit } from "./ae";
+import { aeConfigured, AeError, aeReport, type DayRow, type DimCount, type LinkRow, type Scope, type Unit } from "./ae";
 import { utcDay } from "./clicks";
 import { rolledThrough } from "./cron";
 import type { Env } from "./env";
@@ -7,8 +7,9 @@ import type { UserRow } from "./types";
 
 /**
  * Report builder. One report reads the current window and the window before it in a single pass (they are
- * adjacent), so it costs at most 5 Analytics Engine queries (one aeAggregate) and 4 D1 calls (usable ids, link
- * search, watermark, one batch of up to 3 GROUP BY rollup selects).
+ * adjacent), so it costs 6 Analytics Engine queries per id chunk (one aeReport; 2 chunks for R5's 500 link ids, so
+ * 12) and 4 D1 calls (usable ids, link search, watermark, one batch of up to 3 GROUP BY rollup selects). Both sides
+ * are summed in SQL: the Worker gets buckets + links + dim values rows, never buckets x links.
  */
 
 export type RangeQuery = { range: "1" | "7" | "30" | "90" | "custom"; from?: string; to?: string };
@@ -103,12 +104,7 @@ function scopeSql(scope: Scope, binds: unknown[]): string {
   return s;
 }
 
-/** Per-bucket totals, current and prev window (series, totals, prevClicks). */
-export type DayRow = { bucket: string; qr: number; typed: number; bots: number; visitors: number };
-/** Per-link human clicks, current window only. */
-export type LinkRow = { linkId: string; domainId: string; slug: string; clicks: number };
-/** Per (dim, value) human clicks, current window only. */
-export type DimCount = { dim: DimRow["dim"]; value: string; clicks: number };
+export type { DayRow, DimCount, LinkRow } from "./ae";
 export type ReportRows = { days: DayRow[]; links: LinkRow[]; dims: DimCount[]; live: Live };
 
 /**
@@ -189,21 +185,18 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
   }
   if (!aeConfigured(env)) return out("off");
   if (aeFrom >= range.to) return out("ok");
-  let live: { tot: TotRow[]; dims: DimRow[] };
+  let live: Awaited<ReturnType<typeof aeReport>>;
   try {
-    live = await aeAggregate(env, aeFrom, range.to, unit, scope);
+    live = await aeReport(env, aeFrom, range.from, range.to, unit, scope);
   } catch (e) {
     // R9: any AE-layer failure (an AeError, or sqlId's bad_sql_id on an odd stored id) degrades, never a 500.
     console.error("analytics live read failed", errCode(e));
     return out(e instanceof AeError && e.message === "ae_off" ? "off" : "unavailable");
   }
   const aeK = bucketKey(aeFrom, unit); // keep the seam exact even if AE answers outside the bounds
-  for (const r of live.tot) {
-    if (r.bucket < aeK) continue;
-    addDay(r);
-    if (r.bucket >= curK) addLink({ linkId: r.linkId, domainId: r.domainId, slug: r.slug, clicks: r.qr + r.typed });
-  }
-  for (const r of live.dims) if (r.bucket >= aeK && r.bucket >= curK) addDim(r);
+  for (const r of live.days) if (r.bucket >= aeK) addDay(r);
+  live.links.forEach(addLink); // aeReport reads links and dims from max(aeFrom, range.from), after the seam
+  live.dims.forEach(addDim);
   return out("ok");
 }
 

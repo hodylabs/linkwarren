@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aeAggregate, aeConfigured, AeError, aeLinkDays, aeQuery, MAX_SQL, sqlId } from "../src/ae";
+import { aeConfigured, aeDay, AeError, aeLinkDays, aeQuery, aeReport, MAX_SQL, ROW_CAP, sqlId } from "../src/ae";
 import type { Env } from "../src/env";
 
 const TOKEN = "ae-SECRET-tok";
 const SQL_URL = "https://api.cloudflare.com/client/v4/analytics/sql";
-const env = { DB: {}, CACHE: {}, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: TOKEN } as unknown as Env;
+const env = { DB: {}, CACHE: {}, CLICKS: { writeDataPoint() {} }, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: TOKEN } as unknown as Env;
 const from = new Date("2026-11-18T00:00:00Z");
 const to = new Date("2026-11-20T00:00:00Z");
 const all = { domainIds: null, linkIds: null };
@@ -39,6 +39,9 @@ describe("aeConfigured", () => {
     expect(aeConfigured({ ...env, AE_READ_TOKEN: " " })).toBe(false);
     expect(aeConfigured({ ...env, CF_ACCOUNT_ID: undefined })).toBe(false);
   });
+  it("is off without the CLICKS binding even with a token (nothing is recorded, so nothing to read)", () => {
+    expect(aeConfigured({ ...env, CLICKS: undefined })).toBe(false);
+  });
   it("validates the dataset name", () => {
     expect(aeConfigured({ ...env, AE_DATASET: "my_clicks" })).toBe(true);
     expect(aeConfigured({ ...env, AE_DATASET: "x;DROP" })).toBe(false);
@@ -51,7 +54,18 @@ describe("aeQuery", () => {
     const f = fake(() => [{ n: 1 }]);
     expect(await aeQuery(env, "SELECT 1", { a: "b" })).toEqual([{ n: 1 }]);
     expect(f.sent[0].auth).toBe(`Bearer ${TOKEN}`);
-    expect(f.sent[0].body).toEqual({ query: "SELECT 1", params: { a: "b" } });
+    expect(f.sent[0].body).toEqual({ query: `SELECT 1 LIMIT ${ROW_CAP + 1}`, params: { a: "b" } });
+  });
+  it("a capped answer is an AeError, never a silently partial result", async () => {
+    const rows = (n: number) => Array.from({ length: n }, () => ({ n: 1 }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ data: rows(ROW_CAP + 1) }));
+    await expect(aeQuery(env, "SELECT 1", {})).rejects.toMatchObject({ name: "AeError", message: "ae_truncated" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ data: rows(3), rows: 5 }));
+    await expect(aeQuery(env, "SELECT 1", {})).rejects.toMatchObject({ message: "ae_truncated" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ data: rows(3), rows: 3, rows_before_limit_at_least: 9 }));
+    await expect(aeQuery(env, "SELECT 1", {})).rejects.toMatchObject({ message: "ae_truncated" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ data: rows(ROW_CAP), rows: ROW_CAP }));
+    expect(await aeQuery(env, "SELECT 1", {})).toHaveLength(ROW_CAP);
   });
   it("non-2xx rejects with ae_<status> and never leaks the token", async () => {
     fake(() => [], 500);
@@ -78,109 +92,138 @@ describe("aeQuery", () => {
   });
 });
 
-describe("aeAggregate", () => {
+const cur = new Date("2026-11-19T00:00:00Z");
+const isSeries = (q: string) => q.includes("countIf(blob8 = $human AND blob7 = $qr)") && q.includes("AS bucket");
+
+describe("aeReport", () => {
   it("refuses a bad id before any request (Review Focus 1)", async () => {
     const f = fake();
-    await expect(aeAggregate(env, from, to, "day", { domainIds: ["x' OR 1=1"], linkIds: null })).rejects.toThrow("bad_sql_id");
-    await expect(aeAggregate(env, from, to, "day", { domainIds: null, linkIds: ["a b"] })).rejects.toThrow("bad_sql_id");
+    await expect(aeReport(env, from, cur, to, "day", { domainIds: ["x' OR 1=1"], linkIds: null })).rejects.toThrow("bad_sql_id");
+    await expect(aeReport(env, from, cur, to, "day", { domainIds: null, linkIds: ["a b"] })).rejects.toThrow("bad_sql_id");
     expect(f.spy).not.toHaveBeenCalled();
   });
 
   it("an empty scope list matches nothing without a request", async () => {
     const f = fake();
-    expect(await aeAggregate(env, from, to, "day", { domainIds: null, linkIds: [] })).toEqual({ tot: [], dims: [] });
-    expect(await aeAggregate(env, from, to, "day", { domainIds: [], linkIds: null })).toEqual({ tot: [], dims: [] });
+    const none = { days: [], links: [], dims: [] };
+    expect(await aeReport(env, from, cur, to, "day", { domainIds: null, linkIds: [] })).toEqual(none);
+    expect(await aeReport(env, from, cur, to, "day", { domainIds: [], linkIds: null })).toEqual(none);
     expect(f.spy).not.toHaveBeenCalled();
   });
 
-  it("sends five scoped queries with every value bound, none in the SQL text", async () => {
+  it("sends six queries with every value bound, none in the SQL text; links replace the domain clause", async () => {
     const f = fake();
-    await aeAggregate(env, from, to, "day", { domainIds: ["d1", "d2"], linkIds: ["l1"] });
-    expect(f.sent).toHaveLength(5);
+    await aeReport(env, from, cur, to, "day", { domainIds: ["d1", "d2"], linkIds: ["l1"] });
+    expect(f.sent).toHaveLength(6);
     for (const s of f.sent) {
       expect(s.auth).toBe(`Bearer ${TOKEN}`);
       const q = s.body.query;
       expect(q).toContain(`FROM events.analyticsEngine."linkwarren_clicks"`);
       expect(q).toContain("accountTag = $account");
-      expect(q).toContain("timestamp >= $from AND timestamp < $to");
-      expect(q).toContain("(blob1 = $d0 OR blob1 = $d1)");
+      expect(q).toMatch(/timestamp >= \$(from|cur) AND timestamp < \$to/);
       expect(q).toContain("(blob2 = $l0)");
-      expect(q).toContain("toStartOfDay(timestamp)");
+      expect(q).not.toContain("blob1 = $d");
+      expect(q).toMatch(/LIMIT \d+$/);
       // No literals at all: no quotes, only the SQL alphabet, and no input value outside a $param name.
       expect(q).toMatch(/^[A-Za-z0-9_ ,.()$=<>!*"]+$/);
       for (const v of ["d1", "d2", "l1", "acc1", "2026"]) expect(q).not.toMatch(new RegExp(`(?<![$\\w])${v}(?!\\w)`));
-      expect(s.body.params).toMatchObject({ account: "acc1", from: "2026-11-18T00:00:00Z", to: "2026-11-20T00:00:00Z", d0: "d1", d1: "d2", l0: "l1" });
+      expect(s.body.params).toMatchObject({ account: "acc1", from: "2026-11-18T00:00:00Z", cur: "2026-11-19T00:00:00Z", to: "2026-11-20T00:00:00Z", l0: "l1" });
     }
+    // Series and visitors span the whole read; links and dims only the current window.
+    expect(f.sent.filter((s) => s.body.query.includes("$from"))).toHaveLength(2);
+    expect(f.sent.filter((s) => s.body.query.includes("$cur"))).toHaveLength(4);
   });
 
-  it("uses the configured dataset and the hour bucket, no scope clause when unfiltered", async () => {
+  it("a domain scope is a bound blob1 clause", async () => {
     const f = fake();
-    await aeAggregate({ ...env, AE_DATASET: "other_ds" }, from, to, "hour", all);
-    expect(f.sent).toHaveLength(5);
+    await aeReport(env, from, cur, to, "day", { domainIds: ["d1", "d2"], linkIds: null });
+    for (const s of f.sent) expect(s.body.query).toContain("(blob1 = $d0 OR blob1 = $d1)");
+  });
+
+  it("groups in SQL: by bucket, by link, by value, never bucket x link (I1)", async () => {
+    const f = fake();
+    await aeReport({ ...env, AE_DATASET: "other_ds" }, from, cur, to, "hour", all);
+    const groups = f.sent.map((s) => s.body.query.replace(/ LIMIT \d+$/, "").split(" GROUP BY ")[1]).sort();
+    expect(groups).toEqual(["blob2", "blob4", "blob5", "blob6", "toStartOfHour(timestamp)", "toStartOfHour(timestamp)"]);
     for (const s of f.sent) {
       expect(s.body.query).toContain(`FROM events.analyticsEngine."other_ds"`);
-      expect(s.body.query).toContain("toStartOfHour(timestamp)");
       expect(s.body.query).not.toMatch(/blob[12] = /);
     }
   });
 
-  it("folds canned rows into TotRow and DimRow", async () => {
+  it("maps the summed rows and adds them up across chunks", async () => {
     const day = "2026-11-19 00:00:00";
-    const at = { bucket: day, domainId: "d1", linkId: "l1" };
     fake((q) => {
-      if (q.includes("COUNT(DISTINCT blob9)")) return [{ ...at, n: "2" }];
-      if (q.includes("blob4 AS value")) return [{ ...at, value: "CA", n: 4 }, { ...at, value: "US", n: 1 }];
-      if (q.includes("blob5 AS value")) return [{ ...at, value: "mobile", n: 5 }];
-      if (q.includes("blob6 AS value")) return [{ ...at, value: "", n: 2 }];
-      return [
-        { ...at, slug: "spring", source: "qr", kind: "human", n: 3 },
-        { ...at, slug: "spring", source: "typed", kind: "human", n: "2" },
-        { ...at, slug: "spring", source: "typed", kind: "bot", n: 3 },
-        { ...at, slug: "spring", source: "qr", kind: "preview", n: 1 },
-        { bucket: "2026-11-18T00:00:00Z", domainId: "d1", linkId: "l2", slug: "x", source: "typed", kind: "bot", n: 1 },
-      ];
+      if (q.includes("COUNT(DISTINCT blob9)")) return [{ bucket: day, n: "2" }];
+      if (q.includes("blob4 AS value")) return [{ value: "CA", n: 4 }, { value: "US", n: 1 }];
+      if (q.includes("blob5 AS value")) return [{ value: "mobile", n: 5 }];
+      if (q.includes("blob6 AS value")) return [{ value: "", n: 2 }];
+      if (q.includes("blob2 AS linkId")) return [{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 5 }];
+      return [{ bucket: day, qr: 3, typed: "2", bots: 4 }, { bucket: "2026-11-18T00:00:00Z", qr: 0, typed: 0, bots: 1 }];
     });
-    const r = await aeAggregate(env, from, to, "day", all);
-    expect(r.tot).toEqual([
-      { bucket: "2026-11-18", domainId: "d1", linkId: "l2", slug: "x", qr: 0, typed: 0, bots: 1, visitors: 0 },
-      { bucket: "2026-11-19", domainId: "d1", linkId: "l1", slug: "spring", qr: 3, typed: 2, bots: 4, visitors: 2 },
+    const r = await aeReport(env, from, cur, to, "day", all);
+    expect(r.days).toEqual([
+      { bucket: "2026-11-19", qr: 3, typed: 2, bots: 4, visitors: 2 },
+      { bucket: "2026-11-18", qr: 0, typed: 0, bots: 1, visitors: 0 },
     ]);
-    const d = { bucket: "2026-11-19", domainId: "d1", linkId: "l1" };
+    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 5 }]);
     expect(r.dims).toEqual([
-      { ...d, dim: "country", value: "CA", clicks: 4 },
-      { ...d, dim: "country", value: "US", clicks: 1 },
-      { ...d, dim: "device", value: "mobile", clicks: 5 },
-      { ...d, dim: "referrer", value: "", clicks: 2 },
+      { dim: "country", value: "CA", clicks: 4 },
+      { dim: "country", value: "US", clicks: 1 },
+      { dim: "device", value: "mobile", clicks: 5 },
+      { dim: "referrer", value: "", clicks: 2 },
     ]);
   });
 
-  it("formats hour buckets as ISO hours", async () => {
-    fake((q) => (q.includes("blob3 AS slug") ? [{ bucket: "2026-11-19 13:00:00", domainId: "d1", linkId: "l1", slug: "s", source: "typed", kind: "human", n: 1 }] : []));
-    const r = await aeAggregate(env, from, to, "hour", all);
-    expect(r.tot[0].bucket).toBe("2026-11-19T13:00:00Z");
-  });
-
-  it("an unreadable bucket is an AeError, not a bogus row", async () => {
-    fake((q) => (q.includes("blob3 AS slug") ? [{ bucket: "soon", domainId: "d1", linkId: "l1", slug: "s", source: "typed", kind: "human", n: 1 }] : []));
-    await expect(aeAggregate(env, from, to, "day", all)).rejects.toMatchObject({ name: "AeError", message: "ae_bad_response" });
+  it("formats hour buckets as ISO hours; an unreadable bucket is an AeError", async () => {
+    fake((q) => (isSeries(q) ? [{ bucket: "2026-11-19 13:00:00", qr: 0, typed: 1, bots: 0 }] : []));
+    expect((await aeReport(env, from, cur, to, "hour", all)).days[0].bucket).toBe("2026-11-19T13:00:00Z");
+    vi.restoreAllMocks();
+    fake((q) => (isSeries(q) ? [{ bucket: "soon", qr: 0, typed: 1, bots: 0 }] : []));
+    await expect(aeReport(env, from, cur, to, "day", all)).rejects.toMatchObject({ name: "AeError", message: "ae_bad_response" });
   });
 
   it("filters human, non-empty visitor and typed-only referrers by bound params", async () => {
     const f = fake();
-    await aeAggregate(env, from, to, "day", all);
+    await aeReport(env, from, cur, to, "day", all);
     const qs = f.sent.map((s) => s.body);
     const vis = qs.find((b) => b.query.includes("COUNT(DISTINCT blob9)"))!;
     expect(vis.query).toContain("blob8 = $human AND blob9 != $none");
-    expect(vis.params).toMatchObject({ human: "human", none: "" });
-    const ref = qs.find((b) => b.query.includes("blob6 AS value"))!;
-    expect(ref.query).toContain("blob8 = $human AND blob7 = $typed");
-    expect(ref.params).toMatchObject({ typed: "typed" });
-    for (const c of ["blob4", "blob5"]) expect(qs.find((b) => b.query.includes(`${c} AS value`))!.query).toContain("blob8 = $human");
+    expect(vis.params).toMatchObject({ human: "human", none: "", qr: "qr", typed: "typed" });
+    expect(qs.find((b) => b.query.includes("blob6 AS value"))!.query).toContain("blob8 = $human AND blob7 = $typed");
+    for (const c of ["blob4", "blob5", "blob2 AS linkId"]) expect(qs.find((b) => b.query.includes(c))!.query).toContain("blob8 = $human");
+  });
+
+  it("no current window inside the read: only series and visitors are queried", async () => {
+    const f = fake();
+    await aeReport(env, from, to, to, "day", all);
+    expect(f.sent).toHaveLength(2);
   });
 
   it("any query failing rejects with an AeError", async () => {
     fake(() => [], 403);
-    await expect(aeAggregate(env, from, to, "day", all)).rejects.toMatchObject({ name: "AeError", message: "ae_403" });
+    await expect(aeReport(env, from, cur, to, "day", all)).rejects.toMatchObject({ name: "AeError", message: "ae_403" });
+  });
+});
+
+describe("aeDay", () => {
+  it("one UTC day, grouped to exactly the rollup rows", async () => {
+    const f = fake((q) => {
+      if (q.includes("COUNT(DISTINCT blob9)")) return [{ linkId: "l1", n: 2 }];
+      if (q.includes("blob4 AS value")) return [{ linkId: "l1", domainId: "d1", value: "CA", n: 4 }];
+      if (q.includes("argMax(blob3")) return [{ linkId: "l1", domainId: "d1", slug: "spring", qr: 3, typed: 2, bots: 4 }, { linkId: "l2", domainId: "d1", slug: "x", qr: 0, typed: 0, bots: 1 }];
+      return [];
+    });
+    const r = await aeDay(env, "2026-11-18");
+    expect(f.sent).toHaveLength(5);
+    for (const s of f.sent) expect(s.body.params).toMatchObject({ from: "2026-11-18T00:00:00Z", to: "2026-11-19T00:00:00Z" });
+    const groups = f.sent.map((s) => s.body.query.replace(/ LIMIT \d+$/, "").split(" GROUP BY ")[1]).sort();
+    expect(groups).toEqual(["blob2", "blob2", "blob2, blob4", "blob2, blob5", "blob2, blob6"]);
+    expect(r.tot).toEqual([
+      { linkId: "l1", domainId: "d1", slug: "spring", qr: 3, typed: 2, bots: 4, visitors: 2 },
+      { linkId: "l2", domainId: "d1", slug: "x", qr: 0, typed: 0, bots: 1, visitors: 0 },
+    ]);
+    expect(r.dims).toEqual([{ linkId: "l1", domainId: "d1", dim: "country", value: "CA", clicks: 4 }]);
   });
 });
 
@@ -188,26 +231,33 @@ describe("statement size limit", () => {
   const ids = Array.from({ length: 500 }, (_, i) => `link${String(i).padStart(4, "0")}`);
   const linkOf = (p: Record<string, unknown>) => Object.entries(p).filter(([k]) => /^l\d+$/.test(k)).map(([, v]) => String(v));
 
-  it("a 500-id scope splits into statements under the budget and merges the rows", async () => {
-    const f = fake((q) => {
-      const n = q.includes("blob3 AS slug") ? 1 : 0;
-      return n ? [{ bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "x", slug: "s", source: "typed", kind: "human", n: 1 }] : [];
-    });
-    const out = await aeAggregate(env, from, to, "day", { domainIds: ["d1"], linkIds: ids });
+  it("a 500-id scope splits into statements under the budget and sums the rows", async () => {
+    const f = fake((q) => (isSeries(q) ? [{ bucket: "2026-11-18 00:00:00", qr: 0, typed: 1, bots: 0 }] : []));
+    const out = await aeReport(env, from, cur, to, "day", { domainIds: ["d1"], linkIds: ids });
     for (const s of f.sent) expect(s.body.query.length).toBeLessThan(MAX_SQL);
-    expect(f.sent.length).toBeLessThanOrEqual(10);
-    expect(f.sent.length % 5).toBe(0);
+    expect(f.sent.length).toBe(12);
     const seen = f.sent.flatMap((s) => linkOf(s.body.params));
     expect(new Set(seen).size).toBe(500);
-    expect(out.tot.reduce((a, r) => a + r.typed, 0)).toBe(f.sent.length / 5);
+    expect(out.days).toEqual([{ bucket: "2026-11-18", qr: 0, typed: 2, bots: 0, visitors: 0 }]);
+  });
+
+  it("a member's 1000 usable domains are chunked too (M2)", async () => {
+    const doms = Array.from({ length: 1000 }, (_, i) => `dom${String(i).padStart(4, "0")}`);
+    const f = fake();
+    await aeReport(env, from, cur, to, "day", { domainIds: doms, linkIds: null });
+    for (const s of f.sent) expect(s.body.query.length).toBeLessThan(MAX_SQL);
+    const seen = f.sent.flatMap((s) => Object.entries(s.body.params).filter(([k]) => /^d\d+$/.test(k)).map(([, v]) => v));
+    expect(new Set(seen).size).toBe(1000);
+    expect(f.sent.length % 6).toBe(0);
   });
 
   it("aeLinkDays chunks the same way and concatenates", async () => {
-    const f = fake(() => [{ bucket: "2026-11-18 00:00:00", linkId: "a", source: "qr", n: 2 }]);
+    const f = fake(() => [{ bucket: "2026-11-18 00:00:00", linkId: "a", qr: 2, typed: 1 }]);
     const rows = await aeLinkDays(env, from, to, ids);
     expect(f.sent.length).toBeGreaterThan(1);
     for (const s of f.sent) expect(s.body.query.length).toBeLessThan(MAX_SQL);
     expect(new Set(f.sent.flatMap((s) => linkOf(s.body.params))).size).toBe(500);
     expect(rows).toHaveLength(f.sent.length);
+    expect(rows[0]).toEqual({ bucket: "2026-11-18", linkId: "a", qr: 2, typed: 1 });
   });
 });

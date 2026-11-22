@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PURGE_MAX, purgeAudit, rolledThrough, rollup, watermarkStmt } from "../src/cron";
+import { DAY_WRITE_BUDGET, MAX_DAYS, PURGE_MAX, purgeAudit, rolledThrough, rollup, RUN_WRITE_BUDGET, watermarkStmt } from "../src/cron";
 import type { Env } from "../src/env";
 import worker from "../src/index";
 
@@ -8,24 +8,24 @@ const SQL_URL = "https://api.cloudflare.com/client/v4/analytics/sql";
 const NOW = Date.parse("2026-11-20T12:00:00Z") / 1000;
 const NOW2 = Date.parse("2026-11-21T12:00:00Z") / 1000; // rolls through 11-19
 const CUTOFF = NOW - 1096 * 86400;
-const ae: Env = { ...env, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: "tok" };
+const ae: Env = { ...env, CLICKS: { writeDataPoint() {} } as unknown as AnalyticsEngineDataset, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: "tok" };
 
-/** Canned AE rows for 11-18 (link l1: 3 qr, 2 typed, 4 bots, 2 visitors) and 11-19 (link l2: 1 typed). */
-function reply(q: string): unknown[] {
-  if (q.includes("blob7 AS source"))
-    return [
-      { bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", slug: "spring", source: "qr", kind: "human", n: 3 },
-      { bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", slug: "spring", source: "typed", kind: "human", n: 2 },
-      { bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", slug: "spring", source: "typed", kind: "bot", n: 4 },
-      { bucket: "2026-11-19 00:00:00", domainId: "d1", linkId: "l2", slug: "fall", source: "typed", kind: "human", n: 1 },
-    ];
-  if (q.includes("COUNT(DISTINCT")) return [{ bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", n: 2 }];
+/** Canned AE rows (aeDay shapes, one query per day): 11-18 has link l1 (3 qr, 2 typed, 4 bots, 2 visitors), 11-19 link l2 (1 typed). */
+function reply(q: string, from: string): unknown[] {
+  const day = from.slice(0, 10);
+  if (q.includes("argMax(blob3")) {
+    if (day === "2026-11-18") return [{ linkId: "l1", domainId: "d1", slug: "spring", qr: 3, typed: 2, bots: 4 }];
+    if (day === "2026-11-19") return [{ linkId: "l2", domainId: "d1", slug: "fall", qr: 0, typed: 1, bots: 0 }];
+    return [];
+  }
+  if (day !== "2026-11-18") return [];
+  if (q.includes("COUNT(DISTINCT")) return [{ linkId: "l1", n: 2 }];
   if (q.includes("blob4 AS value"))
     return [
-      { bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", value: "CA", n: 4 },
-      { bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", value: "US", n: 1 },
+      { linkId: "l1", domainId: "d1", value: "CA", n: 4 },
+      { linkId: "l1", domainId: "d1", value: "US", n: 1 },
     ];
-  if (q.includes("blob5 AS value")) return [{ bucket: "2026-11-18 00:00:00", domainId: "d1", linkId: "l1", value: "mobile", n: 5 }];
+  if (q.includes("blob5 AS value")) return [{ linkId: "l1", domainId: "d1", value: "mobile", n: 5 }];
   return [];
 }
 function stubAe(status = 200) {
@@ -34,7 +34,8 @@ function stubAe(status = 200) {
     if (String(input) !== SQL_URL) throw new Error("unexpected fetch");
     bodies.push(JSON.parse(String(init?.body)));
     if (status !== 200) return new Response("no", { status });
-    return Response.json({ data: reply(bodies[bodies.length - 1].query) });
+    const b = bodies[bodies.length - 1];
+    return Response.json({ data: reply(b.query, b.params.from) });
   });
   return { bodies, spy };
 }
@@ -50,16 +51,77 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("rollup", () => {
-  it("no state: starts at today - 89, at most 31 days, one AE round", async () => {
+  it("no state: starts at today - 88, at most 3 days, one AE round (5 queries) per day", async () => {
     const f = stubAe();
     const days = await rollup(ae, NOW);
-    expect(days).toHaveLength(31);
-    expect(days[0]).toBe("2026-08-23");
-    expect(days[30]).toBe("2026-09-22");
-    expect(await rolledThrough(ae)).toBe("2026-09-22");
-    expect(f.bodies).toHaveLength(5);
-    expect(f.bodies[0].params.from).toBe("2026-08-23T00:00:00Z");
-    expect(f.bodies[0].params.to).toBe("2026-09-23T00:00:00Z");
+    expect(MAX_DAYS).toBe(3);
+    expect(days).toEqual(["2026-08-24", "2026-08-25", "2026-08-26"]);
+    expect(await rolledThrough(ae)).toBe("2026-08-26");
+    expect(f.bodies).toHaveLength(15);
+    expect(new Set(f.bodies.map((b) => `${b.params.from}..${b.params.to}`))).toEqual(
+      new Set(["2026-08-24T00:00:00Z..2026-08-25T00:00:00Z", "2026-08-25T00:00:00Z..2026-08-26T00:00:00Z", "2026-08-26T00:00:00Z..2026-08-27T00:00:00Z"]),
+    );
+  });
+
+  it("a 90-day backlog of busy days: at most 3 days per run, writes within the run budget, the next run continues (I1, I2)", async () => {
+    const LINKS = 300; // 300 tot rows + 900 dim rows a day = 3,604 counted writes
+    const busy = (q: string) => {
+      const links = Array.from({ length: LINKS }, (_, i) => `k${i}`);
+      if (q.includes("argMax(blob3")) return links.map((linkId) => ({ linkId, domainId: "d1", slug: linkId, qr: 1, typed: 1, bots: 0 }));
+      if (q.includes("COUNT(DISTINCT")) return links.map((linkId) => ({ linkId, n: 1 }));
+      return links.map((linkId) => ({ linkId, domainId: "d1", value: "x", n: 1 }));
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_i, init) => Response.json({ data: busy(JSON.parse(String(init?.body)).query) }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    let written = 0;
+    const db = env.DB;
+    const counting = {
+      ...ae,
+      DB: {
+        prepare: (q: string) => db.prepare(q),
+        batch: async (st: D1PreparedStatement[]) => {
+          const r = await db.batch(st);
+          written += r.reduce((n, x) => n + (x.meta.rows_written ?? 0), 0);
+          return r;
+        },
+      },
+    } as unknown as Env;
+    const first = await rollup(counting, NOW);
+    expect(first.length).toBeLessThanOrEqual(3);
+    expect(first).toEqual(["2026-08-24", "2026-08-25"]); // a third day would pass RUN_WRITE_BUDGET
+    expect(written).toBeLessThanOrEqual(RUN_WRITE_BUDGET);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^analytics rollup paused day=2026-08-26 /));
+    expect(await rollup(counting, NOW + 3600)).toEqual(["2026-08-26", "2026-08-27"]);
+    expect(await rolledThrough(ae)).toBe("2026-08-27");
+    console.info(`I2 seed: 4 busy days wrote ${written} D1 rows (2 runs)`);
+  });
+
+  it("the daily write budget stops hourly runs before the account's D1 write cap", async () => {
+    stubAe();
+    await setMark("2026-11-17");
+    const today = "2026-11-21";
+    await env.DB.prepare("INSERT INTO analytics_state (k, v) VALUES ('rollup_writes', ?)").bind(`${today}|${DAY_WRITE_BUDGET - 5}`).run();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await rollup(ae, NOW2)).toEqual([]);
+    expect(await rolledThrough(ae)).toBe("2026-11-17");
+    // A new UTC day starts a fresh count.
+    await env.DB.prepare("UPDATE analytics_state SET v = ? WHERE k = 'rollup_writes'").bind(`2026-11-20|${DAY_WRITE_BUDGET}`).run();
+    expect(await rollup(ae, NOW2)).toEqual(["2026-11-18", "2026-11-19"]);
+  });
+
+  it("a capped Analytics Engine answer writes nothing for that day (never a partial day)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_i, init) => {
+      const q = JSON.parse(String(init?.body)).query as string;
+      const rows = q.includes("blob4 AS value") ? Array.from({ length: 2001 }, (_, i) => ({ linkId: `k${i}`, domainId: "d1", value: "CA", n: 1 })) : [];
+      return Response.json({ data: rows, rows: rows.length });
+    });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await setMark("2026-11-17");
+    await expect(rollup(ae, NOW2)).rejects.toThrow("ae_truncated");
+    expect(err).toHaveBeenCalledWith("analytics rollup failed day=2026-11-18", "ae_truncated");
+    expect(await rolledThrough(ae)).toBe("2026-11-17");
+    expect(await daily()).toEqual([]);
+    expect(await dims()).toEqual([]);
   });
 
   it("writes the days after the watermark with the AE rows; a re-run gives identical rows", async () => {
@@ -122,6 +184,14 @@ describe("rollup", () => {
     expect(JSON.stringify(err.mock.calls)).not.toContain("tok");
   });
 
+  it("no CLICKS binding: skipped like an unconfigured read", async () => {
+    const f = stubAe();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await setMark("2026-11-17");
+    expect(await rollup({ ...ae, CLICKS: undefined }, NOW2)).toEqual([]);
+    expect(f.spy).not.toHaveBeenCalled();
+  });
+
   it("AE not configured: nothing written, no fetch", async () => {
     const f = stubAe();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -154,8 +224,8 @@ describe("rollup", () => {
   it("many links per day are chunked under the bound-parameter limit", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_i, init) => {
       const q = JSON.parse(String(init?.body)).query as string;
-      const rows = Array.from({ length: 30 }, (_, i) => ({ bucket: "2026-11-19 00:00:00", domainId: "d1", linkId: `k${i}`, slug: `s${i}`, source: "typed", kind: "human", value: "CA", n: 1 }));
-      return Response.json({ data: q.includes("blob7 AS source") || q.includes("blob4 AS value") ? rows : [] });
+      const rows = Array.from({ length: 30 }, (_, i) => ({ domainId: "d1", linkId: `k${i}`, slug: `s${i}`, qr: 0, typed: 1, bots: 0, value: "CA", n: 1 }));
+      return Response.json({ data: q.includes("argMax(blob3") || q.includes("blob4 AS value") ? rows : [] });
     });
     await setMark("2026-11-18");
     await rollup(ae, NOW2);
@@ -203,7 +273,8 @@ describe("purgeAudit", () => {
 
 describe("scheduled", () => {
   const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
-  const ctl = { cron: "15 0 * * *", scheduledTime: NOW * 1000, noRetry() {} } as ScheduledController;
+  const at = (iso: string) => ({ cron: "15 * * * *", scheduledTime: Date.parse(iso), noRetry() {} }) as ScheduledController;
+  const ctl = at("2026-11-21T00:15:00Z");
 
   it("purges even when the rollup throws", async () => {
     stubAe(500);
@@ -215,6 +286,18 @@ describe("scheduled", () => {
     expect(err).toHaveBeenCalledWith("analytics rollup failed", "AeError");
     expect(await all("SELECT id FROM audit_log WHERE action = 'audit.purge'")).toHaveLength(1);
     expect(await rolledThrough(ae)).toBe("2026-11-17");
+  });
+
+  it("only the 00:15 UTC run purges; every hourly run rolls up", async () => {
+    stubAe();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await setMark("2026-11-16");
+    await env.DB.prepare("INSERT INTO audit_log (at, actor_id, action, target_type, target_id, detail) VALUES (?, 'u1', 'x', 'x', 'x', '{}')").bind(CUTOFF - 5).run();
+    await worker.scheduled(at("2026-11-20T13:15:00Z"), ae, ctx);
+    expect(await all("SELECT id FROM audit_log WHERE action = 'audit.purge'")).toHaveLength(0);
+    expect(await rolledThrough(ae)).toBe("2026-11-18");
+    await worker.scheduled(at("2026-11-21T00:15:00Z"), ae, ctx);
+    expect(await all("SELECT id FROM audit_log WHERE action = 'audit.purge'")).toHaveLength(1);
   });
 
   it("the default export still serves fetch", async () => {

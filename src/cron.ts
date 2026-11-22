@@ -1,9 +1,19 @@
-import { AeError, aeAggregate, aeConfigured, type DimRow, type TotRow } from "./ae";
+import { AeError, aeConfigured, aeDay } from "./ae";
 import { utcDay } from "./clicks";
 import type { Env } from "./env";
 
 const DAY_MS = 86_400_000;
-const MAX_DAYS = 31; // R4: one AE round (5 queries) and at most 31 D1 batches per run, inside the Free plan limits
+export const MAX_DAYS = 3; // per hourly run: 3 x 5 AE queries and a few D1 calls; a 90-day backlog clears in about 30 hours
+/**
+ * D1 rows written per run (Free plan: 100,000 per day for the whole account). A day costs 3 writes per inserted row
+ * (the row, its primary-key index and the domain index), 3 per row it replaces, plus 4 for the state rows; counted
+ * before its batch is sent. The run stops before a day that would go over and the next hour continues.
+ */
+export const RUN_WRITE_BUDGET = 10_000;
+/** Rollup writes per UTC day across all runs, so hourly catch-up runs leave most of the account's daily writes free. */
+export const DAY_WRITE_BUDGET = 40_000;
+const WRITES_PER_ROW = 3;
+const STATE_WRITES = 4; // watermark and write counter, each with its primary-key index
 const MAX_PARAMS = 100; // D1 bound-parameter limit per statement
 const AUDIT_KEEP_DAYS = 1096; // 3 years
 export const PURGE_MAX = 5000; // audit rows deleted per run, oldest first; the next run continues
@@ -35,7 +45,18 @@ function inserts(env: Env, head: string, rows: unknown[][]): D1PreparedStatement
   return out;
 }
 
-/** Rolls UTC days that are at least 2 full days old (through today-2) from Analytics Engine into D1, oldest first, so late AE points for yesterday are not lost. Returns the days written. */
+/** `day|n`: rollup rows written so far on that UTC day (the D1 write budget). */
+async function writtenToday(env: Env, today: string): Promise<number> {
+  const r = await env.DB.prepare("SELECT v FROM analytics_state WHERE k = 'rollup_writes'").first<{ v: string }>();
+  const [d, n] = (r?.v ?? "").split("|");
+  return d === today ? Number(n) || 0 : 0;
+}
+
+/**
+ * Rolls UTC days that are at least 2 full days old (through today-2, so late AE points for yesterday are not lost)
+ * from Analytics Engine into D1, oldest first: at most MAX_DAYS per run, one AE round per day, inside the write
+ * budgets. Returns the days written.
+ */
 export async function rollup(env: Env, nowSec: number): Promise<string[]> {
   if (!aeConfigured(env)) {
     console.log("analytics rollup skipped: not configured");
@@ -44,36 +65,35 @@ export async function rollup(env: Env, nowSec: number): Promise<string[]> {
   const today = utcDay(nowSec);
   const through = addDays(today, -2);
   const rt = await rolledThrough(env);
-  const floor = addDays(today, -89);
+  const floor = addDays(today, -88); // AE keeps about 3 months; today-89 could already be partly gone
   const start = rt && addDays(rt, 1) > floor ? addDays(rt, 1) : floor;
   const days: string[] = [];
   for (let d = start; d <= through && days.length < MAX_DAYS; d = addDays(d, 1)) days.push(d);
   if (!days.length) return [];
 
-  const last = days[days.length - 1];
   // Safe code only (`ae_<code>` / error name), never the token or a response body.
   const fail = (day: string, e: unknown) => {
     console.error(`analytics rollup failed day=${day}`, e instanceof AeError ? e.message : errName(e));
     return e;
   };
-  const { tot, dims } = await aeAggregate(env, new Date(`${start}T00:00:00Z`), new Date(`${addDays(last, 1)}T00:00:00Z`), "day", {
-    domainIds: null,
-    linkIds: null,
-  }).catch((e) => {
-    throw fail(start, e);
-  });
-  const group = <T extends { bucket: string }>(rows: T[]) => {
-    const m = new Map<string, T[]>();
-    for (const r of rows) (m.get(r.bucket) ?? m.set(r.bucket, []).get(r.bucket)!).push(r);
-    return m;
-  };
-  const totBy = group<TotRow>(tot);
-  const dimBy = group<DimRow>(dims);
-
+  let dayUsed = await writtenToday(env, today);
+  let runUsed = 0;
   const written: string[] = [];
   for (const d of days) {
-    const t = (totBy.get(d) ?? []).map((r) => [d, r.linkId, r.domainId, r.slug, r.qr, r.typed, r.bots, r.visitors]);
-    const x = (dimBy.get(d) ?? []).map((r) => [d, r.linkId, r.domainId, r.dim, r.value, r.clicks]);
+    // A capped or failed answer throws here: nothing of this day is written (never a partial day).
+    const { tot, dims } = await aeDay(env, d).catch((e) => {
+      throw fail(d, e);
+    });
+    const old = await env.DB.prepare(
+      "SELECT (SELECT COUNT(*) FROM clicks_daily WHERE day = ?1) + (SELECT COUNT(*) FROM clicks_daily_dim WHERE day = ?1) AS n",
+    ).bind(d).first<{ n: number }>();
+    const cost = (tot.length + dims.length + (old?.n ?? 0)) * WRITES_PER_ROW + STATE_WRITES;
+    if (runUsed + cost > RUN_WRITE_BUDGET || dayUsed + cost > DAY_WRITE_BUDGET) {
+      console.log(`analytics rollup paused day=${d} writes=${cost} run=${runUsed} today=${dayUsed}`);
+      break; // the next run continues; a day over RUN_WRITE_BUDGET on its own never fits (see docs/deploy.md)
+    }
+    const t = tot.map((r) => [d, r.linkId, r.domainId, r.slug, r.qr, r.typed, r.bots, r.visitors]);
+    const x = dims.map((r) => [d, r.linkId, r.domainId, r.dim, r.value, r.clicks]);
     // Delete-then-insert per day in one batch: a re-run replaces the day, never adds to it.
     try {
       await env.DB.batch([
@@ -82,10 +102,13 @@ export async function rollup(env: Env, nowSec: number): Promise<string[]> {
         ...inserts(env, "INSERT INTO clicks_daily (day, link_id, domain_id, slug, qr, typed, bots, visitors)", t),
         ...inserts(env, "INSERT INTO clicks_daily_dim (day, link_id, domain_id, dim, value, clicks)", x),
         watermarkStmt(env, d),
+        env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', ?)").bind(`${today}|${dayUsed + cost}`),
       ]);
     } catch (e) {
       throw fail(d, e); // stops here: later days stay in AE for the next run
     }
+    runUsed += cost;
+    dayUsed += cost;
     written.push(d);
   }
   return written;
@@ -106,6 +129,7 @@ export async function purgeAudit(env: Env, nowSec: number): Promise<number> {
 
 const errName = (e: unknown) => (e instanceof Error ? e.name : "unknown"); // name only: messages could carry data
 
+/** Hourly at :15. Every run rolls up; only the 00:15 UTC run purges the audit log. */
 export async function scheduled(c: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
   const now = Math.floor(c.scheduledTime / 1000);
   try {
@@ -114,6 +138,7 @@ export async function scheduled(c: ScheduledController, env: Env, _ctx: Executio
   } catch (e) {
     console.error("analytics rollup failed", errName(e));
   }
+  if (new Date(c.scheduledTime).getUTCHours() !== 0) return;
   try {
     console.log(`audit purge: ${await purgeAudit(env, now)}`);
   } catch (e) {

@@ -42,8 +42,8 @@ afterEach(() => {
 
 /** Configure AE for one test and restore the original env values afterwards. */
 async function withAe<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = { CF_ACCOUNT_ID: env.CF_ACCOUNT_ID, AE_READ_TOKEN: env.AE_READ_TOKEN };
-  Object.assign(env, { CF_ACCOUNT_ID: "acc", AE_READ_TOKEN: "tok" });
+  const prev = { CLICKS: env.CLICKS, CF_ACCOUNT_ID: env.CF_ACCOUNT_ID, AE_READ_TOKEN: env.AE_READ_TOKEN };
+  Object.assign(env, { CLICKS: { writeDataPoint() {} }, CF_ACCOUNT_ID: "acc", AE_READ_TOKEN: "tok" });
   try {
     return await fn();
   } finally {
@@ -136,10 +136,9 @@ describe("GET /api/analytics/links", () => {
     fetchSpy.mockImplementation(async () =>
       Response.json({
         data: [
-          { bucket: `${dayAt(-1)} 00:00:00`, linkId: "lM", source: "qr", n: 4 },
-          { bucket: `${dayAt(-1)} 00:00:00`, linkId: "lM", source: "typed", n: 1 },
-          { bucket: `${dayAt(0)} 00:00:00`, linkId: "lM", source: "typed", n: 6 },
-          { bucket: `${dayAt(0)} 00:00:00`, linkId: "ghost", source: "typed", n: 9 },
+          { bucket: `${dayAt(-1)} 00:00:00`, linkId: "lM", qr: 4, typed: 1 },
+          { bucket: `${dayAt(0)} 00:00:00`, linkId: "lM", qr: 0, typed: 6 },
+          { bucket: `${dayAt(0)} 00:00:00`, linkId: "ghost", qr: 0, typed: 9 },
         ],
       }),
     );
@@ -154,6 +153,19 @@ describe("GET /api/analytics/links", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1); // one AE query, not the five-query aggregate
     const sent = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body));
     expect(sent.params.from).toBe(`${dayAt(-1)}T00:00:00Z`); // AE starts after the D1 watermark (today-2)
+  });
+  it("token set but no CLICKS binding: live off and no Analytics Engine call (M1)", async () => {
+    await withAe(async () => {
+      const prev = env.CLICKS;
+      Object.assign(env, { CLICKS: undefined });
+      try {
+        expect((await json("/links?ids=lM")).live).toBe("off");
+        expect((await json("?range=7")).live).toBe("off");
+      } finally {
+        Object.assign(env, { CLICKS: prev });
+      }
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
   it("Analytics Engine answering 500 keeps the D1 points and reports live unavailable", async () => {
     fetchSpy.mockImplementation(async () => new Response("no", { status: 500 }));
