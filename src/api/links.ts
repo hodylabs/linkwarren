@@ -4,6 +4,7 @@ import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
+import { parseSettings, settingsQ } from "../settings";
 import { canManageDomain, canUseDomain, usableDomains } from "../perm";
 import { actor, type Grant } from "../principal";
 import { ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
@@ -182,8 +183,8 @@ links.post("/", async (c) => {
   if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
   const b = body.data;
   // Every pre-read in one batch, judged below in the old order. Slugs are ASCII, so lower(slug) = lower(slugKey(slug, *)).
-  const [dr, mr, hr, lr] = await c.env.DB.batch([
-    domainQ(c.env, b.domainId), memberQ(c.env, b.domainId, user.id), hostsQ(c.env), lockQ(c.env, b.domainId, b.slug),
+  const [dr, mr, hr, lr, sr] = await c.env.DB.batch([
+    domainQ(c.env, b.domainId), memberQ(c.env, b.domainId, user.id), hostsQ(c.env), lockQ(c.env, b.domainId, b.slug), settingsQ(c.env),
   ]);
   const domain = dr!.results[0] ? rowToDomain(dr!.results[0] as Record<string, unknown>) : null;
   if (!domain) return c.json({ error: "not_found" }, 404);
@@ -195,7 +196,9 @@ links.post("/", async (c) => {
   if ("error" in dest) return c.json({ error: dest.error }, 400);
   const startsAt = b.startsAt ?? null, expiresAt = b.expiresAt ?? null;
   if (badWindow(startsAt, expiresAt)) return c.json({ error: "bad_window" }, 400);
-  const redirectCode = b.redirectCode ?? 302;
+  // Instance defaults (read in the batch above) fill only what the request left out; a password link never defaults to 301.
+  const d = parseSettings(sr!.results as { key: string; value: string }[]);
+  const redirectCode = b.redirectCode ?? (b.password != null ? 302 : d.linkRedirectCode);
   if (b.password != null && redirectCode === 301) return c.json({ error: "password_301" }, 400);
   const rt = await validateRoutes(c.env, b.routes ?? [], hosts);
   if ("error" in rt) return c.json(rt, 400);
@@ -208,7 +211,7 @@ links.post("/", async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const link: LinkRow = {
     id: crypto.randomUUID(), domainId: domain.id, slug: b.slug, slugKey: key, url: dest.href,
-    redirectCode, startsAt, expiresAt, passQuery: b.passQuery ?? true,
+    redirectCode, startsAt, expiresAt, passQuery: b.passQuery ?? d.linkPassQuery,
     passwordHash, routes: rt.routes, forwardTo: null,
     createdBy: user.id, updatedBy: user.id, createdAt: now, updatedAt: now,
   };

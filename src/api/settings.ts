@@ -1,6 +1,12 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { auditStmt } from "../audit";
+import { authMode } from "../auth";
+import { AE_DAYS } from "../analytics";
+import { AUDIT_KEEP_DAYS } from "../cron";
+import { checkLogo, LOGO_HEADERS, LOGO_KEY, LOGO_MAX_BYTES, LOGO_TYPES, type LogoType } from "../logo";
+import { getSettings, settingStmts, type InstanceSettings } from "../settings";
 import { emailConfigured, sendEmail } from "../email";
 import { LIMITS, hitAll, limitKey } from "../limits";
 import { CfError, cfConfig, cfConfigFor, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
@@ -18,9 +24,125 @@ export const settings = new Hono<E>();
 const CONTROLS = "cf.controls";
 const notConfigured = { error: "cloudflare_not_configured" } as const;
 
-settings.use("*", async (c, next) => {
+const ownerOnly = async (c: { var: { user: UserRow }; json: (b: unknown, s: 403) => Response }, next: () => Promise<void>) => {
   if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
   await next();
+};
+settings.use("*", ownerOnly);
+
+/** Any signed-in user: what the rail, document title and link form need. */
+export const instance = new Hono<E>();
+instance.get("/", async (c) => {
+  const s = await getSettings(c.env);
+  return c.json({
+    name: s.name, logoVersion: s.logoVersion, configured: s.setupCompletedAt !== null, dashboardHost: normalizeHost(c.env.DASHBOARD_HOST),
+    mainDomainId: s.mainDomainId, linkDefaults: { redirectCode: s.linkRedirectCode, passQuery: s.linkPassQuery },
+  });
+});
+instance.get("/logo", async (c) => {
+  const r = await c.env.CACHE.getWithMetadata<{ type?: string }>(LOGO_KEY, "arrayBuffer");
+  const type = r.metadata?.type;
+  if (!r.value || !LOGO_TYPES.includes(type as LogoType)) return c.json({ error: "no_logo" }, 404);
+  return new Response(r.value, { headers: { "Content-Type": type!, ...LOGO_HEADERS } });
+});
+
+const validMain = async (env: Env, id: string | null) =>
+  !!id && !!(await env.DB.prepare("SELECT 1 FROM domains WHERE id = ? AND type = 'main' AND status != 'disabled'").bind(id).first());
+
+async function settingsBody(env: Env) {
+  const [s, emailOk, secrets] = await Promise.all([getSettings(env), emailConfigured(env), secretStatus(env)]);
+  const mode = authMode(env);
+  return {
+    name: s.name, mainDomainId: s.mainDomainId, dashboardHost: normalizeHost(env.DASHBOARD_HOST), authMode: mode,
+    ...(mode === "access" ? { teamDomain: env.ACCESS_TEAM_DOMAIN ?? "" } : {}),
+    emailFrom: env.EMAIL_FROM?.trim() || null, emailConfigured: emailOk, secrets,
+    linkRedirectCode: s.linkRedirectCode, linkPassQuery: s.linkPassQuery, retention: { auditDays: AUDIT_KEEP_DAYS, clickDetailDays: AE_DAYS },
+  };
+}
+settings.get("/", async (c) => c.json(await settingsBody(c.env)));
+
+const NAME_MAX = 60;
+const settingsPatch = z.strictObject({
+  name: z.string().max(400).optional(),
+  mainDomainId: z.string().min(1).max(64).optional(),
+  linkRedirectCode: z.union([z.literal(301), z.literal(302)]).optional(),
+  linkPassQuery: z.boolean().optional(),
+});
+settings.patch("/", async (c) => {
+  const body = settingsPatch.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  const { name: rawName, ...rest } = body.data;
+  const patch: Partial<InstanceSettings> = { ...rest };
+  if (!Object.values(body.data).some((v) => v !== undefined)) return c.json({ error: "no_changes" }, 400);
+  if (rawName !== undefined) {
+    const name = rawName.trim();
+    const len = [...name].length;
+    // Control characters (CR/LF included) and line separators never reach the rail, the title or an email header.
+    if (len < 1 || len > NAME_MAX || /[\p{Cc}\u2028\u2029]/u.test(name)) return c.json({ error: "bad_name" }, 400);
+    patch.name = name;
+  }
+  if (rest.mainDomainId !== undefined && !(await validMain(c.env, rest.mainDomainId))) return c.json({ error: "bad_main_domain" }, 400);
+  await c.env.DB.batch(settingStmts(c.env, c.var.user.id, patch));
+  return c.json(await settingsBody(c.env));
+});
+
+// Base64 of 64 KiB plus the JSON around it; a larger body is refused before it is parsed.
+const LOGO_BODY_MAX = Math.ceil(LOGO_MAX_BYTES / 3) * 4 + 256;
+const logoBody = z.strictObject({ type: z.enum(LOGO_TYPES), data: z.string().min(1).max(LOGO_BODY_MAX).regex(/^[A-Za-z0-9+/]+={0,2}$/) });
+const logoAudit = (env: Env, actorId: string, action: string, detail: object, guard: { sql: string; binds: unknown[] }) =>
+  auditStmt(env, { actorId, action, targetType: "settings", targetId: "instance.logo", detail }, guard);
+settings.put("/logo", bodyLimit({ maxSize: LOGO_BODY_MAX + 256, onError: (c) => c.json({ error: "too_large" }, 413) }), async (c) => {
+  const body = logoBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from(atob(body.data.data), (ch) => ch.charCodeAt(0));
+  } catch {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  const check = checkLogo(body.data.type, bytes);
+  if (!check.ok) return c.json({ error: check.reason }, 400);
+  const v = Date.now();
+  // One KV write per upload (R7). The stored name is fixed: no user-provided filename is ever kept.
+  await c.env.CACHE.put(LOGO_KEY, bytes, { metadata: { type: body.data.type, v } });
+  await c.env.DB.batch([
+    ...settingStmts(c.env, c.var.user.id, { logoVersion: v }),
+    logoAudit(c.env, c.var.user.id, "logo.update", { type: body.data.type, bytes: bytes.length },
+      { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: ["instance.logoVersion", JSON.stringify(v)] }),
+  ]);
+  return c.json({ logoVersion: v });
+});
+settings.delete("/logo", async (c) => {
+  await c.env.CACHE.delete(LOGO_KEY);
+  await c.env.DB.batch([
+    ...settingStmts(c.env, c.var.user.id, { logoVersion: null }),
+    logoAudit(c.env, c.var.user.id, "logo.remove", {}, { sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: ["instance.logoVersion"] }),
+  ]);
+  return c.json({ logoVersion: null });
+});
+
+/** Owner only: first-run progress (R10). The server stores only setup.completedAt. */
+export const setup = new Hono<E>();
+setup.use("*", ownerOnly);
+async function setupSteps(env: Env) {
+  const [s, cf, email] = await Promise.all([getSettings(env), cfConfigFor(env), emailConfigured(env)]);
+  const steps = { name: s.name !== null, signIn: true as const, cloudflare: cf !== null, mainDomain: await validMain(env, s.mainDomainId), email };
+  return { configured: s.setupCompletedAt !== null, steps };
+}
+setup.get("/", async (c) => c.json(await setupSteps(c.env)));
+setup.post("/complete", async (c) => {
+  const { steps } = await setupSteps(c.env);
+  const missing = (["name", "mainDomain"] as const).filter((k) => !steps[k]);
+  if (missing.length) return c.json({ error: "incomplete", missing }, 400);
+  const now = Math.floor(Date.now() / 1000);
+  const once = { sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = 'setup.completedAt')", binds: [] };
+  // The audit runs first under the same guard as the insert, so exactly one of two racing calls writes both rows.
+  const res = await c.env.DB.batch([
+    auditStmt(c.env, { actorId: c.var.user.id, action: "setup.complete", targetType: "settings", targetId: "setup.completedAt", detail: {} }, once),
+    c.env.DB.prepare(`INSERT INTO settings (key, value, updated_at, updated_by) SELECT 'setup.completedAt', ?, ?, ? WHERE ${once.sql}`).bind(JSON.stringify(now), now, c.var.user.id),
+  ]);
+  if (res[1]!.meta.changes === 0) return c.json({ error: "already_configured" }, 409);
+  return c.json({ configured: true });
 });
 
 /** Codes only (the shared mapping), never Cloudflare's own text. */

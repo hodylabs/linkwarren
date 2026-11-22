@@ -25,8 +25,14 @@ const FIELDS: { [K in keyof InstanceSettings]: { key: string; schema: z.ZodType 
 const NAMES = Object.keys(FIELDS) as (keyof InstanceSettings)[];
 const KEYS = NAMES.map((n) => FIELDS[n].key);
 
+/** The one read behind getSettings, for callers that fold it into their own batch (parse the rows with parseSettings). */
+export const settingsQ = (env: Env) => env.DB.prepare(`SELECT key, value FROM settings WHERE key IN (${KEYS.map(() => "?").join(",")})`).bind(...KEYS);
+
 export async function getSettings(env: Env): Promise<InstanceSettings> {
-  const rows = (await env.DB.prepare(`SELECT key, value FROM settings WHERE key IN (${KEYS.map(() => "?").join(",")})`).bind(...KEYS).all<{ key: string; value: string }>()).results;
+  return parseSettings((await settingsQ(env).all<{ key: string; value: string }>()).results);
+}
+
+export function parseSettings(rows: { key: string; value: string }[]): InstanceSettings {
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
   const out = { ...DEFAULTS } as Record<string, unknown>;
   for (const n of NAMES) {

@@ -30,7 +30,7 @@ const HOUR_MS = 3_600_000;
 const MAX_SPAN_DAYS = 366;
 const MAX_LINKS = 500; // R5
 const TOP_LINKS = 50;
-const AE_DAYS = 90; // raw retention
+export const AE_DAYS = 90; // raw retention
 
 const dayStart = (day: string) => new Date(`${day}T00:00:00Z`);
 const addMs = (d: Date, ms: number) => new Date(d.getTime() + ms);

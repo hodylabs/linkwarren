@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { beforeBatch } from "./helpers/race";
 import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare, type FakePerm } from "./helpers/cf";
+import { signedIn, withCookie } from "./helpers/session";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const all = async (sql: string, ...a: unknown[]) => (await env.DB.prepare(sql).bind(...a).all()).results;
@@ -25,7 +26,7 @@ const configure = (on = true) => { for (const [k, v] of Object.entries(CF)) e[k]
 
 beforeAll(setupAccess);
 beforeEach(async () => {
-  await env.DB.batch(["settings", "audit_log", "domain_cf", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["settings", "audit_log", "links", "api_keys", "sessions", "domain_cf", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   for (const [id, email, role] of [["uo", EMAIL.owner, "owner"], ["ua", EMAIL.a, "member"]])
     await run("INSERT INTO users (id,email,role,status,created_at) VALUES (?,?,?,?,1)", id, email, role, "active");
   configure();
@@ -393,5 +394,168 @@ describe("POST /api/settings/email/test", () => {
     const r = await call("owner", "POST", T);
     expect([r.status, await r.json()]).toEqual([502, { error: "email_failed", reason: "rejected" }]);
     expect(await audits()).toBe(0);
+  });
+});
+
+// Task 6: instance, settings, logo, link defaults and setup.
+const pngBytes = (w: number, h: number) => {
+  const b = new Uint8Array(40);
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  new DataView(b.buffer).setUint32(16, w);
+  new DataView(b.buffer).setUint32(20, h);
+  return b;
+};
+const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
+const actions = async () => (await all("SELECT action, detail FROM audit_log ORDER BY id")).map((r) => [r.action, JSON.parse(String(r.detail))]);
+const mainDom = (id: string, host: string, type = "main", status = "active") =>
+  run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,?,?,'uo',1)", id, host, type, status);
+
+describe("instance and settings", () => {
+  beforeEach(async () => {
+    e.EMAIL_FROM = "links@example.com";
+    e.RESEND_API_KEY = "re_test";
+    await env.CACHE.delete("instance:logo");
+  });
+  afterEach(() => { e.EMAIL_FROM = undefined; e.RESEND_API_KEY = undefined; });
+
+  it("GET /api/instance works for a member with defaults", async () => {
+    const r = await call("a", "GET", "/api/instance");
+    expect([r.status, await r.json()]).toEqual([200, { name: null, logoVersion: null, configured: false, dashboardHost: "dash.test", mainDomainId: null, linkDefaults: { redirectCode: 302, passQuery: true } }]);
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect((await dash("/api/instance")).status).toBe(401);
+  });
+
+  it("members get 403 on GET and PATCH /api/settings, logo and setup", async () => {
+    for (const [m, p, b] of [["GET", "/api/settings"], ["PATCH", "/api/settings", { name: "X" }], ["PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(1, 1)) }], ["DELETE", "/api/settings/logo"], ["GET", "/api/setup"], ["POST", "/api/setup/complete"]] as const) {
+      const r = await call("a", m, p, b);
+      expect([m, p, r.status, await r.json()]).toEqual([m, p, 403, { error: "forbidden" }]);
+    }
+    expect(await all("SELECT * FROM settings")).toEqual([]);
+  });
+
+  it("GET /api/settings: no secret values; teamDomain only in access mode", async () => {
+    const r = await call("owner", "GET", "/api/settings");
+    const j = (await r.json()) as Record<string, unknown>;
+    expect(j).toEqual({
+      name: null, mainDomainId: null, dashboardHost: "dash.test", authMode: "access", teamDomain: "team.example.cloudflareaccess.com",
+      emailFrom: "links@example.com", emailConfigured: true, secrets: { pasteAvailable: false, cf: "secret", resend: "secret" },
+      linkRedirectCode: 302, linkPassQuery: true, retention: { auditDays: 1096, clickDetailDays: 90 },
+    });
+    expect(JSON.stringify(j)).not.toContain(STORED);
+    expect(JSON.stringify(j)).not.toContain("re_test");
+    const m = env as { AUTH_MODE?: string };
+    m.AUTH_MODE = "app";
+    try {
+      const s = await signedIn("owner2@example.com", { role: "owner" });
+      const a = (await (await dash("/api/settings", withCookie(s.cookie))).json()) as Record<string, unknown>;
+      expect(a.authMode).toBe("app");
+      expect("teamDomain" in a).toBe(false);
+      // A Bearer credential is not a dashboard session.
+      expect((await dash("/api/settings", { headers: { authorization: "Bearer lw_x" } })).status).toBe(401);
+    } finally {
+      m.AUTH_MODE = "access";
+    }
+  });
+
+  it("PATCH validates every field and writes audits", async () => {
+    await mainDom("dm", "m.test");
+    await mainDom("dp", "p.test", "private");
+    await mainDom("dx", "x.test", "main", "disabled");
+    const bad: [unknown, string][] = [
+      [{}, "no_changes"], [{ name: "" }, "bad_name"], [{ name: "   " }, "bad_name"], [{ name: "a".repeat(61) }, "bad_name"], [{ name: "a\nb" }, "bad_name"],
+      [{ mainDomainId: "dp" }, "bad_main_domain"], [{ mainDomainId: "dx" }, "bad_main_domain"], [{ mainDomainId: "nope" }, "bad_main_domain"],
+      [{ linkRedirectCode: 307 }, "invalid_body"], [{ linkPassQuery: "yes" }, "invalid_body"], [{ other: 1 }, "invalid_body"], [{ mainDomainId: "x".repeat(65) }, "invalid_body"],
+    ];
+    for (const [b, err] of bad) {
+      const r = await call("owner", "PATCH", "/api/settings", b);
+      expect([b, r.status, await r.json()]).toEqual([b, 400, { error: err }]);
+    }
+    expect(await actions()).toEqual([]);
+    const r = await call("owner", "PATCH", "/api/settings", { name: "  Acme links  ", mainDomainId: "dm", linkRedirectCode: 301, linkPassQuery: false });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ name: "Acme links", mainDomainId: "dm", linkRedirectCode: 301, linkPassQuery: false });
+    expect((await actions()).map((a) => a[1].key).sort()).toEqual(["instance.mainDomainId", "instance.name", "links.defaultPassQuery", "links.defaultRedirectCode"]);
+    expect((await (await call("a", "GET", "/api/instance")).json())).toMatchObject({ name: "Acme links", mainDomainId: "dm", linkDefaults: { redirectCode: 301, passQuery: false } });
+  });
+
+  it("logo: PUT, GET with the safe headers, DELETE then 404", async () => {
+    expect([(await call("a", "GET", "/api/instance/logo")).status]).toEqual([404]);
+    const bytes = pngBytes(16, 16);
+    const bad = await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(16, 8)) });
+    expect([bad.status, await bad.json()]).toEqual([400, { error: "not_square" }]);
+    expect((await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: "%%%" })).status).toBe(400);
+    expect((await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: b64(bytes), name: "../x.png" })).status).toBe(400);
+    const put = await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: b64(bytes) });
+    expect(put.status).toBe(200);
+    const { logoVersion } = (await put.json()) as { logoVersion: number };
+    expect(Number.isInteger(logoVersion)).toBe(true);
+    const g = await call("a", "GET", "/api/instance/logo");
+    expect(g.status).toBe(200);
+    expect(new Uint8Array(await g.arrayBuffer())).toEqual(bytes);
+    expect(g.headers.get("content-type")).toBe("image/png");
+    expect(g.headers.get("content-security-policy")).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    expect(g.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(g.headers.get("cache-control")).toBe("private, max-age=300");
+    expect(g.headers.get("content-disposition")).toBe("inline");
+    expect(((await (await call("a", "GET", "/api/instance")).json()) as { logoVersion: number }).logoVersion).toBe(logoVersion);
+    const del = await call("owner", "DELETE", "/api/settings/logo");
+    expect(del.status).toBe(200);
+    const g2 = await call("a", "GET", "/api/instance/logo");
+    expect([g2.status, await g2.json()]).toEqual([404, { error: "no_logo" }]);
+    expect(((await (await call("a", "GET", "/api/instance")).json()) as { logoVersion: unknown }).logoVersion).toBe(null);
+    const acts = (await actions()).filter((a) => a[0].startsWith("logo."));
+    expect(acts).toEqual([["logo.update", { type: "image/png", bytes: bytes.length }], ["logo.remove", {}]]);
+  });
+
+  it("logo: an SVG is refused when hostile, a foreign Origin is refused", async () => {
+    const svg = (s: string) => b64(new TextEncoder().encode(s));
+    const r = await call("owner", "PUT", "/api/settings/logo", { type: "image/svg+xml", data: svg(`<svg onload="x"></svg>`) });
+    expect([r.status, await r.json()]).toEqual([400, { error: "unsafe_svg" }]);
+    const o = await dash("/api/settings/logo", { method: "PUT", headers: { "Cf-Access-Jwt-Assertion": await tokenFor(EMAIL.owner!), "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ type: "image/png", data: b64(pngBytes(1, 1)) }) });
+    expect(o.status).toBe(403);
+    expect(await env.CACHE.get("instance:logo")).toBe(null);
+    const ok = await call("owner", "PUT", "/api/settings/logo", { type: "image/svg+xml", data: svg(`<svg viewBox="0 0 1 1"><rect/></svg>`) });
+    expect(ok.status).toBe(200);
+    expect((await call("a", "GET", "/api/instance/logo")).headers.get("content-type")).toBe("image/svg+xml");
+  });
+
+  it("link defaults apply when the request leaves them out, an explicit value wins, /api/v1 follows", async () => {
+    await mainDom("dm", "m.test");
+    await call("owner", "PATCH", "/api/settings", { linkRedirectCode: 301, linkPassQuery: false });
+    const mk = async (body: Record<string, unknown>) => {
+      const r = await call("a", "POST", "/api/links", { domainId: "dm", url: "https://example.org/", ...body });
+      expect(r.status).toBe(201);
+      return (await r.json()) as { redirectCode: number; passQuery: boolean };
+    };
+    expect(await mk({ slug: "one" })).toMatchObject({ redirectCode: 301, passQuery: false });
+    expect(await mk({ slug: "two", redirectCode: 302, passQuery: true })).toMatchObject({ redirectCode: 302, passQuery: true });
+    // A password link cannot be 301: the default yields to 302 instead of refusing.
+    expect(await mk({ slug: "pw", password: "correct horse battery" })).toMatchObject({ redirectCode: 302 });
+    const k = await dash("/api/keys", { method: "POST", headers: { "Cf-Access-Jwt-Assertion": await tokenFor(EMAIL.a!), "content-type": "application/json" }, body: JSON.stringify({ name: "ci", write: true, del: false, domainIds: [], expiresInDays: 90 }) });
+    const { secret } = (await k.json()) as { secret: string };
+    const v = await dash("/api/v1/links", { method: "POST", headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" }, body: JSON.stringify({ domainId: "dm", slug: "three", url: "https://example.org/" }) });
+    expect(v.status).toBe(201);
+    expect(await v.json()).toMatchObject({ redirectCode: 301, passQuery: false });
+  });
+
+  it("setup steps flip, complete needs name and main domain, runs once", async () => {
+    configure(false);
+    const steps = async () => ((await (await call("owner", "GET", "/api/setup")).json()) as { configured: boolean; steps: Record<string, boolean> });
+    expect(await steps()).toEqual({ configured: false, steps: { name: false, signIn: true, cloudflare: false, mainDomain: false, email: true } });
+    configure();
+    await call("owner", "PATCH", "/api/settings", { name: "Acme" });
+    expect((await steps()).steps).toMatchObject({ name: true, cloudflare: true, mainDomain: false });
+    const inc = await call("owner", "POST", "/api/setup/complete");
+    expect([inc.status, await inc.json()]).toEqual([400, { error: "incomplete", missing: ["mainDomain"] }]);
+    await mainDom("dm", "m.test");
+    await call("owner", "PATCH", "/api/settings", { mainDomainId: "dm" });
+    expect((await steps()).steps.mainDomain).toBe(true);
+    const done = await call("owner", "POST", "/api/setup/complete");
+    expect(done.status).toBe(200);
+    const again = await call("owner", "POST", "/api/setup/complete");
+    expect([again.status, await again.json()]).toEqual([409, { error: "already_configured" }]);
+    expect((await actions()).filter((a) => a[0] === "setup.complete")).toHaveLength(1);
+    expect((await steps()).configured).toBe(true);
+    expect(((await (await call("a", "GET", "/api/instance")).json()) as { configured: boolean }).configured).toBe(true);
   });
 });

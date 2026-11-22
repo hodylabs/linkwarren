@@ -16,7 +16,7 @@ export const DAY_WRITE_BUDGET = 40_000;
 const WRITES_PER_ROW = 3;
 const STATE_WRITES = 4; // watermark and write counter, each with its primary-key index
 const MAX_PARAMS = 100; // D1 bound-parameter limit per statement
-const AUDIT_KEEP_DAYS = 1096; // 3 years
+export const AUDIT_KEEP_DAYS = 1096; // 3 years
 export const PURGE_MAX = 5000; // audit rows deleted per run, oldest first; the next run continues
 
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);

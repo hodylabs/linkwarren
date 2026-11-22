@@ -14,7 +14,7 @@ import { users } from "./api/users";
 import { invites } from "./api/invites";
 import { audit } from "./api/audit";
 import { analytics } from "./api/analytics";
-import { settings } from "./api/settings";
+import { instance, settings, setup } from "./api/settings";
 import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
@@ -56,7 +56,8 @@ app.route("/auth", signin);
 // API responses carry identity and private data: never cache them anywhere.
 app.use("/api/*", async (c, next) => {
   await next();
-  c.header("Cache-Control", "no-store");
+  // The logo is the one private, briefly cacheable response (R7); it sets its own header.
+  if (c.req.path !== "/api/instance/logo") c.header("Cache-Control", "no-store");
 });
 
 // CSRF: the Origin check plus the credential's own scope are the defence (app mode: the host-only SameSite=Lax session
@@ -92,6 +93,8 @@ app.route("/api/users", users);
 app.route("/api/audit", audit);
 app.route("/api/analytics", analytics);
 app.route("/api/settings", settings);
+app.route("/api/setup", setup);
+app.route("/api/instance", instance);
 app.route("/api/account", account);
 app.route("/api/keys", keys);
 app.route("/api/agents", agents);
