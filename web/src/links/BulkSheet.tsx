@@ -129,6 +129,9 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
   const wholeCodes = phase.k === "results"
     ? [...phase.failed.filter(([id]) => phase.whole.has(id)).reduce((m, [, c]) => m.set(c, (m.get(c) ?? 0) + 1), new Map<string, number>())]
     : [];
+  // A request whose answer was lost may have been applied: its links are unknown, never retried blind (the list reloads).
+  const unknown = phase.k === "results" ? phase.failed.filter(([, c]) => c === "lost_connection").length : 0;
+  const retry = phase.k === "results" ? phase.failed.filter(([, c]) => c !== "lost_connection").map(([id]) => id) : [];
   const reason = (op: BulkOp, code: string) => (code === "bad_window" && op.action === "schedule" && op.endNow ? "Starts later: clear its start first" : errorText(code));
 
   return (
@@ -261,7 +264,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
         {phase.k === "results" && (
           <>
             <p role="status">
-              {phase.ok} changed, {phase.failed.length} not changed
+              {phase.ok} changed, {phase.failed.length - unknown} not changed{unknown > 0 && `, ${unknown} unknown`}
             </p>
             {wholeCodes.length > 0 && (
               <div role="alert">
@@ -284,12 +287,12 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
             )}
             {perLink.length > SHOWN_FAILURES && <p className="hint">and {perLink.length - SHOWN_FAILURES} more</p>}
             <div className="actions">
-              {phase.failed.length > 0 && (
-                <button type="button" className="btn primary" autoFocus onClick={() => retryOp.current && void go(retryOp.current, phase.failed.map(([id]) => id))}>
+              {retry.length > 0 && (
+                <button type="button" className="btn primary" autoFocus onClick={() => retryOp.current && void go(retryOp.current, retry)}>
                   Retry failed <span className="k">Enter</span>
                 </button>
               )}
-              <button type="button" className="btn" autoFocus={phase.failed.length === 0} onClick={onClose}>
+              <button type="button" className="btn" autoFocus={retry.length === 0} onClick={onClose}>
                 Done <kbd>Esc</kbd>
               </button>
             </div>

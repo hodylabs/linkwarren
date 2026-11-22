@@ -272,6 +272,23 @@ describe("bulk results", () => {
     await user.keyboard("{Enter}");
     const sheet = await screen.findByRole("dialog", { name: "Delete links" });
     await waitFor(() => expect(within(sheet).getByText("Lost the connection. Some links may have changed: reload to check.")).toBeTruthy());
+    expect(within(sheet).getByText("0 changed, 0 not changed, 3 unknown")).toBeTruthy();
+    expect(within(sheet).queryByRole("button", { name: /^Retry failed/ })).toBeNull();
+    expect(document.activeElement?.textContent).toMatch(/^Done/);
+  });
+
+  it("a dropped connection on chunk 2 of 250: that chunk is unknown, Retry failed resends only the 50 never sent", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => mk(`m${i}`, `s${i}`));
+    let n = 0;
+    const { api, user } = boot({ items: many, bulk: (req) => { if (++n === 2) throw new TypeError("Failed to fetch"); return okAll(req); } });
+    await selectAll(user);
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.keyboard("{Enter}");
+    const sheet = await screen.findByRole("dialog", { name: "Delete links" });
+    await waitFor(() => expect(within(sheet).getByText("100 changed, 50 not changed, 100 unknown")).toBeTruthy());
+    await user.click(within(sheet).getByRole("button", { name: /^Retry failed/ }));
+    await waitFor(() => expect(posts(api)).toHaveLength(3));
+    expect((posts(api)[2] as { ids: string[] }).ids).toEqual(many.slice(200).map((l) => l.id));
   });
 
   it("Esc while running focuses nothing new, cancels after the request in flight and lists the rest once as not run", async () => {
@@ -294,11 +311,15 @@ describe("bulk results", () => {
 
   it("500 selected links run as 5 sequential requests with progress, and the failed ones stay selected", async () => {
     const many = Array.from({ length: 500 }, (_, i) => mk(`m${i}`, `s${i}`));
-    let inFlight = 0, maxInFlight = 0;
+    let inFlight = 0, maxInFlight = 0, calls = 0;
+    // The first response is held until the progress text has been seen, so the check never races the run.
+    let release!: () => void;
+    const first = new Promise<void>((r) => (release = r));
     const { api, user } = boot({
       items: many,
       bulk: async (req) => {
         maxInFlight = Math.max(maxInFlight, ++inFlight);
+        if (++calls === 1) await first;
         await new Promise((r) => setTimeout(r, 5));
         inFlight--;
         const ids = (req.body as { ids: string[] }).ids;
@@ -310,7 +331,8 @@ describe("bulk results", () => {
     await user.click(screen.getByRole("radio", { name: "302" }));
     await user.keyboard("{Control>}{Enter}{/Control}");
     const sheet = await screen.findByRole("dialog", { name: "Redirect type" });
-    await waitFor(() => expect(within(sheet).getByText(/^Working, \d+ of 500$/)).toBeTruthy());
+    await waitFor(() => expect(within(sheet).getByText("Working, 0 of 500")).toBeTruthy());
+    release();
     await waitFor(() => expect(within(sheet).getByText("495 changed, 5 not changed")).toBeTruthy(), { timeout: 5000 });
     expect(posts(api).map((b) => (b as { ids: string[] }).ids.length)).toEqual([100, 100, 100, 100, 100]);
     expect(maxInFlight).toBe(1);
