@@ -1,7 +1,8 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { resolveUser } from "../auth";
-import { emailConfigured, sendEmail, signInEmail } from "../email";
+import { sendEmail, signInEmail } from "../email";
+import { getSecret } from "../secrets";
 import { getSettings } from "../settings";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
@@ -85,11 +86,15 @@ signin.post("/email", async (c) => {
   const b = await parse(c, emailBody);
   if (!b) return c.json(invalid, 400);
   const env = c.env;
-  if (!(await emailConfigured(env))) return c.json({ error: "email_not_configured" }, 503);
+  const notConfigured = () => c.json({ error: "email_not_configured" }, 503);
+  if (!env.EMAIL_FROM?.trim()) return notConfigured();
   const prefix = ipPrefix(c.req.header("cf-connecting-ip") ?? null);
   // Both limiters count before any lookup, so unknown addresses use up their budget too (R5).
   const [byAddr, byIp] = await Promise.all([hit(env, await limitKey.addr(b.email), LIMITS.address), hit(env, limitKey.ip(prefix), LIMITS.ip)]);
   if (!byAddr || !byIp) return c.json(tooMany, 429);
+  // After the limiters (a stored key costs a D1 read and a decrypt) and once per request: the mail reuses it.
+  const key = (await getSecret(env, "RESEND_API_KEY"))?.value;
+  if (!key) return notConfigured();
 
   const now = nowS();
   // One lookup for every address: same queries whether or not a mail goes out (R5).
@@ -104,12 +109,12 @@ signin.post("/email", async (c) => {
 
   // R5: every write that only a receiving address needs runs after the response, so the response path does the same
   // D1 work for every address. R14: the instance cap still answers the same 202 and sends nothing.
-  if (canReceive) c.executionCtx.waitUntil(mailLink(env, b.email, b.next, now));
+  if (canReceive) c.executionCtx.waitUntil(mailLink(env, b.email, b.next, now, key));
   return c.json({ ok: true }, 202);
 });
 
 /** Background: instance cap, then the token row (hash only), then the mail. R4: the token rides in the URL fragment. */
-async function mailLink(env: Env, email: string, next: string | undefined, now: number): Promise<void> {
+async function mailLink(env: Env, email: string, next: string | undefined, now: number, key: string): Promise<void> {
   try {
     if (!(await hit(env, limitKey.inst, LIMITS.instance))) {
       console.warn("email_cap");
@@ -119,7 +124,7 @@ async function mailLink(env: Env, email: string, next: string | undefined, now: 
     await env.DB.prepare("INSERT INTO login_tokens (token_hash, email, next, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
       .bind(await sha256Hex(secret), email, safeNext(next, origin(env)), now, now + TOKEN_TTL).run();
     const name = (await getSettings(env)).name;
-    await sendEmail(env, { to: email, name, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}`, name }) });
+    await sendEmail(env, { to: email, name, key, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}`, name }) });
   } catch {
     console.warn("sign_in_mail_failed"); // codes only: a D1 error text could carry bound values
   }

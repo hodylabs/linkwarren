@@ -191,3 +191,19 @@ describe("review fixes", () => {
     expect(JSON.parse(String((f.mock.calls[0] as unknown[])[1] ? ((f.mock.calls[0] as unknown[])[1] as RequestInit).body : "")).from).toBe('"Acme" <links@example.com>');
   });
 });
+
+describe("sendEmail hardening (Task 11)", () => {
+  it("a D1 failure reading the dashboard key answers settings instead of throwing", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const DB = { prepare: () => { throw new Error("d1 down"); } } as unknown as D1Database;
+    const f = vi.fn();
+    expect(await sendEmail(cfg({ DB, RESEND_API_KEY: undefined }), { ...mail, name: "x" }, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "settings" });
+    expect(f).not.toHaveBeenCalled();
+  });
+  it("a key given by the caller is used without reading D1", async () => {
+    const DB = { prepare: () => { throw new Error("no D1 expected"); } } as unknown as D1Database;
+    const f = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) => Response.json({ id: "1" }));
+    expect(await sendEmail(cfg({ DB, RESEND_API_KEY: undefined }), { ...mail, name: "x", key: "re_given_123" }, f as typeof fetch)).toEqual({ ok: true });
+    expect(new Headers(f.mock.calls[0]![1]!.headers).get("authorization")).toBe("Bearer re_given_123");
+  });
+});

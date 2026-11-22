@@ -19,17 +19,20 @@ export const displayName = (name: string | null): string => cut((name ?? "").rep
 /** One line for a subject or a text line: unsafe characters become a space, runs of spaces one, at most n code points. */
 const oneLine = (s: string, n = 80): string => cut(s.replace(UNSAFE, " ").replace(/ {2,}/g, " ").trim(), n).trim();
 
-/** name: the instance name for the sender; when undefined sendEmail reads it from the settings. */
-export type Mail = { to: string; subject: string; text: string; html: string; name?: string | null };
+/** name: the instance name for the sender; when undefined sendEmail reads it from the settings.
+ * key: the Resend key the caller already resolved (one lookup per request); when undefined sendEmail looks it up. */
+export type Mail = { to: string; subject: string; text: string; html: string; name?: string | null; key?: string };
 export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings" };
 
 /** One POST to Resend. Never throws; logs the status code only (Resend's error body can echo the request, link included). */
 export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Promise<SendResult> {
   const from = env.EMAIL_FROM?.trim();
-  const key = from ? (await getSecret(env, "RESEND_API_KEY"))?.value : undefined;
-  if (!from || !key) return { ok: false, reason: "not_configured" };
+  if (!from) return { ok: false, reason: "not_configured" };
+  let key: string | undefined;
   let name: string;
   try {
+    key = m.key ?? (await getSecret(env, "RESEND_API_KEY"))?.value;
+    if (!key) return { ok: false, reason: "not_configured" };
     name = displayName(m.name !== undefined ? m.name : (await getSettings(env)).name);
   } catch {
     console.warn("settings_read_failed");

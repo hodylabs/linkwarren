@@ -368,3 +368,33 @@ describe("POST /auth/email/verify", () => {
     });
   });
 });
+
+describe("POST /auth/email hardening (Task 11)", () => {
+  const ek = env as { SECRETS_KEY?: string };
+  afterEach(async () => {
+    ek.SECRETS_KEY = undefined;
+    await env.DB.prepare("DELETE FROM settings WHERE key LIKE 'secret.%'").run();
+  });
+
+  it("the limiters run before the key is looked up: past the limit an unreadable key is never read again", async () => {
+    e.RESEND_API_KEY = undefined;
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at, updated_by) VALUES ('secret.RESEND_API_KEY', 'v1.garbage.x', 1, 'u')").run();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) expect((await ask("a@example.com")).status).toBe(503);
+    warn.mockClear();
+    expect((await ask("a@example.com")).status).toBe(429);
+    expect(warn.mock.calls.filter((c) => c[0] === "secrets_unreadable")).toEqual([]);
+  });
+
+  it("a dashboard-stored key is decrypted once per request, mail included", async () => {
+    e.RESEND_API_KEY = undefined;
+    ek.SECRETS_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+    const { putSecretStmts } = await import("../src/secrets");
+    await env.DB.batch(await putSecretStmts(env, "u", "RESEND_API_KEY", "re_dashboard_123456"));
+    await addUser("a@example.com", "active");
+    const dec = vi.spyOn(crypto.subtle, "decrypt");
+    expect((await ask("a@example.com")).status).toBe(202);
+    expect(fake.sent).toHaveLength(1);
+    expect(dec).toHaveBeenCalledTimes(1);
+  });
+});
