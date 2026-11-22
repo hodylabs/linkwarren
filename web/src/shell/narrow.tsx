@@ -50,12 +50,26 @@ export function useDetailView(path: string) {
     navigate(`${path}${s ? `?${s}` : ""}`, { replace: true });
   };
 
-  // Back on the list: focus returns to the selected row.
+  // Back on the list: the row the detail showed last stays selected (J/K in the detail only replaced the detail entry,
+  // so the list entry below still names the row it opened with), then focus returns to it.
+  const sel = q.get("sel");
   const was = useRef(open);
+  const shown = useRef<string | null>(null);
   useEffect(() => {
-    if (was.current && !open) document.querySelector<HTMLElement>('.list [aria-selected="true"]')?.focus();
+    if (open) {
+      shown.current = sel;
+    } else if (was.current) {
+      const want = shown.current;
+      if (want && sel !== want && location.pathname === path) {
+        const p = new URLSearchParams(location.search);
+        p.set("sel", want);
+        return navigate(`${path}?${p}`, { replace: true }); // runs again with the new selection, then focuses
+      }
+      shown.current = null;
+      document.querySelector<HTMLElement>('.list [aria-selected="true"]')?.focus();
+    }
     was.current = open;
-  }, [open]);
+  }, [open, sel, path]);
 
   return { open, show, back };
 }

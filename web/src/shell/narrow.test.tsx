@@ -110,6 +110,20 @@ describe("narrow list and detail", () => {
     await waitFor(() => expect(document.activeElement).toBe(rows()[1]));
   });
 
+  it("J in the detail then Back keeps the row the detail showed selected and focused", async () => {
+    viewport([NARROW]);
+    const user = boot();
+    await ready();
+    await user.click(rows()[0]!);
+    expect(location.search).toBe("?sel=l1&view=detail");
+    await user.keyboard("j");
+    expect(location.search).toBe("?sel=l2&view=detail");
+    await user.click(screen.getByRole("button", { name: "All links" }));
+    await waitFor(() => expect(location.search).toBe("?sel=l2"));
+    expect(rows()[1]!.getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(rows()[1]));
+  });
+
   it("browser back and Esc also return to the list", async () => {
     viewport([NARROW]);
     const user = boot();
