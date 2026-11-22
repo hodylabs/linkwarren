@@ -179,6 +179,8 @@ Set `AUTH_MODE` to `access`. Cloudflare Access signs people in, exactly as befor
 
 Create a Cloudflare Access application on the dashboard host only. Short domains must stay public. Take its audience tag for `ACCESS_AUD`, and set `ACCESS_TEAM_DOMAIN`.
 
+Inviting people in access mode: the invite creates the person and emails them the dashboard address, but Access decides who gets past the login. Add each invitee to the Access application's policy too, or they cannot open the link. They become active on their first visit.
+
 Health checks: `/healthz` sits behind Access on the dashboard host. Add an Access bypass policy for the path `/healthz`, or give the monitor a service token, otherwise the check gets a login redirect.
 
 ### Upgrading an existing instance
