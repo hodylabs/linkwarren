@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { vi } from "vitest";
+import worker from "../../src/index";
 import { ORIGIN, tokenFor } from "./access";
 import { signInApp } from "./session";
 
@@ -109,14 +110,18 @@ export async function connectAgent(email: string, o: { write?: boolean; del?: bo
   return { accessToken, refreshToken, connId, clientId };
 }
 
-/** JSON-RPC over POST /mcp; an SSE answer is read from its first `data:` line. */
-export async function mcpCall(token: string, method: string, params?: unknown): Promise<{ status: number; body: any }> {
-  const r = await fetchW("/mcp", {
+/**
+ * JSON-RPC over POST /mcp; an SSE answer is read from its first `data:` line. With `ctx` the worker runs in that execution
+ * context, so a test can waitOnExecutionContext(ctx) for its waitUntil work (the tool_calls row).
+ */
+export async function mcpCall(token: string, method: string, params?: unknown, ctx?: ExecutionContext): Promise<{ status: number; body: any }> {
+  const init: RequestInit = {
     method: "POST",
     // The edge always sends Host; a test fetch does not, and the MCP handler checks it against DASHBOARD_HOST.
     headers: { host: new URL(ORIGIN).host, authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
-  });
+  };
+  const r = ctx ? await worker.fetch(new Request(`${ORIGIN}/mcp`, init), env, ctx) : await fetchW("/mcp", init);
   const text = await r.text();
   const data = (r.headers.get("content-type") ?? "").includes("text/event-stream") ? /^data: ?(.*)$/m.exec(text)?.[1] ?? "" : text;
   let body: unknown = null;

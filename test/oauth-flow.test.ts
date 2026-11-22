@@ -1,3 +1,4 @@
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupAccess } from "./helpers/access";
@@ -81,9 +82,10 @@ describe("agents follow the role: /token is not gated, tool calls are", () => {
   };
   const callsOf = async (connId: string) => (await env.DB.prepare("SELECT COUNT(*) n FROM tool_calls WHERE conn_id = ?").bind(connId).first<{ n: number }>())!.n;
   const refusedCall = async (accessToken: string, connId: string) => {
-    const r = await mcpCall(accessToken, "tools/call", { name: "server_info", arguments: {} });
+    const ctx = createExecutionContext();
+    const r = await mcpCall(accessToken, "tools/call", { name: "server_info", arguments: {} }, ctx);
     expect([r.status, r.body.result.isError, r.body.result.content[0].text]).toEqual([200, true, ROLE_REFUSED]);
-    await new Promise((res) => setTimeout(res, 100)); // a tool_calls row is written with waitUntil
+    await waitOnExecutionContext(ctx); // a tool_calls row would be written with waitUntil
     expect(await callsOf(connId)).toBe(0);
   };
 
@@ -99,8 +101,11 @@ describe("agents follow the role: /token is not gated, tool calls are", () => {
     await refusedCall(n.access_token, t.connId);
     expect(await grants(email)).toBe(1);
     await role("rf", ["agents"]);
-    const ok = await mcpCall(n.access_token, "tools/call", { name: "server_info", arguments: {} });
+    const ctx = createExecutionContext();
+    const ok = await mcpCall(n.access_token, "tools/call", { name: "server_info", arguments: {} }, ctx);
     expect(ok.body.result.isError).toBeFalsy();
+    await waitOnExecutionContext(ctx);
+    expect(await callsOf(t.connId)).toBe(1); // the same wait does see a waitUntil row, so refusedCall's 0 is real
   });
 
   it("code exchange with agents removed after approval: 200, and the token's tool call is refused", async () => {
@@ -129,10 +134,11 @@ describe("agents follow the role: /token is not gated, tool calls are", () => {
     const t = await connectAgentFull(email, { roleId: "rl" });
     await role("rl", []);
     const before = await env.DB.prepare("SELECT COUNT(*) n FROM auth_limits").first("n");
-    const init = await mcpCall(t.accessToken, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
+    const ctx = createExecutionContext();
+    const init = await mcpCall(t.accessToken, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } }, ctx);
     expect(init.body.result.serverInfo.name).toBe("linkwarren");
-    expect((await mcpCall(t.accessToken, "tools/list")).body.result.tools.length).toBeGreaterThan(0);
-    await new Promise((res) => setTimeout(res, 100));
+    expect((await mcpCall(t.accessToken, "tools/list", undefined, ctx)).body.result.tools.length).toBeGreaterThan(0);
+    await waitOnExecutionContext(ctx);
     expect(await callsOf(t.connId)).toBe(0);
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM auth_limits").first("n")).toBe(before);
   });
