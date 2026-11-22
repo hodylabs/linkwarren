@@ -5,7 +5,6 @@ const EXTRA: Record<string, string> = {
   target_in_use: "The CNAME target name already has a DNS record that linkwarren did not create. Remove or rename it in Cloudflare first.",
   outside_not_configured: "Outside domains are not configured. Set the Cloudflare for SaaS variables, then reload. See the deploy guide.",
   rate_range: "Enter a whole number from 10 to 1000.",
-  cloudflare_0: "Cloudflare did not answer.",
   stalled: "Cloudflare stopped answering. Try again in a minute.",
 };
 

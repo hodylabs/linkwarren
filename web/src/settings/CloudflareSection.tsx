@@ -15,7 +15,6 @@ export const SETTINGS_KEYS = {
 
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
-const UNREACHABLE = new Set(["cloudflare_0", "cloudflare_unreachable"]);
 const SSL_MISSING =
   "The token can't add outside domains yet. That's fine if every domain you'll use is in this Cloudflare account. To let people add their own domains with a CNAME, edit the token to include SSL and Certificates, then check again.";
 
@@ -31,6 +30,8 @@ export function CloudflareSection() {
   const [checkError, setCheckError] = useState<string | null>(null);
   const [controlsError, setControlsError] = useState<string | null>(null);
   const [setup, setSetup] = useState<{ text: string; error: boolean } | null>(null);
+  const [settingUp, setSettingUp] = useState(false);
+  const setupBusy = useRef(false); // a double click sends one setup
   const [resync, setResync] = useState<Resync>(IDLE);
   const busy = useRef(false); // one check at a time: a double C sends once
   const abort = useRef<AbortController | null>(null);
@@ -73,6 +74,9 @@ export function CloudflareSection() {
   };
 
   const runSetup = async () => {
+    if (setupBusy.current) return;
+    setupBusy.current = true;
+    setSettingUp(true);
     setSetup(null);
     try {
       const r = await setupOutside();
@@ -80,6 +84,9 @@ export function CloudflareSection() {
       await load().catch(() => undefined);
     } catch (e) {
       setSetup({ text: settingsError(code(e)), error: true });
+    } finally {
+      setupBusy.current = false;
+      setSettingUp(false);
     }
   };
 
@@ -99,7 +106,7 @@ export function CloudflareSection() {
         const now = new Set(r.failed.map((f) => f.host)); // one row per host, the latest error
         failed = [...failed.filter((f) => f.host !== pending && !now.has(f.host)), ...r.failed];
         checked += r.ok;
-        const unreachable = r.failed.find((f) => UNREACHABLE.has(f.error));
+        const unreachable = r.failed.find((f) => f.error === "cloudflare_unreachable");
         if (r.next === null) return view({ running: false, done: true });
         if (r.next === after) return view({ running: false, stopped: "stalled" });
         if (unreachable && unreachable.host === pending) return view({ running: false, resume: r.next, stopped: "stalled" });
@@ -196,7 +203,7 @@ export function CloudflareSection() {
             <small>Creates the CNAME target and the fallback origin in Cloudflare for SaaS</small>
           </div>
           <div className="row-actions">
-            <button type="button" className="btn" onClick={() => void runSetup()}>Set up outside domains</button>
+            <button type="button" className="btn" onClick={() => void runSetup()} disabled={settingUp}>Set up outside domains</button>
           </div>
         </div>
       )}

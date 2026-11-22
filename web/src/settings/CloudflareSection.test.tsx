@@ -79,6 +79,22 @@ describe("Cloudflare settings", () => {
     expect(writes(api)).toHaveLength(1);
   });
 
+  it("a double click on setup sends one request", async () => {
+    let release!: () => void;
+    const { api, user } = boot({
+      cfg: { fallbackOrigin: "missing" },
+      routes: { "POST /api/settings/cloudflare/setup": () => new Promise((r) => (release = () => r({ body: { target: "t.example.com", fallbackOrigin: "active" } }))) },
+    });
+    const btn = await screen.findByRole("button", { name: /Set up outside domains/ });
+    await user.dblClick(btn);
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(writes(api)).toHaveLength(1);
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    release();
+    expect(await screen.findByText("Outside domains are ready.")).toBeTruthy();
+    expect(writes(api)).toHaveLength(1);
+  });
+
   it("setup 409 fallback_in_use shows its copy", async () => {
     const { user } = boot({
       cfg: { fallbackOrigin: "pending" },
@@ -126,7 +142,7 @@ describe("Resync", () => {
   });
 
   it("stops with Retry when the same domain is unreachable twice", async () => {
-    const down = { host: "a.test", error: "cloudflare_0" };
+    const down = { host: "a.test", error: "cloudflare_unreachable" };
     const b = batches([{ next: "d2", failed: [down] }, { next: "d3", failed: [down] }, { next: null }]);
     const { user } = boot({ routes: { "POST /api/settings/cloudflare/resync": b.route } });
     await user.click(await screen.findByRole("button", { name: "Resync domains" }));
@@ -136,7 +152,7 @@ describe("Resync", () => {
   });
 
   it("Retry after a stall does not duplicate the stalled host", async () => {
-    const down = { host: "a.test", error: "cloudflare_0" };
+    const down = { host: "a.test", error: "cloudflare_unreachable" };
     const b = batches([{ next: "d2", failed: [down] }, { next: "d3", failed: [down] }, { next: "d3", failed: [down] }]);
     const { user } = boot({ routes: { "POST /api/settings/cloudflare/resync": b.route } });
     await user.click(await screen.findByRole("button", { name: "Resync domains" }));
@@ -144,6 +160,24 @@ describe("Resync", () => {
     await waitFor(() => expect(b.sent).toHaveLength(3));
     await screen.findByRole("button", { name: "Retry" });
     expect(screen.getAllByText("a.test")).toHaveLength(1);
+  });
+
+  it("a cloudflare_error failure is not unreachable: the run goes on", async () => {
+    const bad = { host: "a.test", error: "cloudflare_error" };
+    const b = batches([{ next: "d2", failed: [bad] }, { next: "d3", failed: [bad] }, { next: null }]);
+    const { user } = boot({ routes: { "POST /api/settings/cloudflare/resync": b.route } });
+    await user.click(await screen.findByRole("button", { name: "Resync domains" }));
+    await waitFor(() => expect(b.sent).toHaveLength(3));
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("every stored failure code has copy", async () => {
+    const codes = ["cloudflare_error", "cloudflare_forbidden", "internal_error", "outside_not_configured", "hostname_limit", "hostname_in_use"];
+    const b = batches([{ next: null, failed: codes.map((error, i) => ({ host: `h${i}.test`, error })) }]);
+    const { user } = boot({ routes: { "POST /api/settings/cloudflare/resync": b.route } });
+    await user.click(await screen.findByRole("button", { name: "Resync domains" }));
+    await screen.findByText("h0.test");
+    expect(document.body.textContent).not.toContain("Something went wrong (");
   });
 
   it("lists failures", async () => {
