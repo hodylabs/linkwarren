@@ -312,6 +312,32 @@ describe("pruneExpired", () => {
     await worker.scheduled({ cron: "15 * * * *", scheduledTime: Date.parse("2026-11-20T12:15:00Z"), noRetry() {} } as ScheduledController, env, {} as ExecutionContext);
     expect([await count("auth_limits"), await count("sessions")]).toEqual([1, 1]);
   });
+
+  it("counts pruning in the daily write budget and prunes nothing once the day is spent", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const ctl = { cron: "15 * * * *", scheduledTime: Date.parse("2026-11-20T12:15:00Z"), noRetry() {} } as ScheduledController;
+    const mark = async () => (await env.DB.prepare("SELECT v FROM analytics_state WHERE k = 'rollup_writes'").first<{ v: string }>())?.v;
+    await fill(2, 1);
+    await env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', ?)").bind(`2026-11-20|${DAY_WRITE_BUDGET}`).run();
+    await worker.scheduled(ctl, env, {} as ExecutionContext);
+    expect([await count("auth_limits"), await count("sessions")]).toEqual([3, 3]);
+    await env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', '2026-11-20|100')").run();
+    await worker.scheduled(ctl, env, {} as ExecutionContext);
+    expect(await mark()).toBe(`2026-11-20|${100 + 4 * 2 * 3}`); // 2 expired rows in each of 4 tables, 3 writes per row
+  });
+
+  it("reports writes from tables pruned before a later table fails", async () => {
+    await fill(2, 0);
+    const spent = { writes: 0 };
+    const real = env.DB.prepare.bind(env.DB);
+    const spy = vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => {
+      if (q.includes("FROM auth_challenges")) throw new Error("boom");
+      return real(q);
+    });
+    await expect(pruneExpired(env, T, RUN_WRITE_BUDGET, spent)).rejects.toThrow("boom");
+    spy.mockRestore();
+    expect(spent.writes).toBe(2 * 2 * 3); // auth_limits and login_tokens done, 3 writes per row
+  });
 });
 
 describe("scheduled", () => {

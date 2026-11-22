@@ -141,7 +141,7 @@ const PRUNES = [
  * Deletes expired rows, at most PRUNE_MAX per table and within `budget` D1 writes (WRITES_PER_ROW per deleted row,
  * counted before each DELETE). Returns the writes used. Hourly, so visitors' IP ranges in auth_limits do not linger.
  */
-export async function pruneExpired(env: Env, nowSec: number, budget: number): Promise<number> {
+export async function pruneExpired(env: Env, nowSec: number, budget: number, spent = { writes: 0 }): Promise<number> {
   let used = 0;
   for (const [table, col, age] of PRUNES) {
     const rows = Math.min(PRUNE_MAX, Math.floor((budget - used) / WRITES_PER_ROW));
@@ -151,6 +151,7 @@ export async function pruneExpired(env: Env, nowSec: number, budget: number): Pr
       .bind(nowSec - age, rows)
       .run();
     used += r.meta.changes * WRITES_PER_ROW;
+    spent.writes = used; // kept per table, so writes done before a later table fails are still counted
   }
   return used;
 }
@@ -167,10 +168,22 @@ export async function scheduled(c: ScheduledController, env: Env, _ctx: Executio
   } catch (e) {
     console.error("analytics rollup failed", errName(e));
   }
+  // Pruning shares the rollup's daily D1 write budget and adds what it really wrote to the same counter.
+  const today = utcDay(now);
+  const pruned = { writes: 0 };
   try {
-    console.log(`expired rows pruned: ${(await pruneExpired(env, now, RUN_WRITE_BUDGET - spent.writes)) / WRITES_PER_ROW}`);
+    const left = Math.min(RUN_WRITE_BUDGET - spent.writes, DAY_WRITE_BUDGET - (await writtenToday(env, today)));
+    console.log(`expired rows pruned: ${(await pruneExpired(env, now, left, pruned)) / WRITES_PER_ROW}`);
   } catch (e) {
     console.error("expired rows prune failed", errName(e));
+  }
+  if (pruned.writes > 0) {
+    try {
+      const n = (await writtenToday(env, today)) + pruned.writes;
+      await env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', ?)").bind(`${today}|${n}`).run();
+    } catch (e) {
+      console.error("prune write count not saved", errName(e));
+    }
   }
   if (new Date(c.scheduledTime).getUTCHours() !== 0) return;
   try {
