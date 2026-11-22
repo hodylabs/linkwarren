@@ -1,4 +1,4 @@
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
+import { OAuthError, OAuthProvider, type TokenExchangeCallbackOptions } from "@cloudflare/workers-oauth-provider";
 import type { Env } from "./env";
 import { normalizeHost } from "./host";
 import { app } from "./app";
@@ -43,6 +43,27 @@ const checkRegistration = ({ clientMetadata }: { clientMetadata: Record<string, 
     return { code: "invalid_redirect_uri", description: `Only ${CALLBACKS.join(", ")} and http://localhost|127.0.0.1:<port>/callback[/<id>] are accepted` };
 };
 
+/**
+ * Every code exchange and refresh re-reads the connection and its person (one D1 read): a revoked connection (for example a
+ * disconnect whose KV revoke failed) or a disabled person gets invalid_grant, and the library then revokes the grant.
+ * No D1, no token (temporarily_unavailable, the grant is kept).
+ */
+export async function checkConnection(o: TokenExchangeCallbackOptions<Env>): Promise<void> {
+  const connId = (o.props as { connId?: unknown } | undefined)?.connId;
+  let ok: unknown = null;
+  if (typeof connId === "string") {
+    try {
+      ok = await o.env.DB.prepare(
+        "SELECT 1 FROM agent_connections c JOIN users u ON u.id = c.user_id WHERE c.id = ? AND c.user_id = ? AND c.revoked_at IS NULL AND u.status = 'active'",
+      ).bind(connId, o.userId).first();
+    } catch (e) {
+      console.error("connection check failed", e instanceof Error ? e.name : "unknown");
+      throw new OAuthError("temporarily_unavailable", { description: "Try again later", statusCode: 503 });
+    }
+  }
+  if (!ok) throw new OAuthError("invalid_grant", { description: "This connection was disconnected" });
+}
+
 let cached: { host: string; p: OAuthProvider<Env> } | undefined;
 
 /** One provider per dashboard host (the resource URL is derived from it). The library reads its KV as env.OAUTH_KV. */
@@ -59,6 +80,7 @@ export function provider(env: Env): OAuthProvider<Env> {
         tokenEndpoint: "/token",
         clientRegistrationEndpoint: "/register",
         clientRegistrationCallback: checkRegistration,
+        tokenExchangeCallback: checkConnection,
         accessTokenTTL: 86400,
         refreshTokenTTL: 2592000,
         clientRegistrationTTL: 2592000, // abandoned DCR clients age out

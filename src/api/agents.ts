@@ -64,12 +64,17 @@ agents.patch("/connections/:id", async (c) => {
   // R6: the owner may only lower someone else's connection; raising needs that person's own sign-in.
   if (!own && ((write && !item.write) || (del && !item.del))) return c.json({ error: "owner_cannot_raise" }, 403);
   if (write === item.write && del === item.del) return c.json(item);
+  const w = write ? 1 : 0, d = del ? 1 : 0;
   const res = await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL").bind(write ? 1 : 0, del ? 1 : 0, id),
-    auditStmt(c.env, { ...actor(c), action: "agent.access", targetType: "agent_connection", targetId: id, detail: { write, del } },
+    // Not own: the row must still hold at least what is asked at write time, so a lowering never raises what the
+    // person lowered after our read (check-then-write).
+    c.env.DB.prepare("UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL AND (? = 1 OR (can_write >= ? AND can_delete >= ?))")
+      .bind(w, d, id, own ? 1 : 0, w, d),
+    auditStmt(c.env, { ...actor(c), action: "agent.access", targetType: "agent_connection", targetId: id,
+      detail: { write, del, before: { write: item.write, del: item.del } } },
       { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM agent_connections WHERE id = ? AND revoked_at IS NULL)", binds: [id] }),
   ]);
-  if (!res[0]!.meta.changes) return c.json(notFound, 404); // revoked in between
+  if (!res[0]!.meta.changes) return (await find(c.env, u, id)) ? c.json({ error: "changed" }, 409) : c.json(notFound, 404); // revoked in between
   return c.json({ ...item, write, del });
 });
 

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
-import { connectAgent, mcpCall } from "./helpers/oauth";
+import { connectAgent, mcpCall, token } from "./helpers/oauth";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -81,7 +81,7 @@ describe("PATCH /api/agents/connections/:id", () => {
     const rows = await audits("agent.access");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ actor_id: "ua", via: null, target_type: "agent_connection", target_id: a.connId });
-    expect(JSON.parse(rows[0]!.detail as string)).toEqual({ write: true, del: false });
+    expect(JSON.parse(rows[0]!.detail as string)).toEqual({ write: true, del: false, before: { write: false, del: false } });
     expect((await patch(A, a.connId, { write: true, del: false })).status).toBe(200);
     expect(await audits("agent.access")).toHaveLength(1);
   });
@@ -176,5 +176,87 @@ describe("/api/users agentCount", () => {
     expect(await count()).toBe(1);
     expect((await del(A, a.connId)).status).toBe(204);
     expect(await count()).toBe(0);
+  });
+});
+
+describe("final fix wave", () => {
+  const refresh = (t: { clientId: string; refreshToken: string }) => token({ grant_type: "refresh_token", refresh_token: t.refreshToken, client_id: t.clientId });
+
+  it("the owner's lowering cannot raise what the person lowered in between (409, nothing written)", async () => {
+    const w = await connectAgent(B, { write: true, del: true });
+    const batch = env.DB.batch.bind(env.DB);
+    vi.spyOn(env.DB, "batch").mockImplementationOnce(async (stmts) => {
+      await run("UPDATE agent_connections SET can_write = 0, can_delete = 0 WHERE id = ?", w.connId); // the person, concurrently
+      return batch(stmts);
+    });
+    const r = await patch(O, w.connId, { write: true, del: false });
+    expect([r.status, await r.json()]).toEqual([409, { error: "changed" }]);
+    expect(await one("SELECT can_write, can_delete FROM agent_connections WHERE id = ?", w.connId)).toEqual({ can_write: 0, can_delete: 0 });
+    expect(await audits("agent.access")).toHaveLength(0);
+  });
+
+  it("the owner cannot raise delete alone; the audit records before and after", async () => {
+    const w = await connectAgent(B, { write: true });
+    const r = await patch(O, w.connId, { write: true, del: true });
+    expect([r.status, await r.json()]).toEqual([403, { error: "owner_cannot_raise" }]);
+    expect((await patch(O, w.connId, { write: false, del: false })).status).toBe(200);
+    const [a] = await audits("agent.access");
+    expect(JSON.parse(a!.detail as string)).toEqual({ write: false, del: false, before: { write: true, del: false } });
+  });
+
+  it("a Bearer token or key never reaches /api/agents", async () => {
+    const a = await connectAgent(A);
+    for (const [m, p] of [["GET", "/api/agents/connections"], ["DELETE", `/api/agents/connections/${a.connId}`]]) {
+      const r = await dash(p!, { method: m, headers: { authorization: `Bearer ${a.accessToken}` } });
+      expect([m, r.status]).toEqual([m, 401]);
+    }
+    expect(await one("SELECT revoked_at FROM agent_connections WHERE id = ?", a.connId)).toEqual({ revoked_at: null });
+  });
+
+  it("a foreign Origin is refused on PATCH and DELETE and changes nothing", async () => {
+    const a = await connectAgent(A);
+    const h = { "Cf-Access-Jwt-Assertion": await tokenFor(A), "content-type": "application/json", origin: "https://evil.test" };
+    const p = await dash(`/api/agents/connections/${a.connId}`, { method: "PATCH", headers: h, body: JSON.stringify({ write: true, del: false }) });
+    const d = await dash(`/api/agents/connections/${a.connId}`, { method: "DELETE", headers: h });
+    expect([p.status, d.status]).toEqual([403, 403]);
+    expect(await one("SELECT can_write, revoked_at FROM agent_connections WHERE id = ?", a.connId)).toEqual({ can_write: 0, revoked_at: null });
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM audit_log WHERE action IN ('agent.access','agent.disconnect')").first("n")).toBe(0);
+  });
+
+  it("after a KV-failed disconnect: revoked_at and the audit land, and the refresh token is refused (grant then revoked)", async () => {
+    const a = await connectAgent(A);
+    const list = vi.spyOn(env.OAUTH_KV, "list").mockRejectedValue(new Error("KV list limit"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await del(A, a.connId)).status).toBe(204);
+    list.mockRestore();
+    expect((await one<{ revoked_at: number | null }>("SELECT revoked_at FROM agent_connections WHERE id = ?", a.connId))!.revoked_at).not.toBeNull();
+    expect(await audits("agent.disconnect")).toHaveLength(1);
+    expect(await grantsOf("ua")).toEqual([a.connId]); // the grant survived the KV failure
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await refresh(a);
+    expect([r.status, (await r.json<{ error: string }>()).error]).toEqual([400, "invalid_grant"]);
+    expect(await grantsOf("ua")).toEqual([]);
+  });
+
+  it("a disabled person's refresh is refused; a D1 failure refuses it as temporarily unavailable", async () => {
+    const a = await connectAgent(A);
+    const prep = env.DB.prepare.bind(env.DB);
+    const spy = vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("FROM agent_connections")) throw new Error("D1 down");
+      return prep(sql);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const down = await refresh(a);
+    expect([down.status, (await down.json<{ error: string }>()).error]).toEqual([503, "temporarily_unavailable"]);
+    spy.mockRestore();
+    expect(await grantsOf("ua")).toEqual([a.connId]); // a transient failure does not revoke
+    await run("UPDATE users SET status = 'disabled' WHERE id = 'ua'");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect((await (await refresh(a)).json<{ error: string }>()).error).toBe("invalid_grant");
+  });
+
+  it("an active connection still refreshes", async () => {
+    const a = await connectAgent(A);
+    expect((await refresh(a)).status).toBe(200);
   });
 });
