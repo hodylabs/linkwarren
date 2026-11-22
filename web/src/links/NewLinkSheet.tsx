@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type Domain, type Link } from "../api";
+import { api, ApiError, type Domain, type Link, type Route } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
@@ -10,22 +10,28 @@ import { fromLocalInput } from "../time";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
 import { readUtm, suggestSlugs, withUtm, type Utm } from "./compose";
 import { shortUrl } from "./linkView";
+import { parseCountries, passwordProblem, routeSummary } from "./rules";
+import { RoutesEditor } from "./RoutesEditor";
 
 type Check = { status: "available" | "taken" | "locked" | "reserved" } | { status: "invalid"; reason: string };
-type Field = "url" | "slug" | "schedule" | "form";
+type Field = "url" | "slug" | "schedule" | "password" | "form";
 const SLUG_CODES = new Set(["taken", "locked", "reserved", "empty", "slug_too_long", "charset", "leading_dot", "too_long"]);
 const URL_CODES = new Set(["not_url", "scheme", "userinfo", "url_too_long", "loop", "too_long"]);
-const fieldOf = (code: string): Field => (code === "bad_window" ? "schedule" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
+const fieldOf = (code: string): Field => (code === "bad_window" ? "schedule" : code.startsWith("password_") ? "password" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
 const DEBOUNCE_MS = 250;
 
-/** New link sheet hotkeys and their text on the shortcuts sheet (T and S only outside text boxes). */
+/** New link sheet hotkeys and their text on the shortcuts sheet (the rule keys T S P R Q only outside text boxes). */
 export const NEW_LINK_KEYS = {
   "mod+enter": "Create the link",
   "mod+shift+enter": "Create and copy the short link",
   "alt+d": "Change the domain",
   t: "Campaign tags",
   s: "Schedule and expiry",
+  p: "Password",
+  r: "Country and device routing",
+  q: "QR code after creating",
 } as const;
+const blank = (r: Route) => !r.countries.length && !r.devices.length && !r.url.trim();
 
 const isUrl = (s: string) => {
   try {
@@ -35,9 +41,10 @@ const isUrl = (s: string) => {
   }
 };
 
-function Rule({ icon, label, note, keyName, open, onClick }: { icon: string; label: string; note: string; keyName: string; open: boolean; onClick(): void }) {
+/** A rule row. `toggle` rows (QR) are on/off buttons (aria-pressed); the others expand a panel (aria-expanded). */
+function Rule({ icon, label, note, keyName, open, onClick, toggle }: { icon: string; label: string; note: string; keyName: string; open: boolean; onClick(): void; toggle?: boolean }) {
   return (
-    <button type="button" className={open ? "rule open" : "rule"} aria-expanded={open} aria-keyshortcuts={keyName} onClick={onClick}>
+    <button type="button" className={open ? "rule open" : "rule"} aria-expanded={toggle ? undefined : open} aria-pressed={toggle ? open : undefined} aria-keyshortcuts={keyName} onClick={onClick}>
       <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
         <path d={icon} />
       </svg>
@@ -65,6 +72,15 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const [ends, setEnds] = useState("");
   const [tagsOpen, setTagsOpen] = useState(false);
   const [schedOpen, setSchedOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [password, setPassword] = useState(""); // never logged, announced or echoed; cleared after a save
+  const [showPw, setShowPw] = useState(false);
+  const [routesOpen, setRoutesOpen] = useState(false);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [routeErrors, setRouteErrors] = useState<Record<number, string>>({});
+  const [qr, setQr] = useState(false);
+  const pwRef = useRef<HTMLInputElement>(null);
+  const routesRef = useRef<HTMLDivElement>(null);
   const [check, setCheck] = useState<Check | null>(null);
   const [error, setError] = useState<{ field: Field; code: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -107,19 +123,40 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const startSec = fromLocalInput(starts);
   const endSec = fromLocalInput(ends);
 
+  const filled = routes.filter((r) => !blank(r));
+
   const blocked = (): { field: Field; code: string } | null => {
     if (check && check.status !== "available") return { field: "slug", code: check.status === "invalid" ? check.reason : check.status };
     if (!slug) return { field: "slug", code: "empty" };
     const dest = checkDestination(url, usable.map((d) => d.host));
     if (!dest.ok) return { field: "url", code: dest.reason === "too_long" ? "url_too_long" : dest.reason };
     if (startSec !== null && endSec !== null && endSec <= startSec) return { field: "schedule", code: "bad_window" };
+    if (pwOpen) {
+      const p = passwordProblem(password);
+      if (p) return { field: "password", code: p };
+      if (code === 301) return { field: "password", code: "password_301" };
+    }
     return null;
+  };
+
+  /** Countries normalized for the API, or the error text under each bad row (keyed by its index in `routes`). */
+  const routeBody = (): { ok: true; routes: Route[] } | { ok: false; errors: Record<number, string> } => {
+    const errors: Record<number, string> = {};
+    const out = filled.map((r) => {
+      const c = parseCountries(r.countries.join(" "));
+      if (!c.ok) errors[routes.indexOf(r)] = errorText("route_country");
+      return { ...r, countries: c.ok ? c.list : [] };
+    });
+    return Object.keys(errors).length ? { ok: false, errors } : { ok: true, routes: out };
   };
 
   const submit = async (copy: boolean) => {
     if (busy || releasing || !domainId) return;
     const stop = blocked();
-    if (stop) {
+    const rb = routeBody();
+    setRouteErrors(rb.ok ? {} : rb.errors);
+    if (!rb.ok) setRoutesOpen(true);
+    if (stop || !rb.ok) {
       setError(stop);
       return;
     }
@@ -129,18 +166,27 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       const body: Record<string, unknown> = { domainId, slug, url, redirectCode: code };
       if (startSec !== null) body.startsAt = startSec;
       if (endSec !== null) body.expiresAt = endSec;
+      if (pwOpen) body.password = password;
+      if (rb.routes.length) body.routes = rb.routes;
       const link = await api<Link>("POST", "/api/links", body);
+      setPassword("");
       const short = shortUrl(host, link.slug);
       let copied = false;
       if (copy) copied = await navigator.clipboard.writeText(short).then(() => true, () => false);
       app.close();
       app.bumpLinks();
       app.reloadDomains().catch(() => undefined); // link counts
-      navigate(`/links?sel=${encodeURIComponent(link.id)}`);
+      navigate(`/links?sel=${encodeURIComponent(link.id)}${qr ? "&view=detail&qr=1" : ""}`);
       app.announce(`Created ${host}/${link.slug}${copy ? (copied ? " and copied" : ", could not copy") : ""}`);
     } catch (e) {
       const c = e instanceof ApiError ? e.code : "internal";
-      setError({ field: fieldOf(c), code: c }); // typed values stay in the form
+      const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
+      const row = c === "bad_route" && typeof d?.index === "number" ? filled[d.index] : undefined;
+      if (row) {
+        // the server's index counts the rows sent (the non-blank ones), so map it back to the editor row
+        setRouteErrors({ [routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
+        setRoutesOpen(true);
+      } else setError({ field: fieldOf(c), code: c }); // typed values stay in the form
       if (c === "taken" || c === "locked" || c === "reserved") setCheck({ status: c }); // the availability line agrees with the error
     } finally {
       setBusy(false);
@@ -168,12 +214,36 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
     wasReleasing.current = releasing;
   }, [releasing]);
 
+  const focusPw = useRef(false);
+  const focusRoutes = useRef(false);
+  const togglePw = () => {
+    focusPw.current = !pwOpen;
+    setPwOpen(!pwOpen);
+  };
+  const toggleRoutes = () => {
+    focusRoutes.current = !routesOpen;
+    if (!routesOpen && !routes.length) setRoutes([{ countries: [], devices: [], url: "" }]);
+    setRoutesOpen(!routesOpen);
+  };
+  // Opening a row from its key or button moves focus into it.
+  useEffect(() => {
+    if (pwOpen && focusPw.current) pwRef.current?.focus();
+    focusPw.current = false;
+  }, [pwOpen]);
+  useEffect(() => {
+    if (routesOpen && focusRoutes.current) routesRef.current?.querySelector("input")?.focus();
+    focusRoutes.current = false;
+  }, [routesOpen]);
+
   useHotkeys({
     "mod+enter": () => void submit(false),
     "mod+shift+enter": () => void submit(true),
     "alt+d": () => domainRef.current?.focus(),
     t: () => setTagsOpen((v) => !v),
     s: () => setSchedOpen((v) => !v),
+    p: togglePw,
+    r: toggleRoutes,
+    q: () => setQr((v) => !v),
   } satisfies Bindings<typeof NEW_LINK_KEYS>, !releasing);
 
   const setTag = (k: keyof Utm, v: string) => setUrl((u) => withUtm(u, { ...readUtm(u), [k]: v }));
@@ -332,6 +402,73 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
               </div>
             </div>
           )}
+          <Rule
+            icon="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z"
+            label="Password"
+            note={pwOpen && password ? "On" : "Off"}
+            keyName="P"
+            open={pwOpen}
+            onClick={togglePw}
+          />
+          {pwOpen && (
+            <div className="pw">
+              <label htmlFor="nl-pw">Password</label>
+              <div className={err("password") ? "ctl bad" : "ctl"}>
+                <input
+                  id="nl-pw"
+                  ref={pwRef}
+                  type={showPw ? "text" : "password"}
+                  value={password}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  aria-describedby="nl-pw-hint"
+                  aria-invalid={err("password") ? true : undefined}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button type="button" className="btn ghost" aria-pressed={showPw} aria-label={showPw ? "Hide password" : "Show password"} onClick={() => setShowPw((v) => !v)}>
+                  {showPw ? "Hide" : "Show"}
+                </button>
+              </div>
+              <p id="nl-pw-hint" className="utm-note">
+                At least 8 characters. Visitors type it before the link opens.
+              </p>
+              {err("password") && (
+                <p className="err" role="alert">
+                  {errorText(err("password")!)}
+                </p>
+              )}
+            </div>
+          )}
+          <Rule
+            icon="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12zM12 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"
+            label="Country and device routing"
+            note={routeSummary(filled, url)}
+            keyName="R"
+            open={routesOpen}
+            onClick={toggleRoutes}
+          />
+          {routesOpen && (
+            <div ref={routesRef}>
+              <RoutesEditor
+                value={routes}
+                errors={routeErrors}
+                onChange={(r) => {
+                  setRoutes(r);
+                  setRouteErrors({});
+                }}
+              />
+            </div>
+          )}
+          <Rule
+            icon="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h3v3M21 14v7h-4M14 21v-3"
+            label="QR code"
+            note={qr ? "Opens after creating" : "Make one after creating"}
+            keyName="Q"
+            open={qr}
+            toggle
+            onClick={() => setQr((v) => !v)}
+          />
         </div>
         {err("schedule") && (
           <p className="err" role="alert">
@@ -369,7 +506,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         )}
       </div>
       <div className="sh-foot">
-        <span className="left kh">Rule keys T S work outside text boxes</span>
+        <span className="left kh">Rule keys T S P R Q work outside text boxes</span>
         <button type="button" className="btn" disabled={busy || !domainId} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
           Create and copy <span className="k2">Ctrl ⇧ Enter</span>
         </button>

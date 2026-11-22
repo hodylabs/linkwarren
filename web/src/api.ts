@@ -3,7 +3,7 @@ import type { AuditItem as ServerAuditItem, ApiLink, CfView, DomainRow, UserList
 export type { CfView };
 /** `authMode` and `passkeys` come from /api/me; optional so a Me built without them reads as access mode. */
 export type Me = Pick<UserRow, "id" | "email" | "name" | "role"> & { authMode?: "app" | "access"; passkeys?: number };
-export type { PasskeyItem, SessionItem } from "../../src/types";
+export type { PasskeyItem, Route, RouteDevice, SessionItem } from "../../src/types";
 export type Link = ApiLink;
 export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView };
 export type UserItem = UserListItem;

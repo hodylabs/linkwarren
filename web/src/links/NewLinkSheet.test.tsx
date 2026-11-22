@@ -265,6 +265,133 @@ describe("New link sheet", () => {
     expect(posts(api)).toEqual([]);
   });
 
+  it("p, r and q stay text in the destination", async () => {
+    const { user } = boot();
+    const sheet = await open(user);
+    await user.type(dest(), "prq");
+    expect(dest().value).toBe("prq");
+    expect(within(sheet).queryByLabelText("Password")).toBeNull();
+    expect(within(sheet).queryByLabelText("Rule 1 countries")).toBeNull();
+    expect(within(sheet).getByText("Make one after creating")).toBeTruthy();
+  });
+
+  it("p outside inputs opens the password row and focuses its input", async () => {
+    const { user } = boot();
+    const sheet = await open(user);
+    sheet.focus();
+    await user.keyboard("p");
+    const pw = within(sheet).getByLabelText("Password") as HTMLInputElement;
+    expect(document.activeElement).toBe(pw);
+    expect(pw.type).toBe("password");
+    expect(pw.getAttribute("autocomplete")).toBe("new-password");
+    expect(within(sheet).getByText("At least 8 characters. Visitors type it before the link opens.")).toBeTruthy();
+    await user.type(pw, "secret-pass");
+    await user.click(within(sheet).getByRole("button", { name: "Show password" }));
+    expect(pw.type).toBe("text");
+    expect(sheet.querySelector('[aria-keyshortcuts="P"] small')!.textContent).toBe("On");
+  });
+
+  it("Ctrl+Enter sends the password and one route", async () => {
+    const { api, user } = boot();
+    const sheet = await open(user);
+    await user.type(slugBox(), "spring");
+    setVal(dest(), "https://x.com/a");
+    sheet.focus();
+    await user.keyboard("r");
+    expect(document.activeElement).toBe(within(sheet).getByLabelText("Rule 1 countries"));
+    await user.type(within(sheet).getByLabelText("Rule 1 countries"), "ca");
+    setVal(within(sheet).getByLabelText("Rule 1 goes to"), "https://x.ca/");
+    sheet.focus();
+    await user.keyboard("p");
+    await user.type(within(sheet).getByLabelText("Password"), "spring-27");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() =>
+      expect(posts(api)).toEqual([
+        { domainId: "dm", slug: "spring", url: "https://x.com/a", redirectCode: 302, password: "spring-27", routes: [{ countries: ["CA"], devices: [], url: "https://x.ca/" }] },
+      ]),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New link" })).toBeNull());
+    expect(document.body.textContent).not.toContain("spring-27");
+  });
+
+  it("a short password blocks with the minimum text and sends nothing", async () => {
+    const { api, user } = boot();
+    const sheet = await open(user);
+    await user.type(slugBox(), "spring");
+    setVal(dest(), "https://x.com/a");
+    sheet.focus();
+    await user.keyboard("p");
+    await user.type(within(sheet).getByLabelText("Password"), "1234567");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(await screen.findByText("Use at least 8 characters.")).toBeTruthy();
+    expect(posts(api)).toEqual([]);
+  });
+
+  it("a password with 301 blocks with the password_301 text", async () => {
+    const { api, user } = boot();
+    const sheet = await open(user);
+    await user.type(slugBox(), "spring");
+    setVal(dest(), "https://x.com/a");
+    await user.click(within(sheet).getByRole("radio", { name: "301 fixed" }));
+    sheet.focus();
+    await user.keyboard("p");
+    await user.type(within(sheet).getByLabelText("Password"), "spring-27");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(await screen.findByText(errorText("password_301"))).toBeTruthy();
+    expect(posts(api)).toEqual([]);
+  });
+
+  it("a bad country blocks under its rule", async () => {
+    const { api, user } = boot();
+    const sheet = await open(user);
+    await user.type(slugBox(), "spring");
+    setVal(dest(), "https://x.com/a");
+    sheet.focus();
+    await user.keyboard("r");
+    await user.type(within(sheet).getByLabelText("Rule 1 countries"), "CAN");
+    setVal(within(sheet).getByLabelText("Rule 1 goes to"), "https://x.ca/");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    const row = within(sheet).getByRole("group", { name: "Rule 1" });
+    expect(await within(row).findByText(errorText("route_country"))).toBeTruthy();
+    expect(posts(api)).toEqual([]);
+  });
+
+  it("a 400 bad_route shows its reason under that rule", async () => {
+    const { user } = boot({ routes: { "POST /api/links": () => ({ status: 400, body: { error: "bad_route", index: 0, reason: "loop" } }) } });
+    const sheet = await open(user);
+    await user.type(slugBox(), "spring");
+    setVal(dest(), "https://x.com/a");
+    sheet.focus();
+    await user.keyboard("r");
+    await user.type(within(sheet).getByLabelText("Rule 1 countries"), "ca");
+    setVal(within(sheet).getByLabelText("Rule 1 goes to"), "https://go.test/x");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    const row = within(sheet).getByRole("group", { name: "Rule 1" });
+    expect(await within(row).findByText(errorText("loop"))).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "New link" })).toBeTruthy();
+  });
+
+  it("Q on opens the QR code after creating", async () => {
+    const { api, user } = boot();
+    const sheet = await open(user);
+    await user.type(slugBox(), "spring");
+    setVal(dest(), "https://x.com/a");
+    sheet.focus();
+    await user.keyboard("q");
+    expect(within(sheet).getByText("Opens after creating")).toBeTruthy();
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    await waitFor(() => expect(location.search).toBe("?sel=new1&view=detail&qr=1"));
+  });
+
+  it("rule rows follow the mockup order and the footer names their keys", async () => {
+    const { user } = boot();
+    const sheet = await open(user);
+    const rows = within(within(sheet).getByLabelText("Rules")).getAllByRole("button").map((b) => b.getAttribute("aria-keyshortcuts"));
+    expect(rows).toEqual(["T", "S", "P", "R", "Q"]);
+    expect(within(sheet).getByText("Rule keys T S P R Q work outside text boxes")).toBeTruthy();
+  });
+
   it("a suggestion fills the slug", async () => {
     const { user } = boot();
     await open(user);
