@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
+import { ACTOR_OK } from "./users";
 import { CfError, cfConfigFor, cnameTarget } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverDetail } from "../cf/attach";
@@ -503,13 +504,21 @@ domains.put("/:id/members", async (c) => {
     const found = (await c.env.DB.prepare(`SELECT id FROM users WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all()).results.length;
     if (found !== ids.length) return c.json({ error: "unknown_user" }, 400);
   }
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM domain_members WHERE domain_id = ?").bind(d.id),
-    ...ids.map((u) => c.env.DB.prepare(
-      "INSERT INTO domain_members (domain_id, user_id) SELECT ?,? WHERE EXISTS (SELECT 1 FROM users WHERE id = ?)",
-    ).bind(d.id, u, u)),
+  // Every listed person still exists and the actor is still an active owner, or nothing changes: the audit lists exactly
+  // who was granted (a person removed after the check above would otherwise be claimed without a row).
+  const g = { sql: `EXISTS (SELECT 1 FROM domains WHERE id = ?) AND ${ACTOR_OK} AND (SELECT COUNT(*) FROM users WHERE id IN (SELECT value FROM json_each(?))) = ?`,
+    binds: [d.id, user.id, JSON.stringify(ids), ids.length] };
+  const res = await c.env.DB.batch([
     auditStmt(c.env, { actorId: user.id, action: "domain.members", targetType: "domain", targetId: d.id,
-      detail: { host: d.host, userIds: ids } }, exists(d.id)),
+      detail: { host: d.host, userIds: ids } }, g),
+    c.env.DB.prepare(`DELETE FROM domain_members WHERE domain_id = ? AND ${g.sql}`).bind(d.id, ...g.binds),
+    ...ids.map((u) => c.env.DB.prepare(`INSERT INTO domain_members (domain_id, user_id) SELECT ?,? WHERE ${g.sql}`).bind(d.id, u, ...g.binds)),
   ]);
+  if (!res[0]!.meta.changes) {
+    const w = await c.env.DB.prepare(`SELECT ${ACTOR_OK} a, EXISTS (SELECT 1 FROM domains WHERE id = ?) d`).bind(user.id, d.id).first<{ a: number; d: number }>();
+    if (!w?.a) return c.json(forbidden, 403);
+    if (!w.d) return c.json(notFound, 404);
+    return c.json({ error: "unknown_user" }, 400);
+  }
   return c.json({ userIds: ids });
 });

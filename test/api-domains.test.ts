@@ -289,3 +289,17 @@ describe("onboarding rules", () => {
     expect([j.status, j.loopLinks]).toEqual(["active", 1]);
   });
 });
+
+describe("members audit never overclaims (S1 deferral)", () => {
+  it("a person removed between the check and the batch: 400 unknown_user, members unchanged, no audit", async () => {
+    const { beforeBatch } = await import("./helpers/race");
+    await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('uc','c@example.com','member','active',1)");
+    await run("INSERT INTO domain_members (domain_id, user_id) VALUES ('ds', 'ub')");
+    const restore = beforeBatch(1, () => run("DELETE FROM users WHERE id = 'uc'"));
+    let r: Response;
+    try { r = await call("owner", "PUT", "/api/domains/ds/members", { userIds: ["uc", "ub"] }); } finally { restore(); }
+    await status(r, 400, { error: "unknown_user" });
+    expect((await env.DB.prepare("SELECT user_id FROM domain_members WHERE domain_id = 'ds'").all()).results).toEqual([{ user_id: "ub" }]);
+    expect(await audits("domain.members")).toBe(0);
+  });
+});
