@@ -100,7 +100,7 @@ The first 100 custom hostnames on the SaaS zone are free; Cloudflare bills each 
 
 ## Moving links between domains
 
-A link can be moved (or copied) only to an **active** domain, one the person may use; pending, rejected and disabled domains refuse it with `target_not_active`. Moving with "forward" keeps the old address working as a forwarder, and deleting the moved link later deletes its forwarders and locks their old slugs, so an old printed QR code never lands on a link someone else creates there. A lock on a target slug (case-insensitive) blocks a move to it. Details are in [deploy.md](deploy.md#behaviour-to-know).
+A link can be moved (or copied) only to an **active** domain, one the person may use; pending, rejected and disabled domains refuse it with `target_not_active`. Moving with "forward" keeps the old address working as a forwarder, and deleting the moved link later also deletes its forwarders and locks their old slugs, so an old printed QR code never lands on a link someone else creates there. A lock on a target slug (case-insensitive) blocks a move to it. Details are in [deploy.md](deploy.md#behaviour-to-know).
 
 ## Case-sensitive slugs
 

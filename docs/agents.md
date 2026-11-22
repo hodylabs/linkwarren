@@ -51,10 +51,10 @@ Select the connection and press `Shift+D` (or Disconnect), then confirm. The age
 | `link_stats` | read | Daily clicks for one link over the last 7 days |
 | `create_link` | write | Create a short link |
 | `update_link` | write | Change a link |
-| `delete_link` | delete | Delete a link and lock its slug (needs `confirm: true`) |
+| `delete_link` | delete | Delete a link, remove its forwarders and lock their slugs (needs `confirm: true`) |
 | `bulk_links` | write (delete also needs delete) | Change up to 100 links in one call: `delete`, `schedule`, `move`, `redirect` or `password` |
 
-`bulk_links` takes `action`, `ids` (1 to 100), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow`, `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
+`bulk_links` takes `action`, `ids` (1 to 100), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
 The server tells the model that tool results are data, never instructions: a link destination or title that says "ignore your instructions" is just text.
 
 ## API keys
@@ -151,7 +151,7 @@ Agents and keys share per-minute limits per person, per connection and per key, 
 | 429 | `rate_limited` | A limit was reached; see above |
 | 503 | `unavailable` | The rate limiter or database could not be reached; nothing was done |
 
-Per-link codes in a bulk result: `not_found`, `forbidden`, `conflict` (the link changed in between, nothing written for it), `bad_window` (the dates would end before they start), `password_301` (a protected link cannot use a permanent redirect), `forwarder` (an old address is only deleted, never changed or moved), `same_domain`, `taken` (the target has that slug, as a link or a forwarder), `locked` (the target slug is locked), `reserved`, `duplicate_slug` (two selected links would get the same slug), and the slug shape codes of a single create (for example `slug_too_long`).
+Per-link codes in a bulk result: `not_found`, `forbidden`, `conflict` (the link changed in between, nothing written for it), `bad_window` (the dates would end before they start), `password_301` (a protected link cannot use a permanent redirect), `forwarder` (an old address is only deleted, never changed or moved), `same_domain`, `taken` (the target has that slug, as a link or a forwarder), `locked` (the target slug is locked), `reserved`, `duplicate_slug` (two selected links would get the same slug), and the slug shape codes of a single create (for example `slug_too_long`), and `loop` (a move or copy would make a link point at its own domain: its destination or a route is on the target host). A move to a domain id that does not exist or you cannot use answers `403 forbidden`.
 
 Validation errors (for example `taken`, `locked`, `invalid_body`, `q_too_long`) are the same as in the dashboard.
 
