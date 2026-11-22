@@ -99,6 +99,10 @@ describe("API & agents screen", () => {
     await user.keyboard("{ArrowRight}");
     expect(await screen.findByText(`claude mcp add --transport http linkwarren ${mcpUrl()}`)).toBeTruthy();
     await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+    // Wraps from the first chip to the last: Gemini.
+    expect(screen.getByRole("button", { name: "Gemini" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(`gemini mcp add --transport http linkwarren ${mcpUrl()}, then sign in when prompted`)).toBeTruthy();
+    await user.keyboard("{ArrowLeft}");
     expect(screen.getByText(`codex mcp add linkwarren --url ${mcpUrl()}, then codex mcp login linkwarren`)).toBeTruthy();
   });
 

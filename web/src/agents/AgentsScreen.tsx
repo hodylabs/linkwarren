@@ -426,7 +426,7 @@ export function AgentsScreen() {
   const selected = selConn ?? selKey;
   return (
     <>
-      <ScreenHeader title="API & agents" text="connect Claude, ChatGPT, Claude Code, Codex or your own scripts">
+      <ScreenHeader title="API & agents" text="connect Claude, ChatGPT, Claude Code, Codex, Gemini or your own scripts">
         <PrimaryButton label="New API key" shortcut="N" onClick={() => app.open({ kind: "newKey" })} />
       </ScreenHeader>
       <div className={`body agents${open ? " open" : ""}${selected ? "" : " solo"}`}>
@@ -435,7 +435,7 @@ export function AgentsScreen() {
             <div>
               <h3>Connect an agent</h3>
               <p>
-                Add this address as a connector in Claude, ChatGPT, Claude Code or Codex. You sign in, choose read only or read and write, and the agent acts as you: it can
+                Add this address as a connector in Claude, ChatGPT, Claude Code, Codex or Gemini. You sign in, choose read only or read and write, and the agent acts as you: it can
                 never see or change more than you can.
               </p>
             </div>
