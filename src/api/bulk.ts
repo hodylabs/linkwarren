@@ -53,14 +53,12 @@ function refusal(b: Body, link: LinkRow, now: number): string | null {
 /** Revision guard for INSERT ... SELECT over json_each: looks the link up by id (index search, never a scan of links). */
 const REV = "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t') AND updated_at = json_extract(j.value,'$.r'))";
 /**
- * This batch moved link `t`: it sits on the target at key `k` with the revision and editor the move wrote (binds: target id,
- * user id, now). Guards every statement after the move (D3), so a concurrent move of the same link that won writes nothing here.
+ * This batch's own move wrote link `t`: the move marks it with updated_by = `f` (this batch's fresh forwarder id) and the batch's
+ * last statement puts the editor back. A revision and editor match alone would also hold for another batch's identical
+ * same-second move (D3), which could then recreate a forwarder deleted (and its slug locked) in between.
  */
-const MOVED = "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t') AND domain_id = ? AND slug_key = json_extract(j.value,'$.k') AND updated_by = ? AND updated_at = max(?, json_extract(j.value,'$.r') + 1))";
-/**
- * This batch's own forwarder `f` exists. The forwarder insert skips an old address another batch's forwarder already holds, so
- * a same-second double submit (MOVED matches the first batch's write too) repoints and audits only what this batch moved.
- */
+const OWN = "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t') AND updated_by = json_extract(j.value,'$.f'))";
+/** This batch's own forwarder `f` exists, so this batch moved `t` (OWN guards its insert): the repoint and the audit follow it. */
 const MINE = "EXISTS (SELECT 1 FROM links x WHERE x.id = json_extract(j.value,'$.f'))";
 /** No lock on the target (bind: target id) for key `k`, through the slug_locks_lower index. */
 const UNLOCKED = "NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(json_extract(j.value,'$.k')))";
@@ -223,10 +221,10 @@ export async function bulk(c: Context<E>) {
       // Only links that had forwarders when read: a new forwarder of a link needs a move of it, which changes its revision.
       const repoint = JSON.stringify(rows.filter((x) => older.has(x.t)));
       main = env.DB.prepare(
-        `UPDATE links SET domain_id = ?, slug_key = json_extract(j.value,'$.k'), updated_by = ?, updated_at = max(?, links.updated_at + 1)
+        `UPDATE links SET domain_id = ?, slug_key = json_extract(j.value,'$.k'), updated_by = json_extract(j.value,'$.f'), updated_at = max(?, links.updated_at + 1)
          FROM json_each(?) j WHERE links.id = json_extract(j.value,'$.t') AND links.updated_at = json_extract(j.value,'$.r')
          AND ${UNLOCKED} AND ${FREE} RETURNING links.id`,
-      ).bind(t, user.id, now, json, t, t);
+      ).bind(t, now, json, t, t);
       stmts = [
         ...(reclaim.size ? [env.DB.prepare(
           `DELETE FROM links WHERE (domain_id, slug_key, forward_to) IN (SELECT ?, json_extract(j.value,'$.k'), l.id FROM json_each(?) j
@@ -237,17 +235,20 @@ export async function bulk(c: Context<E>) {
         env.DB.prepare(
           `INSERT INTO links (id, domain_id, slug, slug_key, url, redirect_code, starts_at, expires_at, pass_query, password_hash, routes, forward_to, created_by, updated_by, created_at, updated_at)
            SELECT json_extract(j.value,'$.f'), json_extract(j.value,'$.om'), json_extract(j.value,'$.s'), json_extract(j.value,'$.ok'), json_extract(j.value,'$.u'),
-             302, NULL, NULL, 1, NULL, '[]', json_extract(j.value,'$.t'), ?, ?, ?, ? FROM json_each(?) j WHERE ${MOVED} ON CONFLICT DO NOTHING`,
-        ).bind(user.id, user.id, now, now, json, t, user.id, now),
+             302, NULL, NULL, 1, NULL, '[]', json_extract(j.value,'$.t'), ?, ?, ?, ? FROM json_each(?) j WHERE ${OWN} ON CONFLICT DO NOTHING`,
+        ).bind(user.id, user.id, now, now, json),
         // One hop: every older forwarder of a moved link now points at its new address.
         ...(older.size ? [repointed = env.DB.prepare(
           `UPDATE links SET url = json_extract(j.value,'$.u'), updated_at = max(?, links.updated_at + 1) FROM json_each(?) j
-           WHERE links.forward_to = json_extract(j.value,'$.t') AND links.id != json_extract(j.value,'$.f') AND ${MOVED} AND ${MINE} RETURNING links.domain_id, links.slug_key`,
-        ).bind(now, repoint, t, user.id, now)] : []),
+           WHERE links.forward_to = json_extract(j.value,'$.t') AND links.id != json_extract(j.value,'$.f') AND ${MINE} RETURNING links.domain_id, links.slug_key`,
+        ).bind(now, repoint)] : []),
         auditManyStmt(env, { ...base, action: "link.move" }, accepted.map(({ link, domain, k }, i) => ({
           targetId: link.id, k, r: link.updatedAt, f: rows[i]!.f,
           detail: { fromHost: domain.host, toHost: target.host, slug: link.slug, url: link.url, oldAddress: "forward", forwarderId: rows[i]!.f },
-        })), { sql: `${MOVED} AND ${MINE}`, binds: [t, user.id, now] }),
+        })), { sql: MINE, binds: [] }),
+        // The editor back on each link this batch moved (the OWN mark).
+        env.DB.prepare("UPDATE links SET updated_by = ? FROM json_each(?) j WHERE links.id = json_extract(j.value,'$.t') AND links.updated_by = json_extract(j.value,'$.f')")
+          .bind(user.id, json),
       ];
     } else {
       const rows = accepted.map(({ link, k }) => { const n = crypto.randomUUID(); newIds.set(n, link.id); return { t: link.id, r: link.updatedAt, k, n }; });

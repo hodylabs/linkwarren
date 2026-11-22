@@ -455,6 +455,23 @@ describe("final wave", () => {
     // One move audit per link that this batch or the first one actually moved: none claimed twice for w.
     expect([await count("audit_log WHERE action = 'link.move' AND target_id = 'w'"), await count("audit_log WHERE action = 'link.move' AND target_id = 'v'")]).toEqual([1, 1]);
   });
+
+  it("M3: a stale duplicate of a move run after its forwarder was deleted recreates no forwarder and writes no audit; the old slug stays locked", async () => {
+    await seed("w", "ua", { slug: "w" });
+    let inner: Response | undefined, del: Response | undefined;
+    const restore = beforeBatch(4, async () => {
+      inner = await move("a", ["w"], "da", "forward");
+      const f = await one<{ id: string }>("SELECT id FROM links WHERE forward_to = 'w'");
+      del = await call("a", "DELETE", `/api/links/${f!.id}`);
+    });
+    let r;
+    try { r = await answer(await move("a", ["w"], "da", "forward")); } finally { restore(); }
+    expect([inner!.status, del!.status]).toEqual([200, 204]);
+    expect(byId(r.results)).toEqual({ w: "conflict" });
+    expect(await at("dm", "w")).toBeNull();
+    expect(await count("slug_locks WHERE domain_id = 'dm' AND slug_key = 'w'")).toBe(1);
+    expect(await count("audit_log WHERE action = 'link.move' AND target_id = 'w'")).toBe(1);
+  });
 });
 
 describe("fix round 1", () => {
@@ -533,8 +550,8 @@ describe("fix round 1", () => {
     console.log(`bulk move forward x50 with reclaim and repoint: rows_read ${m.rows}`);
     // Measures 3306: link read 200, domains 6, target checks 599 (two forwarders counted per link), reclaim DELETE 700,
     // move 500, forwarder insert 300, repoint UPDATE-FROM 799, audit 201. Each total is a small multiple of the 100 selected
-    // links, well under the 2000 other links and 2000 locks seeded, so no form scans a table; bound about 37 x N (the repoint
-    // and audit each add one primary-key probe per link for this batch's own forwarder).
-    expect(m.rows).toBeLessThan(37 * 50);
+    // links, well under the 2000 other links and 2000 locks seeded, so no form scans a table; bound about 39 x N (the repoint
+    // and audit each add one primary-key probe per link for this batch's own forwarder, the editor restore two per link).
+    expect(m.rows).toBeLessThan(39 * 50);
   });
 });
