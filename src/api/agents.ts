@@ -66,10 +66,10 @@ agents.patch("/connections/:id", async (c) => {
   if (write === item.write && del === item.del) return c.json(item);
   const w = write ? 1 : 0, d = del ? 1 : 0;
   const res = await c.env.DB.batch([
-    // Not own: the row must still hold at least what is asked at write time, so a lowering never raises what the
-    // person lowered after our read (check-then-write).
-    c.env.DB.prepare("UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL AND (? = 1 OR (can_write >= ? AND can_delete >= ?))")
-      .bind(w, d, id, own ? 1 : 0, w, d),
+    // Optimistic: write only if the row still holds what we read, so a change in between answers 409 and `before`
+    // is never stale; with the owner's lowering-only check above, this can never raise what the person set.
+    c.env.DB.prepare("UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL AND can_write = ? AND can_delete = ?")
+      .bind(w, d, id, item.write ? 1 : 0, item.del ? 1 : 0),
     auditStmt(c.env, { ...actor(c), action: "agent.access", targetType: "agent_connection", targetId: id,
       detail: { write, del, before: { write: item.write, del: item.del } } },
       { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM agent_connections WHERE id = ? AND revoked_at IS NULL)", binds: [id] }),

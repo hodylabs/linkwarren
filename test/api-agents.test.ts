@@ -195,6 +195,19 @@ describe("final fix wave", () => {
     expect(await audits("agent.access")).toHaveLength(0);
   });
 
+  it("any change between the read and the write answers 409, even one the lowering would still allow (no stale before)", async () => {
+    const w = await connectAgent(B, { write: true, del: true });
+    const batch = env.DB.batch.bind(env.DB);
+    vi.spyOn(env.DB, "batch").mockImplementationOnce(async (stmts) => {
+      await run("UPDATE agent_connections SET can_write = 1, can_delete = 0 WHERE id = ?", w.connId); // the person, concurrently
+      return batch(stmts);
+    });
+    const r = await patch(O, w.connId, { write: false, del: false });
+    expect([r.status, await r.json()]).toEqual([409, { error: "changed" }]);
+    expect(await one("SELECT can_write, can_delete FROM agent_connections WHERE id = ?", w.connId)).toEqual({ can_write: 1, can_delete: 0 });
+    expect(await audits("agent.access")).toHaveLength(0);
+  });
+
   it("the owner cannot raise delete alone; the audit records before and after", async () => {
     const w = await connectAgent(B, { write: true });
     const r = await patch(O, w.connId, { write: true, del: true });
