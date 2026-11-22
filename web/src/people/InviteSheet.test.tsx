@@ -28,6 +28,11 @@ function boot(opts: { me?: Me; invite?: (body: unknown) => FakeRes; settings?: u
     "GET /api/users": () => ({ body: { items: USERS } }),
     "GET /api/audit": () => ({ body: { items: [], next: null } }),
     "GET /api/settings": () => ({ body: opts.settings ?? SETTINGS }),
+    "GET /api/roles": () => ({ body: [
+      { id: "owner", name: "Owner", perms: [], builtin: "owner", people: 1 },
+      { id: "member", name: "Member", perms: [...MEMBER_ROLE.perms], builtin: "member", people: 0 },
+      { id: "hl", name: "Helper", perms: ["people.manage"], builtin: null, people: 0 },
+    ] }),
     "POST /api/users/invite": ({ body }) => (opts.invite ? opts.invite(body) : { status: 201, body: { user: {}, emailed: true } }),
     ...opts.routes,
   });
@@ -89,6 +94,18 @@ describe("Invite sheet", () => {
     expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", roleId: "member", domainIds: ["ds1"] });
   });
 
+  it("defaults to Member; picking Helper with the keyboard sends its roleId", async () => {
+    const { api, user } = await openInvite();
+    const pick = await within(sheet()).findByRole("listbox", { name: "Role" });
+    expect(within(pick).getByRole("option", { name: "Member" }).getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("jordan@example.com");
+    await user.tab();
+    expect(document.activeElement).toBe(pick);
+    await user.keyboard("{ArrowDown}{Enter}{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", roleId: "hl", domainIds: [] });
+  });
+
   it("success closes the sheet, reloads people and announces", async () => {
     const { api, user } = await openInvite();
     const before = api.calls.filter((c) => c.path === "/api/users").length;
@@ -101,7 +118,7 @@ describe("Invite sheet", () => {
   it("Owner hides the domains and sends no domain ids", async () => {
     const { api, user } = await openInvite();
     await user.keyboard("jordan@example.com");
-    await user.click(within(sheet()).getByRole("radio", { name: "Owner" }));
+    await user.click(within(sheet()).getByRole("option", { name: "Owner" }));
     expect(within(sheet()).queryByText("Domains they can use")).toBeNull();
     expect(within(sheet()).queryAllByRole("switch")).toHaveLength(0);
     await user.keyboard("{Control>}{Enter}{/Control}");
@@ -188,8 +205,11 @@ describe("Invite sheet for a people manager", () => {
     await waitFor(() => expect(document.querySelectorAll("tbody tr")).toHaveLength(1));
     await user.keyboard("n");
     const dlg = await screen.findByRole("dialog", { name: "Invite a person" });
-    expect(within(dlg).queryByRole("radio", { name: "Owner" })).toBeNull();
-    expect(within(dlg).getByText("Member")).toBeTruthy();
+    const pick = await within(dlg).findByRole("listbox", { name: "Role" });
+    expect(within(pick).queryByRole("option", { name: /Owner/ })).toBeNull();
+    // Member has keys and agents, which this manager lacks: shown, not pickable. Helper is within their permissions.
+    expect(within(pick).getByRole("option", { name: /Member/ }).getAttribute("aria-disabled")).toBe("true");
+    expect(within(pick).getByRole("option", { name: "Helper" }).getAttribute("aria-disabled")).toBeNull();
   });
 });
 

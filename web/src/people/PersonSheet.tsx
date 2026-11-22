@@ -6,7 +6,9 @@ import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { useDetailView } from "../shell/narrow";
 import { Confirm, Sheet } from "../shell/Sheet";
-import { Seg, Tag } from "../shell/ui";
+import { Tag } from "../shell/ui";
+import { isOwner, mayAssign } from "../perms";
+import { RolePicker, useRoles } from "./RolePicker";
 import { useApp } from "../state";
 import { shortDate } from "../time";
 
@@ -20,12 +22,8 @@ export const PERSON_KEYS = {
   "shift+x": "Remove the person",
   a: "Show their activity in the audit log",
 } as const;
-const ROLES: { value: "member" | "owner"; label: string }[] = [
-  { value: "member", label: "Member" },
-  { value: "owner", label: "Owner" },
-];
 const STATUS = { invited: ["wait", "Invited"], active: ["ok", "Active"], disabled: ["off", "Disabled"] } as const;
-type Ask = "revoke" | "disable" | "signout" | "remove" | "promote" | "demote";
+type Ask = "revoke" | "disable" | "signout" | "remove" | "role";
 
 const label = (u: UserItem) => u.name || u.email;
 const peopleError = (code: string) => errorText({ too_many: "invite_too_many", email_not_configured: "invite_email_off" }[code] ?? code);
@@ -48,6 +46,8 @@ export function PersonSheet({ id }: { id: string }) {
   const [ask, setAsk] = useState<Ask | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [to, setTo] = useState(me.id);
+  const [pick, setPick] = useState("member"); // the role chosen in the picker, until confirmed
+  const { roles } = useRoles();
   const busy = useRef(false);
   const { show } = useDetailView("/people");
 
@@ -89,7 +89,7 @@ export function PersonSheet({ id }: { id: string }) {
     enable: () => run(() => patch({ status: "active" }), { msg: `Turned on access for ${email}` }),
     signout: () => run(() => api("DELETE", `${path}/sessions`).then(() => null), { msg: `Signed ${email} out everywhere` }),
     remove: () => run(() => api("DELETE", `${path}?transferTo=${encodeURIComponent(to)}`).then(() => null), { msg: `Removed ${email}`, close: true }),
-    role: (role: "member" | "owner") => run(() => patch({ roleId: role }), { msg: `Made ${email} ${role === "owner" ? "an owner" : "a member"}` }),
+    role: (roleId: string, msg: string) => run(() => patch({ roleId }), { msg }),
   };
   // The transfer target starts at you (a non-owner: the first owner) each time, so a target removed or disabled since never lingers.
   const askRemove = () => {
@@ -124,6 +124,19 @@ export function PersonSheet({ id }: { id: string }) {
   const targets = transferTargets(users ?? [], me, id, needsOwner);
   const target = targets.find((x) => x.id === to) ?? null;
   const choice = !target || target.id === me.id ? "you" : label(target);
+  // R4: an owner reaches anyone; a people manager only someone whose current role is within their own permissions, never an owner.
+  const reach = !self && (isOwner(me) || (u.role !== "owner" && mayAssign(me, { id: u.roleId, perms: u.perms })));
+  const picked = roles?.find((r) => r.id === pick);
+  const roleAsk = pick === "owner"
+    ? { title: `Make ${email} an owner`, text: `Make ${email} an owner? They can change every setting and person.`, ok: "Make owner", msg: `Made ${email} an owner` }
+    : {
+      title: pick === "member" ? `Make ${email} a member` : `Give ${email} the role ${picked?.name ?? ""}`,
+      ok: pick === "member" ? "Make member" : "Give role",
+      msg: pick === "member" ? `Made ${email} a member` : `Gave ${email} the role ${picked?.name ?? ""}`,
+      text: u.role === "owner"
+        ? `They lose owner rights${moving.length ? `, and ${moving.join(", ")} move to you.` : ". No domains move."}`
+        : `They can do what ${picked?.name ?? "it"} allows from their next request.`,
+    };
   const btn = (text: string, keys: string, aria: string, onClick: () => void, cls = "btn", autoFocus = false) => (
     <button type="button" className={cls} aria-keyshortcuts={aria} onClick={onClick} autoFocus={autoFocus}>
       {text} <kbd>{keys}</kbd>
@@ -143,9 +156,11 @@ export function PersonSheet({ id }: { id: string }) {
         </p>
         <div className="f">
           <h3 className="lbl">Role</h3>
-          {/* Only owners switch Owner and Member here (R4); the role picker for people managers is its own task. */}
-          {self || me.role !== "owner" ? <p>{u.role === "owner" ? "Owner" : u.roleName}{self ? " (you)" : ""}</p> : <Seg label="Role" options={ROLES} value={u.role} onChange={(v) => v !== u.role && setAsk(v === "owner" ? "promote" : "demote")} />}
-          {!self && me.role === "owner" && u.role !== "owner" && u.roleId !== "member" && <p className="hint">Role: {u.roleName}</p>}
+          {reach && roles ? (
+            <RolePicker value={u.role === "owner" ? "owner" : u.roleId} roles={roles} me={me} allowOwner onChange={(v) => (setPick(v), setAsk("role"))} />
+          ) : (
+            <p>{u.role === "owner" ? "Owner" : u.roleName}{self ? " (you)" : ""}</p>
+          )}
         </div>
         <div className="f">
           <h3 className="lbl">Domains</h3>
@@ -184,12 +199,9 @@ export function PersonSheet({ id }: { id: string }) {
       {ask === "signout" && (
         <Confirm title="Sign out everywhere" text={`Sign ${email} out on every device?`} ok="Sign out" onOk={() => void act.signout()} onCancel={() => setAsk(null)} />
       )}
-      {ask === "demote" && (
-        <Confirm title={`Make ${email} a member`} ok="Make member" onOk={() => void act.role("member")} onCancel={() => setAsk(null)}
-          text={`Make ${email} a member? They lose owner rights${moving.length ? `, and ${moving.join(", ")} move to you.` : ". No domains move."}`} />
-      )}
-      {ask === "promote" && (
-        <Confirm title={`Make ${email} an owner`} text={`Make ${email} an owner? They can change every setting and person.`} ok="Make owner" onOk={() => void act.role("owner")} onCancel={() => setAsk(null)} />
+      {ask === "role" && (
+        <Confirm title={roleAsk.title} ok={roleAsk.ok} onOk={() => void act.role(pick, roleAsk.msg)} onCancel={() => setAsk(null)}
+          text={pick === "owner" ? roleAsk.text : `${roleAsk.title}? ${roleAsk.text}`} />
       )}
       {ask === "remove" && (
         <Confirm title={`Remove ${email}`} ok="Remove" onOk={() => void act.remove()} onCancel={() => setAsk(null)}

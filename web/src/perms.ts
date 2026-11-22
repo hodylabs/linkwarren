@@ -16,6 +16,27 @@ export const isOwner = (me: Who): boolean => me.role === "owner";
 /** Mirror of the server's `can` (S8 R2) for hiding controls; the server stays the authority. A signed-in person is active. */
 export const can = (me: Who, p: Perm): boolean => isOwner(me) || me.perms.includes(p);
 
+/** Each permission's toggle text in the role editor, in PERMS order (S8 R2). */
+export const PERM_TEXT: Record<Perm, { label: string; hint: string }> = {
+  "links.create": { label: "Create links", hint: "Make short links, and change or delete their own." },
+  "links.editAny": { label: "Edit anyone's links", hint: "Change or delete links other people made, on domains they can use, and free up deleted short addresses." },
+  "links.bulk": { label: "Change many links at once", hint: "Select several links and edit, move or delete them together." },
+  "analytics.all": { label: "See analytics for every domain", hint: "Without it, they see clicks only for domains they can use." },
+  "domains.own": { label: "Add their own domains", hint: "Add private domains for themselves. An owner or a domain manager approves them." },
+  "domains.manage": { label: "Add and manage domains", hint: "Add main and shared domains, approve, turn off or reject them, choose who can use them, and use the Cloudflare controls." },
+  "people.manage": { label: "Invite and manage people", hint: "Invite people, change their role and access, and remove them, only up to their own permissions." },
+  keys: { label: "Personal API keys", hint: "Create keys for scripts and other tools." },
+  agents: { label: "Connect AI agents", hint: "Separate from API keys." },
+  settings: { label: "Instance settings", hint: "Name, logo, main domain, link defaults and email. Saved secrets stay with owners." },
+  data: { label: "Export and import", hint: "Downloads every person, link and domain." },
+  audit: { label: "Audit log", hint: "See every change made by people and agents." },
+};
+
+/** Who sees the Roles view (S8 R11, R15): owners and people managers; only owners change roles. */
+export const seesRoles = (me: Who): boolean => can(me, "people.manage");
+/** Same rule as the server's `within` (src/roles.ts) for assigning a role: an owner any role, anyone else a non-owner role with no key they lack. */
+export const mayAssign = (me: Who, r: { id: string; perms: readonly Perm[] }): boolean => isOwner(me) || (r.id !== "owner" && r.perms.every((p) => me.perms.includes(p)));
+
 /** Screens behind a permission; the rest are baseline (R3). */
 export function canSee(me: Who, s: Screen): boolean {
   if (s === "people") return can(me, "people.manage") || can(me, "audit");

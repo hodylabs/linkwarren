@@ -147,10 +147,24 @@ describe("describeAudit agents and keys", () => {
     expect(pd({ action: "user.disable", targetType: "user", targetId: "gone", detail: { email: "jo@example.com" } }).code).toBe("jo@example.com");
     expect(pd({ action: "user.role", targetType: "user", targetId: "gone", detail: { email: "jo@example.com", to: "owner" } }).code).toBe("jo@example.com");
   });
-  it("user.role with role names and ids (S8): owner, member and a custom role by name", () => {
-    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Member", to: "Owner", fromId: "member", toId: "owner", movedDomains: [] } }).suffix).toBe(" an owner");
-    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Helper", to: "Member", fromId: "hl", toId: "member", movedDomains: [] } }).suffix).toBe(" a member");
-    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Member", to: "Helper", fromId: "member", toId: "hl", movedDomains: [] } }).suffix).toBe(" Helper");
+  it("user.role with role names and ids (S8 R14): changed <person> from <from> to <to>", () => {
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Member", to: "Owner", fromId: "member", toId: "owner", movedDomains: [] } }))
+      .toMatchObject({ text: "changed", code: "bea@example.com", suffix: " from Member to Owner" });
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Helper", to: "Member", fromId: "hl", toId: "member", movedDomains: [] } }).suffix).toBe(" from Helper to Member");
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Owner", to: "Helper", fromId: "owner", toId: "hl", movedDomains: ["go.test"] } }).suffix)
+      .toBe(" from Owner to Helper and took over go.test");
+  });
+  it("role.create, role.update and role.delete (S8 R14) use the plain permission labels", () => {
+    expect(d({ action: "role.create", targetType: "role", targetId: "hl", detail: { name: "Helper", perms: ["keys"] } })).toMatchObject({ text: "created the role", code: "Helper", suffix: "" });
+    expect(d({ action: "role.update", targetType: "role", targetId: "hl", detail: { name: "Helper", added: ["keys", "audit"], removed: ["links.bulk"] } }))
+      .toMatchObject({ text: "changed the role", code: "Helper", suffix: ": added Personal API keys, Audit log, removed Change many links at once" });
+    expect(d({ action: "role.update", targetType: "role", targetId: "hl", detail: { name: "Helper", added: ["keys"], removed: [] } }).suffix).toBe(": added Personal API keys");
+    expect(d({ action: "role.update", targetType: "role", targetId: "hl", detail: { name: "Aides", from: "Helper", added: [], removed: [] } }).suffix).toBe(", renamed from Helper");
+    expect(d({ action: "role.update", targetType: "role", targetId: "hl", detail: { name: "Helper", added: ["__proto__", 3], removed: [] } }).suffix).toBe("");
+    expect(d({ action: "role.delete", targetType: "role", targetId: "hl", detail: { name: "Helper", movedTo: "Member", people: 2 } }))
+      .toMatchObject({ text: "deleted the role", code: "Helper", suffix: " and moved 2 people to Member" });
+    expect(d({ action: "role.delete", targetType: "role", targetId: "hl", detail: { name: "Helper", movedTo: "Member", people: 1 } }).suffix).toBe(" and moved 1 person to Member");
+    expect(d({ action: "role.delete", targetType: "role", targetId: "hl", detail: { name: "Helper", movedTo: null, people: 0 } }).suffix).toBe("");
   });
   it("user.role names the domains that moved to the actor on a demote", () => {
     expect(pd({ action: "user.role", targetId: "ub", detail: { from: "owner", to: "member", movedDomains: ["go.test", "s.test"] } }).suffix)

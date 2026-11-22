@@ -1,9 +1,13 @@
 import type { AuditItem } from "../api";
+import { plural } from "../copy";
+import { PERMS, PERM_TEXT, type Perm } from "../perms";
 
 export type AuditText = { who: string; via: string | null; text: string; code: string | null; suffix: string };
 
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/** Known permission keys in a detail array as their labels; anything else is dropped. */
+const labels = (v: unknown): string[] => (Array.isArray(v) ? PERMS.filter((p: Perm) => v.includes(p)).map((p) => PERM_TEXT[p].label) : []);
 
 /** Plain-language parts of one audit row. Every value is text for React to escape; nothing here is HTML. */
 export function describeAudit(a: AuditItem, meId: string, domains: readonly { id: string; host: string }[] = [], users: readonly { id: string; email: string; name?: string | null }[] = []): AuditText {
@@ -54,10 +58,23 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     case "user.revoke": return done("revoked the invite for", person);
     case "user.role": {
       const moved = Array.isArray(a.detail.movedDomains) ? a.detail.movedDomains.filter((h): h is string => typeof h === "string") : [];
+      const took = moved.length ? ` and took over ${moved.join(", ")}` : "";
+      // S8 R14 rows carry both role names and ids.
+      if (str(a.detail.toId) && str(a.detail.from) && str(a.detail.to)) return done("changed", person, ` from ${str(a.detail.from)} to ${str(a.detail.to)}${took}`);
       // toId since roles (S8 R14); older rows carry only to = "owner" | "member".
       const to = str(a.detail.toId) || str(a.detail.to);
       const what = to === "owner" ? " an owner" : to === "member" || !str(a.detail.to) ? " a member" : ` ${str(a.detail.to)}`;
-      return done("made", person, `${what}${moved.length ? ` and took over ${moved.join(", ")}` : ""}`);
+      return done("made", person, `${what}${took}`);
+    }
+    case "role.create": return done("created the role", str(a.detail.name));
+    case "role.update": {
+      const add = labels(a.detail.added), rem = labels(a.detail.removed), from = str(a.detail.from);
+      const parts = [...(add.length ? [`added ${add.join(", ")}`] : []), ...(rem.length ? [`removed ${rem.join(", ")}`] : [])];
+      return done("changed the role", str(a.detail.name), `${parts.length ? `: ${parts.join(", ")}` : ""}${from ? `, renamed from ${from}` : ""}`);
+    }
+    case "role.delete": {
+      const n = num(a.detail.people), to = str(a.detail.movedTo);
+      return done("deleted the role", str(a.detail.name), n && to ? ` and moved ${plural(n, "person", "people")} to ${to}` : "");
     }
     case "user.disable": return done("turned off access for", person);
     case "user.enable": return done("turned on access for", person);

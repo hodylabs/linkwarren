@@ -4,11 +4,12 @@ import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
-import { can } from "../perms";
+import { can, seesRoles } from "../perms";
 import { useApp } from "../state";
 import { BackBar, useDetailView } from "../shell/narrow";
 import { clock, shortDate } from "../time";
 import { describeAudit } from "./auditText";
+import { PeopleTabs, RolesView } from "./RolesView";
 
 const FILTERS = ["everyone", "invited", "disabled"] as const;
 
@@ -18,6 +19,7 @@ export const PEOPLE_KEYS = {
   k: "Previous person",
   escape: "Clear the selected person",
   n: "Invite a person",
+  o: "Show roles",
 } as const;
 const KINDS = [
   ["all", "All"],
@@ -49,7 +51,14 @@ function auditQuery(actor: string | null, kind: Kind, cursor: string | null): st
   return `/api/audit${s ? `?${s}` : ""}`;
 }
 
+/** /people and /people/roles (S8 R15); a role that cannot see roles gets the people view at either address. */
 export function PeopleScreen() {
+  const { me } = useApp();
+  const { sub } = useRoute();
+  return sub === "roles" && seesRoles(me) ? <RolesView /> : <PeopleView />;
+}
+
+function PeopleView() {
   const app = useApp();
   // Link counts change on other screens; refresh them each time People opens.
   useEffect(() => { app.reloadUsers().catch(() => undefined); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -174,6 +183,7 @@ export function PeopleScreen() {
         if (sel) (open ? back() : select(null));
       },
       n: (e) => void (!e.shiftKey && manage && app.open({ kind: "invite" })),
+      o: (e) => void (!e.shiftKey && seesRoles(me) && navigate("/people/roles")),
     } satisfies Bindings<typeof PEOPLE_KEYS>,
     overlay === null,
   );
@@ -185,6 +195,7 @@ export function PeopleScreen() {
         count={manage ? `${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending` : undefined}
         text="Who can sign in, what they can reach, and every change made by a person or an agent."
       >
+        {seesRoles(me) && <PeopleTabs at="people" />}
         <SearchButton q={q} placeholder="Search people and activity" onOpen={() => app.open({ kind: "palette" })} />
         {manage && <div className="chips" role="group" aria-label="Filter people">
           {FILTERS.map((f) => (

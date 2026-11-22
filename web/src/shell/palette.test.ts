@@ -106,7 +106,7 @@ describe("buildCommands: follows the role", () => {
     expect(keys(MEMBER)).toEqual(["gl", "gd", "ga", "af", "gi", "cl", "cd", "ck", "sd", "?"]);
   });
   it("the owner gets every command", () => {
-    expect(keys(OWNER)).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "gs", "cl", "cd", "ck", "cp", "sd", "?"]);
+    expect(keys(OWNER)).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "gr", "gs", "cl", "cd", "ck", "cp", "sd", "?"]);
   });
   it("a role without create, domains or keys has none of their commands; settings and audit add G S and G P", () => {
     const me: Me = { ...MEMBER, ...customRole(["settings", "audit"]) };
@@ -114,8 +114,8 @@ describe("buildCommands: follows the role", () => {
     expect(buildCommands(ctx, me).filter((c) => c.quiet).map((c) => c.label)).not.toContain("Settings: Backups and export"); // needs data
     expect(buildCommands(ctx, { ...me, perms: [...me.perms, "data"] }).filter((c) => c.quiet)).toHaveLength(7);
   });
-  it("people.manage adds G P and Invite; domains.manage alone adds Add a domain", () => {
-    expect(keys({ ...MEMBER, ...customRole(["people.manage"]) })).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "cp", "sd", "?"]);
+  it("people.manage adds G P, G R (Roles) and Invite; domains.manage alone adds Add a domain", () => {
+    expect(keys({ ...MEMBER, ...customRole(["people.manage"]) })).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "gr", "cp", "sd", "?"]);
     expect(keys({ ...MEMBER, ...customRole(["domains.manage"]) })).toEqual(["gl", "gd", "ga", "af", "gi", "cd", "sd", "?"]);
   });
 });

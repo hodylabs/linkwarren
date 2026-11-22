@@ -1,6 +1,6 @@
 import type { AppState, Overlay } from "../state";
 import type { Domain, Me } from "../api";
-import { canSee, mayOpen } from "../perms";
+import { canSee, mayOpen, seesRoles } from "../perms";
 import { navigate } from "../router";
 import { sectionsFor } from "../settings/copy";
 
@@ -49,6 +49,7 @@ export function buildCommands(ctx: Ctx, me: Pick<Me, "role" | "perms">, appMode 
     go("af", "Filter analytics by domain", "/analytics?pick=1"),
     go("gi", "API & agents", "/agents"),
     ...(canSee(me, "people") ? [go("gp", "People & audit log", "/people")] : []),
+    ...(seesRoles(me) ? [go("gr", "Roles", "/people/roles")] : []),
     ...(canSee(me, "settings") ? [go("gs", "Settings", "/settings")] : []),
     ...(canSee(me, "settings") ? sectionsFor(me).map((s, i): Command => ({ ...go(`s${i + 1}`, `Settings: ${s.label}`, `/settings/${s.id}`), quiet: true })) : []),
     ...switcherDomains(ctx.domains).slice(0, 9).map((d, i): Command => ({

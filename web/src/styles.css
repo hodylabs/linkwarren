@@ -682,3 +682,20 @@ main>.an{flex:1;min-height:0}
   .wiz .btn,.wiz .check{min-height:44px}
   .navrow .left{display:none}
 }
+
+/* roles (S8): the People | Roles switch, the role picker (a listbox of .rule rows) and the role editor's .perm toggles */
+.seg a{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;font-size:12.5px;color:var(--muted);border-right:1px solid var(--line);text-decoration:none}
+.seg a:last-child{border-right:0}
+.seg a[aria-current="page"]{background:var(--graphite);color:#fff}
+.picker .rule{cursor:pointer}
+.picker .rule[aria-selected="true"] .lbl{font-weight:600}
+.picker .rule[aria-selected="true"]::after{content:"\2713";color:var(--ok)}
+.picker .rule[aria-disabled="true"]{cursor:default;color:var(--faint)}
+.picker:focus-visible .rule.open{box-shadow:inset 3px 0 0 var(--signal)}
+.perm input{width:16px;height:16px;margin:2px 0 0;flex:none;accent-color:var(--graphite)}
+.perm label{flex:1;min-width:0}
+@media (max-width: 760px){
+  .seg a,.picker .rule{min-height:44px}
+  .perm{min-height:44px}
+  .perm input{width:22px;height:22px}
+}

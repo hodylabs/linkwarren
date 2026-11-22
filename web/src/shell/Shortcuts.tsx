@@ -16,6 +16,8 @@ import { NEW_LINK_KEYS } from "../links/NewLinkSheet";
 import { INVITE_KEYS } from "../people/InviteSheet";
 import { PEOPLE_KEYS } from "../people/PeopleScreen";
 import { PERSON_KEYS } from "../people/PersonSheet";
+import { ROLE_SHEET_KEYS } from "../people/RoleSheet";
+import { ROLES_KEYS } from "../people/RolesView";
 import { SETTINGS_KEYS } from "../settings/CloudflareSection";
 import { EXPORT_KEYS } from "../settings/sections";
 import type { Me } from "../api";
@@ -78,11 +80,17 @@ const GROUPS: { title: string; rows: Row[]; need?: Need }[] = [
     title: "People",
     need: (me) => canSee(me, "people"),
     rows: [
-      ...rows(PEOPLE_KEYS, { n: any("people.manage"), j: any("people.manage"), k: any("people.manage") }),
+      ...rows(PEOPLE_KEYS, { n: any("people.manage"), j: any("people.manage"), k: any("people.manage"), o: any("people.manage") }),
       [["Enter"], "Open the focused person", any("people.manage")],
       ...rows(PERSON_KEYS, Object.fromEntries(Object.keys(PERSON_KEYS).map((k) => [k, any("people.manage")]))),
       [["Enter"], "Confirm", any("people.manage")],
       ...rows(INVITE_KEYS, Object.fromEntries(Object.keys(INVITE_KEYS).map((k) => [k, any("people.manage")]))),
+      [["↑", "↓"], "Move in a role list", any("people.manage")], // RolePicker onKeyDown
+      [["Enter"], "Pick the role", any("people.manage")],
+      ...rows(ROLES_KEYS, { j: any("people.manage"), k: any("people.manage"), n: owner, p: any("people.manage") }),
+      [["Enter"], "Open the focused role", any("people.manage")],
+      [["Space"], "Turn a permission on or off, in a role's sheet", owner], // native checkbox
+      ...rows(ROLE_SHEET_KEYS, { "mod+enter": owner, "shift+x": owner }),
     ],
   },
   {
