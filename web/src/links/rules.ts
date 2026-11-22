@@ -1,20 +1,24 @@
+import { passwordRule } from "../../../src/password-rule";
 import type { Route } from "../api";
 
 const MAX_COUNTRIES = 50;
 
-/** "ca, us  CA" -> ["CA", "US"]. Two letters A to Z, never XX or T1 (Cloudflare's unknown and Tor), at most 50. */
+/** "ca, us  CA" -> ["CA", "US"]. Two ASCII letters (checked raw, before upper-casing), never XX or T1 (Cloudflare's unknown and Tor), at most 50. */
 export function parseCountries(text: string): { ok: true; list: string[] } | { ok: false; bad: string } {
-  const list = [...new Set(text.split(/[\s,]+/).filter(Boolean).map((c) => c.toUpperCase()))];
-  const bad = list.find((c) => !/^[A-Z]{2}$/.test(c) || c === "XX");
-  if (bad) return { ok: false, bad };
+  const raw = text.split(/[\s,]+/).filter(Boolean);
+  // Raw check first, like the server: "ß".toUpperCase() is "SS", which must not pass as a code.
+  const badRaw = raw.find((c) => !/^[A-Za-z]{2}$/.test(c));
+  if (badRaw) return { ok: false, bad: badRaw };
+  const list = [...new Set(raw.map((c) => c.toUpperCase()))];
+  if (list.includes("XX")) return { ok: false, bad: "XX" };
   if (list.length > MAX_COUNTRIES) return { ok: false, bad: list[MAX_COUNTRIES]! };
   return { ok: true, list };
 }
 
-/** Client length check only, same as the server's checkPassword (NFC, 8 to 128 code points); the server stays authoritative. */
+/** Client length check, the server's own rule (src/password-rule.ts); the server stays authoritative. */
 export function passwordProblem(raw: string): "password_short" | "password_long" | null {
-  const n = [...raw.normalize("NFC")].length;
-  return n < 8 ? "password_short" : n > 128 ? "password_long" : null;
+  const r = passwordRule(raw);
+  return r.ok ? null : r.reason;
 }
 
 let names:Intl.DisplayNames | null | undefined;

@@ -9,7 +9,12 @@ describe("parseCountries", () => {
   it("names the first bad code", () => {
     expect(parseCountries("CAN")).toEqual({ ok: false, bad: "CAN" });
     expect(parseCountries("ca xx")).toEqual({ ok: false, bad: "XX" });
-    expect(parseCountries("t1")).toEqual({ ok: false, bad: "T1" });
+    expect(parseCountries("t1")).toEqual({ ok: false, bad: "t1" });
+  });
+  it("checks the raw value before upper-casing: ß, ﬀ and ıd are refused", () => {
+    expect(parseCountries("ß")).toEqual({ ok: false, bad: "ß" });
+    expect(parseCountries("ca ﬀ")).toEqual({ ok: false, bad: "ﬀ" });
+    expect(parseCountries("ıd")).toEqual({ ok: false, bad: "ıd" });
   });
   it("allows at most 50", () => {
     const many = Array.from({ length: 51 }, (_, i) => String.fromCharCode(65 + Math.floor(i / 26), 65 + (i % 26))).join(",");
@@ -23,6 +28,9 @@ describe("passwordProblem", () => {
     expect(passwordProblem("12345678")).toBeNull();
     expect(passwordProblem("😀".repeat(128))).toBeNull();
     expect(passwordProblem("a".repeat(129))).toBe("password_long");
+  });
+  it("composes NFD first: 4 decomposed é are short", () => {
+    expect(passwordProblem("e\u0301".repeat(4))).toBe("password_short");
   });
 });
 
