@@ -664,6 +664,17 @@ describe("Link detail rules", () => {
     expect(bodies).toEqual([]);
   });
 
+  it("a bad country typed into a device-only rule shows its error instead of saving nothing silently", async () => {
+    const bodies: unknown[] = [];
+    const deviceOnly = { ...protectedLink, routes: [{ countries: [], devices: ["mobile" as const], url: "https://example.com/m" }] };
+    const user = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [deviceOnly], next: null } }), routes: patch(bodies) }).user;
+    await ready();
+    fireEvent.change(screen.getByLabelText("Rule 1 countries"), { target: { value: "ZZZ" } });
+    await save(user);
+    expect(await screen.findByText(errorText("route_country"))).toBeTruthy();
+    expect(bodies).toEqual([]);
+  });
+
   it("switching routing off sends routes: []", async () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);

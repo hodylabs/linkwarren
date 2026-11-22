@@ -93,10 +93,11 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
       if (!canEdit || busy) return;
       // Password switched on with nothing stored and nothing typed: refuse, never save the link as if it were protected.
       if (draft.passwordOn && !link.hasPassword && draft.password === "") return setError({ code: "password_short" });
-      const body = diff(link, draft);
-      if (Object.keys(body).length === 0) return;
+      // Route errors first: a bad country in a device-only rule leaves the diff empty and would otherwise be ignored silently.
       const re = routesOf(draft).errors;
       setRouteErrors(re);
+      const body = diff(link, draft);
+      if (Object.keys(re).length === 0 && Object.keys(body).length === 0) return;
       const pwSet = draft.passwordOn && (draft.password !== "" || link.hasPassword);
       const bad = (typeof body.password === "string" && passwordProblem(body.password)) || (pwSet && draft.code === 301 && "password_301");
       if (bad || Object.keys(re).length) return setError(bad ? { code: bad } : null);
