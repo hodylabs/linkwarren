@@ -7,7 +7,8 @@ import type { UserRow } from "./types";
 
 /**
  * Report builder. One report reads the current window and the window before it in a single pass (they are
- * adjacent), so it costs at most 5 Analytics Engine queries (one aeAggregate) and 5 D1 queries in total.
+ * adjacent), so it costs at most 5 Analytics Engine queries (one aeAggregate) and 4 D1 calls (usable ids, link
+ * search, watermark, one batch of up to 3 GROUP BY rollup selects).
  */
 
 export type RangeQuery = { range: "1" | "7" | "30" | "90" | "custom"; from?: string; to?: string };
@@ -102,74 +103,125 @@ function scopeSql(scope: Scope, binds: unknown[]): string {
   return s;
 }
 
-async function d1Rows(env: Env, first: string, last: string, scope: Scope): Promise<{ tot: TotRow[]; dims: DimRow[] }> {
-  const binds: unknown[] = [first, last];
-  const where = `WHERE day >= ? AND day <= ?${scopeSql(scope, binds)}`;
-  const [tot, dims] = await env.DB.batch([
-    env.DB.prepare(`SELECT day AS bucket, domain_id AS domainId, link_id AS linkId, slug, qr, typed, bots, visitors FROM clicks_daily ${where}`).bind(...binds),
-    env.DB.prepare(`SELECT day AS bucket, domain_id AS domainId, link_id AS linkId, dim, value, clicks FROM clicks_daily_dim ${where}`).bind(...binds),
-  ]);
-  return { tot: tot.results as TotRow[], dims: dims.results as DimRow[] };
-}
+/** Per-bucket totals, current and prev window (series, totals, prevClicks). */
+export type DayRow = { bucket: string; qr: number; typed: number; bots: number; visitors: number };
+/** Per-link human clicks, current window only. */
+export type LinkRow = { linkId: string; domainId: string; slug: string; clicks: number };
+/** Per (dim, value) human clicks, current window only. */
+export type DimCount = { dim: DimRow["dim"]; value: string; clicks: number };
+export type ReportRows = { days: DayRow[]; links: LinkRow[]; dims: DimCount[]; live: Live };
 
 /**
- * Hourly: Analytics Engine only. Daily: days up to the rollup watermark from D1, later days (within AE's
- * 90-day retention) from AE, so no day is read twice (R3). An AE failure keeps the D1 rows (R9).
+ * D1 rollups, summed in SQL so the Worker gets at most (days + links + dim values) rows, never days x links.
+ * Every statement filters on `day` first (the `(day, link_id)` primary key, or `(domain_id, day)` when the scope
+ * names domains), so D1 reads only the rows inside the window and scope.
  */
-export async function loadRows(
-  env: Env, from: Date, to: Date, unit: Unit, scope: Scope, nowSec = Math.floor(Date.now() / 1000),
-): Promise<{ tot: TotRow[]; dims: DimRow[]; live: Live }> {
-  const tot: TotRow[] = [];
-  const dims: DimRow[] = [];
-  let aeFrom = from;
+async function d1Rows(env: Env, first: string, cur: string, end: string, scope: Scope) {
+  const where = (from: string): [string, unknown[]] => {
+    const b: unknown[] = [from, end];
+    return [`WHERE day >= ? AND day <= ?${scopeSql(scope, b)}`, b];
+  };
+  const [wAll, bAll] = where(first);
+  const stmts = [
+    env.DB.prepare(`SELECT day AS bucket, SUM(qr) AS qr, SUM(typed) AS typed, SUM(bots) AS bots, SUM(visitors) AS visitors FROM clicks_daily ${wAll} GROUP BY day`).bind(...bAll),
+  ];
+  if (cur <= end) {
+    const [wCur, bCur] = where(cur);
+    stmts.push(
+      // SQLite bare column: `slug` comes from the row with MAX(day), so a renamed link shows its latest slug.
+      env.DB.prepare(`SELECT link_id AS linkId, domain_id AS domainId, slug, MAX(day) AS lastDay, SUM(qr + typed) AS clicks FROM clicks_daily ${wCur} GROUP BY link_id, domain_id`).bind(...bCur),
+      env.DB.prepare(`SELECT dim, value, SUM(clicks) AS clicks FROM clicks_daily_dim ${wCur} GROUP BY dim, value`).bind(...bCur),
+    );
+  }
+  const [days, links, dims] = await env.DB.batch(stmts);
+  return { days: days.results as DayRow[], links: (links?.results ?? []) as LinkRow[], dims: (dims?.results ?? []) as DimCount[] };
+}
+
+/** Error name or fixed code only: a message could carry data. */
+const errCode = (e: unknown) =>
+  e instanceof AeError || (e instanceof Error && e.message === "bad_sql_id") ? e.message : e instanceof Error ? e.name : "unknown";
+
+/**
+ * Reads the whole report span (prev window + current window, they are adjacent) in one pass.
+ * Hourly: Analytics Engine only. Daily: days up to the rollup watermark from D1, later days (within AE's
+ * 90-day retention) from AE, so no day is read twice (R3). Any AE failure keeps the D1 rows (R9).
+ */
+export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Math.floor(Date.now() / 1000)): Promise<ReportRows> {
+  const { unit } = range;
+  const start = range.prev?.from ?? range.from;
+  const curK = bucketKey(range.from, unit);
+  const days = new Map<string, DayRow>();
+  const links = new Map<string, LinkRow>();
+  const dims = new Map<string, DimCount>();
+  const addDay = (r: DayRow) => {
+    const d = days.get(r.bucket) ?? { bucket: r.bucket, qr: 0, typed: 0, bots: 0, visitors: 0 };
+    d.qr += r.qr; d.typed += r.typed; d.bots += r.bots; d.visitors += r.visitors;
+    days.set(r.bucket, d);
+  };
+  const addLink = (r: LinkRow) => {
+    const l = links.get(r.linkId) ?? { linkId: r.linkId, domainId: r.domainId, slug: "", clicks: 0 };
+    l.clicks += r.clicks;
+    if (r.slug) l.slug = r.slug; // AE rows come after D1 rows, so the newest slug wins
+    links.set(r.linkId, l);
+  };
+  const addDim = (r: DimCount) => {
+    const k = `${r.dim}|${r.value}`;
+    const c = dims.get(k) ?? { dim: r.dim, value: r.value, clicks: 0 };
+    c.clicks += r.clicks;
+    dims.set(k, c);
+  };
+  const out = (live: Live): ReportRows => ({ days: [...days.values()], links: [...links.values()], dims: [...dims.values()], live });
+
+  let aeFrom = start;
   if (unit === "day") {
     const w = await rolledThrough(env);
-    const first = bucketKey(from, "day");
-    const last = bucketKey(addMs(to, -DAY_MS), "day");
+    const first = bucketKey(start, "day");
+    const last = bucketKey(addMs(range.to, -DAY_MS), "day");
     if (w && w >= first) {
-      const d1 = await d1Rows(env, first, w < last ? w : last, scope);
-      tot.push(...d1.tot);
-      dims.push(...d1.dims);
+      const d1 = await d1Rows(env, first, curK, w < last ? w : last, scope);
+      d1.days.forEach(addDay);
+      d1.links.forEach((r) => addLink({ linkId: r.linkId, domainId: r.domainId, slug: r.slug, clicks: r.clicks }));
+      d1.dims.forEach(addDim);
       aeFrom = addMs(dayStart(w), DAY_MS);
     }
     const floor = addMs(dayStart(utcDay(nowSec)), -(AE_DAYS - 1) * DAY_MS);
     if (aeFrom < floor) aeFrom = floor;
   }
-  if (!aeConfigured(env)) return { tot, dims, live: "off" };
-  if (aeFrom >= to) return { tot, dims, live: "ok" };
+  if (!aeConfigured(env)) return out("off");
+  if (aeFrom >= range.to) return out("ok");
+  let live: { tot: TotRow[]; dims: DimRow[] };
   try {
-    const live = await aeAggregate(env, aeFrom, to, unit, scope);
-    const k = bucketKey(aeFrom, unit); // keep the seam exact even if AE answers outside the bounds
-    tot.push(...live.tot.filter((r) => r.bucket >= k));
-    dims.push(...live.dims.filter((r) => r.bucket >= k));
-    return { tot, dims, live: "ok" };
+    live = await aeAggregate(env, aeFrom, range.to, unit, scope);
   } catch (e) {
-    if (!(e instanceof AeError)) throw e;
-    return { tot, dims, live: e.message === "ae_off" ? "off" : "unavailable" };
+    // R9: any AE-layer failure (an AeError, or sqlId's bad_sql_id on an odd stored id) degrades, never a 500.
+    console.error("analytics live read failed", errCode(e));
+    return out(e instanceof AeError && e.message === "ae_off" ? "off" : "unavailable");
   }
+  const aeK = bucketKey(aeFrom, unit); // keep the seam exact even if AE answers outside the bounds
+  for (const r of live.tot) {
+    if (r.bucket < aeK) continue;
+    addDay(r);
+    if (r.bucket >= curK) addLink({ linkId: r.linkId, domainId: r.domainId, slug: r.slug, clicks: r.qr + r.typed });
+  }
+  for (const r of live.dims) if (r.bucket >= aeK && r.bucket >= curK) addDim(r);
+  return out("ok");
 }
 
 const desc = <T extends { clicks: number }>(m: Map<string, T>) => [...m.values()].filter((x) => x.clicks > 0).sort((a, b) => b.clicks - a.clicks);
 
-/** Pure: turns merged rows (current and prev window) into the report. `hosts` maps domain id to host. */
-export function buildReport(
-  range: Range, rows: { tot: TotRow[]; dims: DimRow[]; live: Live }, hosts: Map<string, string>, opts: { truncated: boolean; visitors: boolean },
-): AnalyticsReport {
+/** Pure: turns the loaded rows into the report. `hosts` maps domain id to host (a missing id gives ""). */
+export function buildReport(range: Range, rows: ReportRows, hosts: Map<string, string>, opts: { truncated: boolean; visitors: boolean }): AnalyticsReport {
   const { unit } = range;
   const step = unit === "day" ? DAY_MS : HOUR_MS;
   const fromK = bucketKey(range.from, unit);
-  const toK = bucketKey(range.to, unit);
   const series = new Map<string, { bucket: string; qr: number; typed: number }>();
   for (let d = range.from; d < range.to; d = addMs(d, step)) series.set(bucketKey(d, unit), { bucket: bucketKey(d, unit), qr: 0, typed: 0 });
 
-  const totals = { clicks: 0, qr: 0, typed: 0, bots: 0, visitors: 0 };
-  const links = new Map<string, AnalyticsReport["links"][number]>();
-  const domains = new Map<string, AnalyticsReport["domains"][number]>();
+  const totals = { qr: 0, typed: 0, bots: 0, visitors: 0 };
   const prevK = range.prev ? bucketKey(range.prev.from, unit) : null;
   let prev = 0;
-  for (const r of rows.tot) {
-    const clicks = r.qr + r.typed;
-    if (prevK && r.bucket >= prevK && r.bucket < fromK) prev += clicks;
+  for (const r of rows.days) {
+    if (prevK && r.bucket >= prevK && r.bucket < fromK) prev += r.qr + r.typed;
     const s = series.get(r.bucket);
     if (!s) continue;
     s.qr += r.qr;
@@ -177,19 +229,24 @@ export function buildReport(
     totals.qr += r.qr;
     totals.typed += r.typed;
     totals.bots += r.bots;
+    // Daily views follow R2 (sum of per-link per-day distinct visitors). In the 24-hour view AE counts distinct
+    // visitors per hour, so in the 24-hour view a person who returns in a later hour counts again.
     totals.visitors += r.visitors;
+  }
+  const links = new Map<string, AnalyticsReport["links"][number]>();
+  const domains = new Map<string, AnalyticsReport["domains"][number]>();
+  for (const r of rows.links) {
     const host = hosts.get(r.domainId) ?? "";
     const l = links.get(r.linkId) ?? { linkId: r.linkId, domainId: r.domainId, host, slug: "", clicks: 0 };
-    l.clicks += clicks;
+    l.clicks += r.clicks;
     if (r.slug) l.slug = r.slug;
     links.set(r.linkId, l);
     const d = domains.get(r.domainId) ?? { domainId: r.domainId, host, clicks: 0 };
-    d.clicks += clicks;
+    d.clicks += r.clicks;
     domains.set(r.domainId, d);
   }
   const by = { country: new Map<string, Count>(), device: new Map<string, Count>(), referrer: new Map<string, Count>() };
   for (const r of rows.dims) {
-    if (r.bucket < fromK || r.bucket >= toK) continue;
     const m = by[r.dim];
     const c = m.get(r.value) ?? { value: r.value, clicks: 0 };
     c.clicks += r.clicks;
