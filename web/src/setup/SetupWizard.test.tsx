@@ -20,6 +20,7 @@ const REPORT = { created: 2, skipped: 1, conflicts: [{ host: "go.test", slug: "t
 const MAIN_ONLY = { steps: ALL, settings: { name: "N", mainDomainId: "d0" }, domains: [MAIN] };
 const CSV = () => new File(["slug,url\nab,https://x.test\n"], "links.csv", { type: "text/csv" });
 const ctrlEnter = "{Control>}{Enter}{/Control}";
+const NO_PW = "No link in this file had a password";
 
 function boot(o: { me?: Me; configured?: boolean; steps?: Steps; settings?: object; domains?: object[]; routes?: FakeRoutes; path?: string } = {}) {
   history.replaceState(null, "", o.path ?? "/links");
@@ -186,9 +187,11 @@ describe("setup wizard steps", () => {
     await user.upload(screen.getByLabelText("Links file"), new File(["slug,url\nab,https://x.test\n"], "links.csv", { type: "text/csv" }));
     expect(await screen.findByText("2 to import, 1 already there, 1 conflicts, new domains: new.test")).toBeTruthy();
     expect(writes(api)).toEqual([{ method: "POST", path: "/api/import?dryRun=1", body: { mainHost: "go.test", domains: [], links: [{ host: null, slug: "ab", destination: "https://x.test", enabled: true, startDate: null, endDate: null }] } }]);
+    await user.click(screen.getByLabelText(NO_PW));
     await user.click(screen.getByRole("button", { name: "Import" }));
     expect(await screen.findByText(/^Imported 2, 1 already there, 1 conflicts/)).toBeTruthy();
     expect(writes(api).map((c) => c.path)).toEqual(["/api/import?dryRun=1", "/api/import"]);
+    expect((writes(api)[1]!.body as { confirmNoPasswords?: boolean }).confirmNoPasswords).toBe(true);
   });
 
   it("refuses a file over 10 MB and a JSON that is not an export, without calling the server", async () => {
@@ -283,7 +286,8 @@ describe("import results", () => {
     await heading("Bring your links");
     const input = screen.getByLabelText("Links file") as HTMLInputElement;
     await user.upload(input, CSV());
-    await user.click(await screen.findByRole("button", { name: "Import" }));
+    await user.click(await screen.findByLabelText(NO_PW));
+    await user.click(screen.getByRole("button", { name: "Import" }));
     expect(await screen.findByText(/^Stopped at part 1 of 1/)).toBeTruthy();
     expect(input.value).toBe("");
     await user.click(screen.getByRole("button", { name: "Retry" }));
@@ -394,5 +398,37 @@ describe("load states", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Name")));
     await user.keyboard(`N${ctrlEnter}`);
     expect(await screen.findByRole("button", { name: "Reload" })).toBeTruthy();
+  });
+});
+
+describe("N2: a file that does not say which links had a password", () => {
+  it("the dry run warns, Import stays disabled until the owner confirms, then the real run carries the confirmation", async () => {
+    const { api, user } = boot(MAIN_ONLY);
+    await heading("Bring your links");
+    const json = { mainHost: "old.test", domains: [], links: [{ host: null, slug: "s", destination: "https://x.test", enabled: true }] };
+    await user.upload(screen.getByLabelText("Links file"), new File([JSON.stringify(json)], "export.json", { type: "application/json" }));
+    expect(await screen.findByText("This file does not say which links had a password. Confirm none did, or re-export with the protected column.")).toBeTruthy();
+    const imp = screen.getByRole("button", { name: "Import" }) as HTMLButtonElement;
+    expect(imp.disabled).toBe(true);
+    await user.click(imp);
+    expect(writes(api).map((c) => c.path)).toEqual(["/api/import?dryRun=1"]);
+    expect((writes(api)[0]!.body as { confirmNoPasswords?: boolean }).confirmNoPasswords).toBeUndefined();
+    await user.click(screen.getByLabelText(NO_PW));
+    expect(imp.disabled).toBe(false);
+    await user.click(imp);
+    expect(await screen.findByText(/^Imported 2/)).toBeTruthy();
+    expect((writes(api)[1]!.body as { confirmNoPasswords?: boolean }).confirmNoPasswords).toBe(true);
+  });
+
+  it("a file whose links carry protected shows no warning and needs no confirmation", async () => {
+    const { api, user } = boot(MAIN_ONLY);
+    await heading("Bring your links");
+    const json = { mainHost: "old.test", domains: [], links: [{ host: null, slug: "s", destination: "https://x.test", enabled: true, protected: false }] };
+    await user.upload(screen.getByLabelText("Links file"), new File([JSON.stringify(json)], "export.json", { type: "application/json" }));
+    await screen.findByText(/2 to import/);
+    expect(screen.queryByLabelText(NO_PW)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    expect(await screen.findByText(/^Imported 2/)).toBeTruthy();
+    expect((writes(api)[1]!.body as { confirmNoPasswords?: boolean }).confirmNoPasswords).toBeUndefined();
   });
 });

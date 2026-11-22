@@ -13,6 +13,7 @@ import { addPasskey, passkeysSupported } from "../signin/passkey";
 import { useApp } from "../state";
 import { chunkImport, errorsCsv, resultsCsv, runImport, type ImportRun } from "./importRun";
 import { parseLinksFile, type ImportBody, type LineError } from "./parseLinks";
+import { PASSWORDS_UNKNOWN, passwordsUnknown } from "../../../scripts/lib/export";
 
 /** Wizard hotkeys (the navrow shows them; the shell's shortcuts sheet is not on screen here). */
 export const WIZARD_KEYS = { "mod+enter": "Continue", "alt+arrowleft": "Back", escape: "Back (or dismiss the record warning)" } as const;
@@ -84,6 +85,9 @@ export function SetupWizard() {
   const [chunks, setChunks] = useState<ImportBody[] | null>(null);
   const [preview, setPreview] = useState<ImportRun | null>(null);
   const [result, setResult] = useState<ImportRun | null>(null);
+  // N2: no link in the file says whether it had a password; a real run waits for the owner's confirmation.
+  const [pwUnknown, setPwUnknown] = useState(false);
+  const [noPw, setNoPw] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [part, setPart] = useState<string | null>(null);
   const fileGen = useRef(0); // only the newest chosen file may show its preview
@@ -237,6 +241,8 @@ export function SetupWizard() {
     setChunks(null);
     setPreview(null);
     setResult(null);
+    setPwUnknown(false);
+    setNoPw(false);
     if (!f) return;
     setFileName(f.name);
     // Checked here for a quick answer; the server checks every request again.
@@ -253,6 +259,7 @@ export function SetupWizard() {
       return setFileErrors([{ line: 0, reason: (err as Error).message }]);
     }
     setChunks(c);
+    setPwUnknown(passwordsUnknown(p.body));
     const r = await runImport(c, true, { onPart: (i, n) => g === fileGen.current && onPart("Checking")(i, n) });
     if (g !== fileGen.current) return;
     setPart(null);
@@ -262,7 +269,7 @@ export function SetupWizard() {
   const doImport = (dry: boolean, from?: ImportRun) =>
     chunks &&
     run(async () => {
-      const r = await runImport(chunks, dry, { onPart: onPart(dry ? "Checking" : "Importing"), ...(from ? { from: from.failedAt!, report: from.report } : {}) });
+      const r = await runImport(!dry && pwUnknown ? chunks.map((x) => ({ ...x, confirmNoPasswords: true })) : chunks, dry, { onPart: onPart(dry ? "Checking" : "Importing"), ...(from ? { from: from.failedAt!, report: from.report } : {}) });
       setPart(null);
       if (dry) return setPreview(r);
       setResult(r);
@@ -422,6 +429,15 @@ export function SetupWizard() {
           {preview && !result && preview.failedAt === null && (
             <>
               <p>{`${preview.report.created} to import, ${counts(preview.report)}, new domains: ${preview.report.domainsCreated.join(", ") || "none"}`}</p>
+              {pwUnknown && (
+                <div className="callout wait">
+                  <p>{PASSWORDS_UNKNOWN}</p>
+                  <label className="check">
+                    <input type="checkbox" checked={noPw} onChange={(e) => setNoPw(e.target.checked)} disabled={busy} />
+                    <span>No link in this file had a password</span>
+                  </label>
+                </div>
+              )}
               {preview.report.protected.length > 0 && (
                 <p>{`${plural(preview.report.protected.length, "password link")} ${preview.report.protected.length === 1 ? "comes" : "come"} in locked, never live. You set their new passwords after the import.`}</p>
               )}
@@ -445,7 +461,7 @@ export function SetupWizard() {
           )}
         </div>
         <div className="row-actions">
-          {preview && preview.failedAt === null && !result && <button type="button" className="btn" disabled={busy} onClick={() => void doImport(false)}>Import</button>}
+          {preview && preview.failedAt === null && !result && <button type="button" className="btn" disabled={busy || (pwUnknown && !noPw)} onClick={() => void doImport(false)}>Import</button>}
           {r && r.failedAt !== null && <button type="button" className="btn" disabled={busy} onClick={() => void doImport(!result, r)}>Retry</button>}
           {rows > 0 && <button type="button" className="btn" onClick={() => downloadCsv(resultsCsv(r!.report), `linkwarren-import-results-${csvDay()}.csv`)}>Download results</button>}
         </div>

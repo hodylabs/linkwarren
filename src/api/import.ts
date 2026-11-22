@@ -26,6 +26,7 @@ const body = z.object({
     // A legacy password link: its hash cannot be carried over, so it is imported like a disabled link (a lock) and listed.
     protected: z.boolean().optional(),
   })),
+  confirmNoPasswords: z.boolean().optional(),
 });
 
 /** "YYYY-MM-DD HH:MM:SS" (UTC) -> unix seconds, null for null, undefined when unparseable. */
@@ -50,6 +51,10 @@ importApi.post("/", async (c) => {
   const b = parsed.data;
   if (b.links.length > MAX_LINKS) return c.json({ error: "too_many" }, 400);
   const dry = c.req.query("dryRun") === "1";
+  // N2: no row says whether it had a password (an old export, a CSV): a password link would go live, so a real run needs the
+  // owner's explicit confirmation. Rows from an export with the protected column always carry it (true or false).
+  if (!dry && b.links.length && b.links.every((l) => l.protected === undefined) && b.confirmNoPasswords !== true)
+    return c.json({ error: "protected_unknown" }, 400);
   const dashboard = normalizeHost(c.env.DASHBOARD_HOST);
   const mainHost = normalizeHost(b.mainHost);
   const hostOf = (h: string | null) => (h === null ? mainHost : normalizeHost(h));

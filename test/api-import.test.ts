@@ -20,7 +20,8 @@ async function imp(who: string, b: unknown, q = "") {
     body: JSON.stringify(b),
   });
 }
-const owner = (b: unknown, q = "") => imp("owner@example.com", b, q);
+// Most cases are about other rules: they confirm "no password links" unless the body says otherwise (N2 tests use imp).
+const owner = (b: unknown, q = "") => imp("owner@example.com", { confirmNoPasswords: true, ...(b as object) }, q);
 const get = (host: string, path: string) => exports.default.fetch(`https://${host}${path}`, { redirect: "manual" });
 const rep = async (r: Response) => (await r.json()) as { created: number; skipped: number; conflicts: { host: string; slug: string; reason: string }[]; caseSensitiveDomains: string[]; domainsCreated: string[]; ignored: { host: string; field: string }[]; protected: { host: string; slug: string }[] };
 const D = (host: string, i: string | null = null, n: string | null = null) => ({ host, customIndexUrl: i, customNotFoundUrl: n });
@@ -267,5 +268,31 @@ describe("rules", () => {
   it("duplicate rows within one export are skipped when identical", async () => {
     const l = { host: "a.test", slug: "x", destination: "https://e.org/" };
     expect(await rep(await owner(body([l, l])))).toMatchObject({ created: 1, skipped: 1 });
+  });
+});
+
+describe("N2: a file that does not say which links had a password", () => {
+  const old = () => body([{ host: "a.test", slug: "s", destination: "https://e.org/x" }]);
+  const o = (b: unknown, q = "") => imp("owner@example.com", b, q);
+  it("a real run without confirmNoPasswords is 400 protected_unknown and writes nothing", async () => {
+    const r = await o(old());
+    expect([r.status, await r.json()]).toEqual([400, { error: "protected_unknown" }]);
+    expect(await count("links")).toBe(0);
+    expect(await count("domains")).toBe(0);
+  });
+  it("the dry run still answers (the client shows the warning)", async () => {
+    expect((await o(old(), "?dryRun=1")).status).toBe(200);
+  });
+  it("with confirmNoPasswords: true it imports", async () => {
+    const r = await o({ ...old(), confirmNoPasswords: true });
+    expect(r.status).toBe(200);
+    expect(await count("links")).toBe(1);
+  });
+  it("a file whose rows carry protected (even all false) needs no confirmation", async () => {
+    const b = body([{ host: "a.test", slug: "s", destination: "https://e.org/x", protected: false }]);
+    expect((await o(b)).status).toBe(200);
+  });
+  it("a domains-only request needs no confirmation", async () => {
+    expect((await o(body([], [D("only.test")]))).status).toBe(200);
   });
 });
