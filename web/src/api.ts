@@ -1,8 +1,8 @@
-import type { AuditItem as ServerAuditItem, DomainRow, LinkRow, UserListItem, UserRow } from "../../src/types";
+import type { AuditItem as ServerAuditItem, CfView, DomainRow, LinkRow, UserListItem, UserRow } from "../../src/types";
 
 export type Me = Pick<UserRow, "id" | "email" | "name" | "role">;
 export type Link = LinkRow;
-export type Domain = DomainRow & { linkCount: number; isMember: boolean };
+export type Domain = DomainRow & { linkCount: number; isMember: boolean; cloudflare?: CfView };
 export type UserItem = UserListItem;
 export type AuditItem = ServerAuditItem;
 export type Page<T> = { items: T[]; next: string | null };

@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
+import { CfError, cfConfig } from "../cf/api";
+import { classify, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
-import { rowToDomain, type DomainRow, type UserRow } from "../types";
+import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
 import { destination, getDomain, loopField, purgeHost as purge, purgeMany } from "./shared";
 
@@ -16,7 +18,7 @@ const notFound = { error: "not_found" } as const;
 export const MAX_PENDING_PER_MEMBER = 3;
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-const createBody = z.strictObject({ host: z.string(), type: z.enum(["main", "shared", "private"]) });
+const createBody = z.strictObject({ host: z.string(), type: z.enum(["main", "shared", "private"]), confirmTakeover: z.boolean().optional() });
 const patchBody = z.strictObject({
   bareRedirect: z.string().nullable().optional(), notfoundRedirect: z.string().nullable().optional(),
   caseSensitive: z.boolean().optional(), noindex: z.boolean().optional(),
@@ -36,6 +38,47 @@ export function hostError(host: string, dashboard: string, cnameTarget?: string)
   return null;
 }
 
+// Second-level labels that make a two-letter ccTLD pair (co.uk, com.au) one registrable suffix.
+const CC_SLD = new Set(["co", "com", "net", "org", "gov", "ac", "edu"]);
+/** Registrable apex by the simple rule: the last two labels, or three when they are a ccTLD pair like co.uk. */
+export function apexOf(host: string): string {
+  const l = host.split(".");
+  const n = l.length >= 3 && l[l.length - 1]!.length === 2 && CC_SLD.has(l[l.length - 2]!) ? 3 : 2;
+  return l.slice(-n).join(".");
+}
+
+const getCf = async (env: Env, id: string): Promise<CfRow | null> => {
+  const r = await env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(id).first();
+  return r ? rowToCf(r) : null;
+};
+
+/** A missing domain_cf row reads as manual (S1 behaviour). */
+function cfView(env: Env, d: DomainRow, cf: CfRow | null): CfView {
+  const t = env.CF_CNAME_TARGET?.trim();
+  const target = t ? normalizeHost(t) : null;
+  const apex = apexOf(d.host);
+  const base = cf ?? { kind: "manual", dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, routeId: null };
+  return {
+    kind: base.kind, dns: base.dns, ownership: base.ownership, certificate: base.certificate,
+    errors: base.errors, lastError: base.lastError, checkedAt: base.checkedAt,
+    instructions: base.kind === "outside" && target
+      ? { type: "CNAME", name: d.host === apex ? "@" : d.host.slice(0, -apex.length - 1), target, apex: d.host === apex }
+      : null,
+    attachOnApproval: base.kind === "account" && base.routeId === null && d.status === "pending",
+  };
+}
+
+/** After a committed write a failed sync is reported through lastError (syncDomain stored it), never as a 5xx. */
+async function trySync(env: Env, d: DomainRow, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }): Promise<CfRow> {
+  const cfg = cfConfig(env);
+  if (!cfg || cf.kind === "manual") return cf;
+  try {
+    return await syncDomain(env, cfg, d, cf, opts);
+  } catch {
+    return (await getCf(env, d.id)) ?? cf;
+  }
+}
+
 domains.get("/", async (c) => {
   const user = c.var.user;
   const members = new Set(
@@ -46,10 +89,11 @@ domains.get("/", async (c) => {
     (await c.env.DB.prepare("SELECT domain_id, COUNT(*) n FROM links GROUP BY domain_id").all<{ domain_id: string; n: number }>())
       .results.map((r) => [r.domain_id, r.n]),
   );
+  const cfs = new Map((await c.env.DB.prepare("SELECT * FROM domain_cf").all()).results.map((r) => [r.domain_id as string, rowToCf(r)]));
   // shortcut: no pagination, the domain list is small; add a cursor if an instance ever hosts thousands.
   const items = (await c.env.DB.prepare("SELECT * FROM domains ORDER BY host").all()).results.map(rowToDomain)
     .filter((d) => canUseDomain(user, d, members.has(d.id)))
-    .map((d) => ({ ...d, linkCount: counts.get(d.id) ?? 0, isMember: members.has(d.id) }));
+    .map((d) => ({ ...d, linkCount: counts.get(d.id) ?? 0, isMember: members.has(d.id), cloudflare: cfView(c.env, d, cfs.get(d.id) ?? null) }));
   return c.json(items);
 });
 
@@ -57,12 +101,33 @@ domains.post("/", async (c) => {
   const user = c.var.user;
   const body = createBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
-  const { type } = body.data;
+  const { type, confirmTakeover } = body.data;
   const isOwner = user.role === "owner";
   if (!isOwner && type !== "private") return c.json(forbidden, 403);
   const host = normalizeHost(body.data.host.trim());
   const bad = hostError(host, c.env.DASHBOARD_HOST, c.env.CF_CNAME_TARGET);
   if (bad) return c.json({ error: bad }, 400);
+  // Early exits so a doomed create makes no Cloudflare calls; the INSERT below still enforces both under races.
+  if (await c.env.DB.prepare("SELECT 1 FROM domains WHERE host = ?").bind(host).first()) return c.json({ error: "host_taken" }, 409);
+  if (!isOwner && (await c.env.DB.prepare("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'").bind(user.id).first<{ n: number }>())!.n >= MAX_PENDING_PER_MEMBER)
+    return c.json({ error: "pending_limit" }, 409);
+  const cfg = cfConfig(c.env);
+  let kind: CfRow["kind"] = "manual";
+  if (cfg) {
+    // Every Cloudflare read and refusal happens before the first write.
+    try {
+      const k = await classify(cfg, host);
+      kind = k.kind;
+      // R3: only the owner attaches at create, so only the owner is asked about a takeover. Same checks as syncDomain.
+      if (k.kind === "account" && isOwner) {
+        const code = await takeoverCheck(cfg, host, { id: k.zoneId, name: k.zoneName }, confirmTakeover);
+        if (code) return c.json({ error: code }, 409);
+      }
+    } catch (e) {
+      if (!(e instanceof CfError)) throw e;
+      return e.status === 0 && e.codes.includes(-1) ? c.json({ error: "outside_not_configured" }, 400) : c.json({ error: "cloudflare_unreachable" }, 502);
+    }
+  }
   const d: DomainRow = {
     id: crypto.randomUUID(), host, type, status: isOwner ? "active" : "pending", ownerId: user.id,
     bareRedirect: null, notfoundRedirect: null, caseSensitive: false, noindex: true, reservedExtra: [],
@@ -76,8 +141,8 @@ domains.post("/", async (c) => {
         `INSERT INTO domains (id,host,type,status,owner_id,created_at) SELECT ?,?,?,?,?,?
          WHERE ? = 'owner' OR (SELECT COUNT(*) FROM domains WHERE owner_id = ? AND status = 'pending') < ${MAX_PENDING_PER_MEMBER}`,
       ).bind(d.id, host, type, d.status, user.id, d.createdAt, user.role, user.id),
-      c.env.DB.prepare("INSERT INTO domain_cf (domain_id, kind, updated_at) SELECT ?, 'manual', ? WHERE EXISTS (SELECT 1 FROM domains WHERE id = ?)")
-        .bind(d.id, d.createdAt, d.id),
+      c.env.DB.prepare("INSERT INTO domain_cf (domain_id, kind, updated_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM domains WHERE id = ?)")
+        .bind(d.id, kind, d.createdAt, d.id),
       auditStmt(c.env, { actorId: user.id, action: "domain.create", targetType: "domain", targetId: d.id,
         detail: { host, type, status: d.status } }, exists(d.id)),
     ]);
@@ -87,7 +152,22 @@ domains.post("/", async (c) => {
   }
   if (res[0]!.meta.changes === 0) return c.json({ error: "pending_limit" }, 409);
   await purge(c.env, host); // clears a 60 s cached miss for this host
-  return c.json(isOwner ? { ...d, ...(await loopField(c.env, host)) } : d, 201);
+  let cf = await getCf(c.env, d.id);
+  // A member's same-account create runs read-only (attach false): R3, no Cloudflare write.
+  if (cf) cf = await trySync(c.env, d, cf, { attach: kind === "outside" || isOwner, confirmTakeover });
+  const out = { ...d, cloudflare: cfView(c.env, d, cf) };
+  return c.json(isOwner ? { ...out, ...(await loopField(c.env, host)) } : out, 201);
+});
+
+/** R9: the poll endpoint and the retry. Repair mode only (attach false), so no poll can ever take over a host. */
+domains.get("/:id/cloudflare", async (c) => {
+  const d = await getDomain(c.env, c.req.param("id"));
+  if (!d) return c.json(notFound, 404);
+  if (!canManageDomain(c.var.user, d)) return c.json(forbidden, 403);
+  let cf = await getCf(c.env, d.id);
+  const fresh = cf?.checkedAt != null && Math.floor(Date.now() / 1000) - cf.checkedAt < 10;
+  if (cf && !fresh) cf = await trySync(c.env, d, cf, { attach: false });
+  return c.json(cfView(c.env, d, cf));
 });
 
 domains.patch("/:id", async (c) => {

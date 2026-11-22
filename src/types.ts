@@ -47,6 +47,11 @@ export type CfRow = {
   certificate: "unknown" | "pending" | "issued" | "failed" | "not_covered";
   errors: string[]; lastError: string | null; checkedAt: number | null; securityLevel: string | null; rateLimit: number | null;
 };
+/** What the API shows about a domain's Cloudflare state. `instructions` only for `outside`. */
+export type CfView = Pick<CfRow, "kind" | "dns" | "ownership" | "certificate" | "errors" | "lastError" | "checkedAt"> & {
+  instructions: { type: "CNAME"; name: string; target: string; apex: boolean } | null;
+  attachOnApproval: boolean;
+};
 export const rowToCf = (r: R): CfRow => ({
   kind: r.kind as CfRow["kind"], zoneId: r.zone_id as string | null, dnsRecordId: r.dns_record_id as string | null,
   routeId: r.route_id as string | null, hostnameId: r.hostname_id as string | null, dns: r.dns as CfRow["dns"],

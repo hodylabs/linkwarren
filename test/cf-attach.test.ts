@@ -37,8 +37,8 @@ async function load(id: string) {
 describe("classify", () => {
   it("a host under any account zone is account, including subdomains of the SaaS zone", async () => {
     installFakeCloudflare({ zones });
-    expect(await classify(cfg, "go.example.com")).toEqual({ kind: "account", zoneId: "z1" });
-    expect(await classify(cfg, "x.saas.test")).toEqual({ kind: "account", zoneId: "zsaas" });
+    expect(await classify(cfg, "go.example.com")).toEqual({ kind: "account", zoneId: "z1", zoneName: "example.com" });
+    expect(await classify(cfg, "x.saas.test")).toEqual({ kind: "account", zoneId: "zsaas", zoneName: "saas.test" });
   });
   it("is outside when no zone matches", async () => {
     installFakeCloudflare({ zones });

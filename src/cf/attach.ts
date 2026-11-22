@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { rowToCf, type CfRow, type DomainRow } from "../types";
-import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findRoute, findZone, listDns, listRoutes, type CfConfig } from "./api";
+import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findRoute, findZone, listDns, listRoutes, type CfConfig, type DnsRecord, type Route } from "./api";
 import { dnsPointsAt } from "./dns";
 
 export class AttachError extends Error {
@@ -13,9 +13,9 @@ export class AttachError extends Error {
 /** CfError 0 with code -1: the API maps it to `outside_not_configured`. */
 const notConfigured = () => new CfError(0, [-1]);
 
-export async function classify(cfg: CfConfig, host: string): Promise<{ kind: "account"; zoneId: string } | { kind: "outside" }> {
+export async function classify(cfg: CfConfig, host: string): Promise<{ kind: "account"; zoneId: string; zoneName: string } | { kind: "outside" }> {
   const z = await findZone(cfg, host);
-  if (z) return { kind: "account", zoneId: z.id };
+  if (z) return { kind: "account", zoneId: z.id, zoneName: z.name };
   if (!cfg.saasZoneId || !cfg.cnameTarget) throw notConfigured();
   return { kind: "outside" };
 }
@@ -76,44 +76,63 @@ async function syncOutside(cfg: CfConfig, host: string, made: Made): Promise<Sna
   return { dns: await dnsPointsAt(host, cfg.cnameTarget), ownership: ownershipOf(h.status), certificate: certificateOf(h.sslStatus), errors: h.errors };
 }
 
+type AccountFacts = { records: DnsRecord[]; covering: DnsRecord[]; delegated: boolean; routes: Route[]; route: Route | null };
+
+/** Reads only: what is at `host` in its zone (records, closest wildcard, NS delegation, routes). */
+async function inspectAccount(cfg: CfConfig, host: string, zone: { id: string; name: string }): Promise<AccountFacts> {
+  const atHost = await listDns(cfg, zone.id, host);
+  const records = atHost.filter((r) => ADDRESS.has(r.type));
+  // Ancestors inside the zone, closest first, ending at the apex: a.b.owned.test -> b.owned.test, owned.test.
+  const ancestors: string[] = [];
+  for (let p = host; p !== zone.name && p.endsWith("." + zone.name); ancestors.push(p)) p = p.slice(p.indexOf(".") + 1);
+  // shortcut: the closest wildcard counts even when a closer non-wildcard name exists (DNS would not use it then); errs toward asking.
+  const [wilds, mids] = await Promise.all([
+    Promise.all(ancestors.map((p) => listDns(cfg, zone.id, `*.${p}`))),
+    Promise.all(ancestors.slice(0, -1).map((p) => listDns(cfg, zone.id, p))), // NS at the apex is the zone's own
+  ]);
+  const wild = wilds.map((l) => l.filter((r) => ADDRESS.has(r.type))).find((l) => l.length) ?? [];
+  // NS at the host or any label below the apex delegates the name to other nameservers.
+  const delegated = [atHost, ...mids].some((l) => l.some((r) => r.type === "NS"));
+  const routes = await listRoutes(cfg, zone.id);
+  const pattern = `${host}/*`;
+  return { records, covering: records.length ? records : wild, delegated, routes, route: routes.find((r) => r.pattern === pattern) ?? null };
+}
+
+/** The refusal an attach of `host` would throw, or null. Pure, so the pre-insert check and syncDomain cannot drift. */
+function refusal(cfg: CfConfig, host: string, f: AccountFacts, o: { confirmTakeover?: boolean; ownRecordId: string | null; attached: boolean }): AttachError["code"] | null {
+  // A delegated subdomain is served by other nameservers: no confirmation can make the placeholder visible.
+  if (f.delegated || f.covering.some((r) => !r.proxied)) return "dns_not_proxied";
+  const onlyOurs = f.records.length === 1 && f.records[0]!.id === o.ownRecordId;
+  if (f.covering.length > 0 && !onlyOurs && !o.confirmTakeover && !o.attached) return "dns_record_exists";
+  if (f.routes.some((r) => routeCovers(r.pattern, host) && r.script !== cfg.workerName)) return "route_in_use";
+  return null;
+}
+
+/** Read-only twin of a fresh attach: the AttachError code syncDomain would throw for `host`, or null. Never writes. */
+export async function takeoverCheck(cfg: CfConfig, host: string, zone: { id: string; name: string }, confirmTakeover = false): Promise<AttachError["code"] | null> {
+  return refusal(cfg, host, await inspectAccount(cfg, host, zone), { confirmTakeover, ownRecordId: null, attached: false });
+}
+
 async function syncAccount(cfg: CfConfig, host: string, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }, made: Made): Promise<Snap> {
   const z = await findZone(cfg, host);
   if (!z) throw new CfError(404); // the zone left the account
   const zoneId = cf.zoneId ?? z.id;
   if (!cf.zoneId) made.zone_id = zoneId;
-  const pattern = `${host}/*`;
-  const atHost = await listDns(cfg, zoneId, host);
-  const records = atHost.filter((r) => ADDRESS.has(r.type));
-  // Ancestors inside the zone, closest first, ending at the apex: a.b.owned.test -> b.owned.test, owned.test.
-  const ancestors: string[] = [];
-  for (let p = host; p !== z.name && p.endsWith("." + z.name); ancestors.push(p)) p = p.slice(p.indexOf(".") + 1);
-  // shortcut: the closest wildcard counts even when a closer non-wildcard name exists (DNS would not use it then); errs toward asking.
-  const [wilds, mids] = await Promise.all([
-    Promise.all(ancestors.map((p) => listDns(cfg, zoneId, `*.${p}`))),
-    Promise.all(ancestors.slice(0, -1).map((p) => listDns(cfg, zoneId, p))), // NS at the apex is the zone's own
-  ]);
-  const wild = wilds.map((l) => l.filter((r) => ADDRESS.has(r.type))).find((l) => l.length) ?? [];
-  // NS at the host or any label below the apex delegates the name to other nameservers.
-  const delegated = [atHost, ...mids].some((l) => l.some((r) => r.type === "NS"));
-  const covering = records.length ? records : wild;
-  const routes = await listRoutes(cfg, zoneId);
-  const route = routes.find((r) => r.pattern === pattern) ?? null;
+  const f = await inspectAccount(cfg, host, { id: zoneId, name: z.name });
+  const { covering, delegated, route } = f;
   // A stored route means an attach already succeeded (and any takeover was confirmed then): keep it repaired.
   const attached = cf.routeId !== null;
   const attach = opts.attach || attached;
   if (attach) {
-    // A delegated subdomain is served by other nameservers: no confirmation can make the placeholder visible.
-    if (delegated || covering.some((r) => !r.proxied)) throw new AttachError("dns_not_proxied");
-    const onlyOurs = records.length === 1 && records[0]!.id === cf.dnsRecordId;
-    if (covering.length > 0 && !onlyOurs && !opts.confirmTakeover && !attached) throw new AttachError("dns_record_exists");
-    if (routes.some((r) => routeCovers(r.pattern, host) && r.script !== cfg.workerName)) throw new AttachError("route_in_use");
+    const code = refusal(cfg, host, f, { confirmTakeover: opts.confirmTakeover, ownRecordId: cf.dnsRecordId, attached });
+    if (code) throw new AttachError(code);
     // Repair only re-creates a placeholder we had; it never adds a record next to the owner's takeover.
     if (covering.length === 0 && (opts.attach || cf.dnsRecordId !== null)) {
       const rec = await createDns(cfg, zoneId, host);
       made.dns_record_id = rec.id;
       covering.push(rec);
     }
-    if (!route) made.route_id = (await createRoute(cfg, zoneId, pattern)).id;
+    if (!route) made.route_id = (await createRoute(cfg, zoneId, `${host}/*`)).id;
   }
   return {
     dns: covering.some((r) => r.proxied) ? "found" : covering.length || delegated ? "wrong_target" : "missing",
