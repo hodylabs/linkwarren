@@ -1,5 +1,6 @@
-import { useEffect, type ReactNode } from "react";
-import { api } from "../api";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { api, ApiError } from "../api";
+import { errorText } from "../copy";
 import { NavLink, useRoute, type Screen } from "../router";
 import { useApp } from "../state";
 import { PHONE, useMedia } from "./narrow";
@@ -86,9 +87,20 @@ export function Rail() {
   const current = domains.find((d) => d.id === currentDomainId);
   const isOwner = me.role === "owner";
   const appMode = me.authMode === "app";
-  // Back to the sign-in screen even if the request fails: the cookie is cleared server side, and a stale one is refused anyway.
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const signingOut = useRef(false);
+  // Reload into the sign-in screen only when the server ended the session: a failed POST leaves the cookie valid.
   const signOut = async () => {
-    await api("POST", "/api/account/sign-out", {}).catch(() => undefined);
+    if (signingOut.current) return;
+    signingOut.current = true;
+    setSignOutError(null);
+    try {
+      await api("POST", "/api/account/sign-out", {});
+    } catch (e) {
+      setSignOutError(errorText(e instanceof ApiError ? e.code : "internal"));
+      signingOut.current = false;
+      return;
+    }
     location.assign("/");
   };
   const navBody = (
@@ -120,6 +132,7 @@ export function Rail() {
               <button type="button" className="linkbtn" onClick={() => open({ kind: "account" })}>Sign-in and security</button>
               <br />
               <button type="button" className="linkbtn" onClick={() => void signOut()}>Sign out</button>
+              {signOutError && <small className="err" role="alert">{signOutError}</small>}
             </>
           ) : (
             <>

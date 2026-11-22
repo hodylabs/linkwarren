@@ -9,11 +9,11 @@ import { Rail } from "./Rail";
 const base: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
 afterEach(() => vi.unstubAllGlobals());
 
-function boot(me: Me) {
+function boot(me: Me, signOut: () => { status: number; body?: unknown } = () => ({ status: 204 })) {
   const api = fakeApi({
     "GET /api/domains": () => ({ body: [] }),
     "GET /api/users": () => ({ body: { items: [] } }),
-    "POST /api/account/sign-out": () => ({ status: 204 }),
+    "POST /api/account/sign-out": signOut,
   });
   const assign = vi.fn();
   vi.stubGlobal("location", { ...window.location, assign });
@@ -42,5 +42,16 @@ describe("Rail footer", () => {
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
     expect(api.calls.filter((c) => c.method === "POST" && c.path === "/api/account/sign-out")).toHaveLength(1);
+  });
+  it("a failed sign-out is announced inline and does not reload; a retry can succeed", async () => {
+    let fail = true;
+    const { api, assign, user } = boot({ ...base, authMode: "app" }, () => (fail ? { status: 500, body: { error: "internal" } } : { status: 204 }));
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Something went wrong (internal)");
+    expect(assign).not.toHaveBeenCalled();
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
+    expect(api.calls.filter((c) => c.path === "/api/account/sign-out")).toHaveLength(2);
   });
 });
