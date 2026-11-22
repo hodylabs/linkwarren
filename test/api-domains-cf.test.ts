@@ -41,6 +41,23 @@ afterEach(() => {
   assertNoUnexpectedCloudflareCalls();
 });
 
+describe("a failing token lookup after the domain is written", () => {
+  it("answers 201 with the created domain instead of a 500", async () => {
+    e.CF_API_TOKEN = undefined; // the token comes from the settings table: getSecret reads D1
+    const real = env.DB.prepare.bind(env.DB);
+    let n = 0;
+    vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => {
+      if (q === "SELECT value FROM settings WHERE key = ?" && ++n === 2) throw new Error("D1 down");
+      return real(q);
+    });
+    const r = await create("owner", "go.manual.test");
+    expect(n).toBe(2);
+    expect(r.status).toBe(201);
+    expect(await r.json()).toMatchObject({ host: "go.manual.test" });
+    expect(await domainCount()).toBe(1);
+  });
+});
+
 describe("create: outside", () => {
   it("member adds go.outside.test: pending, CNAME instructions, one hostname and one route, DNS missing and ownership pending", async () => {
     const fake = installFakeCloudflare({ zones });

@@ -68,7 +68,13 @@ function cfView(env: Env, d: DomainRow, cf: CfRow | null, manage = true): CfView
 
 /** After a committed write a failed sync is reported through lastError (syncDomain stored it), never as a 5xx. */
 async function trySync(env: Env, d: DomainRow, cf: CfRow, opts: { attach: boolean; confirmTakeover?: boolean }): Promise<CfRow> {
-  const cfg = await cfConfigFor(env);
+  let cfg;
+  try {
+    cfg = await cfConfigFor(env); // a D1 read: after a committed write it must not turn the answer into a 500
+  } catch (e) {
+    logInternal(d.id, e);
+    return { ...cf, lastError: "internal_error" };
+  }
   if (!cfg || cf.kind === "manual") return cf;
   try {
     return await syncDomain(env, cfg, d, cf, opts); // logs internal errors itself
