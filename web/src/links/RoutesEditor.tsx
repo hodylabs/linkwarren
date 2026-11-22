@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { Route, RouteDevice } from "../api";
 import { Switch } from "../shell/ui";
+import { DEVICE_LABEL } from "./rules";
 
 export const MAX_ROUTES = 10;
-const DEVICES: RouteDevice[] = ["mobile", "tablet", "desktop"];
+const GROUPS: [string, RouteDevice[]][] = [
+  ["Device", ["mobile", "tablet", "desktop"]],
+  ["Phone OS", ["ios", "android"]],
+  ["Computer OS", ["windows", "macos", "linux", "chromeos"]],
+];
+const DEVICES = GROUPS.flatMap(([, ds]) => ds);
 const tokens = (s: string) => s.split(/[\s,]+/).filter(Boolean);
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
@@ -59,15 +65,20 @@ export function RoutesEditor({ value, onChange, errors }: { value: Route[]; onCh
                 </div>
               </div>
               <div className="rt-d" role="group" aria-label={`Rule ${n} devices`}>
-                {DEVICES.map((d) => (
-                  <span key={d} className="rt-sw">
-                    <Switch
-                      label={`Rule ${n} ${d}`}
-                      checked={r.devices.includes(d)}
-                      onChange={(on) => set(i, { devices: on ? DEVICES.filter((x) => x === d || r.devices.includes(x)) : r.devices.filter((x) => x !== d) })}
-                    />
-                    <span aria-hidden="true">{d[0]!.toUpperCase() + d.slice(1)}</span>
-                  </span>
+                {GROUPS.map(([g, ds]) => (
+                  <div key={g} className="rt-g" role="group" aria-label={`Rule ${n} ${g}`}>
+                    <span className="rt-l" aria-hidden="true">{g}</span>
+                    {ds.map((d) => (
+                      <span key={d} className="rt-sw">
+                        <Switch
+                          label={`Rule ${n} ${DEVICE_LABEL[d]}`}
+                          checked={r.devices.includes(d)}
+                          onChange={(on) => set(i, { devices: on ? DEVICES.filter((x) => x === d || r.devices.includes(x)) : r.devices.filter((x) => x !== d) })}
+                        />
+                        <span aria-hidden="true">{DEVICE_LABEL[d]}</span>
+                      </span>
+                    ))}
+                  </div>
                 ))}
               </div>
             </div>
@@ -102,7 +113,10 @@ export function RoutesEditor({ value, onChange, errors }: { value: Route[]; onCh
           Add rule
         </button>
       )}
-      <p className="utm-note">Rules apply top to bottom. Everyone else goes to the main destination.</p>
+      <p className="utm-note">
+        Rules apply top to bottom; a rule matches any ticked device. Everyone else goes to the main destination. An iPad in desktop mode counts
+        as macOS and Desktop, not iOS.
+      </p>
     </div>
   );
 }

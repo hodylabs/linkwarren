@@ -10,7 +10,9 @@ export type DomainRow = {
   bareRedirect: string | null; notfoundRedirect: string | null;
   caseSensitive: boolean; noindex: boolean; reservedExtra: string[]; createdAt: number;
 };
-export type RouteDevice = "mobile" | "tablet" | "desktop";
+/** Route device values: a form factor, a phone OS or a computer OS. A route matches a visitor who has any one of its values. */
+export const ROUTE_DEVICES = ["mobile", "tablet", "desktop", "ios", "android", "windows", "macos", "linux", "chromeos"] as const;
+export type RouteDevice = (typeof ROUTE_DEVICES)[number];
 export type Route = { countries: string[]; devices: RouteDevice[]; url: string };
 export type LinkRow = {
   id: string; domainId: string; slug: string; slugKey: string; url: string;

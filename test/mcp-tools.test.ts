@@ -538,6 +538,15 @@ describe("rate limits", () => {
 });
 
 describe("bounded inputs", () => {
+  it("route devices: create_link and update_link accept every device value and refuse unknown ones", () => {
+    const all9 = ["mobile", "tablet", "desktop", "ios", "android", "windows", "macos", "linux", "chromeos"];
+    for (const name of ["create_link", "update_link"] as const) {
+      const base = name === "create_link" ? { domain: "go.test", slug: "ok", url: "https://y.com" } : { id: "abc" };
+      expect(TOOLS[name]!.input.safeParse({ ...base, routes: [{ devices: all9, url: "https://y.com" }] }).success).toBe(true);
+      expect(TOOLS[name]!.input.safeParse({ ...base, routes: [{ devices: ["tv"], url: "https://y.com" }] }).success).toBe(false);
+      expect(TOOLS[name]!.description).toMatch(/\bios\b.*chromeos.*iPad in desktop mode/);
+    }
+  });
   it("oversize or malformed input is refused before any limiter write or tool_calls row", async () => {
     const t = await connectAgent(A, { write: true });
     for (const [name, args] of [

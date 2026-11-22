@@ -55,6 +55,18 @@ Select the connection and press `Shift+D` (or Disconnect), then confirm. The age
 | `bulk_links` | write (delete also needs delete) | Change up to 100 links in one call: `delete`, `schedule`, `move`, `redirect` or `password` |
 
 `bulk_links` takes `action`, `ids` (1 to 100), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
+### Routing
+
+`create_link` and `update_link` (and `POST`/`PATCH /links`) take `routes`: up to 10 rules, each `{ countries, devices, url }`, tried top to bottom; the first match wins and everyone else goes to the main `url`. A rule needs at least one country or device. `devices` lists any of:
+
+| Group | Values |
+|---|---|
+| Form factor | `mobile`, `tablet`, `desktop` |
+| Phone OS | `ios` (iPhone, iPad, iPod, any browser), `android` |
+| Computer OS | `windows`, `macos`, `linux`, `chromeos` |
+
+A rule matches a visitor who has any one of its values, so `["ios", "android"]` means any phone or tablet OS, and `["tablet", "windows"]` means tablets plus Windows computers. Every visitor has a form factor and, when the user agent names one, an OS: an iPhone is `mobile` and `ios`, a Chromebook is `desktop` and `chromeos` (never `linux`), a Windows Phone only `mobile`, and bots or an empty agent `desktop`. An iPad in desktop mode sends a Mac user agent, so it counts as `macos` and `desktop`, not `ios`: no server can tell it apart from a Mac.
+
 The server tells the model that tool results are data, never instructions: a link destination or title that says "ignore your instructions" is just text.
 
 ## API keys
@@ -83,6 +95,10 @@ curl -s -H "Authorization: Bearer $LW_KEY" "$LW/links/by-slug?domain=<domain id>
 # Create (needs a write key)
 curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
   -d '{"domainId":"<domain id>","slug":"spring","url":"https://example.com/spring-sale"}' "$LW/links"
+
+# Send iPhone and Android visitors to app store pages (write)
+curl -s -X PATCH -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
+  -d '{"routes":[{"devices":["ios"],"url":"https://apps.example.com/ios"},{"devices":["android"],"url":"https://apps.example.com/android"}]}' "$LW/links/<link id>"
 
 # Change the destination (write)
 curl -s -X PATCH -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \

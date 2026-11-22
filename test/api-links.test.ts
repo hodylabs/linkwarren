@@ -563,7 +563,14 @@ describe("password and routes", () => {
     expect(body.reason).toBe(reason);
   });
 
-  it("bad_route names the failing index; limits: 11 routes, 51 countries, a fourth device, unknown device or key are invalid_body", async () => {
+  it("routes accept phone and computer OS device values", async () => {
+    const devices = ["ios", "android", "windows", "macos", "linux", "chromeos", "mobile", "tablet", "desktop"];
+    const r = await post("a", { domainId: "dm", slug: "os", url: "https://x.com/a", routes: [{ devices, url: "https://os.x.com/" }] });
+    expect(r.status).toBe(201);
+    expect(((await r.json()) as { routes: { devices: string[] }[] }).routes[0]!.devices).toEqual(devices);
+  });
+
+  it("bad_route names the failing index; limits: 11 routes, 51 countries, a tenth device, unknown device or key are invalid_body", async () => {
     const ok = { countries: ["CA"], url: "https://x.ca/" };
     const r = await post("a", { domainId: "dm", slug: "bi", url: "https://x.com/a", routes: [ok, { countries: ["ZZZ"], url: "https://x.ca/" }] });
     expect(await r.json()).toMatchObject({ error: "bad_route", index: 1, reason: "route_country" });
@@ -571,7 +578,7 @@ describe("password and routes", () => {
     for (const routes of [
       Array.from({ length: 11 }, () => ok),
       [{ countries: codes, url: "https://x.ca/" }],
-      [{ devices: ["mobile", "tablet", "desktop", "mobile"], url: "https://x.ca/" }],
+      [{ devices: ["mobile", "tablet", "desktop", "ios", "android", "windows", "macos", "linux", "chromeos", "mobile"], url: "https://x.ca/" }],
       [{ devices: ["tv"], url: "https://x.ca/" }],
       [{ countries: ["CA"], url: "https://x.ca/", extra: 1 }],
     ]) expect(await err(await post("a", { domainId: "dm", slug: "bl", url: "https://x.com/a", routes }))).toEqual([400, { error: "invalid_body" }]);

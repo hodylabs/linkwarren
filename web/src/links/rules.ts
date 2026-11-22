@@ -1,5 +1,5 @@
 import { passwordRule } from "../../../src/password-rule";
-import type { Route } from "../api";
+import type { Route, RouteDevice } from "../api";
 
 const MAX_COUNTRIES = 50;
 
@@ -38,7 +38,10 @@ export function countryName(code: string): string {
   }
 }
 
-const cap = (s: string) => s[0]!.toUpperCase() + s.slice(1);
+export const DEVICE_LABEL: Record<RouteDevice, string> = {
+  mobile: "Mobile", tablet: "Tablet", desktop: "Desktop", ios: "iOS", android: "Android",
+  windows: "Windows", macos: "macOS", linux: "Linux", chromeos: "ChromeOS",
+};
 const hostPath = (url: string) => {
   try {
     const u = new URL(url);
@@ -52,7 +55,7 @@ const hostPath = (url: string) => {
 export function routeSummary(routes: Route[]): string {
   const r = routes[0];
   if (!r) return "Off";
-  const devices = r.devices.map(cap).join(", ");
+  const devices = r.devices.map((d) => DEVICE_LABEL[d] ?? d).join(", ");
   const who = r.countries.length ? r.countries.map(countryName).join(", ") + (devices ? ` on ${devices}` : "") : devices;
   return `${who} goes to ${hostPath(r.url)}${routes.length > 1 ? ` (+${routes.length - 1} more)` : ""}`;
 }

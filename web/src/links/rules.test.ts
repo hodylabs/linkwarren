@@ -49,6 +49,10 @@ describe("routeSummary", () => {
     ];
     expect(routeSummary(r)).toBe("Canada, United States on Mobile, Tablet goes to x.ca/a (+1 more)");
   });
+  it("phone and computer OS names", () => {
+    expect(routeSummary([{ countries: ["CA"], devices: ["ios"], url: "https://x.ca/app" }])).toBe("Canada on iOS goes to x.ca/app");
+    expect(routeSummary([{ countries: [], devices: ["android", "macos", "chromeos"], url: "https://x.com/" }])).toBe("Android, macOS, ChromeOS goes to x.com/");
+  });
   it("Off when empty", () => {
     expect(routeSummary([])).toBe("Off");
   });

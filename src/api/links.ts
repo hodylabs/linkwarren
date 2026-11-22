@@ -6,7 +6,7 @@ import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
 import { canManageDomain, canUseDomain, usableDomains } from "../perm";
 import { actor, type Grant } from "../principal";
-import { rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
+import { ROUTE_DEVICES, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
 import { bulk } from "./bulk";
 import { allHosts, destination, getDomain, isMember, purge } from "./shared";
@@ -24,7 +24,7 @@ export const times = {
 export const code = z.union([z.literal(301), z.literal(302)]);
 const routeInput = z.strictObject({
   countries: z.array(z.string()).max(50).optional(),
-  devices: z.array(z.enum(["mobile", "tablet", "desktop"])).max(3).optional(),
+  devices: z.array(z.enum(ROUTE_DEVICES)).max(ROUTE_DEVICES.length).optional(),
   url: z.string(),
 });
 type RouteInput = z.infer<typeof routeInput>;

@@ -4,6 +4,7 @@ import { callApi, type Principal } from "../call";
 import type { Env } from "../env";
 import { normalizeHost, slugFromPath } from "../host";
 import { LIMITS } from "../limits";
+import { ROUTE_DEVICES } from "../types";
 import { VERSION } from "../version";
 import { ApiError } from "./run";
 
@@ -39,6 +40,9 @@ const time = z.number().int().nonnegative().nullable().optional();
 const url = z.string().min(1).max(2048);
 const slug = z.string().min(1).max(64);
 const hostOrId = z.string().min(1).max(253).describe("Host (go.example.com) or domain id");
+const ROUTES =
+  " Devices match when the visitor has any listed value: form factor (mobile, tablet, desktop), phone OS (ios, android)"
+  + " or computer OS (windows, macos, linux, chromeos). An iPad in desktop mode reads as macos and desktop, not ios.";
 const rules = {
   redirectCode: z.union([z.literal(301), z.literal(302)]).optional(),
   startsAt: time,
@@ -47,9 +51,9 @@ const rules = {
   password: z.string().max(1024).nullable().optional().describe("Write-only: a string sets it, null clears it. Never returned."),
   routes: z.array(z.strictObject({
     countries: z.array(z.string().length(2)).max(50).optional(),
-    devices: z.array(z.enum(["mobile", "tablet", "desktop"])).max(3).optional(),
+    devices: z.array(z.enum(ROUTE_DEVICES)).max(ROUTE_DEVICES.length).optional(),
     url,
-  })).max(10).optional(),
+  })).max(10).optional().describe("Replaces the whole list; [] clears it. First matching route wins." + ROUTES),
 };
 // The id alphabet only, so "." and ".." can never become path segments.
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
@@ -102,14 +106,14 @@ export const TOOLS: Record<string, ToolDef> = {
     },
   },
   create_link: {
-    description: "Create a short link. Confirm with the person first. `domain` is a host or domain id.",
+    description: "Create a short link. Confirm with the person first. `domain` is a host or domain id. `routes` send visitors by country or device." + ROUTES,
     input: z.strictObject({ domain: hostOrId, slug, url, ...rules }),
     write: true,
     run: async (api, { domain, ...rest }) =>
       (await api("POST", "/links", { domainId: (await domainOf(api, domain)).id, ...rest })) as Record<string, unknown>,
   },
   update_link: {
-    description: "Change a link. This changes a live redirect that printed QR codes may use: confirm with the person first.",
+    description: "Change a link. This changes a live redirect that printed QR codes may use: confirm with the person first." + ROUTES,
     input: z.strictObject({ id, url: url.optional(), ...rules }),
     write: true,
     run: async (api, { id: linkId, ...rest }) => (await api("PATCH", `/links/${enc(linkId)}`, rest)) as Record<string, unknown>,

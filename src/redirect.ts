@@ -55,8 +55,8 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
 /** Routed destination plus pass-through query (`search` already has the QR marker stripped); shared by the redirect and the unlock. */
 export function destinationOf(req: Request, link: LinkRow, search: string): string {
   // The UA is read (capped) only when a route needs the device: a plain link does no agent work before it answers.
-  const device = link.routes.some((r) => r.devices.length) ? routeDeviceOf(req.headers.get("user-agent")) : "desktop";
-  return withQuery(pickDestination(link, countryOf(req), device), link.passQuery, search);
+  const devices = link.routes.some((r) => r.devices.length) ? routeDeviceOf(req.headers.get("user-agent")) : [];
+  return withQuery(pickDestination(link, countryOf(req), devices), link.passQuery, search);
 }
 
 export async function recordClick(env: Env, req: Request, link: LinkRow, domain: DomainRow, qr: boolean, now: number): Promise<void> {
