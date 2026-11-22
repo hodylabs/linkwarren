@@ -89,6 +89,8 @@ export async function hitAll(env: Env, checks: Check[]): Promise<HitAll> {
      INSERT INTO auth_limits (key, window_start, count)
      SELECT key, ?, c FROM k WHERE c > 0 AND NOT EXISTS
        (SELECT 1 FROM k b JOIN auth_limits a ON a.key = b.key AND a.window_start > b.since WHERE a.count + max(b.c, 1) > b.n)
+       -- A charge above a whole limit never fits, even on a key with no row in this window yet.
+       AND NOT EXISTS (SELECT 1 FROM k b WHERE b.c > b.n)
      ON CONFLICT(key) DO UPDATE SET
        count = CASE WHEN window_start <= (SELECT since FROM k WHERE k.key = excluded.key) THEN excluded.count ELSE count + excluded.count END,
        window_start = CASE WHEN window_start <= (SELECT since FROM k WHERE k.key = excluded.key) THEN excluded.window_start ELSE window_start END

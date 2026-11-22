@@ -121,6 +121,13 @@ describe("hitAll", () => {
     expect(await all()).toEqual(before);
   });
 
+  it("refuses a charge larger than the whole limit even when the key has no row yet, with zero writes", async () => {
+    const before = await all();
+    const r = await hitAll(env, [{ key: "a", limit: A }, { key: "b", limit: B, charge: 6 }]);
+    expect(r).toEqual({ ok: false, key: "b", counts: [0, 0] });
+    expect(await all()).toEqual(before);
+  });
+
   it("names the first key in checks order when several are over", async () => {
     await hitBy(env, "a", A, 3);
     await hitBy(env, "b", B, 5);
