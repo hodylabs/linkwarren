@@ -30,6 +30,7 @@ export function SignIn({ next, token, incomplete, onSpent }: { next: string; tok
   const host = location.host;
   const [view, setView] = useState<View>(token ? "landing" : "form");
   const [email, setEmail] = useState("");
+  const [sentTo, setSentTo] = useState(""); // the address the link went to, fixed at submit time
   const [error, setError] = useState<string | null>(incomplete ? errorText("link_incomplete") : null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
@@ -49,7 +50,9 @@ export function SignIn({ next, token, incomplete, onSpent }: { next: string; tok
   };
 
   const sendLink = () => run(async () => {
-    await api("POST", "/auth/email", { email: email.trim(), next });
+    const to = email.trim();
+    await api("POST", "/auth/email", { email: to, next });
+    setSentTo(to);
     setView("sent");
   });
   const usePasskey = () => run(async () => goNext((await signInWithPasskey(next)).next));
@@ -106,7 +109,7 @@ export function SignIn({ next, token, incomplete, onSpent }: { next: string; tok
     body = (
       <>
         <h1>Check your email</h1>
-        <p>If {email.trim()} can sign in here, a link is on its way. It works once, for 15 minutes.</p>
+        <p>If {sentTo} can sign in here, a link is on its way. It works once, for 15 minutes.</p>
         <button type="button" className="btn" aria-keyshortcuts="Escape" onClick={() => setView("form")}>
           Use a different email <kbd>Esc</kbd>
         </button>

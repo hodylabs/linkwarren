@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash } from "./helpers/access";
+import { auditStmt } from "../src/audit";
 import { signedIn, withCookie } from "./helpers/session";
 
 const e = env as { AUTH_MODE?: string };
@@ -200,5 +201,15 @@ describe("/api/me", () => {
     const a = await signedIn("a@example.com");
     await addKey(a.user.id);
     expect(await (await call(a.cookie, "GET", "/api/me")).json()).toEqual({ id: a.user.id, email: "a@example.com", name: null, role: "member", authMode: "app", passkeys: 1 });
+  });
+});
+
+describe("audit count", () => {
+  it("is counted when the batch runs, so a session added after the statement was built is included", async () => {
+    const a = await signedIn("a@example.com");
+    const stmt = auditStmt(env, { actorId: a.user.id, action: "auth.sign_out_all", targetType: "user", targetId: a.user.id, count: { sql: "SELECT COUNT(*) FROM sessions WHERE user_id = ?", binds: [a.user.id] } });
+    await extraSession(a.user.id);
+    await env.DB.batch([stmt]);
+    expect(await all("SELECT detail FROM audit_log WHERE action = 'auth.sign_out_all'")).toEqual([{ detail: '{"count":2}' }]);
   });
 });

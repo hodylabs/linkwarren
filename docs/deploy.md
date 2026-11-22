@@ -136,7 +136,10 @@ Health checks: `/healthz` sits behind Access on the dashboard host. Add an Acces
 
 ### Upgrading an existing instance
 
-Instances deployed before the sign-in modes used Access. The default is now app mode, so **set `AUTH_MODE` to `access` before deploying this version** to keep Access. Without it the dashboard switches to app mode and the Access token is ignored. To move to app mode later, set `EMAIL_FROM` and `RESEND_API_KEY`, apply the migrations, deploy, and then remove the Access application.
+Instances deployed before the sign-in modes used Access. The default is now app mode, so an upgrade without a setting switches the dashboard to app mode and ignores the Access token.
+
+1. **Keep Access:** set `AUTH_MODE` to `access` before deploying this version. Nothing else changes.
+2. **Move to app mode later**, as its own step: set `EMAIL_FROM` and `RESEND_API_KEY`, apply the migrations, then set `AUTH_MODE` to `app` (or remove the `access` value; unset also means `app`) and deploy. Check that you can sign in, and only then remove the Access application.
 
 ## Behaviour to know
 

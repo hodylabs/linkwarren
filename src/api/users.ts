@@ -38,9 +38,8 @@ users.delete("/:id/sessions", async (c) => {
   if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
   const id = c.req.param("id");
   if (!(await c.env.DB.prepare("SELECT 1 FROM users WHERE id = ?").bind(id).first())) return c.json({ error: "not_found" }, 404);
-  const n = await c.env.DB.prepare("SELECT COUNT(*) n FROM sessions WHERE user_id = ?").bind(id).first<{ n: number }>();
   await c.env.DB.batch([
-    auditStmt(c.env, { actorId: c.var.user.id, action: "session.end_all", targetType: "user", targetId: id, detail: { count: n?.n ?? 0 } },
+    auditStmt(c.env, { actorId: c.var.user.id, action: "session.end_all", targetType: "user", targetId: id, count: { sql: "SELECT COUNT(*) FROM sessions WHERE user_id = ?", binds: [id] } },
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE user_id = ?)", binds: [id] }),
     endSessionStmt(c.env, { userId: id }),
   ]);

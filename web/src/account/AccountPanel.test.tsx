@@ -138,4 +138,52 @@ describe("AccountPanel", () => {
     await screen.findByText("<img src=x onerror=alert(1)>");
     expect(document.querySelector("img")).toBeNull();
   });
+
+  it("rows are reachable by Tab and Enter selects, revealing actions", async () => {
+    const { user } = await boot();
+    await user.tab();
+    expect(document.activeElement?.getAttribute("class")).toContain("acct-row");
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: /^Rename/ })).toBeTruthy();
+  });
+
+  it("a late rename answer does not close a newer rename dialog", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { user } = await boot({ "PATCH /api/account/passkeys/p1": async () => { await gate; return { body: pk("p1", "A") }; } });
+    await user.keyboard("jr");
+    await user.keyboard("{Enter}"); // save p1: pending
+    await user.keyboard("{Escape}");
+    await user.keyboard("jr"); // a new dialog, for p2
+    const input = await screen.findByLabelText("Name");
+    await user.clear(input);
+    await user.type(input, "Second");
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Second");
+  });
+
+  it("an older refresh does not replace newer account data", async () => {
+    let calls = 0;
+    const slow: { resolve?: () => void } = {};
+    const { user } = await boot({
+      "GET /api/account": async () => {
+        if (++calls === 1) return { body: account };
+        if (calls === 2) { await new Promise<void>((r) => (slow.resolve = r)); return { body: account }; }
+        return { body: { ...account, passkeys: [pk("p1", "Renamed")] } };
+      },
+      "PATCH /api/account/passkeys/p1": () => ({ body: pk("p1", "Renamed") }),
+    });
+    await user.keyboard("jr");
+    await user.keyboard("{Enter}"); // refresh #2 (slow)
+    await waitFor(() => expect(calls).toBe(2));
+    await user.keyboard("r"); // p1 is still selected
+    await user.keyboard("{Enter}"); // refresh #3 (fast, newer)
+    await waitFor(() => expect(calls).toBe(3));
+    await screen.findByText("Renamed");
+    slow.resolve!();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByText("Renamed")).toBeTruthy();
+    expect(screen.queryByText("Laptop")).toBeNull();
+  });
 });

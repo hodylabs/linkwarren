@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ApiError, type PasskeyItem, type SessionItem } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
@@ -35,11 +35,16 @@ export function AccountPanel() {
   const working = useRef(false); // a write is in flight: a second Enter or click does nothing
   const supported = passkeysSupported();
 
+  const loadGen = useRef(0); // only the newest refresh may write: an older, slower answer is dropped
+  const renameGen = useRef(0); // which rename dialog a pending save belongs to
+
   const load = useCallback(async () => {
+    const g = ++loadGen.current;
     try {
-      setData(await api<Data>("GET", "/api/account"));
+      const d = await api<Data>("GET", "/api/account");
+      if (g === loadGen.current) setData(d);
     } catch (e) {
-      setError(code(e));
+      if (g === loadGen.current) setError(code(e));
     }
   }, []);
   useEffect(() => void load(), [load]);
@@ -71,9 +76,16 @@ export function AccountPanel() {
     const i = sel === null ? (step === 1 ? 0 : ids.length - 1) : Math.min(Math.max(ids.indexOf(sel) + step, 0), ids.length - 1);
     setSel(ids[i]!);
   };
+  // Enter or Space on a focused row selects it, which reveals its actions.
+  const rowKey = (id: string) => (e: KeyboardEvent<HTMLLIElement>) => {
+    if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    setSel(id);
+  };
   const add = () => run(() => addPasskey(), () => void load());
   const startRename = () => {
     if (!passkey) return;
+    renameGen.current++;
     setName(passkey.name);
     setRenaming(passkey);
   };
@@ -95,8 +107,9 @@ export function AccountPanel() {
   const doRename = () => {
     const r = renaming;
     if (!r) return;
+    const mine = renameGen.current;
     void run(() => api("PATCH", `/api/account/passkeys/${r.id}`, { name }), () => {
-      setRenaming(null);
+      if (renameGen.current === mine) setRenaming(null); // a late answer must not close a newer dialog
       void load();
     });
   };
@@ -122,7 +135,7 @@ export function AccountPanel() {
       {data.passkeys.length === 0 && <p className="muted acct-empty">No passkeys yet. You sign in with an email link.</p>}
       <ul className="acct-list" aria-label="Passkeys">
         {data.passkeys.map((p) => (
-          <li key={p.id} className="acct-row" aria-current={p.id === sel ? "true" : undefined} onClick={() => setSel(p.id)}>
+          <li key={p.id} className="acct-row" aria-current={p.id === sel ? "true" : undefined} tabIndex={0} onClick={() => setSel(p.id)} onKeyDown={rowKey(p.id)}>
             <div className="acct-main">
               <b>{p.name}</b> {p.backedUp && <Tag tone="off">Synced</Tag>}
               <br />
@@ -151,7 +164,7 @@ export function AccountPanel() {
       <div className="p-sec">Sessions</div>
       <ul className="acct-list" aria-label="Sessions">
         {data.sessions.map((s) => (
-          <li key={s.id} className="acct-row" aria-current={s.id === sel ? "true" : undefined} onClick={() => setSel(s.id)}>
+          <li key={s.id} className="acct-row" aria-current={s.id === sel ? "true" : undefined} tabIndex={0} onClick={() => setSel(s.id)} onKeyDown={rowKey(s.id)}>
             <div className="acct-main">
               <b>{s.device ?? "Unknown device"}</b> {s.current && <Tag tone="ok">This device</Tag>}
               <br />

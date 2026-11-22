@@ -35,6 +35,17 @@ function form(routes: FakeRoutes = {}) {
 }
 
 describe("SignIn form", () => {
+  it("the confirmation shows the submitted address even if the input changes while the request is in flight", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { user } = form({ "POST /auth/email": async () => { await gate; return { status: 202, body: { ok: true } }; } });
+    const input = screen.getByLabelText("Email");
+    await user.type(input, "a@example.com{Enter}");
+    await user.type(input, "x");
+    release();
+    expect(await screen.findByText("If a@example.com can sign in here, a link is on its way. It works once, for 15 minutes.")).toBeTruthy();
+  });
+
   it("Enter posts the email and next, then shows the Sent copy; Esc returns with the address kept", async () => {
     const { api, user } = form({ "POST /auth/email": () => ({ status: 202, body: { ok: true } }) });
     expect(screen.getByRole("heading", { name: `Sign in to ${location.host}` })).toBeTruthy();

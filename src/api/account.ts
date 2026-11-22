@@ -137,9 +137,8 @@ account.post("/sign-out", async (c) => {
 
 account.post("/sign-out-everywhere", async (c) => {
   const uid = c.var.user.id;
-  const n = await c.env.DB.prepare("SELECT COUNT(*) n FROM sessions WHERE user_id = ?").bind(uid).first<{ n: number }>();
   await c.env.DB.batch([
-    auditStmt(c.env, { actorId: uid, action: "auth.sign_out_all", targetType: "user", targetId: uid, detail: { count: n?.n ?? 0 } },
+    auditStmt(c.env, { actorId: uid, action: "auth.sign_out_all", targetType: "user", targetId: uid, count: { sql: "SELECT COUNT(*) FROM sessions WHERE user_id = ?", binds: [uid] } },
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE user_id = ?)", binds: [uid] }),
     endSessionStmt(c.env, { userId: uid }),
   ]);
