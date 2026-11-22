@@ -35,8 +35,13 @@ export function CloudflareSection() {
   const [resync, setResync] = useState<Resync>(IDLE);
   const busy = useRef(false); // one check at a time: a double C sends once
   const abort = useRef<AbortController | null>(null);
+  const edits = useRef(0); // bumped by every controls toggle: older loads and toggles must not overwrite a newer one
 
-  const load = useCallback((signal?: AbortSignal) => getCloudflare(signal).then(setS), []);
+  // A load that a toggle overtook keeps the toggled value and takes the rest.
+  const load = useCallback((signal?: AbortSignal) => {
+    const at = edits.current;
+    return getCloudflare(signal).then((v) => setS((cur) => (cur && at !== edits.current ? { ...v, controlsEnabled: cur.controlsEnabled } : v)));
+  }, []);
   useEffect(() => {
     const ac = new AbortController();
     load(ac.signal).catch((e) => !isAbort(e) && setLoadError(code(e)));
@@ -63,11 +68,13 @@ export function CloudflareSection() {
 
   const toggle = async (on: boolean) => {
     if (!s) return;
+    const mine = ++edits.current;
     setControlsError(null);
     setS({ ...s, controlsEnabled: on });
     try {
       await setControls(on);
     } catch (e) {
+      if (mine !== edits.current) return; // a newer toggle owns the switch now
       setS((cur) => cur && { ...cur, controlsEnabled: !on });
       setControlsError(code(e));
     }
@@ -94,9 +101,11 @@ export function CloudflareSection() {
   const runResync = async () => {
     if (abort.current) return;
     const ac = (abort.current = new AbortController());
-    let after = resync.resume;
-    let { checked } = resync;
-    let failed = resync.failed;
+    // A finished run starts over from the first domain; only a stopped one (Retry, Esc) continues from its cursor.
+    const from = resync.done ? IDLE : resync;
+    let after = from.resume;
+    let { checked } = from;
+    let failed = from.failed;
     let pending: string | null = null; // the host whose retry decides whether Cloudflare is really unreachable
     const view = (p: Partial<Resync>) => setResync({ running: true, checked, failed, resume: after, stopped: null, done: false, ...p });
     view({});

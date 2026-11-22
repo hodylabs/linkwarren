@@ -63,6 +63,45 @@ describe("Cloudflare settings", () => {
     expect(screen.getByRole("alert").textContent).toContain("internal");
   });
 
+  it("an older toggle that fails after newer ones succeeded does not flip the switch back", async () => {
+    let fail!: () => void;
+    let n = 0;
+    const { api, user } = boot({
+      routes: { "PATCH /api/settings/cloudflare": ({ body }) => (++n === 1 ? new Promise((r) => (fail = () => r({ status: 500, body: { error: "internal" } }))) : { body }) },
+    });
+    const sw = await screen.findByRole("switch", { name: "Cloudflare controls in domain settings" });
+    await user.click(sw);
+    await user.click(sw);
+    await user.click(sw);
+    await waitFor(() => expect(writes(api)).toHaveLength(3));
+    await waitFor(() => expect(sw.getAttribute("aria-checked")).toBe("true"));
+    fail();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a settings load that a toggle overtook keeps the toggled value", async () => {
+    let release!: () => void;
+    let gets = 0;
+    const { user } = boot({
+      cfg: { fallbackOrigin: "missing" },
+      routes: {
+        "GET /api/settings/cloudflare": () => (++gets === 1 ? { body: { ...CFG, fallbackOrigin: "missing" } }
+          : new Promise((r) => (release = () => r({ body: { ...CFG, fallbackOrigin: "active", controlsEnabled: false } })))),
+        "POST /api/settings/cloudflare/setup": () => ({ body: { target: "t.example.com", fallbackOrigin: "active" } }),
+        "PATCH /api/settings/cloudflare": ({ body }) => ({ body }),
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: /Set up outside domains/ }));
+    await waitFor(() => expect(release).toBeTypeOf("function")); // the reload after setup is in flight
+    const sw = screen.getByRole("switch", { name: "Cloudflare controls in domain settings" });
+    await user.click(sw);
+    await waitFor(() => expect(sw.getAttribute("aria-checked")).toBe("true"));
+    release();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Set up outside domains/ })).toBeNull()); // the rest of the load landed
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+
   it("the setup button shows only when the fallback origin is not active", async () => {
     boot();
     await screen.findByText(/Connected to the account/);
@@ -131,6 +170,19 @@ describe("Resync", () => {
     await user.click(await screen.findByRole("button", { name: "Resync domains" }));
     expect(await screen.findByText("Checked 7. All repaired.")).toBeTruthy();
     expect(b.sent).toEqual([{}, { after: "d4" }, { after: "d7" }]);
+  });
+
+  it("a new run after a finished one starts from the first domain with fresh counts", async () => {
+    const sent: unknown[] = [];
+    const steps = [{ next: "d4", ok: 3 }, { next: null, ok: 1 }];
+    const route = ({ body }: { body: unknown }) => ({ body: { failed: [], ...steps[sent.push(body) % 2 === 1 ? 0 : 1] } });
+    const { user } = boot({ routes: { "POST /api/settings/cloudflare/resync": route } });
+    await user.click(await screen.findByRole("button", { name: "Resync domains" }));
+    expect(await screen.findByText("Checked 4. All repaired.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Resync domains" }));
+    await waitFor(() => expect(sent).toHaveLength(4));
+    expect(sent).toEqual([{}, { after: "d4" }, {}, { after: "d4" }]);
+    expect(await screen.findByText("Checked 4. All repaired.")).toBeTruthy();
   });
 
   it("stops with Retry when the cursor does not move", async () => {
