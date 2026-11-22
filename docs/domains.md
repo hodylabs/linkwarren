@@ -7,7 +7,7 @@ A domain is a hostname that serves short links, for example `go.example.com`. Th
 When Cloudflare is configured (see [deploy.md](deploy.md)), linkwarren looks the host up in your Cloudflare account before it writes anything and gives the domain one of three kinds:
 
 - **account**: the host is inside a zone in your Cloudflare account. linkwarren attaches it directly: a proxied placeholder record (`AAAA <host> 100::`, comment `linkwarren`) when the host has no record yet, plus a Worker route `<host>/*`. The owner's create attaches at once. A member's create makes no Cloudflare change at all; the owner attaches it when approving (`attachOnApproval: true`).
-- **outside**: the host is not in your account. linkwarren creates a Cloudflare for SaaS custom hostname and a route `<host>/*` on the SaaS zone. The person who manages the host's DNS adds one record, shown in `cloudflare.instructions`: `CNAME <name> -> <target>`, where `name` is the host without its registrable domain (`@` for the bare domain) and `target` is `CF_CNAME_TARGET`.
+- **outside**: the host is not in your account. linkwarren creates a Cloudflare for SaaS custom hostname and a route `<host>/*` on the SaaS zone. The person who manages the host's DNS adds one record, shown in `cloudflare.instructions`: `CNAME <name> -> <target>`, where `name` is the host without its registrable domain (`@` for the bare domain) and `target` is `CF_CNAME_TARGET`. When that DNS is itself on Cloudflare, make the record DNS only (grey cloud). The `<host>/*` route on the SaaS zone is set up for DNS-only records; a proxied record also hides the CNAME, so the DNS check shows `wrong_target` until Cloudflare has activated the hostname and issued its certificate.
 - **manual**: Cloudflare is not configured. linkwarren calls no Cloudflare API and you connect the host yourself, as before.
 
 ### Existing records (account domains)
@@ -23,9 +23,9 @@ Records include a wildcard at any parent name inside the zone (`*.example.com` c
 
 The SaaS zone may serve other things, so before anything is written an outside create (by anyone) is refused, with no domain added:
 
-- `409 route_in_use`: a route on the SaaS zone that covers the host (for example `*/*` or `*.example.com/*`) is bound to another Worker or to none.
+- `409 route_in_use`: a route on the SaaS zone that covers the host (for example `*/*` or `*.example.com/*`) is bound to another Worker or to none. Once linkwarren's own `<host>/*` route exists, a broader foreign route is fine, but another pattern for the same host (such as `<host>/private/*`) still refuses, because it takes those paths away.
 - `409 hostname_in_use`: a custom hostname for the host already exists and linkwarren did not create it, and no route to linkwarren serves it.
-- `409 hostname_limit`: the zone already has 100 custom hostnames. Cloudflare bills each one past the free 100, so linkwarren never creates one there.
+- `409 hostname_limit`: the zone already has 95 custom hostnames. Cloudflare bills each one past the free 100; linkwarren stops at 95 so concurrent creates cannot reach a billed one.
 
 The same checks run again before every later write (approve, status check, resync), so a conflict that appears later is stored as `lastError` and nothing is written.
 
@@ -41,7 +41,7 @@ Every domain in `GET /api/domains` carries a `cloudflare` object from the last s
 
 | Field | Values |
 | --- | --- |
-| `dns` | `found` (the record points at linkwarren), `missing` (no record yet), `wrong_target` (a record points somewhere else), `unknown` (not checked, or the DNS lookup failed) |
+| `dns` | `found` (the record points at linkwarren; for an outside host with no visible CNAME, also once Cloudflare has activated its hostname and certificate, which covers a proxied record), `missing` (no record yet), `wrong_target` (a record points somewhere else), `unknown` (not checked, or the DNS lookup failed) |
 | `ownership` | `verified`, `pending` (Cloudflare is still checking, or an account domain is not attached yet), `failed`, `unknown` |
 | `certificate` | `issued`, `pending`, `failed`, `not_covered` (account host two or more labels below the zone: the free certificate covers the zone and one label below it; add an advanced certificate in Cloudflare), `unknown` |
 | `errors` | Cloudflare's own verification messages, at most 3 |
@@ -75,6 +75,8 @@ Owner only.
 - **Finish connecting** is the same call on an active account domain that is not attached. It attaches the host and records a `domain.attach` audit entry. It is the only way to finish an attach that failed; status checks never attach.
 - **Reject** (`DELETE /api/domains/:id`) works on pending domains only (`409 not_pending` otherwise). It first removes what linkwarren created in Cloudflare (a 404 counts as already gone). If Cloudflare fails, nothing is deleted and the answer is `502 cloudflare_error`: retry. Then the domain, its links, slug locks and members are deleted in one step and a `domain.reject` audit entry is written.
 
+Approve, reject and the Cloudflare controls below take a short per-domain lock, because each writes Cloudflare first and the database after. While one runs, another on the same domain answers `409 conflict` and changes nothing; retry in a moment. A lock left by a crashed request expires after 2 minutes.
+
 Audit entries for create, approve and attach carry `confirmTakeover: true` when a takeover was confirmed.
 
 ## Cloudflare controls
@@ -94,7 +96,7 @@ A bare domain such as `example.com` (or `example.co.uk`) has `instructions.apex:
 
 ## Cloudflare for SaaS limits
 
-The first 100 custom hostnames on the SaaS zone are free; Cloudflare bills each one after that. Every outside domain uses one, including pending ones, until the domain is rejected. linkwarren refuses with `hostname_limit` instead of creating the 101st, so it never causes a charge.
+The first 100 custom hostnames on the SaaS zone are free; Cloudflare bills each one after that. Every outside domain uses one, including pending ones, until the domain is rejected. linkwarren refuses with `hostname_limit` from the 95th on, so it never causes a charge.
 
 ## Case-sensitive slugs
 
