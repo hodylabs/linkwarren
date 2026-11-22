@@ -59,7 +59,6 @@ const ERRORS: Record<string, string> = {
   same_domain: "This link is already on that domain.",
   duplicate_slug: "Another selected link has the same slug, so only one of them can move there.",
   kv_budget: "Bulk changes reached today's limit on this instance. Try again after midnight UTC, or change links one at a time.",
-  mcp_locked: "MCP is locked off by the deploy config.",
   forwarder: "This address only forwards to another link. It can be deleted, not changed.",
   target_not_active: "Pick a domain that is active. Links cannot move to a domain that is waiting for approval or turned off.",
   pending: "The password was not set yet. Retry to continue.",
@@ -87,7 +86,6 @@ const ERRORS: Record<string, string> = {
   too_many_keys: "You can have at most 20 API keys, expired ones included. Revoke one first.",
   key_name: "Use 1 to 40 lowercase letters, digits or hyphens.",
   mcp_locked: "Agent connections are locked off by the deploy config (MCP_ENABLED=0). Change the config to use the switch.",
-  unavailable: "Could not read this setting right now. Try again in a moment.",
   email_not_configured: "Sign-in email is not set up on this instance. Use a passkey or ask the owner.",
 };
 
