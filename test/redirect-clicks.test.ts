@@ -18,7 +18,7 @@ async function seed(o: Record<string, unknown> = {}) {
   );
   await run(
     "INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    d.link, d.id, "spring", "spring", "https://dest.test/x", 302, null, o.expires ?? null, o.pass ?? 1, "u1", "u1", 1, 1,
+    d.link, d.id, "spring", "spring", "https://dest.test/x", 302, o.starts ?? null, o.expires ?? null, o.pass ?? 1, "u1", "u1", 1, 1,
   );
   return d;
 }
@@ -36,8 +36,11 @@ function harness(o: { clicks?: boolean; ctx?: boolean; salt?: string | null; thr
   const e: Env = { ...env, VISITOR_SALT: o.salt === null ? undefined : (o.salt ?? "test-salt") };
   if (o.clicks !== false) e.CLICKS = fake as unknown as AnalyticsEngineDataset;
   const ctx = o.ctx === false ? undefined : { waitUntil: (p: Promise<unknown>) => void pending.push(p) };
-  const go = async (host: string, path: string, init: RequestInit & { cf?: unknown } = {}) => {
-    const r = await handleRedirect(new Request(`https://${host}${path}`, init as RequestInit), e, now(), ctx);
+  const go = async (host: string, path: string, init: RequestInit & { cf?: unknown } = {}, hook?: { req(r: Request): void; returned(): void }) => {
+    const req = new Request(`https://${host}${path}`, init as RequestInit);
+    hook?.req(req);
+    const r = await handleRedirect(req, e, now(), ctx);
+    hook?.returned();
     await Promise.all(pending);
     return r;
   };
@@ -136,5 +139,45 @@ describe("click recording", () => {
     const r = await b.go(d.host, "/spring", visit());
     expect([r.status, r.headers.get("location")]).toEqual([302, "https://dest.test/x"]);
     expect(b.points).toHaveLength(0);
+  });
+
+  it("no point for a scheduled link, a disabled domain or a POST", async () => {
+    const later = await seed({ starts: now() + 3600 });
+    const off = await seed({ status: "disabled" });
+    const d = await seed();
+    const h = harness();
+    expect((await h.go(later.host, "/spring", visit())).status).toBe(404);
+    expect((await h.go(off.host, "/spring", visit())).status).toBe(404);
+    expect((await h.go(d.host, "/spring", { ...visit(), method: "POST" })).status).toBe(302);
+    expect(h.points).toHaveLength(0);
+  });
+
+  it("the marker is case sensitive: LW=qr passes through and counts as typed", async () => {
+    const d = await seed();
+    const h = harness();
+    expect((await h.go(d.host, "/spring?LW=qr", visit())).headers.get("location")).toBe("https://dest.test/x?LW=qr");
+    expect(h.points[0].blobs?.[6]).toBe("typed");
+  });
+
+  it("no user-agent work before the redirect returns; a 64 KB UA is cut to 512 chars", async () => {
+    const d = await seed();
+    const h = harness();
+    // Human desktop UA in the first 512 chars, a bot word only after them.
+    const ua = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) ${"a".repeat(600)} bot ${"b".repeat(64 * 1024)}`;
+    let returned = false;
+    let readBeforeReturn = false;
+    const r = await h.go(d.host, "/spring", visit({ "user-agent": ua }), {
+      req(req) {
+        const get = req.headers.get.bind(req.headers);
+        req.headers.get = (k: string) => {
+          if (k.toLowerCase() === "user-agent" && !returned) readBeforeReturn = true;
+          return get(k);
+        };
+      },
+      returned: () => void (returned = true),
+    });
+    expect([r.status, r.headers.get("location")]).toEqual([302, "https://dest.test/x"]);
+    expect(readBeforeReturn).toBe(false);
+    expect(h.points[0].blobs?.slice(4, 8)).toEqual(["desktop", "instagram.com", "typed", "human"]);
   });
 });

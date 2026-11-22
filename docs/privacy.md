@@ -12,11 +12,11 @@ Each redirect to a live link records one data point with:
 - the referrer host only (for example `example.com`), never the full referring address
 - whether the visit came from a QR code or was typed or clicked
 - whether the visitor looks like a person, a bot, or a chat-app link preview
-- a visitor code that changes every UTC day and cannot be turned back into an IP address
+- a visitor code that changes every UTC day
 
-The visitor code is a keyed hash of the day, the IP address and the user agent, cut to 16 hex characters. The key is a secret of the instance. Because the day is part of the hash, the same person gets a different code the next day, so visits cannot be linked across days. Unique visitors are therefore counted per link per UTC day: a person who opens two links, or comes back tomorrow, counts again.
+The visitor code is a keyed hash of the day, the IP address and the user agent, cut to 16 hex characters. The key is a secret salt of the instance: without it the code cannot be turned back into an IP address. Because the day is part of the hash, the same person gets a different code the next day, so visits cannot be linked across days. Unique visitors are therefore counted per link per UTC day: a person who opens two links, or comes back tomorrow, counts again.
 
-Bots and chat-app link previews are recorded only as a count. They are kept apart from people, so previews in chat apps do not inflate the click totals.
+Bots and chat-app link previews are recorded the same way as people, as raw points kept for 90 days, but marked as bots or previews. They are left out of the click and visitor counts for people, so previews in chat apps do not inflate them.
 
 ## What is never stored
 

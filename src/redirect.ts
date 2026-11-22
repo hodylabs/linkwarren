@@ -46,9 +46,14 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   return res;
 }
 
+const UA_MAX = 512;
+
 export async function recordClick(env: Env, req: Request, link: LinkRow, domain: DomainRow, qr: boolean, now: number): Promise<void> {
   try {
-    const ua = req.headers.get("user-agent");
+    // A macrotask, not `await null`: microtasks still run before the response is handed back, a timer runs after it.
+    await new Promise((r) => setTimeout(r, 0));
+    // Capped: the agent regexes cost grows faster than linear on crafted long agents (Free plan: 10 ms CPU).
+    const ua = req.headers.get("user-agent")?.slice(0, UA_MAX) ?? null;
     const cf = req.cf as { country?: unknown; verifiedBotCategory?: unknown } | undefined;
     const vb = typeof cf?.verifiedBotCategory === "string" ? cf.verifiedBotCategory : undefined;
     const { kind, device } = classifyAgent(ua, vb);
