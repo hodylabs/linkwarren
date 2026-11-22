@@ -129,7 +129,7 @@ describe("forward", () => {
     expect(await one("SELECT count FROM auth_limits WHERE key = 'bulk:kv'")).toEqual({ count: 6 });
   });
 
-  it("chains and cycles: every forwarder stays one hop; moving back reclaims; deleting leaves forwarders on the locked address", async () => {
+  it("chains and cycles: every forwarder stays one hop; moving back reclaims; deleting removes the forwarders too", async () => {
     await seed("X", "uo", { slug: "x" });
     await answer(await move("owner", ["X"], "da", "forward"));
     await answer(await move("owner", ["X"], "db", "forward"));
@@ -149,9 +149,7 @@ describe("forward", () => {
 
     await answer(await bulk("owner", { action: "delete", ids: ["X"] }));
     const h = harness();
-    const r = await h.go("a.test", "/x");
-    expect([r.status, r.headers.get("location")]).toEqual([302, "https://go.test/x"]);
-    expect((await h.go("go.test", "/x")).status).toBe(404);
+    for (const host of ["go.test", "a.test", "b.test"]) expect((await h.go(host, "/x")).status).toBe(404);
   });
 
   it("forwarders are not loops (D8)", async () => {
@@ -332,6 +330,94 @@ describe("budget", () => {
     // Measures 1408 with only the budget table's forms (link read 200, domains and membership 6, target checks 200, move
     // UPDATE-FROM 500, forwarder insert 300, audit 202): the forms alone exceed 10 x N + 200, so 250 rows of headroom (as delete's 50).
     expect(m.rows).toBeLessThan(10 * 100 + 200 + 250);
+  });
+});
+
+describe("delete removes forwarders (QR codes never land on a new link)", () => {
+  /** X lives on b.test/x and has forwarders on go.test/x and a.test/x; their redirects are cached. */
+  async function chain() {
+    await seed("X", "uo", { slug: "x" });
+    await answer(await move("owner", ["X"], "da", "forward"));
+    await answer(await move("owner", ["X"], "db", "forward"));
+    const h = harness();
+    for (const host of ["go.test", "a.test"]) expect((await h.go(host, "/x")).status).toBe(302);
+    expect(await env.CACHE.get("l2:dm:x")).not.toBeNull();
+    return (await all<Row>("SELECT * FROM links WHERE forward_to = 'X' ORDER BY domain_id")).map((r) => r.id);
+  }
+  const deletes = (ids: string[]) =>
+    all<{ target_id: string; detail: string }>(`SELECT target_id, detail FROM audit_log WHERE action = 'link.delete' AND target_id IN (SELECT value FROM json_each(?)) ORDER BY target_id`, JSON.stringify(ids));
+  async function gone(fwd: string[]) {
+    expect(await count("links")).toBe(0);
+    expect((await all<{ domain_id: string; slug_key: string }>("SELECT domain_id, slug_key FROM slug_locks ORDER BY domain_id"))
+      .map((l) => `${l.domain_id}/${l.slug_key}`)).toEqual(["da/x", "db/x", "dm/x"]);
+    const a = await deletes(["X", ...fwd]);
+    expect(a.map((x) => x.target_id).sort()).toEqual(["X", ...fwd].sort());
+    for (const x of a.filter((x) => x.target_id !== "X")) expect(JSON.parse(x.detail)).toMatchObject({ slug: "x", forwarderOf: "X" });
+    for (const k of ["l2:dm:x", "l2:da:x"]) expect(await env.CACHE.get(k)).toBeNull();
+    const h = harness();
+    for (const host of ["go.test", "a.test", "b.test"]) expect((await h.go(host, "/x")).status).toBe(404);
+  }
+
+  it("bulk delete: the link and both forwarders go, all three addresses locked, one audit each, KV cleared, budget counts them", async () => {
+    const fwd = await chain();
+    const kv = (await one<{ count: number }>("SELECT count FROM auth_limits WHERE key = 'bulk:kv'"))!.count;
+    const r = await answer(await bulk("owner", { action: "delete", ids: ["X"] }));
+    expect(byId(r.results)).toEqual({ X: "ok" });
+    await gone(fwd);
+    expect(await one("SELECT count FROM auth_limits WHERE key = 'bulk:kv'")).toEqual({ count: kv + 3 });
+  });
+
+  it("single delete: the same", async () => {
+    const fwd = await chain();
+    expect((await call("owner", "DELETE", "/api/links/X")).status).toBe(204);
+    await gone(fwd);
+  });
+
+  it("bulk delete of the link and one of its forwarders: both ok, each deleted and audited once", async () => {
+    const fwd = await chain();
+    const r = await answer(await bulk("owner", { action: "delete", ids: [fwd[0]!, "X"] }));
+    expect(byId(r.results)).toEqual({ [fwd[0]!]: "ok", X: "ok" });
+    await gone(fwd);
+  });
+
+  it("a revision change between read and batch: conflict, the link and its forwarders stay, no locks", async () => {
+    await chain();
+    const restore = beforeBatch(3, () => run("UPDATE links SET updated_at = updated_at + 50 WHERE id = 'X'"));
+    let r;
+    try { r = await answer(await bulk("owner", { action: "delete", ids: ["X"] })); } finally { restore(); }
+    expect(byId(r.results)).toEqual({ X: "conflict" });
+    expect(await count("links")).toBe(3);
+    expect(await count("slug_locks")).toBe(0);
+  });
+
+  it("rows read for a 100-link delete where every link has one forwarder", async () => {
+    const s100 = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 99)";
+    await run(`${s100} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
+      SELECT 'r' || i, 'da', 'r' || i, 'r' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
+    await run(`${s100} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,forward_to,created_by,updated_by,created_at,updated_at)
+      SELECT 'f' || i, 'dm', 'r' || i, 'r' || i, 'https://a.test/r' || i, 302, 1, '[]', 'r' || i, 'uo', 'uo', 1, 10 FROM n`);
+    const m = meter();
+    let r;
+    try { r = await answer(await bulk("owner", { action: "delete", ids: Array.from({ length: 100 }, (_, i) => `r${i}`) })); } finally { m.restore(); }
+    expect(r.results.every((x) => x.ok)).toBe(true);
+    expect(await count("links")).toBe(0);
+    expect(await count("slug_locks")).toBe(200);
+    console.log(`bulk delete x100 with one forwarder each: rows_read ${m.rows}`);
+    // Measures 3002 (each forwarder adds a count probe, a lock, an audit row with its domain and a delete); bound about 35 x N.
+    expect(m.rows).toBeLessThan(35 * 100);
+  });
+
+  it("releasing the lock on the moved address and reusing it does not reopen the old addresses", async () => {
+    await chain();
+    expect((await call("owner", "DELETE", "/api/links/X")).status).toBe(204);
+    expect((await call("owner", "DELETE", "/api/locks/db/x")).status).toBe(204);
+    const made = await call("b", "POST", "/api/links", { domainId: "db", slug: "x", url: "https://someone-else.test/" });
+    expect(made.status).toBe(201);
+    const h = harness();
+    const r = await h.go("b.test", "/x");
+    expect([r.status, r.headers.get("location")]).toEqual([302, "https://someone-else.test/"]);
+    for (const host of ["go.test", "a.test"]) expect((await h.go(host, "/x")).status).toBe(404);
+    expect((await call("b", "POST", "/api/links", { domainId: "dm", slug: "x", url: "https://someone-else.test/" })).status).toBe(409);
   });
 });
 

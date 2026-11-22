@@ -8,7 +8,7 @@ import { actor, type Grant } from "../principal";
 import { rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
 import { canUseDomain } from "../perm";
 import { checkSlug, slugKey } from "../validate";
-import { badWindow, bodyError, canEditLink, code, passwordInput, rules, times } from "./links";
+import { badWindow, bodyError, canEditLink, code, forwarderDeletes, passwordInput, purgeReturned, rules, times } from "./links";
 import { isV1, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -82,8 +82,12 @@ export async function bulk(c: Context<E>) {
   const { env } = c, user = c.var.user, now = Math.floor(Date.now() / 1000);
   const ids = JSON.stringify(order);
   // Driven from json_each with a by-id lookup: rows read stay O(selected), never a scan of links.
-  const lr = await env.DB.batch<Record<string, unknown>>([env.DB.prepare("SELECT l.* FROM json_each(?) j JOIN links l ON l.id = j.value").bind(ids)]);
+  // A delete also counts each link's forwarders (deleted with it), through links_forward_to.
+  const lr = await env.DB.batch<Record<string, unknown>>([env.DB.prepare(
+    `SELECT l.*${b.action === "delete" ? ", (SELECT count(*) FROM links f WHERE f.forward_to = l.id) fwd" : ""} FROM json_each(?) j JOIN links l ON l.id = j.value`,
+  ).bind(ids)]);
   const found = new Map(lr[0]!.results.map((r) => { const l = rowToLink(r); return [l.id, l]; }));
+  const fwdCount = new Map(lr[0]!.results.map((r) => [r.id as string, (r.fwd as number | undefined) ?? 0]));
   const dIds = JSON.stringify([...new Set([...found.values()].map((l) => l.domainId).concat(b.action === "move" ? [b.domainId] : []))]);
   const [dr, mr] = await env.DB.batch<Record<string, unknown>>([
     env.DB.prepare("SELECT d.* FROM json_each(?) j JOIN domains d ON d.id = j.value").bind(dIds),
@@ -147,6 +151,16 @@ export async function bulk(c: Context<E>) {
     });
     accepted.push(...keep);
   }
+  // A selected forwarder whose link is deleted in this request goes with that link (one delete, one audit); same outcome.
+  const withParent = new Map<string, string>();
+  if (b.action === "delete") {
+    const parents = new Set(accepted.map(({ link }) => link.id));
+    accepted.splice(0, accepted.length, ...accepted.filter(({ link }) => {
+      if (!link.forwardTo || !parents.has(link.forwardTo)) return true;
+      withParent.set(link.id, link.forwardTo);
+      return false;
+    }));
+  }
 
   // R3: the daily caps count one unit per link processed (refused ones too, pending ones not) for /api/v1 and MCP; the key
   // middleware or runTool already charged one (not refunded on a refusal, D7). Read-only first so a refused request writes
@@ -163,7 +177,8 @@ export async function bulk(c: Context<E>) {
 
   // R4: one KV delete per written link (a forward move: old and new key plus each forwarder it repoints), checked read-only
   // first so a refused request writes nothing.
-  const cost = b.action === "move" && b.oldAddress === "forward" ? 2 * accepted.length + [...older.values()].reduce((a, n) => a + n, 0) : accepted.length;
+  const cost = b.action === "move" && b.oldAddress === "forward" ? 2 * accepted.length + [...older.values()].reduce((a, n) => a + n, 0)
+    : b.action === "delete" ? accepted.reduce((a, { link }) => a + 1 + fwdCount.get(link.id)!, 0) : accepted.length;
   if (!(await fits(env, limitKey.bulkKv, LIMITS.bulkKvDay, cost))) return c.json({ error: "kv_budget" }, 429);
   // One hash per link, each with its own salt (hashPassword draws one per call); null clears, undefined does not occur here.
   const hashes = b.action === "password"
@@ -182,6 +197,8 @@ export async function bulk(c: Context<E>) {
   // The statement whose RETURNING lists the links written; for a copy it returns the new ids (`n` maps them back).
   let main: D1PreparedStatement;
   let repointed: D1PreparedStatement | undefined;
+  // Delete: the statement deleting the forwarders, whose RETURNING lists their cache keys.
+  let cascaded: D1PreparedStatement | undefined;
   const newIds = new Map<string, string>();
   if (b.action === "move" && target) {
     const t = target.id;
@@ -240,6 +257,8 @@ export async function bulk(c: Context<E>) {
       ];
     }
   } else if (b.action === "delete") {
+    const withFwd = rows.filter((x) => fwdCount.get(x.t)! > 0);
+    let fd: D1PreparedStatement[] = [];
     stmts = [
       env.DB.prepare(
         `INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by)
@@ -248,8 +267,11 @@ export async function bulk(c: Context<E>) {
       auditManyStmt(env, { ...base, action: "link.delete" },
         accepted.map(({ link, domain }) => ({ targetId: link.id, r: link.updatedAt, detail: { host: domain.host, slug: link.slug, url: link.url } })),
         { sql: REV, binds: [] }),
+      // Only links that had forwarders when read: a new forwarder of a link needs a move of it, which changes its revision.
+      ...(withFwd.length ? (fd = forwarderDeletes(env, base, now, JSON.stringify(withFwd), REV)) : []),
       main = env.DB.prepare("DELETE FROM links WHERE (id, updated_at) IN (SELECT json_extract(value,'$.t'), json_extract(value,'$.r') FROM json_each(?)) RETURNING id").bind(json),
     ];
+    cascaded = fd[2];
   } else {
     const set: string[] = [], binds: unknown[] = [];
     const col = (sql: string, ...v: unknown[]) => { set.push(sql); binds.push(...v); };
@@ -295,7 +317,7 @@ export async function bulk(c: Context<E>) {
       b.oldAddress === "forward" ? done.map(({ link }): [string, string] => [link.domainId, link.slugKey]) : [],
       repointed ? res[stmts.indexOf(repointed)]!.results.map((r) => [(r as { domain_id: string }).domain_id, (r as { slug_key: string }).slug_key]) : [],
     );
-  await Promise.all(keys.map(([d, k]) => purge(env, d, k)));
+  await Promise.all([...keys.map(([d, k]) => purge(env, d, k)), ...(cascaded ? [purgeReturned(env, res[stmts.indexOf(cascaded)]!)] : [])]);
   // Keyed by the selected id: a copy answers with the new link (the source is unchanged).
   const fresh = new Map<string, LinkRow>();
   if (b.action !== "delete" && done.length) {
@@ -303,6 +325,7 @@ export async function bulk(c: Context<E>) {
     const rr = await env.DB.prepare("SELECT * FROM links WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(want)).all();
     for (const r of rr.results) { const l = rowToLink(r); fresh.set(newIds.get(l.id) ?? l.id, l); }
   }
+  for (const [id, parent] of withParent) out.set(id, applied.has(parent) ? { id, ok: true } : { id, ok: false, error: "conflict" });
   for (const { link } of accepted) {
     const f = fresh.get(link.id);
     out.set(link.id, applied.has(link.id) ? { id: link.id, ok: true, ...(f ? { link: toApiLink(f) } : {}) } : { id: link.id, ok: false, error: "conflict" });

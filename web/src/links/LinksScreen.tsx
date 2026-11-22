@@ -530,7 +530,8 @@ export function LinksScreen() {
           <div className="sh-body">
             <p>
               Delete {domainOf(selected.domainId)?.host}/{selected.slug}? Visits go to the domain's not-found page, and the slug stays locked so nobody
-              else can take it. Printed QR codes keep failing rather than being taken over.
+              else can take it. Printed QR codes keep failing rather than being taken over. Old addresses that forward to it are deleted and locked
+              too.
             </p>
             {deleteError && (
               <p className="err" role="alert">

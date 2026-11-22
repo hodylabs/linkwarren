@@ -306,6 +306,32 @@ links.patch("/:id", async (c) => {
   return c.json(toApiLink(next));
 });
 
+/**
+ * Deleting a link deletes every forwarder aimed at it and locks their slugs, so a printed QR code for an old
+ * address can never land on a later link at the moved address. `parents`: JSON array of `{ t: link id, ... }`; `guard` reads
+ * `j.value` and must hold only while that link is still there to delete. Lock, audit (one row per forwarder) and delete, in that
+ * order, before the parent's own DELETE in the same batch; the DELETE returns the cache keys to purge. Index probes only
+ * (links_forward_to).
+ */
+export function forwarderDeletes(env: Env, who: { actorId: string; via: string | null }, now: number, parents: string, guard: string): D1PreparedStatement[] {
+  const of = `FROM json_each(?) j JOIN links f ON f.forward_to = json_extract(j.value,'$.t')`;
+  return [
+    env.DB.prepare(`INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT f.domain_id, f.slug_key, ?, ? ${of} WHERE ${guard}`)
+      .bind(now, who.actorId, parents),
+    env.DB.prepare(
+      `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
+       SELECT ?, ?, ?, 'link.delete', 'link', f.id, json_object('host', d.host, 'slug', f.slug, 'url', f.url, 'forwarderOf', f.forward_to)
+       ${of} JOIN domains d ON d.id = f.domain_id WHERE ${guard}`,
+    ).bind(now, who.actorId, who.via, parents),
+    env.DB.prepare(`DELETE FROM links WHERE forward_to IN (SELECT json_extract(j.value,'$.t') FROM json_each(?) j WHERE ${guard}) RETURNING domain_id, slug_key`)
+      .bind(parents),
+  ];
+}
+
+/** Purges the cache keys a forwarderDeletes DELETE returned. */
+export const purgeReturned = (env: Env, r: D1Result) =>
+  Promise.all(r.results.map((x) => purge(env, (x as { domain_id: string }).domain_id, (x as { slug_key: string }).slug_key)));
+
 links.delete("/:id", async (c) => {
   const user = c.var.user;
   const found = await editable(c, c.req.param("id"));
@@ -313,16 +339,18 @@ links.delete("/:id", async (c) => {
   const { link, domain } = found;
   // Lock and audit run before the DELETE and only while the link still exists, so a racing second delete writes neither.
   const here = { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] };
+  const now = Math.floor(Date.now() / 1000);
   const res = await c.env.DB.batch([
     c.env.DB.prepare(
       "INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM links WHERE id = ?)",
-    ).bind(link.domainId, link.slugKey, Math.floor(Date.now() / 1000), user.id, link.id),
+    ).bind(link.domainId, link.slugKey, now, user.id, link.id),
     auditStmt(c.env, { ...actor(c), action: "link.delete", targetType: "link", targetId: link.id,
       detail: { host: domain.host, slug: link.slug, url: link.url } }, here),
+    ...forwarderDeletes(c.env, actor(c), now, JSON.stringify([{ t: link.id }]), "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t'))"),
     c.env.DB.prepare("DELETE FROM links WHERE id = ?").bind(link.id),
   ]);
-  if (res[2]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
-  await purge(c.env, link.domainId, link.slugKey);
+  if (res[5]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
+  await Promise.all([purge(c.env, link.domainId, link.slugKey), purgeReturned(c.env, res[4]!)]);
   return c.body(null, 204);
 });
 

@@ -321,6 +321,7 @@ describe("Link detail", () => {
     const dlg = screen.getByRole("dialog");
     expect(dlg.textContent).toContain("go.test/spring");
     expect(dlg.textContent).toContain("the slug stays locked");
+    expect(dlg.textContent).toContain("Old addresses that forward to it are deleted and locked");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.calls.some((c) => c.method === "DELETE")).toBe(false);

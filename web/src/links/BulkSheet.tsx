@@ -142,7 +142,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
             {mode === "delete" && (
               <p>
                 Delete {plural(n, "link")}? Visits go to each domain's not-found page and the slugs stay locked, so printed QR codes keep failing rather than being
-                taken over.
+                taken over. Old addresses that forward to them are deleted and locked too.
               </p>
             )}
             {mode === "schedule" && (
