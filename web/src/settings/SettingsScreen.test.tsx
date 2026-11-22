@@ -304,6 +304,20 @@ describe("Settings sections", () => {
 
 describe("Settings: unsaved drafts and section keys (Task 11)", () => {
   const UNSAVED = "Unsaved changes: save with Ctrl+Enter or discard with Esc in the form first.";
+  it("typing while a save is on its way keeps the new text; the saved value is adopted only where nothing changed", async () => {
+    let release!: () => void;
+    const { user } = boot("/settings/instance", {
+      routes: { "PATCH /api/settings": ({ body }) => new Promise((r) => (release = () => r({ body: { ...SETTINGS, ...(body as object) } }))) },
+    });
+    const name = (await screen.findByLabelText("Name")) as HTMLInputElement;
+    await user.clear(name);
+    await user.type(name, "Acme{Control>}{Enter}{/Control}");
+    await user.type(name, " Links");
+    release();
+    await screen.findByText("Saved.");
+    expect(name.value).toBe("Acme Links");
+  });
+
   it("a section switch (click or arrow) with an unsaved edit stays and says why; the edit is kept", async () => {
     const { user } = boot("/settings/instance");
     const name = (await screen.findByLabelText("Name")) as HTMLInputElement;

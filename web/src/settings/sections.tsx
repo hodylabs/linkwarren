@@ -50,10 +50,12 @@ function useEdit<K extends Key>(s: SettingsBody, keys: readonly K[], onSaved: (b
     busy.current = true;
     setSaving(true);
     setMsg(null);
+    const sent = draft;
     try {
       const b = await patchSettings(Object.fromEntries(changed.map((k) => [k, draft[k]])) as SettingsPatch);
       onSaved(b);
-      setDraft(pick(b));
+      // A field edited while the save was on its way keeps the new edit; the rest adopt the server's value.
+      setDraft((d) => Object.fromEntries(keys.map((k) => [k, d[k] === sent[k] ? b[k] : d[k]])) as Pick<SettingsBody, K>);
       setMsg({ text: "Saved.", error: false });
     } catch (e) {
       setMsg({ text: settingsError(code(e)), error: true });
