@@ -201,7 +201,7 @@ Caching: a browser that once got a `301` for a link keeps going straight to the 
 
 ## Agents and API
 
-Agents (Claude, ChatGPT, Claude Code, Codex) connect to `https://<dashboard host>/mcp` with OAuth; scripts use personal API keys on `/api/v1`. How people connect and use them is in [agents.md](agents.md). This section is what the operator sets up, and what it costs on the Workers Free plan.
+Agents (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) connect to `https://<dashboard host>/mcp` with OAuth; scripts use personal API keys on `/api/v1`. How people connect and use them is in [agents.md](agents.md). This section is what the operator sets up, and what it costs on the Workers Free plan.
 
 ### Setup
 
@@ -211,7 +211,7 @@ Agents (Claude, ChatGPT, Claude Code, Codex) connect to `https://<dashboard host
 
 ### MCP_ENABLED
 
-MCP is **off unless `MCP_ENABLED` is exactly `"1"`**. Off, `/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (with or without `/mcp`) answer `404 {"error":"not_found"}`: no agent can register, connect, refresh or call a tool, and existing tokens stop working until it is turned back on. API keys on `/api/v1` keep working either way (revoke them in the dashboard). Turning it off is the kill switch after an incident; the API & agents screen then tells people that agent connections are off.
+MCP is **off unless `MCP_ENABLED` is exactly `"1"`**. Off, `/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (with or without `/mcp`) answer `404 {"error":"not_found"}` (`/authorize` in any URL encoding): no agent can register, connect, refresh or call a tool, and existing tokens stop working until it is turned back on. API keys on `/api/v1` keep working either way (revoke them in the dashboard). Turning it off is the kill switch after an incident; the API & agents screen then tells people that agent connections are off.
 
 ### Access mode
 
@@ -227,18 +227,27 @@ In app mode (`AUTH_MODE=app`, the default) nothing more is needed. With `AUTH_MO
 
 ### Allowed redirect URIs
 
-`/register` (Dynamic Client Registration) accepts only these redirect URIs, compared exactly; any other is refused with `invalid_redirect_uri` before anything is written:
+`/register` (Dynamic Client Registration) accepts only these redirect URIs; any other is refused with `invalid_redirect_uri` and nothing is written to KV.
+
+Exact addresses:
 
 - `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback` (claude.ai and Claude Desktop)
 - `https://chatgpt.com/connector_platform_oauth_redirect` (ChatGPT)
-- `http://localhost:<port>/callback` and `http://127.0.0.1:<port>/callback`, any port (Claude Code, Codex and other local clients)
+- `https://vertexaisearch.cloud.google.com/oauth-redirect` (Gemini Enterprise)
+- `https://antigravity.google/oauth-callback` (Google Antigravity)
 
-Authorization responses carry the `iss` parameter (RFC 9207, advertised as `authorization_response_iss_parameter_supported`), which ChatGPT requires. PKCE with `S256` is required for every client. Client registrations are kept 30 days (`clientRegistrationTTL`).
+Loopback addresses for local clients: `http://localhost:<port>` or `http://127.0.0.1:<port>` (any port 1 to 65535) with the path exactly `/callback` (Claude Code), `/callback/<id>` where `<id>` is 1 to 64 letters, digits, `_` or `-` (Codex), or `/oauth/callback` (Gemini CLI). Nothing else is accepted on loopback: no `https`, no `[::1]`, no query, fragment, user info, trailing slash or extra path segments.
+
+A refused registration logs one line, `redirect refused origin=<scheme://host[:port]> path=<path>` (at most 200 characters, never the query, the client name or any secret), so an unlisted client's callback shows up in Workers Logs and can be added to `src/oauth.ts`. Addresses the OAuth library rejects on its own (a fragment, user info, control characters or a bad port) are refused before that check and are not logged.
+
+RFC 9207: the metadata `issuer` is `https://<dashboard host>` with `authorization_response_iss_parameter_supported: true`, and every authorization redirect (a code, `access_denied`, or an error such as a missing PKCE `S256` challenge) carries `iss=<issuer>` (the OAuth library's own RFC 9207 support, used as is). ChatGPT and Gemini CLI require it. Once the client and its redirect are known, errors go back to the client as a redirect; an unknown client or an unregistered redirect gets a local `400` page. PKCE with `S256` is required for every client. Client registrations are kept 30 days (`clientRegistrationTTL`).
 
 ### Tokens
 
 - Access tokens last 24 hours. Every tool call still re-reads the connection and the person in D1, so a Disconnect, a lowered access or a disabled person applies on the next call, even with a valid token.
 - Refresh tokens last 30 days and rotate on every use: the old one stops working as soon as the new one is issued.
+- Every token exchange (code and refresh) re-reads the connection and the person in D1. A refresh for a disconnected connection or a disabled person is refused with `invalid_grant`, and the grant is then removed from KV.
+- Disconnect writes D1 first, so the next tool call is refused at once, then removes the grant from KV. If that KV delete fails (for example at the daily cap), the next refresh is refused as above and the grant is removed then.
 
 ### KV budget
 
@@ -252,7 +261,9 @@ Workers KV Free allows 1,000 writes, 1,000 deletes and 1,000 lists per day for t
 | Disconnect | 0 | the grant and its tokens | 1 |
 | Tool call | 0 (one read) | 0 | 0 |
 
-So 100 agents in daily use cost about 200 writes a day for refreshes. When the daily cap is reached, registering, connecting and refreshing fail with `503 {"error":"unavailable"}` until 00:00 UTC (agents drop off as their tokens expire), and redirect cache writes are skipped (redirects fall back to D1 reads). The limits below keep anonymous callers and loops from spending it.
+A refused refresh also deletes the grant (deletes column). So 100 agents in daily use cost about 200 writes a day for refreshes.
+
+D1 costs of the OAuth steps, on top of the limits below: each `/authorize` request (the approval page, then the approve or deny) reads 1 limiter row and writes 1; each token exchange (code or refresh) reads the connection and the person (1 read); approving the same client again writes 1 extra `UPDATE` to close the older connection. Domain lookups (`/api/v1/domains` and every MCP tool that resolves a domain) read only the person's domain memberships and the domains, never the links table. When the daily cap is reached, registering, connecting and refreshing fail with `503 {"error":"unavailable"}` until 00:00 UTC (agents drop off as their tokens expire), and redirect cache writes are skipped (redirects fall back to D1 reads). The limits below keep anonymous callers and loops from spending it.
 
 ### Limits
 
@@ -262,7 +273,7 @@ MCP tool calls (`/mcp`) and machine API requests (`/api/v1`) share the D1 limite
 - 1000 calls per UTC day per person (`api:ud:`).
 - 3000 calls per UTC day for the whole instance, every person and agent together (`api:day`).
 - `POST /register`: 5 per hour per IP range, /24 or /48 (`reg:`), and 50 per UTC day for the instance (`reg:day`); over it `429` with `Retry-After: 3600`. Someone who rotates IP ranges can use up the 50 and block new connections for the rest of the UTC day; existing connections keep working. This is the accepted trade for keeping anonymous registration from spending the KV budget.
-- `/authorize`: 10 per hour per signed-in person (`authz:u:`), counting the approval page and the approve or deny; over it the page answers `429`.
+- `/authorize`: 10 consent requests per hour per signed-in person (`authz:u:`), counting the approval page and the approve or deny, so a normal connect uses 2; over it the page answers `429`. If the limiter cannot be reached it answers `503`.
 
 Over a limit the API answers `429 {"error":"rate_limited"}`; an MCP tool answers "Rate limited, try again in a minute." or, for the two daily caps, "Daily limit reached, try again tomorrow (UTC).".
 
@@ -278,7 +289,8 @@ Against the Free plan's 100,000 rows written per day for the whole account: one 
 
 - **Refresh replay does not revoke the grant.** A replayed old refresh token is refused, but the connection stays valid (OAuth library behaviour). Disconnect it in the dashboard if a refresh token may have leaked.
 - **`/mcp` accepts only OAuth access tokens, not API keys.** Keys work only on `/api/v1`.
-- **No IP allowlist.** Claude Code, Codex and scripts call from people's own machines, so a WAF rule limited to one vendor's IP ranges would break them. Protection is OAuth with sign-in on `/authorize`, hashed API keys, and the limits above.
+- **Rights come from the connection, not the token scopes.** Every call reads the connection's access from D1 (which the dashboard can change at any time); the scopes in the token are not used to cap it further.
+- **No IP allowlist.** Claude Code, Codex, Gemini CLI and scripts call from people's own machines, so a WAF rule limited to one vendor's IP ranges would break them. Protection is OAuth with sign-in on `/authorize`, hashed API keys, and the limits above.
 
 ## Behaviour to know
 

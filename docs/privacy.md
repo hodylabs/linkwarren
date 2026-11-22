@@ -43,6 +43,8 @@ When people connect agents (MCP) or create API keys (see [agents.md](agents.md))
 
 The OAuth state (registered clients, grants and hashed tokens) lives in the `OAUTH_KV` namespace. A grant carries only the person's id, the connection id and the agent's name, never link data. Grants end with Disconnect or when their refresh token expires (30 days unused); client registrations are kept 30 days.
 
+When an agent tries to register with a callback address the instance does not allow, linkwarren logs one line with that address's origin and path (never its query, the agent's name or any secret), so the owner can decide to allow it.
+
 `POST /register` is limited per IP range (the /24 or /48, never the full address) and `/authorize` per person; those counters live in the same rate-limit table as the password limits and are cleaned up the same way.
 
 ## How long data is kept

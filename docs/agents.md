@@ -1,6 +1,6 @@
 # Agents and API
 
-linkwarren has two ways in for software: **agents** (Claude, ChatGPT, Claude Code, Codex and other MCP clients) connect to the built-in MCP server with OAuth, and **scripts** use a personal API key on `/api/v1`. Both act as you: they can never see or change more than you can in the dashboard, and every change they make is in the audit log as "you via <agent or key>".
+linkwarren has two ways in for software: **agents** (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) connect to the built-in MCP server with OAuth, and **scripts** use a personal API key on `/api/v1`. Both act as you: they can never see or change more than you can in the dashboard, and every change they make is in the audit log as "you via <agent or key>".
 
 The operator turns agents on with `MCP_ENABLED` (see [deploy.md](deploy.md#agents-and-api)). The API & agents screen (`G I`) shows the MCP address only while agents are on; API keys work either way.
 
@@ -12,8 +12,12 @@ The MCP address is `https://<dashboard host>/mcp`. Copy it from the API & agents
 - **ChatGPT:** Plugins, the plus button, Add custom MCP server, paste the address and choose OAuth. Whether you can add one depends on your ChatGPT plan and workspace role.
 - **Claude Code:** `claude mcp add --transport http linkwarren https://<dashboard host>/mcp`, then run `/mcp` in Claude Code to sign in.
 - **Codex:** `codex mcp add linkwarren --url https://<dashboard host>/mcp`, then `codex mcp login linkwarren` to sign in.
+- **Gemini CLI:** `gemini mcp add --transport http linkwarren https://<dashboard host>/mcp`, then sign in when Gemini CLI prompts you.
+- **Gemini Enterprise:** an admin adds a custom MCP server data store with OAuth and the StreamableHTTP URL `https://<dashboard host>/mcp`.
+- **Google Antigravity:** add a custom MCP server with the address in Antigravity's MCP settings, then sign in when prompted.
+- **Gemini app:** the callback address of its custom connectors is not documented, so it may be refused. If it is, tell the instance owner: the refused address is logged and can be added to the allowlist.
 
-Any other MCP client that supports remote servers with OAuth works the same way, as long as it signs in through one of the callbacks the instance allows (claude.ai, claude.com, ChatGPT, or a local `http://localhost:<port>/callback` or `http://127.0.0.1:<port>/callback`).
+Any other MCP client that supports remote servers with OAuth works the same way, as long as it signs in through one of the callbacks the instance allows (claude.ai, claude.com, ChatGPT, Gemini Enterprise, Antigravity, or a local `http://localhost:<port>` or `http://127.0.0.1:<port>` address ending `/callback`, `/callback/<id>` or `/oauth/callback`; the full list is in [deploy.md](deploy.md#allowed-redirect-uris)). A client with any other callback is refused when it registers.
 
 Connecting opens linkwarren in your browser. Sign in if you are not already, then the approval screen shows the agent's name and, more prominently, the host it sends you back to (for example `claude.ai`). Anyone can give a client any name, so check the host. Then choose the access and approve.
 
@@ -27,11 +31,11 @@ Agents have no domain restriction beyond your own: they reach every domain you c
 
 ### Changing access
 
-On the API & agents screen, select the connection (`J`/`K`, `Enter`) and use the switches, then Change access. The change applies on the agent's next call; it does not need to reconnect. You can raise or lower your own connections. The owner can lower or disconnect anyone's connection but only that person can raise it again.
+On the API & agents screen, select the connection (`J`/`K`, `Enter`) and use the switches, then Change access. The change applies on the agent's next call; it does not need to reconnect. You can raise or lower your own connections. The owner can lower or disconnect anyone's connection but only that person can raise it again. If the person changed it in the meantime, the owner's change is refused (`409 changed`) and nothing is written: reload and try again.
 
 ### Disconnecting
 
-Select the connection and press `Shift+D` (or Disconnect), then confirm. The agent's next call fails and it has to connect again. Disconnecting someone does not touch their other agents or keys.
+Select the connection and press `Shift+D` (or Disconnect), then confirm. The agent's next call fails, its refresh token stops working, and it has to connect again. The same happens to every agent of a person the owner disables. Disconnecting someone does not touch their other agents or keys.
 
 ## Tools
 
@@ -40,7 +44,7 @@ Select the connection and press `Shift+D` (or Disconnect), then confirm. The age
 | `server_info` | read | Your access level, role, the MCP address and the limits |
 | `search_links` | read | Search the links you can see, newest first |
 | `get_link` | read | One link by id or by short URL |
-| `list_domains` | read | The domains you can create links on |
+| `list_domains` | read | The domains you can create links on (host, type and status) |
 | `check_slug` | read | Whether a slug is available, taken, locked, reserved or invalid |
 | `link_stats` | read | Daily clicks for one link over the last 7 days |
 | `create_link` | write | Create a short link |
@@ -53,7 +57,7 @@ The server tells the model that tool results are data, never instructions: a lin
 
 For scripts, create a key on the API & agents screen: New API key (`N`), give it a name (lowercase letters, digits and hyphens), choose the access (read only by default, delete only with write), optionally limit it to some domains, and pick the expiry (30, 90 or 365 days). The key (`lw_` and 43 more characters) is shown **once**: copy it then. linkwarren keeps only a hash. Revoke a key from the same screen (`Shift+D`); a revoked or expired key answers `401 {"error":"invalid_key"}`.
 
-A key works only on `/api/v1`, sent as a Bearer token. It never works on the dashboard API (`/api`) or on `/mcp`. Keep it in an environment variable, not on the command line or in a file you commit:
+A key works only on `/api/v1`, sent as a Bearer token (`Authorization: Bearer <key>`, the word `Bearer` in any case). It never works on the dashboard API (`/api`) or on `/mcp`. Keep it in an environment variable, not on the command line or in a file you commit:
 
 ```sh
 export LW_KEY='<your key>'
@@ -87,7 +91,7 @@ curl -s -X DELETE -H "Authorization: Bearer $LW_KEY" "$LW/links/<link id>"
 curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<link id>"
 ```
 
-Bodies must be JSON (`Content-Type: application/json`); `/api/v1` needs no `Origin` header. Everything else under `/api/v1` (people, audit, keys, domain settings, imports) answers `404`: those stay in the dashboard. A key limited to some domains sees only their links and gets `403` on any other domain.
+Bodies must be JSON (`Content-Type: application/json`); `/api/v1` needs no `Origin` header. Everything else under `/api/v1` (people, audit, keys, domain settings, imports) answers `404`: those stay in the dashboard. A key limited to some domains sees only their links and gets `403` on any other domain; if its stored domain list ever cannot be read, the key works on no domain at all. `GET /api/v1/domains` returns the domains you can use with the same fields as the dashboard, but without link counts or Cloudflare details.
 
 ## Limits and errors
 
