@@ -64,8 +64,13 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
   { title: "Sign-in and security", rows: [...rows(ACCOUNT_KEYS), [["Enter"], "Confirm"], [["Esc"], "Cancel or close"]] },
 ];
 
+/** Access mode has no account sheet: drop its group and the `ys` palette row. */
+const forMode = (app: boolean) =>
+  app ? GROUPS : GROUPS.filter((g) => g.title !== "Sign-in and security").map((g) => ({ ...g, rows: g.rows.filter(([, what]) => what !== ACCOUNT_PALETTE_ROW) }));
+const ACCOUNT_PALETTE_ROW = paletteCmds.find((c) => c.keys === "ys")!.label;
+
 export function Shortcuts() {
-  const { close } = useApp();
+  const { close, me } = useApp();
   return (
     <Sheet label="Keyboard shortcuts" onClose={close}>
       <div className="sh-head">
@@ -73,7 +78,7 @@ export function Shortcuts() {
         <span className="x"><Kbd>Esc</Kbd> close</span>
       </div>
       <div className="sh-body">
-        {GROUPS.map((g) => (
+        {forMode(me.authMode === "app").map((g) => (
           <section key={g.title}>
             <div className="p-sec">{g.title}</div>
             {g.rows.map(([keys, what], i) => (

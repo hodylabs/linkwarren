@@ -16,10 +16,10 @@ import { GLOBAL_KEYS, GROUPS } from "./Shortcuts";
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
 afterEach(() => vi.unstubAllGlobals());
 
-async function openSheet() {
+async function openSheet(me: Me = owner) {
   history.replaceState(null, "", "/links");
   fakeApi({
-    "GET /api/me": () => ({ body: owner }),
+    "GET /api/me": () => ({ body: me }),
     "GET /api/domains": () => ({ body: [] }),
     "GET /api/users": () => ({ body: { items: [] } }),
     "GET /api/links": () => ({ body: { items: [], next: null } }),
@@ -61,8 +61,19 @@ describe("Shortcuts sheet", () => {
     expect(sheetRows(dlg, "In search and go (Ctrl K)")).toEqual(expect.arrayContaining(["S D = Switch domain", "C D = Add a domain", "C L = New link"]));
   });
 
-  it("every group in the table renders", async () => {
-    const dlg = await openSheet();
+  it("every group in the table renders (app mode)", async () => {
+    const dlg = await openSheet({ ...owner, authMode: "app", passkeys: 0 });
     await waitFor(() => expect(within(dlg).getAllByText(/./, { selector: ".p-sec" }).map((e) => e.textContent)).toEqual(GROUPS.map((g) => g.title)));
+  });
+
+  it("access mode lists no account keys and no ys palette entry; app mode does", async () => {
+    const dlg = await openSheet({ ...owner, authMode: "access" });
+    expect(within(dlg).queryByText("Sign-in and security", { selector: ".p-sec" })).toBeNull();
+    expect(sheetRows(dlg, "In search and go (Ctrl K)").join("\n")).not.toContain("Sign-in and security");
+  });
+  it("app mode shows the account group and the ys row", async () => {
+    const dlg = await openSheet({ ...owner, authMode: "app", passkeys: 0 });
+    expect(sheetRows(dlg, "In search and go (Ctrl K)")).toContain("Y S = Sign-in and security");
+    expect(within(dlg).getByText("Sign-in and security", { selector: ".p-sec" })).toBeTruthy();
   });
 });
