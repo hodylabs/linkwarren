@@ -1,3 +1,4 @@
+import { passwordRule } from "./password-rule";
 import type { Env } from "./env";
 
 /** Measured live on Workers Free: 25000 took 10-18 ms CPU per unlock; 10000 keeps an unlock inside 10 ms. */
@@ -18,13 +19,8 @@ export function iterationsOf(env: Pick<Env, "PASSWORD_HASH_ITERATIONS">): number
 }
 
 /** NFC-normalizes (never trims) and checks 8 to 128 code points. */
-export function checkPassword(raw: string): { ok: true; value: string } | { ok: false; reason: "password_short" | "password_long" } {
-  const value = raw.normalize("NFC");
-  const n = [...value].length;
-  if (n < 8) return { ok: false, reason: "password_short" };
-  if (n > 128) return { ok: false, reason: "password_long" };
-  return { ok: true, value };
-}
+/** The shared rule (also used by the dashboard), so server and client cannot drift. */
+export const checkPassword = passwordRule;
 
 const b64u = (b: Uint8Array): string => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 /** Strict: only the unpadded base64url alphabet at the exact length for `bytes`, else null. */
