@@ -14,14 +14,15 @@ const LEVELS = [
 ];
 
 /**
- * Security level and rate limit for a domain in the owner's own Cloudflare account. The server does not report the current
- * values, so only fields the owner touched are sent (Default = null removes the rule; an empty rate removes it too).
+ * Security level and rate limit for a domain in the owner's own Cloudflare account. The form starts from the server's stored
+ * values and only fields that differ from the saved baseline are sent (Default = null removes the rule; an empty rate removes it too).
  */
 export function CfControls({ domain, controlsEnabled }: { domain: Domain; controlsEnabled: boolean }) {
-  const { me } = useApp();
-  const [level, setLevel] = useState("default");
-  const [rate, setRate] = useState("");
-  const [touched, setTouched] = useState({ level: false, rate: false });
+  const { me, reloadDomains } = useApp();
+  const fromServer = (v: { securityLevel?: string | null; rateLimit?: number | null } | undefined) => ({ level: v?.securityLevel ?? "default", rate: v?.rateLimit == null ? "" : String(v.rateLimit) });
+  const [base, setBase] = useState(() => fromServer(domain.cloudflare)); // what Cloudflare holds, as far as we know
+  const [level, setLevel] = useState(base.level);
+  const [rate, setRate] = useState(base.rate);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const busy = useRef(false);
@@ -31,8 +32,8 @@ export function CfControls({ domain, controlsEnabled }: { domain: Domain; contro
     if (busy.current) return;
     setSaved(false);
     const body: ControlsPatch = {};
-    if (touched.level) body.securityLevel = level === "default" ? null : level;
-    if (touched.rate) {
+    if (level !== base.level) body.securityLevel = level === "default" ? null : level;
+    if (rate.trim() !== base.rate) {
       const t = rate.trim();
       const n = Number(t);
       if (t !== "" && !(/^\d+$/.test(t) && n >= 10 && n <= 1000)) return setError("rate_range");
@@ -42,11 +43,14 @@ export function CfControls({ domain, controlsEnabled }: { domain: Domain; contro
     if (Object.keys(body).length === 0) return;
     busy.current = true;
     try {
-      await patchDomainCf(domain.id, body);
-      setTouched({ level: false, rate: false });
+      setBase(fromServer(await patchDomainCf(domain.id, body)));
       setSaved(true);
+      void reloadDomains().catch(() => {}); // the saved values are already in the form
     } catch (e) {
       setError(e instanceof ApiError ? e.code : "internal");
+      // A partial failure carries the stored values: the field that landed is no longer changed, the failed one stays.
+      const d = e instanceof ApiError ? (e.data as { securityLevel?: string | null; rateLimit?: number | null } | undefined) : undefined;
+      if (d && "securityLevel" in d && "rateLimit" in d) setBase(fromServer(d));
     } finally {
       busy.current = false;
     }
@@ -64,12 +68,12 @@ export function CfControls({ domain, controlsEnabled }: { domain: Domain; contro
       <h3>Cloudflare</h3>
       <div className="field">
         <span id="cfc-level">Security level</span>
-        <Seg options={LEVELS} value={level} label="Security level" onChange={(v) => { setLevel(v); setTouched((t) => ({ ...t, level: true })); }} />
+        <Seg options={LEVELS} value={level} label="Security level" onChange={setLevel} />
       </div>
       <div className="field">
         <label htmlFor="cfc-rate">Rate limit</label>
         <input id="cfc-rate" className="input" inputMode="numeric" autoComplete="off" value={rate} aria-describedby="cfc-rate-hint" aria-invalid={error === "rate_range" ? true : undefined}
-          onChange={(e) => { setRate(e.target.value); setTouched((t) => ({ ...t, rate: true })); }} />
+          onChange={(e) => setRate(e.target.value)} />
       </div>
       <p id="cfc-rate-hint" className="muted">requests per 10 seconds per visitor, empty for none. Your Cloudflare plan may allow only one rate limit per zone.</p>
       {error && <p className="err" role="alert">{settingsError(error)}</p>}

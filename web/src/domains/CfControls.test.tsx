@@ -7,10 +7,10 @@ import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 import { CfControls } from "./CfControls";
 
 const owner: Me = { id: "uo", email: "o@example.com", name: null, role: "owner" };
-const cf = (kind: string) => ({ kind, dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, instructions: null, attachOnApproval: false });
-const dom = (kind: string): Domain => ({
+const cf = (kind: string, securityLevel: string | null, rateLimit: number | null) => ({ kind, dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, instructions: null, attachOnApproval: false, securityLevel, rateLimit });
+const dom = (kind: string, securityLevel: string | null = null, rateLimit: number | null = null): Domain => ({
   id: "d1", host: "go.test", type: "shared", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
-  caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: true, cloudflare: cf(kind) as Domain["cloudflare"],
+  caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: true, cloudflare: cf(kind, securityLevel, rateLimit) as Domain["cloudflare"],
 });
 
 function boot(domain: Domain, controlsEnabled: boolean, routes: FakeRoutes = {}) {
@@ -48,8 +48,7 @@ describe("CfControls", () => {
   });
 
   it("an emptied rate sends null", async () => {
-    const { api, user } = boot(dom("account"), true, { "PATCH /api/domains/d1/cloudflare": () => ({ body: { securityLevel: null, rateLimit: null } }) });
-    await user.type(screen.getByLabelText("Rate limit"), "50");
+    const { api, user } = boot(dom("account", null, 50), true, { "PATCH /api/domains/d1/cloudflare": () => ({ body: { securityLevel: null, rateLimit: null } }) });
     await user.clear(screen.getByLabelText("Rate limit"));
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(patches(api)).toHaveLength(1));
@@ -67,5 +66,39 @@ describe("CfControls", () => {
     const { user } = boot(dom("account"), true, { "PATCH /api/domains/d1/cloudflare": () => ({ status: 409, body: { error: "cloudflare_plan_limit" } }) });
     await user.type(screen.getByLabelText("Rate limit"), "20{Control>}{Enter}{/Control}");
     expect((await screen.findByRole("alert")).textContent).toBe("Your Cloudflare plan allows no more rate limit rules in this zone.");
+  });
+
+  it("starts from the stored values and an unchanged Save sends nothing", async () => {
+    const { api, user } = boot(dom("account", "high", 40), true);
+    expect(screen.getByRole("radio", { name: "High" }).getAttribute("aria-checked")).toBe("true");
+    expect((screen.getByLabelText("Rate limit") as HTMLInputElement).value).toBe("40");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.click(screen.getByRole("button", { name: /^Save/ }));
+    expect(patches(api)).toHaveLength(0);
+  });
+
+  it("a partial failure keeps the failed rate changed and the landed level not", async () => {
+    let n = 0;
+    const { api, user } = boot(dom("account", "high", 40), true, {
+      "PATCH /api/domains/d1/cloudflare": () =>
+        ++n === 1 ? { status: 409, body: { error: "cloudflare_plan_limit", securityLevel: "under_attack", rateLimit: 40 } } : { body: { securityLevel: "under_attack", rateLimit: 60 } },
+    });
+    await user.click(screen.getByRole("radio", { name: "Under attack" }));
+    const rate = screen.getByLabelText("Rate limit");
+    await user.clear(rate);
+    await user.type(rate, "60");
+    await user.click(screen.getByRole("button", { name: /^Save/ }));
+    expect((await screen.findByRole("alert")).textContent).toContain("no more rate limit rules");
+    expect(patches(api)[0]!.body).toEqual({ securityLevel: "under_attack", rateLimit: 60 });
+    await user.click(screen.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(patches(api)).toHaveLength(2));
+    expect(patches(api)[1]!.body).toEqual({ rateLimit: 60 }); // the level landed, only the rate is retried
+  });
+
+  it("a success refreshes the domain list", async () => {
+    const { api, user } = boot(dom("account", "high", 40), true, { "PATCH /api/domains/d1/cloudflare": () => ({ body: { securityLevel: "low", rateLimit: 40 } }) });
+    await user.click(screen.getByRole("radio", { name: "Low" }));
+    await user.click(screen.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "GET" && c.path === "/api/domains").length).toBeGreaterThan(1));
   });
 });

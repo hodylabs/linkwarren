@@ -6,7 +6,7 @@ import { AppContext, type AppState } from "../state";
 import { CfStatus } from "./CfStatus";
 
 const OUT: CfView = {
-  kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1,
+  kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, securityLevel: null, rateLimit: null,
   instructions: { type: "CNAME", name: "go", target: "edge.example.net", apex: false }, attachOnApproval: false,
 };
 const ACC: CfView = { ...OUT, kind: "account", dns: "found", ownership: "verified", certificate: "issued", instructions: null };

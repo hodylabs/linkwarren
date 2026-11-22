@@ -261,7 +261,7 @@ describe("Domain settings (member)", () => {
 
 const OUT: CfView = {
   kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1,
-  instructions: { type: "CNAME", name: "cafe", target: "edge.example.net", apex: false }, attachOnApproval: false,
+  instructions: { type: "CNAME", name: "cafe", target: "edge.example.net", apex: false }, attachOnApproval: false, securityLevel: null, rateLimit: null,
 };
 const GREEN: CfView = { ...OUT, dns: "found", ownership: "verified", certificate: "issued" };
 const PEND_CF = { ...PEND, cloudflare: GREEN };
@@ -374,5 +374,31 @@ describe("Ownership, approve and reject", () => {
     await user.keyboard("f");
     await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/domains/d4/approve")).toHaveLength(1));
     expect(within(panel()).queryByText("Approve domain")).toBeNull();
+  });
+});
+
+describe("Cloudflare controls in the detail", () => {
+  const ACC: CfView = { ...GREEN, kind: "account", instructions: null, securityLevel: "high", rateLimit: 40 };
+  const settings = { configured: true, outsideReady: true, accountName: "A", cnameTarget: null, fallbackOrigin: null, hostnames: null, attachedCount: 0, controlsEnabled: true };
+  const gets = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.path === "/api/settings/cloudflare");
+
+  it("an owner sees the stored High and 40 on an account domain", async () => {
+    boot({ list: () => [{ ...MAIN, cloudflare: ACC }], routes: { "GET /api/settings/cloudflare": () => ({ body: settings }) }, path: "/domains?sel=d1" });
+    expect((await screen.findByLabelText("Rate limit") as HTMLInputElement).value).toBe("40");
+    expect(screen.getByRole("radio", { name: "High" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a member never reads the owner-only settings", async () => {
+    const { api } = boot({ me: member, list: () => [{ ...MAIN, ownerId: "um", cloudflare: ACC }], routes: { "GET /api/settings/cloudflare": () => ({ body: settings }) }, path: "/domains?sel=d1" });
+    await screen.findByLabelText("The bare domain");
+    expect(screen.queryByLabelText("Rate limit")).toBeNull();
+    expect(gets(api)).toHaveLength(0);
+  });
+
+  it("an outside domain renders no controls and asks nothing", async () => {
+    const { api } = boot({ list: () => [{ ...MAIN, cloudflare: OUT }], routes: { "GET /api/settings/cloudflare": () => ({ body: settings }) }, path: "/domains?sel=d1" });
+    await screen.findByLabelText("The bare domain");
+    expect(screen.queryByLabelText("Rate limit")).toBeNull();
+    expect(gets(api)).toHaveLength(0);
   });
 });

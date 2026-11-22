@@ -40,7 +40,7 @@ describe("statusTag", () => {
   });
 
   const cf = (dns: CfView["dns"], kind: CfView["kind"] = "outside"): CfView => ({
-    kind, dns, ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, instructions: null, attachOnApproval: false,
+    kind, dns, ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, instructions: null, attachOnApproval: false, securityLevel: null, rateLimit: null,
   });
   it("an outside domain whose record is missing or wrong reads DNS record missing", () => {
     expect(statusTag(dom({ status: "pending", cloudflare: cf("missing") }), true)).toEqual({ label: "DNS record missing", tone: "bad" });

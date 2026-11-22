@@ -4,11 +4,13 @@ import { errorText, plural } from "../copy";
 import { rebase } from "../draft";
 import { useHotkeys, type Bindings } from "../keys";
 import { NavLink } from "../router";
+import { getCloudflare } from "../settings/api";
 import { Sheet } from "../shell/Sheet";
 import { CloseButton, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { DEFAULT_RESERVED } from "../../../src/validate";
 import { shortDate } from "../time";
+import { CfControls } from "./CfControls";
 import { CfStatus } from "./CfStatus";
 import { MembersEditor } from "./MembersEditor";
 import { canManage, domainDiff, draftOf, ownerLabel, statusTag, type Draft } from "./domainView";
@@ -46,6 +48,16 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
   const showCf = canEdit && view !== null && view.kind !== "manual";
   const poll = useCfPoll(showCf ? domain.id : null, view !== null && !cfSettled(view));
   useEffect(() => void (poll.view && setView(poll.view)), [poll.view]);
+  // Controls need the owner's "controls on" switch; members never ask (the endpoint is owner only). Errors mean off.
+  const [controlsEnabled, setControlsEnabled] = useState(false);
+  const accountKind = view?.kind === "account";
+  useEffect(() => {
+    setControlsEnabled(false);
+    if (!isOwner || !accountKind) return;
+    const ac = new AbortController();
+    getCloudflare(ac.signal).then((s) => setControlsEnabled(s.controlsEnabled), () => {});
+    return () => ac.abort();
+  }, [isOwner, accountKind, domain.id]);
   const tag = statusTag(view ? { ...domain, cloudflare: view } : domain, isOwner);
   const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
 
@@ -259,7 +271,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
             {poll.error && <p className="err">{errorText(poll.error)}</p>}
           </div>
         )}
-        {/* Cloudflare controls section (Task 10) goes here, after "Ownership and certificate": <CfControls domain={domain} /> */}
+        <CfControls key={domain.id} domain={{ ...domain, cloudflare: view ?? domain.cloudflare }} controlsEnabled={controlsEnabled} />
         <fieldset className="plain" disabled={!canEdit}>
           <div className="sect">
             <h3>When someone visits</h3>

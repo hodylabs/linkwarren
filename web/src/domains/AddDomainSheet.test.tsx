@@ -14,7 +14,7 @@ const MAIN: Domain = {
 };
 
 const OUT: CfView = {
-  kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1,
+  kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, securityLevel: null, rateLimit: null,
   instructions: { type: "CNAME", name: "go", target: "edge.example.net", apex: false }, attachOnApproval: false,
 };
 const GREEN: CfView = { ...OUT, dns: "found", ownership: "verified", certificate: "issued" };
