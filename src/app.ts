@@ -20,6 +20,7 @@ import { account } from "./api/account";
 import { keys } from "./api/keys";
 import { nonJsonBody } from "./api/shared";
 import { isV1, v1 } from "./api/v1";
+import { authorize } from "./mcp/authorize";
 
 export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>();
 
@@ -91,6 +92,9 @@ app.route("/api/account", account);
 app.route("/api/keys", keys);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
+
+// OAuth consent (MCP agents). Reached only through the wrapper, which 404s it unless MCP_ENABLED is "1".
+app.route("/authorize", authorize);
 
 // Dashboard files: GET/HEAD only, never under /api (unknown API paths stay JSON 404).
 app.on(["GET", "HEAD"], ["/", "/*"], async (c) => {
