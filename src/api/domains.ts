@@ -3,7 +3,7 @@ import { z } from "zod";
 import { auditStmt } from "../audit";
 import { CfError, cfConfig } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
-import { AttachError, classify, detachDomain, isVerified, logInternal, syncDomain, takeoverCheck } from "../cf/attach";
+import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
 import { apexOf, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
@@ -45,20 +45,22 @@ const getCf = async (env: Env, id: string): Promise<CfRow | null> => {
   return r ? rowToCf(r) : null;
 };
 
-/** A missing domain_cf row reads as manual (S1 behaviour). */
-function cfView(env: Env, d: DomainRow, cf: CfRow | null): CfView {
+/** A missing domain_cf row reads as manual (S1 behaviour). `manage` false (a member using someone else's domain) strips the setup details. */
+function cfView(env: Env, d: DomainRow, cf: CfRow | null, manage = true): CfView {
   const t = env.CF_CNAME_TARGET?.trim();
   const target = t ? normalizeHost(t) : null;
   const apex = apexOf(d.host);
   const base = cf ?? { kind: "manual", dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, routeId: null, securityLevel: null, rateLimit: null };
-  return {
+  const view: CfView = {
     kind: base.kind, dns: base.dns, ownership: base.ownership, certificate: base.certificate,
     errors: base.errors, lastError: base.lastError, checkedAt: base.checkedAt, securityLevel: base.securityLevel, rateLimit: base.rateLimit,
     instructions: base.kind === "outside" && target
       ? { type: "CNAME", name: d.host === apex ? "@" : d.host.slice(0, -apex.length - 1), target, apex: d.host === apex }
       : null,
     attachOnApproval: base.kind === "account" && base.routeId === null && d.status === "pending",
+    attached: base.routeId !== null,
   };
+  return manage ? view : { ...view, errors: [], lastError: null, securityLevel: null, rateLimit: null, instructions: null };
 }
 
 /** After a committed write a failed sync is reported through lastError (syncDomain stored it), never as a 5xx. */
@@ -91,7 +93,7 @@ domains.get("/", async (c) => {
   // shortcut: no pagination, the domain list is small; add a cursor if an instance ever hosts thousands.
   const items = (await c.env.DB.prepare("SELECT * FROM domains ORDER BY host").all()).results.map(rowToDomain)
     .filter((d) => canUseDomain(user, d, members.has(d.id)))
-    .map((d) => ({ ...d, linkCount: counts.get(d.id) ?? 0, isMember: members.has(d.id), cloudflare: cfView(c.env, d, cfs.get(d.id) ?? null) }));
+    .map((d) => ({ ...d, linkCount: counts.get(d.id) ?? 0, isMember: members.has(d.id), cloudflare: cfView(c.env, d, cfs.get(d.id) ?? null, canManageDomain(user, d)) }));
   return c.json(items);
 });
 
@@ -117,10 +119,9 @@ domains.post("/", async (c) => {
       const k = await classify(cfg, host);
       kind = k.kind;
       // R3: only the owner attaches at create, so only the owner is asked about a takeover. Same checks as syncDomain.
-      if (k.kind === "account" && isOwner) {
-        const code = await takeoverCheck(cfg, host, { id: k.zoneId, name: k.zoneName }, confirmTakeover);
-        if (code) return c.json({ error: code }, 409);
-      }
+      const code = k.kind === "outside" ? await outsideCheck(cfg, host)
+        : isOwner ? await takeoverCheck(cfg, host, { id: k.zoneId, name: k.zoneName }, confirmTakeover) : null;
+      if (code) return c.json({ error: code }, 409);
     } catch (e) {
       if (!(e instanceof CfError)) throw e;
       return e.status === 0 && e.codes.includes(-1) ? c.json({ error: "outside_not_configured" }, 400) : c.json({ error: "cloudflare_unreachable" }, 502);
@@ -142,7 +143,7 @@ domains.post("/", async (c) => {
       c.env.DB.prepare("INSERT INTO domain_cf (domain_id, kind, updated_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM domains WHERE id = ?)")
         .bind(d.id, kind, d.createdAt, d.id),
       auditStmt(c.env, { actorId: user.id, action: "domain.create", targetType: "domain", targetId: d.id,
-        detail: { host, type, status: d.status } }, exists(d.id)),
+        detail: { host, type, status: d.status, ...(confirmTakeover && isOwner && kind === "account" ? { confirmTakeover: true } : {}) } }, exists(d.id)),
     ]);
   } catch (e) {
     if (String(e).includes("UNIQUE")) return c.json({ error: "host_taken" }, 409);
@@ -356,6 +357,8 @@ domains.post("/:id/approve", async (c) => {
   if (!d) return c.json(notFound, 404);
   let cf = await getCf(c.env, d.id);
   const finish = d.status === "active" && cf?.kind === "account" && cf.routeId === null;
+  // Recorded only when it was used: a takeover confirmation means something only for an account attach.
+  const confirmed = body.data.confirmTakeover === true && cf?.kind === "account" ? { confirmTakeover: true } : {};
   if (d.status === "active" && !finish) return c.json({ ...d, ...(await loopField(c.env, d.host)) });
   if (cf && cf.kind !== "manual") {
     const cfg = cfConfig(c.env);
@@ -375,14 +378,15 @@ domains.post("/:id/approve", async (c) => {
     if (finish) {
       // A route someone else made is never adopted, so nothing was attached: no audit.
       if (cf.routeId === null) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
+      // The route ids are system state that syncDomain already stored; the audit is guarded on that stored route on this row.
       await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
-        detail: { host: d.host } }, exists(d.id))]);
+        detail: { host: d.host, ...confirmed } }, { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ? AND route_id = ?)", binds: [d.id, cf.routeId] })]);
       return c.json({ ...d, cloudflare: cfView(c.env, d, cf), ...(await loopField(c.env, d.host)) });
     }
     if (!isVerified(cf)) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
   }
   const view = cfView(c.env, d, cf);
-  const out = await setStatus(c, d, "approve", "active", { check: { dns: view.dns, ownership: view.ownership, certificate: view.certificate } });
+  const out = await setStatus(c, d, "approve", "active", { check: { dns: view.dns, ownership: view.ownership, certificate: view.certificate }, ...confirmed });
   if (out === "lost" || out === null) return c.json(notFound, 404);
   const loop = out.status === "active" ? await loopField(c.env, out.host) : {};
   return c.json({ ...out, cloudflare: cfView(c.env, out, cf), ...loop });

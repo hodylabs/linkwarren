@@ -265,7 +265,7 @@ describe("POST /api/settings/cloudflare/resync", () => {
     fake.failNext(/custom_hostnames\?hostname=a\.out\.test/, 500); // first host fails, the rest still run
     const r = await call("owner", "POST", `${S}/resync`);
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ ok: 2, failed: [{ host: "a.out.test", error: "cloudflare_500" }], next: null });
+    expect(await r.json()).toEqual({ ok: 2, failed: [{ host: "a.out.test", error: "cloudflare_error" }], next: null });
     expect(fake.state.hostnames.map((h) => h.hostname)).toEqual(["e.out.test"]);
     expect(fake.state.routes.map((x) => x.pattern).sort()).toEqual(["b.example.com/*", "e.out.test/*"]);
     expect(fake.state.dns.map((d) => d.name)).toEqual(["b.example.com"]);
@@ -296,16 +296,24 @@ describe("POST /api/settings/cloudflare/resync", () => {
     for (let i = 1; i <= 3; i++) await dom(`h${i}.out.test`, "outside");
     fake.failNext(/custom_hostnames\?hostname=h2\.out\.test/, 0);
     const r = await call("owner", "POST", `${S}/resync`);
-    expect(await r.json()).toEqual({ ok: 1, failed: [{ host: "h2.out.test", error: "cloudflare_0" }], next: "d-h2.out.test" });
+    expect(await r.json()).toEqual({ ok: 1, failed: [{ host: "h2.out.test", error: "cloudflare_unreachable" }], next: "d-h2.out.test" });
     expect(fake.calls.some((c) => c.path.includes("h3.out.test"))).toBe(false);
     const r2 = await call("owner", "POST", `${S}/resync`, { after: "d-h2.out.test" });
     expect(await r2.json()).toEqual({ ok: 2, failed: [], next: null });
+  });
+  it("disabled domains are skipped: no Cloudflare calls for them", async () => {
+    const fake = installFakeCloudflare({ zones });
+    await dom("h1.out.test", "outside");
+    await run("UPDATE domains SET status = 'disabled' WHERE id = 'd-h1.out.test'");
+    expect(await (await call("owner", "POST", `${S}/resync`)).json()).toEqual({ ok: 0, failed: [], next: null });
+    expect(fake.calls.some((c) => c.path.includes("h1.out.test"))).toBe(false);
+    expect(fake.state.hostnames).toEqual([]);
   });
   it("outside_not_configured (status 0, code -1) does not stop the run", async () => {
     installFakeCloudflare({ zones });
     e.CF_SAAS_ZONE_ID = undefined;
     for (let i = 1; i <= 2; i++) await dom(`h${i}.out.test`, "outside");
-    expect(await (await call("owner", "POST", `${S}/resync`)).json()).toEqual({ ok: 0, failed: [1, 2].map((i) => ({ host: `h${i}.out.test`, error: "cloudflare_0" })), next: null });
+    expect(await (await call("owner", "POST", `${S}/resync`)).json()).toEqual({ ok: 0, failed: [1, 2].map((i) => ({ host: `h${i}.out.test`, error: "outside_not_configured" })), next: null });
   });
   it("bad body 400; not configured 409 cloudflare_not_configured", async () => {
     installFakeCloudflare({ zones });

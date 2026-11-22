@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import { CfError, cfConfig, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
-import { AttachError, syncDomain } from "../cf/attach";
+import { syncDomain, syncErrorCode } from "../cf/attach";
 import { checkToken, sampleZone } from "../cf/perms";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
@@ -19,14 +19,11 @@ settings.use("*", async (c, next) => {
   await next();
 });
 
-/** Codes only: a CfError message is `cloudflare_<status>`, never Cloudflare's own text. */
+/** Codes only (the shared mapping), never Cloudflare's own text. */
 const cfFail = (e: unknown) => {
   if (!(e instanceof CfError)) throw e;
-  return e.status === 0
-    ? ({ body: { error: "cloudflare_unreachable" }, status: 502 } as const)
-    : e.status === 401 || e.status === 403
-      ? ({ body: { error: "cloudflare_forbidden" }, status: 409 } as const)
-      : ({ body: { error: "cloudflare_error" }, status: 502 } as const);
+  const error = syncErrorCode(e);
+  return { body: { error }, status: error === "cloudflare_unreachable" || error === "cloudflare_error" ? 502 : 409 } as const;
 };
 const orNull = <T>(p: Promise<T>) => p.catch(() => null);
 
@@ -130,7 +127,9 @@ settings.post("/cloudflare/setup", async (c) => {
   }
 });
 
-const BATCH = 3; // Workers Free allows 50 subrequests per call; one domain sync takes up to about 11.
+// Workers Free allows 50 subrequests per call. An outside sync takes about 10, an account one 3i+4 for a host i labels below its zone.
+// shortcut: deep account hosts can still pass 50; the cap shows as cloudflare_unreachable and the loop resumes from that domain.
+const BATCH = 3;
 const resyncBody = z.strictObject({ after: z.string().min(1).max(64).optional() });
 settings.post("/cloudflare/resync", async (c) => {
   const cfg = cfConfig(c.env);
@@ -147,7 +146,7 @@ settings.post("/cloudflare/resync", async (c) => {
   // `after` is the `next` of the previous call: the first domain id not yet done (inclusive).
   const rows = (await c.env.DB.prepare(
     `SELECT d.id FROM domains d JOIN domain_cf c ON c.domain_id = d.id
-     WHERE (c.kind = 'outside' OR (c.kind = 'account' AND c.route_id IS NOT NULL)) AND d.id >= ? ORDER BY d.id LIMIT ?`,
+     WHERE (c.kind = 'outside' OR (c.kind = 'account' AND c.route_id IS NOT NULL)) AND d.status IN ('pending', 'active') AND d.id >= ? ORDER BY d.id LIMIT ?`,
   ).bind(body.data.after ?? "", BATCH + 1).all<{ id: string }>()).results;
   let ok = 0;
   let next = rows[BATCH]?.id ?? null;
@@ -164,10 +163,10 @@ settings.post("/cloudflare/resync", async (c) => {
       await syncDomain(c.env, cfg, dom, rowToCf(cf), { attach: false });
       ok++;
     } catch (e) {
-      failed.push({ host: dom.host, error: e instanceof AttachError ? e.code : e instanceof CfError ? e.message : "internal_error" });
-      // Status 0 is unreachable or the subrequest limit: later domains would fail the same way, so retry from here.
-      // Code -1 is outside_not_configured, a per-domain verdict that a retry cannot fix.
-      if (e instanceof CfError && e.status === 0 && !e.codes.includes(-1)) {
+      const error = syncErrorCode(e);
+      failed.push({ host: dom.host, error });
+      // Unreachable includes the subrequest limit: later domains would fail the same way, so retry from here.
+      if (error === "cloudflare_unreachable") {
         next = id;
         break;
       }

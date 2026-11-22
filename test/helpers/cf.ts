@@ -19,7 +19,7 @@ export function fakeCloudflare(opts: { zones?: FakeZone[]; doh?: Record<string, 
   const state = {
     zones: [...(opts.zones ?? [])],
     dns: [] as { id: string; zoneId: string; type: string; name: string; content: string; proxied: boolean; comment: string | null }[],
-    routes: [] as { id: string; zoneId: string; pattern: string; script: string }[],
+    routes: [] as { id: string; zoneId: string; pattern: string; script: string | null }[],
     hostnames: [] as { id: string; hostname: string; status: string; ssl: { status: string; validation_errors?: { message: string }[] }; verification_errors?: string[] }[],
     fallbackOrigin: null as string | null,
     fallbackStatus: "active",

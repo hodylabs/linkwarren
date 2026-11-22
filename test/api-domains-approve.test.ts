@@ -94,6 +94,37 @@ describe("approve gate", () => {
     expect(await statusOf(id)).toBe("active");
     expect(fake.state.dns.map((d) => d.id)).toEqual(["r1"]);
     expect(fake.state.routes.map((x) => x.pattern)).toEqual(["www.owned.test/*"]);
+    const audit = await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'domain.approve'");
+    expect(JSON.parse(audit!.detail)).toMatchObject({ confirmTakeover: true });
+  });
+  it("finish connecting with confirmTakeover records it in domain.attach", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("owner", "x.owned.test");
+    fake.state.routes.length = 0;
+    fake.state.dns.length = 0;
+    fake.state.dns.push({ id: "r1", zoneId: "zo", type: "A", name: "x.owned.test", content: "192.0.2.1", proxied: true, comment: null });
+    await run("UPDATE domain_cf SET route_id = NULL, dns_record_id = NULL WHERE domain_id = ?", id);
+    expect((await approve(id)).status).toBe(409);
+    expect((await approve(id, { confirmTakeover: true })).status).toBe(200);
+    const a = await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'domain.attach'");
+    expect(JSON.parse(a!.detail)).toEqual({ host: "x.owned.test", confirmTakeover: true });
+  });
+  it("I-1 on approve: a domain whose create stored nothing meets a foreign route or hostname: 409, zero writes, still pending", async () => {
+    for (const [seed, code] of [
+      [(f: Fake) => f.state.routes.push({ id: "rt", zoneId: "zsaas", pattern: "*/*", script: "other" }), "route_in_use"],
+      [(f: Fake) => f.state.hostnames.push({ id: "ch-x", hostname: "shop.outside.test", status: "active", ssl: { status: "active" } }), "hostname_in_use"],
+    ] as const) {
+      const fake = installFakeCloudflare({ zones });
+      await run("DELETE FROM domains");
+      await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('d1','shop.outside.test','private','pending','ua',1)");
+      await run("INSERT INTO domain_cf (domain_id,kind,updated_at) VALUES ('d1','outside',1)");
+      seed(fake);
+      const r = await approve("d1");
+      expect([code, r.status, await r.json()]).toEqual([code, 409, { error: code }]);
+      expect(writes(fake.calls)).toEqual([]);
+      expect(await statusOf("d1")).toBe("pending");
+      vi.restoreAllMocks();
+    }
   });
   it("a Cloudflare failure during the fresh sync is 502 cloudflare_error, still pending", async () => {
     const fake = installFakeCloudflare({ zones });

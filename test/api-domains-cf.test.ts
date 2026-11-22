@@ -90,7 +90,7 @@ describe("create: outside", () => {
     const r = await create("a", "go.outside.test");
     expect(r.status).toBe(201);
     const j = await r.json<Record<string, any>>();
-    expect(j.cloudflare.lastError).toBe("cloudflare_500");
+    expect(j.cloudflare.lastError).toBe("cloudflare_error");
     expect(fake.state.hostnames).toEqual([]);
     advance(11);
     const p = await poll("a", j.id);
@@ -104,9 +104,11 @@ describe("internal errors", () => {
   it("a plain Error inside syncDomain gives 201 with internal_error and one console.error without the token", async () => {
     const fake = installFakeCloudflare({ zones });
     // A non-Response from fetch makes cf() throw a TypeError: a bug, not a Cloudflare answer.
+    let lookups = 0;
     vi.mocked(fetch).mockImplementation(async (i, init) => {
       const req = new Request(i as RequestInfo, init);
-      return req.url.includes("custom_hostnames?hostname=") ? ({} as Response) : fake.handle(req);
+      // The first lookup is the pre-insert check; the second is the sync after the insert.
+      return req.url.includes("custom_hostnames?hostname=") && ++lookups === 2 ? ({} as Response) : fake.handle(req);
     });
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = await create("a", "go.outside.test");
@@ -238,11 +240,10 @@ describe("GET /api/domains/:id/cloudflare", () => {
   });
   it("a domain whose sync keeps failing makes one round across 3 polls within 10 s, and a new round after 10 s", async () => {
     const fake = installFakeCloudflare({ zones });
-    fake.state.routes.push({ id: "rt", zoneId: "zsaas", pattern: "go.outside.test/*", script: "other" });
-    const { id, cloudflare } = await (await create("a", "go.outside.test")).json<{ id: string; cloudflare: { lastError: string } }>();
-    expect(cloudflare.lastError).toBe("route_in_use");
+    const { id } = await (await create("a", "go.outside.test")).json<{ id: string }>();
+    fake.state.routes[0]!.script = "other"; // another Worker now holds the exact route
     advance(11);
-    await poll("a", id);
+    expect(await (await poll("a", id)).json()).toMatchObject({ lastError: "route_in_use" });
     const afterFirst = fake.calls.length;
     for (const s of [3, 3]) { advance(s); expect(await (await poll("a", id)).json()).toMatchObject({ lastError: "route_in_use" }); }
     expect(fake.calls).toHaveLength(afterFirst);
@@ -268,6 +269,120 @@ describe("GET /api/domains/:id/cloudflare", () => {
     fake.failNext(/custom_hostnames\?hostname=/, 500);
     const p = await poll("a", id);
     expect(p.status).toBe(200);
-    expect(await p.json()).toMatchObject({ kind: "outside", lastError: "cloudflare_500", ownership: "pending" });
+    expect(await p.json()).toMatchObject({ kind: "outside", lastError: "cloudflare_error", ownership: "pending" });
+  });
+});
+
+describe("outside refusals on a shared SaaS zone (I-1) and the free hostname quota", () => {
+  type Fake = ReturnType<typeof installFakeCloudflare>;
+  const foreignHostname = (f: Fake) => f.state.hostnames.push({ id: "ch-x", hostname: "shop.outside.test", status: "active", ssl: { status: "active" } });
+  const cases: [string, (f: Fake) => void, string][] = [
+    ["a catch-all route to another Worker", (f) => f.state.routes.push({ id: "rt", zoneId: "zsaas", pattern: "*/*", script: "other" }), "route_in_use"],
+    ["a wildcard route bound to no Worker", (f) => f.state.routes.push({ id: "rt", zoneId: "zsaas", pattern: "*.outside.test/*", script: null }), "route_in_use"],
+    ["another tool's custom hostname for the host", foreignHostname, "hostname_in_use"],
+  ];
+  for (const who of ["a", "owner"])
+    for (const [what, seed, code] of cases)
+      it(`${who === "a" ? "member" : "owner"} create over ${what}: 409 ${code}, no domain row, zero writes`, async () => {
+        const fake = installFakeCloudflare({ zones });
+        seed(fake);
+        const r = await create(who, "shop.outside.test");
+        expect([r.status, await r.json()]).toEqual([409, { error: code }]);
+        expect(await domainCount()).toBe(0);
+        expect(writes(fake.calls)).toEqual([]);
+      });
+  it("an existing hostname already served by a route to our Worker is reused, not refused", async () => {
+    const fake = installFakeCloudflare({ zones });
+    foreignHostname(fake);
+    fake.state.routes.push({ id: "rt", zoneId: "zsaas", pattern: "shop.outside.test/*", script: "lw" });
+    const r = await create("a", "shop.outside.test");
+    expect(r.status).toBe(201);
+    expect(writes(fake.calls)).toEqual([]);
+  });
+  it("a poll that meets a newly added foreign hostname records hostname_in_use and writes nothing", async () => {
+    const fake = installFakeCloudflare({ zones });
+    // An outside domain whose earlier sync stored nothing (for example Cloudflare failed at its create).
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('d1','shop.outside.test','private','pending','ua',1)");
+    await run("INSERT INTO domain_cf (domain_id,kind,updated_at) VALUES ('d1','outside',1)");
+    foreignHostname(fake);
+    advance(11);
+    expect(await (await poll("a", "d1")).json()).toMatchObject({ lastError: "hostname_in_use" });
+    expect(writes(fake.calls)).toEqual([]);
+  });
+  const fill = (f: Fake, n: number) => { for (let i = 0; i < n; i++) f.state.hostnames.push({ id: `ch-f${i}`, hostname: `f${i}.other.test`, status: "active", ssl: { status: "active" } }); };
+  it("100 hostnames used: create refuses 409 hostname_limit before any write (each one past 100 is billed)", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fill(fake, 100);
+    const r = await create("a", "go.outside.test");
+    expect([r.status, await r.json()]).toEqual([409, { error: "hostname_limit" }]);
+    expect(await domainCount()).toBe(0);
+    expect(writes(fake.calls)).toEqual([]);
+  });
+  it("99 hostnames used: the 100th is created", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fill(fake, 99);
+    expect((await create("a", "go.outside.test")).status).toBe(201);
+    expect(fake.state.hostnames).toHaveLength(100);
+  });
+  it("a repair that would re-create a hostname past the quota stores hostname_limit and creates nothing", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const { id } = await (await create("a", "go.outside.test")).json<{ id: string }>();
+    fake.state.hostnames.length = 0;
+    fill(fake, 100);
+    advance(11);
+    expect(await (await poll("a", id)).json()).toMatchObject({ lastError: "hostname_limit" });
+    expect(fake.state.hostnames.some((h) => h.hostname === "go.outside.test")).toBe(false);
+  });
+});
+
+describe("half-attached account domains (I-3)", () => {
+  it("an owner create whose attach failed keeps lastError across status checks and reads as not attached", async () => {
+    const fake = installFakeCloudflare({ zones });
+    let failed = false; // the route create answers 500 once; the reads before it succeed
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      const req = new Request(i as RequestInfo, init);
+      if (!failed && req.method === "POST" && req.url.endsWith("/workers/routes")) {
+        failed = true;
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 10000 }], result: null }), { status: 500 });
+      }
+      return fake.handle(req);
+    });
+    const r = await create("owner", "x.owned.test");
+    const j = await r.json<Record<string, any>>();
+    expect([r.status, j.status, j.cloudflare.lastError, j.cloudflare.attached]).toEqual([201, "active", "cloudflare_error", false]);
+    advance(11);
+    const p = await (await poll("owner", j.id)).json<Record<string, any>>();
+    expect(p).toMatchObject({ lastError: "cloudflare_error", attached: false, ownership: "pending" });
+    expect(fake.state.routes).toEqual([]);
+    const fin = await call("owner", "POST", `/api/domains/${j.id}/approve`);
+    expect(fin.status).toBe(200);
+    expect((await fin.json<Record<string, any>>()).cloudflare).toMatchObject({ lastError: null, attached: true, ownership: "verified" });
+  });
+});
+
+describe("member view of someone else's domain", () => {
+  it("a member using the owner's shared domain gets no errors, lastError, controls or instructions; the owner sees them", async () => {
+    installFakeCloudflare({ zones });
+    const r = await call("owner", "POST", "/api/domains", { host: "go.outside.test", type: "shared" });
+    const { id } = await r.json<{ id: string }>();
+    await run("UPDATE domain_cf SET last_error = 'cloudflare_error', errors = '[\"txt\"]', security_level = 'high', rate_limit = 50 WHERE domain_id = ?", id);
+    await run("INSERT INTO domain_members (domain_id, user_id) VALUES (?, 'ua')", id);
+    const asMember = (await (await call("a", "GET", "/api/domains")).json<any[]>()).find((d) => d.id === id);
+    expect(asMember.cloudflare).toMatchObject({ kind: "outside", errors: [], lastError: null, securityLevel: null, rateLimit: null, instructions: null });
+    const asOwner = (await (await call("owner", "GET", "/api/domains")).json<any[]>()).find((d) => d.id === id);
+    expect(asOwner.cloudflare).toMatchObject({ errors: ["txt"], lastError: "cloudflare_error", securityLevel: "high", rateLimit: 50 });
+    expect(asOwner.cloudflare.instructions).not.toBeNull();
+  });
+});
+
+describe("audit of takeover confirmations", () => {
+  it("domain.create records confirmTakeover only when it was used", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.dns.push({ id: "r1", zoneId: "zo", type: "A", name: "www.owned.test", content: "192.0.2.1", proxied: true, comment: null });
+    const { id } = await (await create("owner", "www.owned.test", { confirmTakeover: true })).json<{ id: string }>();
+    const { id: plain } = await (await create("owner", "y.owned.test")).json<{ id: string }>();
+    const detail = async (t: string) => JSON.parse((await one<{ detail: string }>("SELECT detail FROM audit_log WHERE action = 'domain.create' AND target_id = ?", t))!.detail);
+    expect((await detail(id)).confirmTakeover).toBe(true);
+    expect(await detail(plain)).not.toHaveProperty("confirmTakeover");
   });
 });

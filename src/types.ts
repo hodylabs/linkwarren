@@ -53,6 +53,8 @@ export type CfRow = {
 export type CfView = Pick<CfRow, "kind" | "dns" | "ownership" | "certificate" | "errors" | "lastError" | "checkedAt" | "securityLevel" | "rateLimit"> & {
   instructions: { type: "CNAME"; name: string; target: string; apex: boolean } | null;
   attachOnApproval: boolean;
+  /** linkwarren holds a route for this host (an account domain is connected only then). */
+  attached: boolean;
 };
 export const rowToCf = (r: R): CfRow => ({
   kind: r.kind as CfRow["kind"], zoneId: r.zone_id as string | null, dnsRecordId: r.dns_record_id as string | null,

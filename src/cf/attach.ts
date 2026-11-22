@@ -1,11 +1,11 @@
 import type { Env } from "../env";
 import { rowToCf, type CfRow, type DomainRow } from "../types";
-import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findRoute, findZone, listDns, listRoutes, type CfConfig, type DnsRecord, type Route } from "./api";
+import { CfError, createDns, createHostname, createRoute, deleteDns, deleteHostname, deleteRoute, findHostname, findZone, hostnameCount, listDns, listRoutes, type CfConfig, type DnsRecord, type HostnameStatus, type Route } from "./api";
 import { deleteHostRule, isForbidden, rlRef, secRef, type Phase } from "./controls";
 import { dnsPointsAt } from "./dns";
 
 export class AttachError extends Error {
-  constructor(public code: "dns_record_exists" | "dns_not_proxied" | "route_in_use") {
+  constructor(public code: "dns_record_exists" | "dns_not_proxied" | "route_in_use" | "hostname_in_use" | "hostname_limit") {
     super(code);
     this.name = "AttachError";
   }
@@ -13,6 +13,20 @@ export class AttachError extends Error {
 
 /** CfError 0 with code -1: the API maps it to `outside_not_configured`. */
 const notConfigured = () => new CfError(0, [-1]);
+
+/** Cloudflare for SaaS includes this many custom hostnames; each one past it is billed, so linkwarren never creates one there. */
+export const FREE_HOSTNAMES = 100;
+
+/**
+ * The one mapping from a sync failure to the stable code stored as `last_error` and reported by resync.
+ * Never Cloudflare's own text: CfError messages are status-only anyway.
+ */
+export function syncErrorCode(e: unknown): string {
+  if (e instanceof AttachError) return e.code;
+  if (!(e instanceof CfError)) return "internal_error";
+  if (e.status === 0) return e.codes.includes(-1) ? "outside_not_configured" : "cloudflare_unreachable";
+  return e.status === 401 || e.status === 403 ? "cloudflare_forbidden" : "cloudflare_error";
+}
 
 export async function classify(cfg: CfConfig, host: string): Promise<{ kind: "account"; zoneId: string; zoneName: string } | { kind: "outside" }> {
   const z = await findZone(cfg, host);
@@ -52,11 +66,13 @@ export async function syncDomain(env: Env, cfg: CfConfig, d: DomainRow, cf: CfRo
   const made: Made = {};
   let saved: CfRow | null;
   try {
-    const snap = cf.kind === "outside" ? await syncOutside(cfg, d.host, made) : await syncAccount(cfg, d.host, cf, opts, made);
-    saved = await save(env, d.id, cf, made, { ...snap, errors: JSON.stringify(snap.errors), last_error: null, checked_at: Math.floor(Date.now() / 1000) });
+    const snap = cf.kind === "outside" ? await syncOutside(cfg, d.host, cf, made) : await syncAccount(cfg, d.host, cf, opts, made);
+    // A read-only check of an active account domain whose attach failed resolves nothing: its error stays until Finish connecting.
+    const unresolved = cf.kind === "account" && d.status === "active" && !opts.attach && cf.routeId === null;
+    saved = await save(env, d.id, cf, made, { ...snap, errors: JSON.stringify(snap.errors), ...(unresolved ? {} : { last_error: null }), checked_at: Math.floor(Date.now() / 1000) });
   } catch (e) {
     // checked_at moves only on success; updated_at (bumped by save) is what throttles polls.
-    const code = e instanceof AttachError ? e.code : e instanceof CfError ? e.message : "internal_error";
+    const code = syncErrorCode(e);
     if (code === "internal_error") logInternal(d.id, e);
     try {
       await unstored(cfg, d.id, cf, made, await save(env, d.id, cf, made, { last_error: code }));
@@ -91,14 +107,42 @@ async function unstored(cfg: CfConfig, domainId: string, cf: CfRow, made: Made, 
   }
 }
 
-async function syncOutside(cfg: CfConfig, host: string, made: Made): Promise<Snap> {
+type OutsideFacts = { hostname: (HostnameStatus & { id: string }) | null; routes: Route[]; route: Route | null };
+
+/** Reads only: the custom hostname and the SaaS zone's routes for `host`. */
+async function inspectOutside(cfg: CfConfig, zoneId: string, host: string): Promise<OutsideFacts> {
+  const [hostname, routes] = await Promise.all([findHostname(cfg, host), listRoutes(cfg, zoneId)]);
+  return { hostname, routes, route: routes.find((r) => r.pattern === `${host}/*`) ?? null };
+}
+
+/**
+ * The refusal an outside sync of `host` would throw, or null. Reads only (the hostname count is one GET, only when a create is due).
+ * The SaaS zone may serve other things: linkwarren never routes a host another Worker serves, never takes over a custom hostname
+ * it does not hold, and never creates a billed hostname past the free quota.
+ */
+async function outsideRefusal(cfg: CfConfig, host: string, f: OutsideFacts, heldHostnameId: string | null): Promise<AttachError["code"] | null> {
+  const covers = f.routes.filter((r) => routeCovers(r.pattern, host));
+  // Our own exact route wins over a broader foreign one; without it, any foreign (or script-less) covering route refuses.
+  if (f.route ? f.route.script !== cfg.workerName : covers.some((r) => r.script !== cfg.workerName)) return "route_in_use";
+  if (f.hostname && f.hostname.id !== heldHostnameId && !covers.some((r) => r.script === cfg.workerName)) return "hostname_in_use";
+  if (!f.hostname && (await hostnameCount(cfg)) >= FREE_HOSTNAMES) return "hostname_limit";
+  return null;
+}
+
+/** Read-only twin of an outside sync for a new domain: the AttachError code syncDomain would throw, or null. Never writes. */
+export async function outsideCheck(cfg: CfConfig, host: string): Promise<AttachError["code"] | null> {
   if (!cfg.saasZoneId || !cfg.cnameTarget) throw notConfigured();
-  const pattern = `${host}/*`;
-  let h = await findHostname(cfg, host);
-  const route = await findRoute(cfg, cfg.saasZoneId, pattern);
-  if (route && route.script !== cfg.workerName) throw new AttachError("route_in_use");
+  return outsideRefusal(cfg, host, await inspectOutside(cfg, cfg.saasZoneId, host), null);
+}
+
+async function syncOutside(cfg: CfConfig, host: string, cf: CfRow, made: Made): Promise<Snap> {
+  if (!cfg.saasZoneId || !cfg.cnameTarget) throw notConfigured();
+  const f = await inspectOutside(cfg, cfg.saasZoneId, host);
+  const code = await outsideRefusal(cfg, host, f, cf.hostnameId);
+  if (code) throw new AttachError(code);
+  let h = f.hostname;
   if (!h) made.hostname_id = (h = await createHostname(cfg, host)).id;
-  if (!route) made.route_id = (await createRoute(cfg, cfg.saasZoneId, pattern)).id;
+  if (!f.route) made.route_id = (await createRoute(cfg, cfg.saasZoneId, `${host}/*`)).id;
   return { dns: await dnsPointsAt(host, cfg.cnameTarget), ownership: ownershipOf(h.status), certificate: certificateOf(h.sslStatus), errors: h.errors };
 }
 

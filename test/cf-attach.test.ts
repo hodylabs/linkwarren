@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CfError, type CfConfig } from "../src/cf/api";
-import { AttachError, classify, detachDomain, isVerified, routeCovers, syncDomain } from "../src/cf/attach";
+import { AttachError, classify, detachDomain, isVerified, routeCovers, syncDomain, syncErrorCode } from "../src/cf/attach";
 import { rowToCf, rowToDomain, type CfRow } from "../src/types";
 import type { Env } from "../src/env";
 import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare } from "./helpers/cf";
@@ -130,7 +130,7 @@ describe("syncDomain outside", () => {
     fake.failNext(/custom_hostnames/, 500, { success: false, errors: [{ code: 1, message: `echo ${cfg.token}` }], result: null });
     await expect(syncDomain(e, cfg, d, cf, { attach: true })).rejects.toBeInstanceOf(CfError);
     const after = (await load(d.id)).cf;
-    expect(after.lastError).toBe("cloudflare_500");
+    expect(after.lastError).toBe("cloudflare_error");
     expect(JSON.stringify(after)).not.toContain("SECRET");
     const r = await syncDomain(e, cfg, d, after, { attach: true });
     expect(r.lastError).toBeNull();
@@ -159,7 +159,7 @@ describe("syncDomain outside", () => {
     await expect(syncDomain(e, cfg, d, (await load(d.id)).cf, { attach: true })).rejects.toMatchObject({ status: 500 });
     const stored = (await load(d.id)).cf;
     expect(stored.hostnameId).toBe(fake.state.hostnames[0]!.id);
-    expect(stored.lastError).toBe("cloudflare_500");
+    expect(stored.lastError).toBe("cloudflare_error");
   });
 
   it("re-creates a stored route that vanished and stores the new id", async () => {
@@ -452,7 +452,7 @@ describe("isVerified", () => {
   const base = rowToCf({ kind: "outside", errors: "[]", dns: "found", ownership: "verified", certificate: "issued" });
   it("outside needs dns found, ownership verified, certificate issued, no error", () => {
     expect(isVerified(base)).toBe(true);
-    for (const p of [{ dns: "unknown" }, { dns: "wrong_target" }, { ownership: "pending" }, { certificate: "pending" }, { certificate: "not_covered" }, { lastError: "cloudflare_500" }] as Partial<CfRow>[])
+    for (const p of [{ dns: "unknown" }, { dns: "wrong_target" }, { ownership: "pending" }, { certificate: "pending" }, { certificate: "not_covered" }, { lastError: "cloudflare_error" }] as Partial<CfRow>[])
       expect(isVerified({ ...base, ...p })).toBe(false);
   });
   it("account needs an attach (ownership verified, dns found, no error); not_covered is allowed", () => {
@@ -462,4 +462,16 @@ describe("isVerified", () => {
     expect(isVerified({ ...a, lastError: "route_in_use" })).toBe(false);
   });
   it("manual keeps S1 behaviour", () => expect(isVerified({ ...base, kind: "manual", dns: "unknown", ownership: "unknown" })).toBe(true));
+});
+
+describe("syncErrorCode", () => {
+  it("maps every failure to the small stable set", () => {
+    expect([
+      new AttachError("route_in_use"), new AttachError("hostname_limit"), new CfError(0, [-1]), new CfError(0), new CfError(401), new CfError(403),
+      new CfError(500), new CfError(404), new CfError(200), new TypeError("x"), "weird",
+    ].map(syncErrorCode)).toEqual([
+      "route_in_use", "hostname_limit", "outside_not_configured", "cloudflare_unreachable", "cloudflare_forbidden", "cloudflare_forbidden",
+      "cloudflare_error", "cloudflare_error", "cloudflare_error", "internal_error", "internal_error",
+    ]);
+  });
 });
