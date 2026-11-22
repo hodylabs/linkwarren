@@ -111,7 +111,7 @@ describe("aeReport", () => {
     expect(f.spy).not.toHaveBeenCalled();
   });
 
-  it("sends six queries with every value bound, none in the SQL text; links replace the domain clause", async () => {
+  it("sends six queries with every value bound, none in the SQL text; links keep the domain clause", async () => {
     const f = fake();
     await aeReport(env, from, cur, to, "day", { domainIds: ["d1", "d2"], linkIds: ["l1"] });
     expect(f.sent).toHaveLength(6);
@@ -122,12 +122,13 @@ describe("aeReport", () => {
       expect(q).toContain("accountTag = $account");
       expect(q).toMatch(/timestamp >= \$(from|cur) AND timestamp < \$to/);
       expect(q).toContain("(blob2 = $l0)");
-      expect(q).not.toContain("blob1 = $d");
+      // A moved link's older points keep their domain: the domain clause stays next to the link clause.
+      expect(q).toContain("(blob1 = $d0 OR blob1 = $d1)");
       expect(q).toMatch(/LIMIT \d+$/);
       // No literals at all: no quotes, only the SQL alphabet, and no input value outside a $param name.
       expect(q).toMatch(/^[A-Za-z0-9_ ,.()$=<>!*"]+$/);
       for (const v of ["d1", "d2", "l1", "acc1", "2026"]) expect(q).not.toMatch(new RegExp(`(?<![$\\w])${v}(?!\\w)`));
-      expect(s.body.params).toMatchObject({ account: "acc1", from: "2026-11-18T00:00:00Z", cur: "2026-11-19T00:00:00Z", to: "2026-11-20T00:00:00Z", l0: "l1" });
+      expect(s.body.params).toMatchObject({ account: "acc1", from: "2026-11-18T00:00:00Z", cur: "2026-11-19T00:00:00Z", to: "2026-11-20T00:00:00Z", l0: "l1", d0: "d1", d1: "d2" });
     }
     // Series and visitors span the whole read; links and dims only the current window.
     expect(f.sent.filter((s) => s.body.query.includes("$from"))).toHaveLength(2);
@@ -144,7 +145,7 @@ describe("aeReport", () => {
     const f = fake();
     await aeReport({ ...env, AE_DATASET: "other_ds" }, from, cur, to, "hour", all);
     const groups = f.sent.map((s) => s.body.query.replace(/ LIMIT \d+$/, "").split(" GROUP BY ")[1]).sort();
-    expect(groups).toEqual(["blob2", "blob4", "blob5", "blob6", "toStartOfHour(timestamp)", "toStartOfHour(timestamp)"]);
+    expect(groups).toEqual(["blob2, blob1", "blob4", "blob5", "blob6", "toStartOfHour(timestamp)", "toStartOfHour(timestamp)"]);
     for (const s of f.sent) {
       expect(s.body.query).toContain(`FROM events.analyticsEngine."other_ds"`);
       expect(s.body.query).not.toMatch(/blob[12] = /);
@@ -209,21 +210,30 @@ describe("aeReport", () => {
 describe("aeDay", () => {
   it("one UTC day, grouped to exactly the rollup rows", async () => {
     const f = fake((q) => {
-      if (q.includes("COUNT(DISTINCT blob9)")) return [{ linkId: "l1", n: 2 }];
-      if (q.includes("blob4 AS value")) return [{ linkId: "l1", domainId: "d1", value: "CA", n: 4 }];
-      if (q.includes("argMax(blob3")) return [{ linkId: "l1", domainId: "d1", slug: "spring", qr: 3, typed: 2, bots: 4 }, { linkId: "l2", domainId: "d1", slug: "x", qr: 0, typed: 0, bots: 1 }];
+      // l1 moved from d1 to d2 that day: each domain keeps its own clicks, visitors and dim rows.
+      if (q.includes("COUNT(DISTINCT blob9)")) return [{ linkId: "l1", domainId: "d1", n: 2 }, { linkId: "l1", domainId: "d2", n: 1 }];
+      if (q.includes("blob4 AS value")) return [{ linkId: "l1", domainId: "d1", value: "CA", n: 4 }, { linkId: "l1", domainId: "d2", value: "CA", n: 1 }];
+      if (q.includes("argMax(blob3")) return [
+        { linkId: "l1", domainId: "d1", slug: "spring", qr: 3, typed: 2, bots: 4 }, { linkId: "l1", domainId: "d2", slug: "spring", qr: 1, typed: 0, bots: 0 },
+        { linkId: "l2", domainId: "d1", slug: "x", qr: 0, typed: 0, bots: 1 },
+      ];
       return [];
     });
     const r = await aeDay(env, "2026-11-18");
     expect(f.sent).toHaveLength(5);
     for (const s of f.sent) expect(s.body.params).toMatchObject({ from: "2026-11-18T00:00:00Z", to: "2026-11-19T00:00:00Z" });
     const groups = f.sent.map((s) => s.body.query.replace(/ LIMIT \d+$/, "").split(" GROUP BY ")[1]).sort();
-    expect(groups).toEqual(["blob2", "blob2", "blob2, blob4", "blob2, blob5", "blob2, blob6"]);
+    expect(groups).toEqual(["blob2, blob1", "blob2, blob1", "blob2, blob1, blob4", "blob2, blob1, blob5", "blob2, blob1, blob6"]);
+    for (const s of f.sent) expect(s.body.query).not.toContain("argMax(blob1");
     expect(r.tot).toEqual([
       { linkId: "l1", domainId: "d1", slug: "spring", qr: 3, typed: 2, bots: 4, visitors: 2 },
+      { linkId: "l1", domainId: "d2", slug: "spring", qr: 1, typed: 0, bots: 0, visitors: 1 },
       { linkId: "l2", domainId: "d1", slug: "x", qr: 0, typed: 0, bots: 1, visitors: 0 },
     ]);
-    expect(r.dims).toEqual([{ linkId: "l1", domainId: "d1", dim: "country", value: "CA", clicks: 4 }]);
+    expect(r.dims).toEqual([
+      { linkId: "l1", domainId: "d1", dim: "country", value: "CA", clicks: 4 },
+      { linkId: "l1", domainId: "d2", dim: "country", value: "CA", clicks: 1 },
+    ]);
   });
 });
 
@@ -262,6 +272,35 @@ describe("statement size limit", () => {
     const seen = f.sent.flatMap((s) => Object.entries(s.body.params).filter(([k]) => /^d\d+$/.test(k)).map(([, v]) => v));
     expect(new Set(seen).size).toBe(1000);
     expect(f.sent.length % 6).toBe(0);
+  });
+
+  it("both lists at scale: every statement under the budget, every (link, domain) pair sent exactly once; too many is refused unsent", async () => {
+    const huge = Array.from({ length: 1000 }, (_, i) => `dom${String(i).padStart(4, "0")}`);
+    const f = fake();
+    await expect(aeReport(env, from, cur, to, "day", { domainIds: huge, linkIds: ids })).rejects.toMatchObject({ message: "ae_scope_too_big" });
+    expect(f.spy).not.toHaveBeenCalled();
+    const doms = huge.slice(0, 300);
+    await aeReport(env, from, cur, to, "day", { domainIds: doms, linkIds: ids });
+    expect(f.sent.length).toBeLessThanOrEqual(36);
+    for (const s of f.sent) expect(s.body.query.length).toBeLessThan(MAX_SQL);
+    const pairs = new Set<string>();
+    for (const s of f.sent.filter((x) => x.body.query.includes("AS bucket, countIf"))) {
+      const d = Object.entries(s.body.params).filter(([k]) => /^d\d+$/.test(k)).map(([, v]) => v);
+      for (const l of linkOf(s.body.params)) for (const x of d) {
+        expect(pairs.has(`${l}|${x}`)).toBe(false);
+        pairs.add(`${l}|${x}`);
+      }
+    }
+    expect(pairs.size).toBe(500 * 300);
+  });
+
+  it("aeLinkDays keeps a domain clause when given one, none when null", async () => {
+    const f = fake();
+    await aeLinkDays(env, from, to, ["a"], ["d1"]);
+    await aeLinkDays(env, from, to, ["a"]);
+    expect(f.sent.map((s) => s.body.query.includes("(blob1 = $d0)"))).toEqual([true, false]);
+    expect(await aeLinkDays(env, from, to, ["a"], [])).toEqual([]);
+    expect(f.sent).toHaveLength(2);
   });
 
   it("aeLinkDays chunks the same way and concatenates", async () => {

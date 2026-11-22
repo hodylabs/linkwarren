@@ -56,6 +56,9 @@ export const linkStats = async (c: Context<E>) => {
   const usable = new Set((await env.DB.prepare(u.sql).bind(...u.binds).all<{ id: string }>()).results.map((d) => d.id));
   if (found.some((l) => !usable.has(l.domain_id))) return c.json({ error: "forbidden" }, 403);
   const linkIds = found.map((l) => l.id);
+  // A moved link keeps older points under the domain of the moment: only points on a usable domain count here
+  // (null: every domain is usable, as for an unrestricted owner, so no filter and no extra AE chunks).
+  const usableIds = c.var.user.role === "owner" && !c.var.grant.domains ? null : [...usable];
 
   const nowSec = Math.floor(Date.now() / 1000);
   const today = utcDay(nowSec);
@@ -78,14 +81,12 @@ export const linkStats = async (c: Context<E>) => {
   if (w && w >= days[0]) {
     const last = w < today ? w : today;
     const dl = JSON.stringify(days.filter((d) => d <= last));
-    const b = JSON.stringify(linkIds);
-    // Point lookups, not a day range (a range scans every clicked link of the window). Measured with EXPLAIN QUERY PLAN:
-    // SEARCH clicks_daily USING INDEX sqlite_autoindex_clicks_daily_1 (day=? AND link_id=?);
-    // SEARCH clicks_daily_dim USING INDEX sqlite_autoindex_clicks_daily_dim_1 (day=? AND link_id=? AND dim=?).
-    // Only the country dim is read (topCountry); device and referrer rows are never touched.
+    const b = JSON.stringify(linkIds), u = usableIds && JSON.stringify(usableIds);
+    // Point lookups on the (day, link_id, domain_id) primary key, not a day range (a range scans every clicked link of the
+    // window). Only the country dim is read (topCountry); device and referrer rows are never touched.
     const [t, d] = await env.DB.batch([
-      env.DB.prepare("SELECT day, link_id AS id, qr, typed FROM clicks_daily WHERE day IN (SELECT value FROM json_each(?)) AND link_id IN (SELECT value FROM json_each(?))").bind(dl, b),
-      env.DB.prepare("SELECT link_id AS id, value, SUM(clicks) AS n FROM clicks_daily_dim WHERE dim = 'country' AND day IN (SELECT value FROM json_each(?)) AND link_id IN (SELECT value FROM json_each(?)) GROUP BY link_id, value").bind(dl, b),
+      env.DB.prepare("SELECT day, link_id AS id, qr, typed FROM clicks_daily WHERE day IN (SELECT value FROM json_each(?1)) AND link_id IN (SELECT value FROM json_each(?2)) AND (?3 IS NULL OR domain_id IN (SELECT value FROM json_each(?3)))").bind(dl, b, u),
+      env.DB.prepare("SELECT link_id AS id, value, SUM(clicks) AS n FROM clicks_daily_dim WHERE dim = 'country' AND day IN (SELECT value FROM json_each(?1)) AND link_id IN (SELECT value FROM json_each(?2)) AND (?3 IS NULL OR domain_id IN (SELECT value FROM json_each(?3))) GROUP BY link_id, value").bind(dl, b, u),
     ]);
     for (const r of t.results as { day: string; id: string; qr: number; typed: number }[]) add(r.id, r.day, r.qr, r.typed);
     for (const r of d.results as { id: string; value: string; n: number }[]) addCountry(r.id, r.value, r.n);
@@ -96,7 +97,7 @@ export const linkStats = async (c: Context<E>) => {
   if (aeFrom < end && linkIds.length && live === "ok") {
     try {
       // One AE query per id chunk (clicks per link and day). topCountry comes from D1 days only; the AE days add no country.
-      for (const r of await aeLinkDays(env, aeFrom, end, linkIds)) add(r.linkId, r.bucket, r.qr, r.typed);
+      for (const r of await aeLinkDays(env, aeFrom, end, linkIds, usableIds)) add(r.linkId, r.bucket, r.qr, r.typed);
     } catch (e) {
       live = "unavailable";
       console.error("analytics links live read failed", e instanceof Error ? e.name : "unknown"); // degrade to D1 only

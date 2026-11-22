@@ -209,6 +209,12 @@ Owners of an instance deployed before this version see the setup wizard once, on
 
 Write costs: the index adds one D1 row written per link created and per change of a link's creator. Removing a person moves all their links to the person you choose in one batch, about 3 rows written per link, so removing someone who created tens of thousands of links can use a large share of the Free plan's 100,000 rows written per day (or fail when the day's budget is gone, leaving nothing changed). Remove such a person early in the UTC day.
 
+### Upgrading to per-domain daily totals (migration 0010)
+
+This version adds migration `0010_clicks_per_domain.sql`. It rebuilds `clicks_daily` and `clicks_daily_dim` so a link moved to another domain during a day keeps that day's clicks under each domain they happened on, instead of all under its newest domain. **Apply it before you deploy the Worker** (same commands as above). Until it is applied, the new rollup fails for a day on which a link was clicked on two domains and retries that day on every run, so nothing is lost as long as the migration lands within Analytics Engine's 90-day retention.
+
+Write costs: the rebuild copies every existing row of both tables once, so an instance with years of totals can use a large share of the Free plan's 100,000 rows written per day. Apply it early in the UTC day. Days already rolled up before the upgrade keep their old totals (all under the newest domain of that day).
+
 ## Password-protected links
 
 A link with a password answers its short URL with a small form page instead of a redirect. The form posts back to the same URL (query included); a right password answers `303` to the destination (routes and query pass-through apply, the QR marker is stripped), with `Cache-Control: private, no-store` and `Referrer-Policy: no-referrer`. A wrong one shows the form again with a generic message (`401`). There is no unlock cookie: every visit asks again, and short hosts never set cookies. The unlock POST must carry `Origin: https://<short host>` and a form body of at most 2048 bytes (enough for 128 characters of any script), else `403`, `415`, `411` or `413`. Showing the form records no click; a right unlock records one.

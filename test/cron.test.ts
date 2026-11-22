@@ -10,6 +10,16 @@ const NOW2 = Date.parse("2026-11-21T12:00:00Z") / 1000; // rolls through 11-19
 const CUTOFF = NOW - 1096 * 86400;
 const ae: Env = { ...env, CLICKS: { writeDataPoint() {} } as unknown as AnalyticsEngineDataset, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: "tok" };
 
+describe("rollup keys", () => {
+  it("one day may hold a link twice, once per domain it was clicked on", async () => {
+    await env.DB.prepare("DELETE FROM clicks_daily").run();
+    await env.DB.prepare("INSERT INTO clicks_daily (day,link_id,domain_id,slug,qr,typed) VALUES ('2026-11-18','l1','d1','s',1,0),('2026-11-18','l1','d2','s',0,1)").run();
+    await env.DB.prepare("INSERT INTO clicks_daily_dim (day,link_id,domain_id,dim,value,clicks) VALUES ('2026-11-18','l1','d1','country','CA',1),('2026-11-18','l1','d2','country','CA',1)").run();
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM clicks_daily WHERE link_id = 'l1'").first<{ n: number }>())!.n).toBe(2);
+    await env.DB.batch(["clicks_daily", "clicks_daily_dim"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  });
+});
+
 /** Canned AE rows (aeDay shapes, one query per day): 11-18 has link l1 (3 qr, 2 typed, 4 bots, 2 visitors), 11-19 link l2 (1 typed). */
 function reply(q: string, from: string): unknown[] {
   const day = from.slice(0, 10);
@@ -19,7 +29,7 @@ function reply(q: string, from: string): unknown[] {
     return [];
   }
   if (day !== "2026-11-18") return [];
-  if (q.includes("COUNT(DISTINCT")) return [{ linkId: "l1", n: 2 }];
+  if (q.includes("COUNT(DISTINCT")) return [{ linkId: "l1", domainId: "d1", n: 2 }];
   if (q.includes("blob4 AS value"))
     return [
       { linkId: "l1", domainId: "d1", value: "CA", n: 4 },

@@ -102,14 +102,21 @@ function idClause(col: string, prefix: string, ids: string[] | null, params: Par
 export const MAX_SQL = 8192;
 const SQL_OVERHEAD = 1100; // select, group by, limit and fixed where terms of the longest statement
 
+const BUDGET = MAX_SQL - SQL_OVERHEAD;
+/** The length an id clause adds for `n` ids (` OR col = $p<i>` per id). */
+const clauseLen = (col: string, prefix: string, n: number) => {
+  let len = 0;
+  for (let i = 0; i < n; i++) len += ` OR ${col} = $${prefix}${i}`.length;
+  return len;
+};
+
 /**
- * Split ids so each statement stays under MAX_SQL. Chunks partition the ids, so rows from different chunks never
+ * Split ids so each clause stays under `budget` bytes. Chunks partition the ids, so rows from different chunks never
  * overlap and sum correctly. R5's 500 link ids (17-18 bytes per term) make 2 chunks.
  */
-function chunkIds(all: string[], col: string, prefix: string): string[][] {
+function chunkIds(all: string[], col: string, prefix: string, budget = BUDGET): string[][] {
   const ids = [...new Set(all)]; // a repeated id would be counted once per copy
   ids.forEach(sqlId); // every id checked before any chunk is sent: a bad one never leaves a partial send
-  const budget = MAX_SQL - SQL_OVERHEAD;
   const chunks: string[][] = [];
   let cur: string[] = [];
   let len = 0;
@@ -123,16 +130,29 @@ function chunkIds(all: string[], col: string, prefix: string): string[][] {
   return chunks;
 }
 
+type Chunk = { links: string[] | null; domains: string[] | null };
+/** Both id clauses of one chunk, bound into `p`. */
+const chunkClause = (c: Chunk, p: Params) => idClause("blob2", "l", c.links, p) + idClause("blob1", "d", c.domains, p);
+
 /**
- * The id clauses of a scope, one per chunk. Link ids from resolveScope are already limited to the caller's usable
- * domains in D1, so when links are named the domain clause is left out (it would only repeat that limit) and only
- * one of the two lists is ever chunked.
+ * The id chunks of a scope. A moved link keeps its older points under the domain of the moment, so when links are named
+ * the domain clause stays too: a usable link never brings in clicks from a domain the caller cannot use. With both lists,
+ * the chunks are their cross product (each list partitioned), sized so one statement holds a link chunk and a domain chunk.
  */
-function scopeChunks(scope: Scope): { col: string; prefix: string; ids: string[] | null }[] {
-  if (scope.linkIds) return chunkIds(scope.linkIds, "blob2", "l").map((ids) => ({ col: "blob2", prefix: "l", ids }));
-  if (scope.domainIds) return chunkIds(scope.domainIds, "blob1", "d").map((ids) => ({ col: "blob1", prefix: "d", ids }));
-  return [{ col: "", prefix: "", ids: null }];
+function scopeChunks(scope: Scope): Chunk[] {
+  const { linkIds, domainIds } = scope;
+  if (!linkIds) return domainIds ? chunkIds(domainIds, "blob1", "d").map((domains) => ({ links: null, domains })) : [{ links: null, domains: null }];
+  if (!domainIds) return chunkIds(linkIds, "blob2", "l").map((links) => ({ links, domains: null }));
+  // Usually the domain clause fits in one piece and the links get the rest of the budget.
+  const whole = clauseLen("blob1", "d", new Set(domainIds).size);
+  const dBudget = whole <= BUDGET / 2 ? whole : BUDGET / 2;
+  const ds = chunkIds(domainIds, "blob1", "d", dBudget), ls = chunkIds(linkIds, "blob2", "l", BUDGET - dBudget);
+  // shortcut: past MAX_CHUNKS (6 queries each, under the 50 subrequests of Workers Free) the live part is refused as unavailable;
+  // only a search by someone with hundreds of usable domains gets here.
+  if (ds.length * ls.length > MAX_CHUNKS) throw new AeError("scope_too_big");
+  return ls.flatMap((links) => ds.map((domains) => ({ links, domains })));
 }
+const MAX_CHUNKS = 6;
 
 const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
 
@@ -172,13 +192,14 @@ export async function aeReport(env: Env, from: Date, cur: Date, to: Date, unit: 
   const runChunk = (c: ReturnType<typeof scopeChunks>[number]) => {
     const p = baseParams(env, from, to);
     p.cur = iso(curFrom);
-    const where = (start: "from" | "cur") => WINDOW.replace("$from", () => `$${start}`) + idClause(c.col, c.prefix, c.ids, p);
+    const where = (start: "from" | "cur") => WINDOW.replace("$from", () => `$${start}`) + chunkClause(c, p);
     const q = (select: string, start: "from" | "cur", extra: string, group: string) => aeQuery(env, `SELECT ${select} FROM ${ds(env)} ${where(start)}${extra} GROUP BY ${group}`, p);
     const now = curFrom < to;
     return Promise.all([
       q(`${b} AS bucket, ${COUNTS}`, "from", "", b),
       q(`${b} AS bucket, ${VISITORS}`, "from", VISITOR, b),
-      now ? q("blob2 AS linkId, argMax(blob1, timestamp) AS domainId, argMax(blob3, timestamp) AS slug, COUNT(*) AS clicks", "cur", HUMAN, "blob2") : [],
+      // Per link and domain: a link moved inside the window keeps each domain's clicks apart.
+      now ? q("blob2 AS linkId, blob1 AS domainId, argMax(blob3, timestamp) AS slug, COUNT(*) AS clicks", "cur", HUMAN, "blob2, blob1") : [],
       ...DIMS.map(([, col, extra]) => (now ? q(`${col} AS value, COUNT(*) AS n`, "cur", HUMAN + extra, col) : [])),
     ]);
   };
@@ -207,38 +228,43 @@ export async function aeReport(env: Env, from: Date, cur: Date, to: Date, unit: 
 
 /**
  * One UTC day for the D1 rollup, grouped by the SQL API to exactly the clicks_daily and clicks_daily_dim rows
- * (one row per link; one per link and dim value). 5 queries; each answer at most ROW_CAP rows or AeError("truncated").
+ * (one row per link and domain; one per link, domain and dim value), so a link moved that day keeps each domain's clicks
+ * under that domain. 5 queries; each answer at most ROW_CAP rows or AeError("truncated").
  */
 export async function aeDay(env: Env, day: string): Promise<{ tot: RollTot[]; dims: RollDim[] }> {
   const from = new Date(`${day}T00:00:00Z`);
   const p = baseParams(env, from, new Date(from.getTime() + 86_400_000));
   const q = (select: string, extra: string, group: string) => aeQuery(env, `SELECT ${select} FROM ${ds(env)} ${WINDOW}${extra} GROUP BY ${group}`, p);
-  // argMax: the newest domain and slug of the day, so every link is exactly one row (the clicks_daily key).
-  const link = "blob2 AS linkId, argMax(blob1, timestamp) AS domainId";
+  // argMax: the newest slug of the day, so every (link, domain) is exactly one row (the clicks_daily key).
+  const link = "blob2 AS linkId, blob1 AS domainId";
   const [tot, vis, ...dimRows] = await Promise.all([
-    q(`${link}, argMax(blob3, timestamp) AS slug, ${COUNTS}`, "", "blob2"),
-    q(`blob2 AS linkId, ${VISITORS}`, VISITOR, "blob2"),
-    ...DIMS.map(([, col, extra]) => q(`${link}, ${col} AS value, COUNT(*) AS n`, HUMAN + extra, `blob2, ${col}`)),
+    q(`${link}, argMax(blob3, timestamp) AS slug, ${COUNTS}`, "", "blob2, blob1"),
+    q(`${link}, ${VISITORS}`, VISITOR, "blob2, blob1"),
+    ...DIMS.map(([, col, extra]) => q(`${link}, ${col} AS value, COUNT(*) AS n`, HUMAN + extra, `blob2, blob1, ${col}`)),
   ]);
-  const visitors = new Map(vis.map((r) => [str(r.linkId), num(r.n)]));
+  const key = (r: Record<string, unknown>) => `${str(r.linkId)}|${str(r.domainId)}`;
+  const visitors = new Map(vis.map((r) => [key(r), num(r.n)]));
   return {
     tot: tot.map((r) => ({
       linkId: str(r.linkId), domainId: str(r.domainId), slug: str(r.slug),
-      qr: num(r.qr), typed: num(r.typed), bots: num(r.bots), visitors: visitors.get(str(r.linkId)) ?? 0,
+      qr: num(r.qr), typed: num(r.typed), bots: num(r.bots), visitors: visitors.get(key(r)) ?? 0,
     })),
     dims: dimRows.flatMap((rows, i) => rows.map((r) => ({ linkId: str(r.linkId), domainId: str(r.domainId), dim: DIMS[i][0], value: str(r.value), clicks: num(r.n) }))),
   };
 }
 
-/** Human clicks per link and UTC day for the Links sparkline: one query per id chunk (see chunkIds), ids validated and bound. */
-export async function aeLinkDays(env: Env, from: Date, to: Date, linkIds: string[]): Promise<{ bucket: string; linkId: string; qr: number; typed: number }[]> {
-  if (linkIds.length === 0) return [];
+/**
+ * Human clicks per link and UTC day for the Links sparkline: one query per id chunk (see scopeChunks), ids validated and
+ * bound. `domainIds` (null: any) keeps only points recorded on a domain the caller may use.
+ */
+export async function aeLinkDays(env: Env, from: Date, to: Date, linkIds: string[], domainIds: string[] | null = null): Promise<{ bucket: string; linkId: string; qr: number; typed: number }[]> {
+  if (linkIds.length === 0 || domainIds?.length === 0) return [];
   const b = "toStartOfDay(timestamp)";
   const rows = (
     await Promise.all(
-      chunkIds(linkIds, "blob2", "l").map((ids) => {
+      scopeChunks({ linkIds, domainIds }).map((c) => {
         const p = baseParams(env, from, to);
-        const where = WINDOW + HUMAN + idClause("blob2", "l", ids, p);
+        const where = WINDOW + HUMAN + chunkClause(c, p);
         return aeQuery(env, `SELECT ${b} AS bucket, blob2 AS linkId, ${COUNTS} FROM ${ds(env)} ${where} GROUP BY ${b}, blob2`, p);
       }),
     )

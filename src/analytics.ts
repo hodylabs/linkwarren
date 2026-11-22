@@ -156,11 +156,13 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
     d.qr += r.qr; d.typed += r.typed; d.bots += r.bots; d.visitors += r.visitors;
     days.set(r.bucket, d);
   };
+  // Per link and domain: a moved link's clicks stay with the domain they happened on until buildReport ranks the links.
   const addLink = (r: LinkRow) => {
-    const l = links.get(r.linkId) ?? { linkId: r.linkId, domainId: r.domainId, slug: "", clicks: 0 };
+    const k = `${r.linkId}|${r.domainId}`;
+    const l = links.get(k) ?? { linkId: r.linkId, domainId: r.domainId, slug: "", clicks: 0 };
     l.clicks += r.clicks;
     if (r.slug) l.slug = r.slug; // AE rows come after D1 rows, so the newest slug wins
-    links.set(r.linkId, l);
+    links.set(k, l);
   };
   const addDim = (r: DimCount) => {
     const k = `${r.dim}|${r.value}`;
@@ -232,9 +234,11 @@ export function buildReport(range: Range, rows: ReportRows, hosts: Map<string, s
   const domains = new Map<string, AnalyticsReport["domains"][number]>();
   for (const r of rows.links) {
     const host = hosts.get(r.domainId) ?? "";
+    // The ranking is per link; its address is the newest row's (D1 rows come before AE rows).
+    // shortcut: two AE rows of a link moved inside the live window arrive in no set order; add a last-seen time if that shows.
     const l = links.get(r.linkId) ?? { linkId: r.linkId, domainId: r.domainId, host, slug: "", clicks: 0 };
     l.clicks += r.clicks;
-    if (r.slug) l.slug = r.slug;
+    if (r.slug) Object.assign(l, { slug: r.slug, domainId: r.domainId, host });
     links.set(r.linkId, l);
     const d = domains.get(r.domainId) ?? { domainId: r.domainId, host, clicks: 0 };
     d.clicks += r.clicks;

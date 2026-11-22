@@ -118,6 +118,24 @@ describe("GET /api/analytics/links", () => {
     expect(r.items.find((i: any) => i.linkId === "lS").topCountry).toBeNull();
     expect(r.live).toBe("off");
   });
+  it("a link moved onto a usable domain shows only the clicks recorded on domains the caller may use", async () => {
+    await run("UPDATE links SET domain_id = 'dM' WHERE id = 'lB'"); // moved from b's private domain to main
+    await roll(dayAt(-4), "lB", "dM", 0, 1);
+    await run("INSERT INTO clicks_daily_dim (day,link_id,domain_id,dim,value,clicks) VALUES (?, 'lB','dB','country','FR',9)", dayAt(-3));
+    const m = (await json("/links?ids=lB", "a@example.com")).items[0];
+    expect(m).toMatchObject({ clicks: 1, days: [0, 0, 1, 0, 0, 0, 0], topCountry: null });
+    expect((await json("/links?ids=lB")).items[0]).toMatchObject({ clicks: 4, topCountry: "FR" }); // the owner may use both
+  });
+  it("the live sparkline read is limited to the member's usable domains", async () => {
+    fetchSpy.mockImplementation(async () => Response.json({ data: [] }));
+    await withAe(async () => {
+      await json("/links?ids=lM", "a@example.com");
+      await json("/links?ids=lM");
+    });
+    const [member, owner] = fetchSpy.mock.calls.map((c: unknown[]) => JSON.parse(String((c[1] as RequestInit).body)));
+    expect(Object.entries(member.params).filter(([k]) => /^d\d+$/.test(k)).map(([, v]) => v).sort()).toEqual(["dM", "dS"]);
+    expect(owner.query).not.toContain("blob1 = $d");
+  });
   it("an id on a domain the caller cannot use is 403; unknown ids are dropped", async () => {
     expect((await get("/links?ids=lM,lB", "a@example.com")).status).toBe(403);
     expect((await json("/links?ids=lM,ghost", "a@example.com")).items.map((i: any) => i.linkId)).toEqual(["lM"]);

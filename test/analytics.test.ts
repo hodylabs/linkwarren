@@ -163,6 +163,13 @@ describe("loadRows (Review Focus 4)", () => {
     expect(bodies).toHaveLength(6);
     expect(bodies.every((b) => b.params.from === "2026-11-19T00:00:00Z" && b.params.cur === "2026-11-19T00:00:00Z")).toBe(true);
   });
+  it("a link that moved between the rolled days and the live ones keeps each domain's clicks apart", async () => {
+    await seedD1();
+    await run("INSERT INTO analytics_state (k, v) VALUES ('rolled_through', '2026-11-18')");
+    stubAe(aeRows, 200, [{ linkId: "l1", domainId: "d2", slug: "spring", clicks: 7 }]);
+    const r = await loadRows(ae, r1820, all, NOW);
+    expect(r.links).toEqual([{ linkId: "l1", domainId: "d1", slug: "spring", clicks: 5 }, { linkId: "l1", domainId: "d2", slug: "spring", clicks: 7 }]);
+  });
   it("no watermark: everything in range comes from AE", async () => {
     await seedD1();
     const bodies = stubAe(aeRows);
@@ -329,6 +336,11 @@ describe("buildReport", () => {
     const r = buildReport(range, noPrev, hosts, { truncated: false, visitors: false });
     expect([r.totals.visitors, r.totals.prevClicks]).toEqual([null, null]);
     expect(buildReport({ ...range, prev: null }, rows, hosts, { truncated: false, visitors: true }).totals.prevClicks).toBeNull();
+  });
+  it("a moved link ranks once with all its clicks, while the domain breakdown keeps each domain's share", () => {
+    const r = buildReport(range, { days: [], links: [link("l1", "d1", 3), link("l1", "d2", 5)], dims: [], live: "ok" }, hosts, { truncated: false, visitors: true });
+    expect(r.links).toEqual([{ linkId: "l1", domainId: "d2", host: "b.test", slug: "s-l1", clicks: 8 }]);
+    expect(r.domains).toEqual([{ domainId: "d2", host: "b.test", clicks: 5 }, { domainId: "d1", host: "a.test", clicks: 3 }]);
   });
   it("links keep the top 50", () => {
     const many = Array.from({ length: 60 }, (_, i) => link(`x${i}`, "d1", i + 1));
