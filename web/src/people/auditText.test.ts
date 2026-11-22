@@ -141,6 +141,11 @@ describe("describeAudit agents and keys", () => {
     expect(pd({ action: "user.disable", targetType: "user", targetId: "gone", detail: { email: "jo@example.com" } }).code).toBe("jo@example.com");
     expect(pd({ action: "user.role", targetType: "user", targetId: "gone", detail: { email: "jo@example.com", to: "owner" } }).code).toBe("jo@example.com");
   });
+  it("user.role with role names and ids (S8): owner, member and a custom role by name", () => {
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Member", to: "Owner", fromId: "member", toId: "owner", movedDomains: [] } }).suffix).toBe(" an owner");
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Helper", to: "Member", fromId: "hl", toId: "member", movedDomains: [] } }).suffix).toBe(" a member");
+    expect(pd({ action: "user.role", targetId: "ub", detail: { from: "Member", to: "Helper", fromId: "member", toId: "hl", movedDomains: [] } }).suffix).toBe(" Helper");
+  });
   it("user.role names the domains that moved to the actor on a demote", () => {
     expect(pd({ action: "user.role", targetId: "ub", detail: { from: "owner", to: "member", movedDomains: ["go.test", "s.test"] } }).suffix)
       .toBe(" a member and took over go.test, s.test");

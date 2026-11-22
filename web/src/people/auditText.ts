@@ -52,7 +52,10 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     case "user.revoke": return done("revoked the invite for", person);
     case "user.role": {
       const moved = Array.isArray(a.detail.movedDomains) ? a.detail.movedDomains.filter((h): h is string => typeof h === "string") : [];
-      return done("made", person, `${a.detail.to === "owner" ? " an owner" : " a member"}${moved.length ? ` and took over ${moved.join(", ")}` : ""}`);
+      // toId since roles (S8 R14); older rows carry only to = "owner" | "member".
+      const to = str(a.detail.toId) || str(a.detail.to);
+      const what = to === "owner" ? " an owner" : to === "member" || !str(a.detail.to) ? " a member" : ` ${str(a.detail.to)}`;
+      return done("made", person, `${what}${moved.length ? ` and took over ${moved.join(", ")}` : ""}`);
     }
     case "user.disable": return done("turned off access for", person);
     case "user.enable": return done("turned on access for", person);

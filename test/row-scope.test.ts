@@ -181,7 +181,7 @@ describe("user admin: role, disable and remove touch only the person", () => {
       const before = await qRows();
       const go = (method: string, path: string, body?: unknown) =>
         dash(path, { method, headers: { cookie: o.cookie, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
-      expect((await go("PATCH", `/api/users/${p.user.id}`, { role: "member" })).status).toBe(200);
+      expect((await go("PATCH", `/api/users/${p.user.id}`, { roleId: "member" })).status).toBe(200);
       expect((await go("PATCH", `/api/users/${p.user.id}`, { status: "disabled" })).status).toBe(200);
       expect((await go("PATCH", `/api/users/${p.user.id}`, { status: "active" })).status).toBe(200);
       expect((await go("DELETE", `/api/users/${p.user.id}`)).status).toBe(200);

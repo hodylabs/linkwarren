@@ -176,7 +176,7 @@ describe("Person sheet", () => {
     await user.click(within(dlg).getByRole("radio", { name: "Member" }));
     await screen.findByRole("dialog", { name: "Make uc@example.com a member" });
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/uc", body: { role: "member" } })]));
+    await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/uc", body: { roleId: "member" } })]));
   });
 
   it("demoting an owner with no main or shared domains says none move", async () => {
@@ -197,7 +197,7 @@ describe("Person sheet", () => {
     await screen.findByRole("dialog", { name: "Make ud@example.com an owner" });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(writes(api)).toHaveLength(1));
-    expect(writes(api)[0]).toMatchObject({ method: "PATCH", path: "/api/users/ud", body: { role: "owner" } });
+    expect(writes(api)[0]).toMatchObject({ method: "PATCH", path: "/api/users/ud", body: { roleId: "owner" } });
   });
 
   it("after Remove, focus goes to the row that took its place", async () => {
@@ -226,7 +226,7 @@ describe("Person sheet", () => {
     await user.click(within(dlg).getByRole("radio", { name: "Member" }));
     await screen.findByRole("dialog", { name: "Make ub@example.com a member" });
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/ub", body: { role: "member" } })]));
+    await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/ub", body: { roleId: "member" } })]));
     expect((await within(dlg).findByRole("alert")).textContent).toBe("linkwarren needs at least one active owner. Make someone else an owner first.");
   });
 

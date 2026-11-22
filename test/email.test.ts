@@ -95,19 +95,26 @@ describe("displayName", () => {
 });
 
 describe("inviteEmail", () => {
-  const o = { instanceName: "Acme", inviter: "Bo", dashboardHost: "links.example.com", role: "member" as const };
-  it("has the exact subject and text, no owner line for members", () => {
+  const o = { instanceName: "Acme", inviter: "Bo", dashboardHost: "links.example.com", roleName: "Member", isOwner: false };
+  it("has the exact subject and text, the role line and no owner line for members", () => {
     const m = inviteEmail(o);
     expect(m.subject).toBe("You're invited to Acme");
-    expect(m.text).toBe("Bo invited you to Acme, a link shortener.\nOpen https://links.example.com/join and sign in with the address this was sent to.\n");
+    expect(m.text).toBe("Bo invited you to Acme, a link shortener.\nOpen https://links.example.com/join and sign in with the address this was sent to.\nYou will join with the role Member.\n");
     expect(m.html).toContain('<a href="https://links.example.com/join">https://links.example.com/join</a>');
     expect(m.text).not.toMatch(/[?#]/);
     expect(m.html).not.toContain("owner");
   });
   it("adds the owner line only for owners", () => {
-    const m = inviteEmail({ ...o, role: "owner" });
+    const m = inviteEmail({ ...o, roleName: "Owner", isOwner: true });
     expect(m.text).toContain("You will be an owner: you can manage every person, domain and link.");
     expect(m.html).toContain("You will be an owner");
+    expect(m.text).not.toContain("join with the role");
+  });
+  it("names a custom role, escaped in HTML and on one line", () => {
+    const m = inviteEmail({ ...o, roleName: "<i>Ops</i>\r\nBcc" });
+    expect(m.text).toContain("You will join with the role <i>Ops</i> Bcc.");
+    expect(m.html).toContain("<p>You will join with the role &lt;i&gt;Ops&lt;/i&gt; Bcc.</p>");
+    expect(m.html).not.toContain("<i>");
   });
   it("escapes names in HTML, raw only in text, and strips CR/LF from the subject", () => {
     const m = inviteEmail({ ...o, instanceName: "<b>x</b>", inviter: "<i>Bo</i>" });
@@ -117,7 +124,7 @@ describe("inviteEmail", () => {
     expect(inviteEmail({ ...o, instanceName: "A\r\nBcc: x" }).subject).not.toMatch(/[\r\n]/);
   });
   it("never mentions the old sign-in products", () => {
-    for (const role of ["owner", "member"] as const) expect(inviteEmail({ ...o, role }).text).not.toMatch(/Google|one-time code|Access/);
+    for (const isOwner of [true, false]) expect(inviteEmail({ ...o, isOwner }).text).not.toMatch(/Google|one-time code|Access/);
   });
 });
 
@@ -170,13 +177,13 @@ describe("review fixes", () => {
     } finally {
       await env.DB.prepare("DELETE FROM settings").run();
     }
-    const m = inviteEmail({ instanceName: "n".repeat(10_000), inviter: "i".repeat(10_000), dashboardHost: "h.example", role: "member" });
+    const m = inviteEmail({ instanceName: "n".repeat(10_000), inviter: "i".repeat(10_000), dashboardHost: "h.example", roleName: "Member", isOwner: false });
     expect(m.subject.length).toBeLessThanOrEqual(120);
     expect(m.text.length).toBeLessThan(400);
     expect(m.html.length).toBeLessThan(600);
   });
   it("invite names lose bidi and line separators", () => {
-    const m = inviteEmail({ instanceName: "A\u202eB\u2028C", inviter: "x\u2066y", dashboardHost: "h.example", role: "member" });
+    const m = inviteEmail({ instanceName: "A\u202eB\u2028C", inviter: "x\u2066y", dashboardHost: "h.example", roleName: "Member", isOwner: false });
     expect(m.subject + m.text).not.toMatch(/[\u2028\u2029\u202a-\u202e\u2066-\u2069]/);
   });
   it("a settings read failure is its own reason, not network", async () => {

@@ -41,7 +41,7 @@ const invite = (body: unknown, cookie = owner) => call(cookie, "POST", "/api/use
 describe("POST /api/users/invite", () => {
   it("creates an invited user with grants, audits once and emails the dashboard address", async () => {
     const fake = fakeResend();
-    const r = await invite({ email: "  New@Example.com ", role: "member", domainIds: ["ds1"] });
+    const r = await invite({ email: "  New@Example.com ", roleId: "member", domainIds: ["ds1"] });
     expect(r.status).toBe(201);
     const b = (await r.json()) as { user: Record<string, unknown>; emailed: boolean };
     expect(b.emailed).toBe(true);
@@ -51,7 +51,7 @@ describe("POST /api/users/invite", () => {
     expect(await all("SELECT domain_id FROM domain_members WHERE user_id = ?", row!.id)).toEqual([{ domain_id: "ds1" }]);
     const a = await audits("user.invite");
     expect(a).toHaveLength(1);
-    expect(JSON.parse(String(a[0]!.detail))).toEqual({ email: "new@example.com", role: "member", domains: ["team.test"] });
+    expect(JSON.parse(String(a[0]!.detail))).toEqual({ email: "new@example.com", role: "member", roleId: "member", roleName: "Member", domains: ["team.test"] });
     expect(fake.sent).toHaveLength(1);
     expect(fake.sent[0]!.to).toEqual(["new@example.com"]);
     expect(fake.sent[0]!.text).toContain("https://dash.test/");
@@ -59,7 +59,7 @@ describe("POST /api/users/invite", () => {
   it("a private or unknown domain id is 400 bad_domain and creates nothing", async () => {
     const fake = fakeResend();
     for (const id of ["dp", "nope", "dm"]) {
-      const r = await invite({ email: "new@example.com", role: "member", domainIds: [id] });
+      const r = await invite({ email: "new@example.com", roleId: "member", domainIds: [id] });
       expect([r.status, await r.json()]).toEqual([400, { error: "bad_domain" }]);
     }
     expect(await userBy("new@example.com")).toBeNull();
@@ -67,7 +67,7 @@ describe("POST /api/users/invite", () => {
   });
   it("an owner invite ignores domainIds", async () => {
     fakeResend();
-    const r = await invite({ email: "boss@example.com", role: "owner", domainIds: ["dp"] });
+    const r = await invite({ email: "boss@example.com", roleId: "owner", domainIds: ["dp"] });
     expect(r.status).toBe(201);
     const row = await userBy("boss@example.com");
     expect(row).toMatchObject({ role: "owner", status: "invited" });
@@ -75,7 +75,7 @@ describe("POST /api/users/invite", () => {
   });
   it("an existing email in any case is 409 email_taken and sends nothing", async () => {
     const fake = fakeResend();
-    const r = await invite({ email: "A@EXAMPLE.com", role: "member" });
+    const r = await invite({ email: "A@EXAMPLE.com", roleId: "member" });
     expect([r.status, await r.json()]).toEqual([409, { error: "email_taken" }]);
     expect(fake.sent).toHaveLength(0);
     expect(await audits("user.invite")).toHaveLength(0);
@@ -83,7 +83,7 @@ describe("POST /api/users/invite", () => {
   it("without email config the invite stands: 201 emailed false not_configured", async () => {
     e.RESEND_API_KEY = undefined;
     const fake = fakeResend();
-    const r = await invite({ email: "new@example.com", role: "member" });
+    const r = await invite({ email: "new@example.com", roleId: "member" });
     expect(r.status).toBe(201);
     expect(await r.json()).toMatchObject({ emailed: false, emailReason: "not_configured" });
     expect(await userBy("new@example.com")).toMatchObject({ status: "invited" });
@@ -92,7 +92,7 @@ describe("POST /api/users/invite", () => {
   it("the invite email budget at its cap: 201 emailed false too_many", async () => {
     await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('invite:hour', ?, 20)", Math.floor(Date.now() / 1000));
     const fake = fakeResend();
-    const r = await invite({ email: "new@example.com", role: "member" });
+    const r = await invite({ email: "new@example.com", roleId: "member" });
     expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "too_many" }]);
     expect(fake.sent).toHaveLength(0);
   });
@@ -100,14 +100,14 @@ describe("POST /api/users/invite", () => {
     const now = Math.floor(Date.now() / 1000);
     await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('invite:day', ?, 40)", now - (now % 86400));
     const fake = fakeResend();
-    const r = await invite({ email: "new@example.com", role: "member" });
+    const r = await invite({ email: "new@example.com", roleId: "member" });
     expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "too_many" }]);
     expect(fake.sent).toHaveLength(0);
     expect(await all("SELECT key FROM auth_limits WHERE key = 'invite:hour'")).toEqual([]);
   });
   it("a sent invite counts once in the hour and once in the UTC day", async () => {
     fakeResend();
-    expect((await invite({ email: "new@example.com", role: "member" })).status).toBe(201);
+    expect((await invite({ email: "new@example.com", roleId: "member" })).status).toBe(201);
     expect(await all("SELECT key, count FROM auth_limits WHERE key IN ('invite:hour', 'invite:day') ORDER BY key")).toEqual([
       { key: "invite:day", count: 1 }, { key: "invite:hour", count: 1 },
     ]);
@@ -115,7 +115,7 @@ describe("POST /api/users/invite", () => {
   it("a Resend rejection still keeps the invite: emailed false rejected", async () => {
     const fake = fakeResend();
     fake.failNext(422);
-    const r = await invite({ email: "new@example.com", role: "member" });
+    const r = await invite({ email: "new@example.com", roleId: "member" });
     expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "rejected" }]);
   });
   it("invalid bodies are 400", async () => {
@@ -126,7 +126,7 @@ describe("POST /api/users/invite", () => {
   });
   it("the invitee signs in by email link and becomes active", async () => {
     fakeResend();
-    expect((await invite({ email: "new@example.com", role: "member" })).status).toBe(201);
+    expect((await invite({ email: "new@example.com", roleId: "member" })).status).toBe(201);
     vi.restoreAllMocks();
     const fake = fakeResend();
     const ctx = createExecutionContext();
@@ -141,10 +141,10 @@ describe("POST /api/users/invite", () => {
   });
   it("a member gets 403, a Bearer token without a session 401, a foreign Origin 403", async () => {
     const fake = fakeResend();
-    expect((await invite({ email: "new@example.com", role: "member" }, member)).status).toBe(403);
-    const bearer = await dash("/api/users/invite", { method: "POST", headers: { ...json, authorization: "Bearer lw_test_123" }, body: JSON.stringify({ email: "new@example.com", role: "member" }) });
+    expect((await invite({ email: "new@example.com", roleId: "member" }, member)).status).toBe(403);
+    const bearer = await dash("/api/users/invite", { method: "POST", headers: { ...json, authorization: "Bearer lw_test_123" }, body: JSON.stringify({ email: "new@example.com", roleId: "member" }) });
     expect(bearer.status).toBe(401);
-    const foreign = await dash("/api/users/invite", withCookie(owner, { method: "POST", headers: { ...json, origin: "https://evil.example.com" }, body: JSON.stringify({ email: "new@example.com", role: "member" }) }));
+    const foreign = await dash("/api/users/invite", withCookie(owner, { method: "POST", headers: { ...json, origin: "https://evil.example.com" }, body: JSON.stringify({ email: "new@example.com", roleId: "member" }) }));
     expect(foreign.status).toBe(403);
     expect(await userBy("new@example.com")).toBeNull();
     expect(fake.sent).toHaveLength(0);
@@ -169,7 +169,7 @@ describe("POST /api/users/:id/resend", () => {
   });
   it("the invite email itself counts: a resend right after inviting is too_soon", async () => {
     fakeResend();
-    const b = (await (await invite({ email: "new@example.com", role: "member" })).json()) as { user: { id: string } };
+    const b = (await (await invite({ email: "new@example.com", roleId: "member" })).json()) as { user: { id: string } };
     expect((await call(owner, "POST", `/api/users/${b.user.id}/resend`)).status).toBe(429);
   });
   it("unknown 404, active 409 not_invited_state, unconfigured 409, instance cap 429 too_many, member 403", async () => {
@@ -236,19 +236,19 @@ describe("hardening (Task 11)", () => {
     const now = Math.floor(Date.now() / 1000);
     await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('inst', ?, 50)", now);
     const fake = fakeResend();
-    const r = await invite({ email: "new@example.com", role: "member" });
+    const r = await invite({ email: "new@example.com", roleId: "member" });
     expect([r.status, await r.json()]).toMatchObject([201, { emailed: true }]);
     expect(fake.sent).toHaveLength(1);
     await run("DELETE FROM auth_limits WHERE key = 'inst'");
-    expect((await invite({ email: "two@example.com", role: "member" })).status).toBe(201);
+    expect((await invite({ email: "two@example.com", roleId: "member" })).status).toBe(201);
     expect(await all("SELECT key FROM auth_limits WHERE key = 'inst'")).toEqual([]);
   });
 
   it("the per-invitee minute is keyed by address: revoke and re-invite within 60 s does not mail again", async () => {
     const fake = fakeResend();
-    const a = (await (await invite({ email: "new@example.com", role: "member" })).json()) as { user: { id: string } };
+    const a = (await (await invite({ email: "new@example.com", roleId: "member" })).json()) as { user: { id: string } };
     expect((await call(owner, "DELETE", `/api/users/${a.user.id}/invite`)).status).toBe(200);
-    const b = await invite({ email: "NEW@example.com", role: "member" });
+    const b = await invite({ email: "NEW@example.com", roleId: "member" });
     expect([b.status, await b.json()]).toMatchObject([201, { emailed: false, emailReason: "too_many" }]);
     expect(fake.sent).toHaveLength(1);
   });
@@ -257,7 +257,7 @@ describe("hardening (Task 11)", () => {
     const o = await userBy("owner@example.com");
     const restore = beforeBatch(1, () => run("UPDATE users SET role = 'member' WHERE id = ?", o!.id));
     let r: Response;
-    try { r = await invite({ email: "new@example.com", role: "owner" }); } finally { restore(); }
+    try { r = await invite({ email: "new@example.com", roleId: "owner" }); } finally { restore(); }
     expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
     expect(await userBy("new@example.com")).toBeNull();
     expect(await audits("user.invite")).toEqual([]);
@@ -266,7 +266,7 @@ describe("hardening (Task 11)", () => {
   it("a domain made private between read and batch: 400 bad_domain and nothing written", async () => {
     const restore = beforeBatch(1, () => run("UPDATE domains SET type = 'private' WHERE id = 'ds1'"));
     let r: Response;
-    try { r = await invite({ email: "new@example.com", role: "member", domainIds: ["ds1"] }); } finally { restore(); }
+    try { r = await invite({ email: "new@example.com", roleId: "member", domainIds: ["ds1"] }); } finally { restore(); }
     expect([r.status, await r.json()]).toEqual([400, { error: "bad_domain" }]);
     expect(await userBy("new@example.com")).toBeNull();
     expect(await all("SELECT * FROM domain_members")).toEqual([]);
@@ -289,7 +289,7 @@ describe("hardening (Task 11)", () => {
     const settings = await import("../src/settings");
     vi.spyOn(settings, "getSettings").mockRejectedValue(new Error("d1 down"));
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const r = await invite({ email: "new@example.com", role: "member" });
+    const r = await invite({ email: "new@example.com", roleId: "member" });
     expect([r.status, await r.json()]).toMatchObject([201, { emailed: false, emailReason: "settings" }]);
   });
 

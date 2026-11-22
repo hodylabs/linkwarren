@@ -80,7 +80,7 @@ export function PersonSheet({ id }: { id: string }) {
     enable: () => run(() => patch({ status: "active" }), { msg: `Turned on access for ${email}` }),
     signout: () => run(() => api("DELETE", `${path}/sessions`).then(() => null), { msg: `Signed ${email} out everywhere` }),
     remove: () => run(() => api("DELETE", `${path}?transferTo=${encodeURIComponent(to)}`).then(() => null), { msg: `Removed ${email}`, close: true }),
-    role: (role: "member" | "owner") => run(() => patch({ role }), { msg: `Made ${email} ${role === "owner" ? "an owner" : "a member"}` }),
+    role: (role: "member" | "owner") => run(() => patch({ roleId: role }), { msg: `Made ${email} ${role === "owner" ? "an owner" : "a member"}` }),
   };
   // The transfer target starts at you each time, so a target removed or disabled since never lingers.
   const askRemove = () => {

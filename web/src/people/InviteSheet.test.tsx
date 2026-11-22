@@ -85,7 +85,7 @@ describe("Invite sheet", () => {
     await user.keyboard(" ");
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(posts(api)).toHaveLength(1));
-    expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", role: "member", domainIds: ["ds1"] });
+    expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", roleId: "member", domainIds: ["ds1"] });
   });
 
   it("success closes the sheet, reloads people and announces", async () => {
@@ -105,7 +105,7 @@ describe("Invite sheet", () => {
     expect(within(sheet()).queryAllByRole("switch")).toHaveLength(0);
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(posts(api)).toHaveLength(1));
-    expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", role: "owner", domainIds: [] });
+    expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", roleId: "owner", domainIds: [] });
   });
 
   it("409 email_taken shows its copy and keeps the values", async () => {

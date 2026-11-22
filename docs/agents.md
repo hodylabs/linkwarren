@@ -33,11 +33,11 @@ Agents have no domain restriction beyond your own: they reach every domain you c
 
 ### Changing access
 
-On the API & agents screen, select the connection (`J`/`K`, `Enter`) and use the switches, then Change access. The change applies on the agent's next call; it does not need to reconnect. You can raise or lower your own connections. The owner can lower or disconnect anyone's connection but only that person can raise it again. If the person changed it in the meantime, the owner's change is refused (`409 changed`) and nothing is written: reload and try again.
+On the API & agents screen, select the connection (`J`/`K`, `Enter`) and use the switches, then Change access. The change applies on the agent's next call; it does not need to reconnect. You can raise or lower your own connections. An owner can lower or disconnect anyone's connection, and a person whose role can invite and manage people can do the same for people whose role has no permission theirs lacks (never an owner's: `403 role_above_you`). Only the person can raise a connection again (`403 owner_cannot_raise`). If the person changed it in the meantime, the change is refused (`409 changed`) and nothing is written: reload and try again.
 
 ### Disconnecting
 
-Select the connection and press `Shift+D` (or Disconnect), then confirm. The agent's next call fails, its refresh token stops working, and it has to connect again. The same happens to every agent of a person the owner disables. Disconnecting someone does not touch their other agents or keys.
+Select the connection and press `Shift+D` (or Disconnect), then confirm. The agent's next call fails, its refresh token stops working, and it has to connect again. The same happens to every agent of a person who is disabled. Disconnecting someone does not touch their other agents or keys.
 
 ## Tools
 

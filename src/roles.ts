@@ -37,13 +37,35 @@ export const actorCan = (userId: string, p: Perm): Guard => ({
   binds: [userId, p],
 });
 
-/** SQL twin of `within` for assigning `roleId`: the actor is active and an owner, or the role exists, is not Owner and has no key the actor's role lacks. */
-export const roleWithin = (roleId: string, actorId: string): Guard => ({
-  sql: `EXISTS (SELECT 1 FROM users a JOIN roles ar ON ar.id = COALESCE(a.role_id, a.role) JOIN roles t ON t.id = ?
+/** The actor is active and an owner, or the role `role` (an SQL expression) exists, is not Owner and has no key the actor's role lacks. */
+const withinSql = (role: string) => `EXISTS (SELECT 1 FROM users a JOIN roles ar ON ar.id = COALESCE(a.role_id, a.role) JOIN roles t ON t.id = ${role}
     WHERE a.id = ? AND a.status = 'active' AND (a.role = 'owner' OR (t.id != 'owner' AND NOT EXISTS (
-      SELECT 1 FROM json_each(${arr("t.perms")}) k WHERE NOT EXISTS (SELECT 1 FROM json_each(${arr("ar.perms")}) h WHERE h.value = k.value)))))`,
-  binds: [roleId, actorId],
-});
+      SELECT 1 FROM json_each(${arr("t.perms")}) rk WHERE NOT EXISTS (SELECT 1 FROM json_each(${arr("ar.perms")}) rh WHERE rh.value = rk.value)))))`;
+
+/** SQL twin of `within` for assigning `roleId`: the actor is active and an owner, or the role exists, is not Owner and has no key the actor's role lacks. */
+export const roleWithin = (roleId: string, actorId: string): Guard => ({ sql: withinSql("?"), binds: [roleId, actorId] });
+
+/** A person by bound id, or a users-id column of the outer query (for lists). */
+export type Target = string | { col: string };
+const tgt = (t: Target) => (typeof t === "string" ? { sql: "?", binds: [t] } : { sql: t.col, binds: [] });
+
+/** roleWithin on a person's current role (R4): false for an owner target unless the actor is an owner, and for nobody. */
+export const personWithin = (target: Target, actorId: string): Guard => {
+  const x = tgt(target);
+  return { sql: withinSql(`(SELECT COALESCE(role_id, role) FROM users WHERE id = ${x.sql})`), binds: [...x.binds, actorId] };
+};
+
+/** Someone's keys and agent connections: the active actor's own, or a people.manage holder's over a person within (an owner: anyone). */
+export const mayManage = (target: Target, actorId: string): Guard => {
+  const x = tgt(target), pc = actorCan(actorId, "people.manage"), pw = personWithin(target, actorId);
+  return {
+    sql: `(EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active') AND (${x.sql} = ? OR (${pc.sql} AND ${pw.sql})))`,
+    binds: [actorId, ...x.binds, actorId, ...pc.binds, ...pw.binds],
+  };
+};
+
+/** TS twin of personWithin (the actor reads the target's row): an owner reaches anyone, others only non-owners within. */
+export const reaches = (actor: UserRow, target: UserRow): boolean => actor.status === "active" && (actor.role === "owner" || (target.role !== "owner" && within(target.perms, actor)));
 
 /** Every query feeding rowToUser selects these from `users u` with ROLE_JOIN: the role comes with the user, never as its own query. */
 export const USER_COLS = "u.*, COALESCE(u.role_id, u.role) role_key, r.name role_name, r.perms role_perms";

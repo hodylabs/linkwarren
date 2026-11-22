@@ -52,7 +52,7 @@ export function InviteSheet() {
     setPending(true);
     setError(null);
     try {
-      const res = await api<InviteResult>("POST", "/api/users/invite", { email: e, role, domainIds: role === "owner" ? [] : picked });
+      const res = await api<InviteResult>("POST", "/api/users/invite", { email: e, roleId: role, domainIds: role === "owner" ? [] : picked });
       app.reloadUsers().catch(() => undefined);
       if (res.emailed) {
         app.close();
