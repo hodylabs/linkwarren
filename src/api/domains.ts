@@ -22,11 +22,11 @@ const busy = { error: "conflict" } as const;
 export const MAX_PENDING_PER_MEMBER = 3;
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-const createBody = z.strictObject({ host: z.string(), type: z.enum(["main", "shared", "private"]), confirmTakeover: z.boolean().optional() });
+const createBody = z.strictObject({ host: z.string().max(1024), type: z.enum(["main", "shared", "private"]), confirmTakeover: z.boolean().optional() });
 const patchBody = z.strictObject({
-  bareRedirect: z.string().nullable().optional(), notfoundRedirect: z.string().nullable().optional(),
+  bareRedirect: z.string().max(8192).nullable().optional(), notfoundRedirect: z.string().max(8192).nullable().optional(),
   caseSensitive: z.boolean().optional(), noindex: z.boolean().optional(),
-  reservedExtra: z.array(z.string()).max(100).optional(),
+  reservedExtra: z.array(z.string().max(256)).max(100).optional(),
 });
 // 100 is D1's bind cap for the member lookup below.
 const membersBody = z.strictObject({ userIds: z.array(z.string().min(1)).max(100) });

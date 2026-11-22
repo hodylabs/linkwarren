@@ -320,7 +320,7 @@ settings.post("/cloudflare/resync", async (c) => {
 
 // Write-only (R2): every response is the status, never a value. The Worker secret always wins, so a paste over it is refused.
 const secretName = (p: string): SecretName | null => (p === "cf" ? "CF_API_TOKEN" : p === "resend" ? "RESEND_API_KEY" : null);
-const secretBody = z.strictObject({ value: z.string() });
+const secretBody = z.strictObject({ value: z.string().max(512) });
 settings.get("/secrets", async (c) => c.json(await secretStatus(c.env)));
 
 settings.put("/secrets/:name", async (c) => {

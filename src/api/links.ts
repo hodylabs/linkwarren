@@ -24,9 +24,9 @@ export const times = {
 };
 export const code = z.union([z.literal(301), z.literal(302)]);
 const routeInput = z.strictObject({
-  countries: z.array(z.string()).max(50).optional(),
+  countries: z.array(z.string().max(1024)).max(50).optional(),
   devices: z.array(z.enum(ROUTE_DEVICES)).max(ROUTE_DEVICES.length).optional(),
-  url: z.string(),
+  url: z.string().max(8192),
 });
 type RouteInput = z.infer<typeof routeInput>;
 export const rules = {
@@ -37,11 +37,12 @@ export const rules = {
   routes: z.array(routeInput).max(10).optional(),
 };
 const createBody = z.strictObject({
-  domainId: z.string().min(1), slug: z.string(), url: z.string(),
+  // Caps well above the real limits (2048-char URLs, short slugs), so those keep their own error codes.
+  domainId: z.string().min(1).max(64), slug: z.string().max(1024), url: z.string().max(8192),
   redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
 });
 const patchBody = z.strictObject({
-  url: z.string().optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
+  url: z.string().max(8192).optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
 });
 
 /** Countries two ASCII letters (raw, then upper-cased; never XX or T1, they never match), deduped; each url checked like the main destination. */

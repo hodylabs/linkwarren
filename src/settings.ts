@@ -16,7 +16,7 @@ const DEFAULTS: InstanceSettings = { name: null, mainDomainId: null, logoVersion
 // Values are JSON-encoded. Only these keys are ever read here (never secret.*, see src/secrets.ts).
 const FIELDS: { [K in keyof InstanceSettings]: { key: string; schema: z.ZodType } } = {
   name: { key: "instance.name", schema: z.string().trim().min(1).refine((v) => [...v].length <= 80) },
-  mainDomainId: { key: "instance.mainDomainId", schema: z.string() },
+  mainDomainId: { key: "instance.mainDomainId", schema: z.string().max(64) },
   logoVersion: { key: "instance.logoVersion", schema: z.number().int() },
   linkRedirectCode: { key: "links.defaultRedirectCode", schema: z.union([z.literal(301), z.literal(302)]) },
   linkPassQuery: { key: "links.defaultPassQuery", schema: z.boolean() },

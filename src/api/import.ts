@@ -16,13 +16,13 @@ const MAX_LINKS = 1000;
 const CHUNK = 100; // statements per D1 batch
 
 const body = z.object({
-  mainHost: z.string().min(1),
+  mainHost: z.string().min(1).max(1024),
   domains: z.array(z.object({
-    host: z.string(), customIndexUrl: z.string().nullable().optional(), customNotFoundUrl: z.string().nullable().optional(),
+    host: z.string().max(1024), customIndexUrl: z.string().max(8192).nullable().optional(), customNotFoundUrl: z.string().max(8192).nullable().optional(),
   })).max(MAX_LINKS),
   links: z.array(z.object({
-    host: z.string().nullable(), slug: z.string(), destination: z.string(), enabled: z.boolean(),
-    startDate: z.string().nullable().optional(), endDate: z.string().nullable().optional(),
+    host: z.string().max(1024).nullable(), slug: z.string().max(1024), destination: z.string().max(8192), enabled: z.boolean(),
+    startDate: z.string().max(32).nullable().optional(), endDate: z.string().max(32).nullable().optional(),
     // A legacy password link: its hash cannot be carried over, so it is imported like a disabled link (a lock) and listed.
     protected: z.boolean().optional(),
   })),
