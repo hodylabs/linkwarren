@@ -1,21 +1,47 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { AnalyticsReport } from "../api";
-import { bucketLabel, chartGeometry, GRID_X, H, PLOT, TICK_Y, W } from "./chart";
+import { PHONE, useMedia } from "../shell/narrow";
+import { bucketLabel, chartGeometry, DESK, PHONE_BOX } from "./chart";
 import { fmt } from "./view";
 
-type Props = { series: AnalyticsReport["series"]; unit: AnalyticsReport["unit"]; table: boolean; onToggle: () => void };
+/** Keys on the focused chart (handled by its onKeyDown) and their text on the shortcuts sheet. */
+export const CHART_KEYS = {
+  arrowleft: "Previous bar of the focused chart",
+  arrowright: "Next bar of the focused chart",
+  home: "First bar",
+  end: "Last bar",
+  escape: "Hide the bar details",
+} as const;
+
+const EMPTY = "No clicks match these filters. Try a longer range or another domain.";
+
+type Props = {
+  series: AnalyticsReport["series"]; unit: AnalyticsReport["unit"]; table: boolean; onToggle: () => void;
+  /** Replaces the no-clicks line, for example when hourly data needs the live read. */
+  empty?: string;
+};
 type Active = { i: number; x: number; y: number } | null;
 
 /** Stacked bar chart of clicks per bucket (QR bottom, typed top) with a hover and keyboard tooltip, or the same data as a table. */
-export function ClicksChart({ series, unit, table, onToggle }: Props) {
+export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Props) {
   const rows = series.map((s) => ({ label: bucketLabel(s.bucket, unit), qr: s.qr, typed: s.typed }));
   const total = rows.reduce((n, r) => n + r.qr + r.typed, 0);
-  const g = chartGeometry(rows);
+  const g = chartGeometry(rows, useMedia(PHONE) ? PHONE_BOX : DESK);
+  const { W, H } = g.box;
   const [active, setActive] = useState<Active>(null);
+  const cardRef = useRef<HTMLElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const focusIn = useRef(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const bar = active ? g.bars[active.i] : undefined;
+
+  // Switching view unmounts the focused chart (or table): keep focus in the card on the toggle, never on <body>.
+  useLayoutEffect(() => {
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (focusIn.current && lost) toggleRef.current?.focus();
+  }, [table]);
 
   // The tip is placed through the CSSOM (allowed by the style-src CSP), never a style attribute.
   useLayoutEffect(() => {
@@ -41,11 +67,14 @@ export function ClicksChart({ series, unit, table, onToggle }: Props) {
   const onKey = (e: KeyboardEvent) => {
     const last = g.bars.length - 1;
     const cur = active?.i ?? 0;
-    const next = { ArrowRight: Math.min(last, cur + 1), ArrowLeft: Math.max(0, cur - 1), Home: 0, End: last }[e.key];
+    const k = e.key.toLowerCase();
+    if (!(k in CHART_KEYS) || e.altKey || e.ctrlKey || e.metaKey) return;
+    const moves: Record<Exclude<keyof typeof CHART_KEYS, "escape">, number> = { arrowright: Math.min(last, cur + 1), arrowleft: Math.max(0, cur - 1), home: 0, end: last };
+    const next = k === "escape" ? undefined : moves[k as keyof typeof moves];
     if (next !== undefined) {
       e.preventDefault();
       setActive(atBar(next));
-    } else if (e.key === "Escape" && active) {
+    } else if (active) {
       e.stopPropagation();
       setActive(null);
     }
@@ -70,7 +99,7 @@ export function ClicksChart({ series, unit, table, onToggle }: Props) {
       </table>
     );
   } else if (!total) {
-    body = <div className="empty">No clicks match these filters. Try a longer range or another domain.</div>;
+    body = <div className="empty">{empty}</div>;
   } else {
     body = (
       <div
@@ -88,35 +117,45 @@ export function ClicksChart({ series, unit, table, onToggle }: Props) {
         <svg ref={svgRef} className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Clicks over time split into QR scans and typed or clicked visits">
           {g.grid.map((l, k) => (
             <g key={k}>
-              <line x1={GRID_X.x1} x2={GRID_X.x2} y1={l.y} y2={l.y} stroke="#EEEFEB" />
-              <text x={GRID_X.label} y={l.y + 4} textAnchor="end">{l.label}</text>
+              <line x1={g.gridX.x1} x2={g.gridX.x2} y1={l.y} y2={l.y} stroke="#EEEFEB" />
+              <text x={g.gridX.label} y={l.y + 4} textAnchor="end">{l.label}</text>
             </g>
           ))}
           {g.bars.map((b, i) => (
             <g key={i} className={active?.i === i ? "bar on" : "bar"} onMouseMove={onMove(i)} onMouseLeave={() => setActive(null)}>
-              <rect x={b.hx} y={PLOT.top} width={b.hw} height={PLOT.height} fill="transparent" />
+              <rect x={b.hx} y={g.plot.top} width={b.hw} height={g.plot.height} fill="transparent" />
               {b.qrH > 0 && <rect x={b.x} y={b.qrY} width={b.w} height={b.qrH} fill="#E07418" />}
               {b.typedPath && <path d={b.typedPath} fill="#3F6FB5" />}
             </g>
           ))}
           {g.ticks.map((t) => (
-            <text key={t.x} x={t.x} y={TICK_Y} textAnchor="middle">{t.label}</text>
+            <text key={t.x} x={t.x} y={g.tickY} textAnchor="middle">{t.label}</text>
           ))}
         </svg>
-        <div className={bar ? "tip on" : "tip"} ref={tipRef} role="status">{bar?.tip ?? ""}</div>
+        <div className={bar ? "tip on" : "tip"} ref={tipRef} aria-hidden="true">{bar?.tip ?? ""}</div>
+        {/* Always in the tree (visually hidden), so the first change on focus is announced. */}
+        <div className="sr-only" role="status">{bar?.tip ?? ""}</div>
       </div>
     );
   }
 
   return (
-    <section className="card2">
+    <section
+      className="card2"
+      ref={cardRef}
+      onFocus={() => (focusIn.current = true)}
+      // A blur with no new target (the focused node was removed) keeps the flag, so the effect above can restore focus.
+      onBlur={(e) => {
+        if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget as Node)) focusIn.current = false;
+      }}
+    >
       <div className="card2-h">
         <h3>{title}</h3>
         <div className="legend">
           <span><i className="lg-qr" />From QR codes</span>
           <span><i className="lg-ty" />Typed or clicked</span>
         </div>
-        <button type="button" className="btn ghost tv" onClick={onToggle} aria-keyshortcuts="V">
+        <button type="button" className="btn ghost tv" ref={toggleRef} onClick={onToggle} aria-keyshortcuts="V">
           {table ? "Chart view" : "Table view"}<span className="k2">V</span>
         </button>
       </div>

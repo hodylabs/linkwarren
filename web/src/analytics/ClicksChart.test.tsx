@@ -9,6 +9,7 @@ const series = [
   { bucket: "2026-11-20", qr: 1200, typed: 84 },
 ];
 const tip = () => screen.getByRole("status").textContent;
+const tipBox = () => document.querySelector(".tip")!;
 
 describe("ClicksChart", () => {
   it("titles the card with the first and last day and shows the legend", () => {
@@ -29,9 +30,9 @@ describe("ClicksChart", () => {
     const bar = container.querySelectorAll(".bar")[1]!;
     fireEvent.mouseMove(bar, { clientX: 10, clientY: 10 });
     expect(tip()).toBe("Nov 19: 7 clicks, 3 from QR, 4 typed or clicked");
-    expect(screen.getByRole("status").classList.contains("on")).toBe(true);
+    expect(tipBox().classList.contains("on")).toBe(true);
     fireEvent.mouseLeave(bar);
-    expect(screen.getByRole("status").classList.contains("on")).toBe(false);
+    expect(tipBox().classList.contains("on")).toBe(false);
   });
 
   it("focus then ArrowRight twice shows the third bar; Home, End and Esc", async () => {
@@ -51,7 +52,27 @@ describe("ClicksChart", () => {
     await user.keyboard("{End}");
     expect(tip()).toContain("Nov 20");
     await user.keyboard("{Escape}");
-    expect(screen.getByRole("status").classList.contains("on")).toBe(false);
+    expect(tipBox().classList.contains("on")).toBe(false);
+  });
+
+  it("the announced tip is a separate, always rendered status (the visual tip is hidden from the tree)", () => {
+    render(<ClicksChart series={series} unit="day" table={false} onToggle={() => {}} />);
+    const status = screen.getByRole("status");
+    expect(status.classList.contains("sr-only")).toBe(true);
+    expect(status.textContent).toBe("");
+    expect(tipBox().getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("switching to the table while the chart has focus moves focus to the view toggle", () => {
+    const { rerender } = render(<ClicksChart series={series} unit="day" table={false} onToggle={() => {}} />);
+    screen.getByRole("group", { name: /Clicks chart/ }).focus();
+    rerender(<ClicksChart series={series} unit="day" table onToggle={() => {}} />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Chart view/ }));
+  });
+
+  it("a custom empty line replaces the default one", () => {
+    render(<ClicksChart series={[]} unit="hour" table={false} onToggle={() => {}} empty="Hourly clicks need live clicks." />);
+    expect(screen.getByText("Hourly clicks need live clicks.")).toBeTruthy();
   });
 
   it("table view has four columns and the same totals; the toggle button calls onToggle", async () => {

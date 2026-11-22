@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { bucketLabel, chartGeometry } from "./chart";
+import { bucketLabel, chartGeometry, PHONE_BOX } from "./chart";
 
 const s = (n: number, f: (i: number) => [number, number] = () => [1, 1]) =>
   Array.from({ length: n }, (_, i) => ({ label: `d${i}`, qr: f(i)[0], typed: f(i)[1] }));
@@ -39,6 +39,29 @@ describe("chartGeometry", () => {
     expect(chartGeometry([{ label: "Nov 20", qr: 1200, typed: 84 }]).bars[0]!.tip).toBe(
       "Nov 20: 1,284 clicks, 1,200 from QR, 84 typed or clicked",
     );
+  });
+
+  it("small maxima get whole, distinct axis labels", () => {
+    const labels = (mx: number) => chartGeometry([{ label: "a", qr: 0, typed: mx }]).grid.map((x) => x.label);
+    expect(labels(1)).toEqual(["0", "1", "2", "3", "4"]);
+    expect(labels(5)).toEqual(["0", "2", "4", "6", "8"]);
+    expect(labels(9)).toEqual(["0", "3", "6", "9", "12"]);
+    for (let mx = 1; mx <= 120; mx++) expect(new Set(labels(mx)).size).toBe(5);
+  });
+
+  it("the phone box keeps the scale and lays bars out in its own units", () => {
+    const desk = chartGeometry(s(30, () => [3, 5]));
+    const g = chartGeometry(s(30, () => [3, 5]), PHONE_BOX);
+    expect(g.top).toBe(desk.top);
+    expect(g.grid.map((x) => x.label)).toEqual(desk.grid.map((x) => x.label));
+    expect(g.grid[0]!.y).toBe(198); // 220 - 22
+    expect(g.grid[4]!.y).toBe(8);
+    const bw = (360 - 34 - 10) / 30;
+    expect(g.bars[0]!.x).toBeCloseTo(34 + 2);
+    expect(g.bars[0]!.w).toBeCloseTo(bw - 4);
+    expect(g.bars[29]!.hx + g.bars[29]!.hw).toBeCloseTo(350);
+    expect(g.tickY).toBe(214);
+    expect(g.gridX).toEqual({ x1: 34, x2: 354, label: 26 });
   });
 
   it("ticks sit at 0, N/3, 2N/3 and N-1", () => {

@@ -3,6 +3,7 @@ import { keyLabels } from "../keys";
 import type { Screen } from "../router";
 import { ACCOUNT_KEYS } from "../account/AccountPanel";
 import { ANALYTICS_KEYS } from "../analytics/AnalyticsScreen";
+import { CHART_KEYS } from "../analytics/ClicksChart";
 import { ADD_DOMAIN_KEYS } from "../domains/AddDomainSheet";
 import { DOMAIN_DETAIL_KEYS } from "../domains/DomainDetail";
 import { DOMAINS_KEYS } from "../domains/DomainsScreen";
@@ -69,6 +70,7 @@ export const GROUPS: { title: string; rows: Row[] }[] = [
       [["↑", "↓"], "Move in the domain list"], // DomainPicker onKeyDown
       [["Space"], "Pick or unpick a domain"],
       [["Esc"], "Close the domain list"],
+      ...rows(CHART_KEYS),
     ],
   },
   { title: "Settings", rows: rows(SETTINGS_KEYS) },

@@ -87,7 +87,7 @@ export function useChord(onChord: (letter: string) => boolean, enabled = true): 
 /** A binding map with exactly the names of a keymap (a `{ name: "what it does" }` object), so the shortcuts sheet cannot drift from what is bound. */
 export type Bindings<T> = { [K in keyof T]: (e: KeyboardEvent) => void };
 
-const LABELS: Record<string, string> = { mod: "Ctrl", alt: "Alt", shift: "Shift", escape: "Esc", enter: "Enter" };
+const LABELS: Record<string, string> = { mod: "Ctrl", alt: "Alt", shift: "Shift", escape: "Esc", enter: "Enter", arrowleft: "←", arrowright: "→", home: "Home", end: "End" };
 
 /** "mod+shift+enter" -> ["Ctrl", "Shift", "Enter"], "gl" (a palette or chord sequence) -> ["G", "L"]. */
 export function keyLabels(name: string): string[] {

@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { Me } from "../api";
+import { ANALYTICS_KEYS } from "../analytics/AnalyticsScreen";
+import { CHART_KEYS } from "../analytics/ClicksChart";
 import { ADD_DOMAIN_KEYS } from "../domains/AddDomainSheet";
 import { DOMAIN_DETAIL_KEYS } from "../domains/DomainDetail";
 import { DOMAINS_KEYS } from "../domains/DomainsScreen";
@@ -45,6 +47,8 @@ describe("Shortcuts sheet", () => {
     expect(sheetRows(dlg, "New link")).toEqual(expected(NEW_LINK_KEYS));
     expect(sheetRows(dlg, "Domains")).toEqual(expect.arrayContaining([...expected(DOMAINS_KEYS), ...expected(DOMAIN_DETAIL_KEYS), ...expected(ADD_DOMAIN_KEYS)]));
     expect(sheetRows(dlg, "People")).toEqual(expect.arrayContaining(expected(PEOPLE_KEYS)));
+    expect(sheetRows(dlg, "Analytics")).toEqual(expect.arrayContaining([...expected(ANALYTICS_KEYS), ...expected(CHART_KEYS)]));
+    expect(sheetRows(dlg, "Analytics")).toEqual(expect.arrayContaining(["← = Previous bar of the focused chart", "Home = First bar", "Esc = Hide the bar details"]));
   });
 
   it("matches what the screens really do: N adds a domain, A approves, no setup step or domain switch on S", async () => {
