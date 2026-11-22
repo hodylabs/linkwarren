@@ -168,6 +168,11 @@ describe("dnsPointsAt", () => {
     installFakeCloudflare({ doh: { "CNAME:go.example.com": ["other.test."] } });
     expect(await dnsPointsAt("go.example.com", T)).toBe("wrong_target");
   });
+  it("a visible CNAME elsewhere is wrong_target even when it shares an edge IP with the target", async () => {
+    installFakeCloudflare({ doh: { "CNAME:go.example.com": ["other.test."], "A:go.example.com": ["1.2.3.4"], "A:edge.test": ["1.2.3.4"] } });
+    expect(await dnsPointsAt("go.example.com", T)).toBe("wrong_target");
+    expect(await dnsPointsAt("go.example.com", T, true)).toBe("wrong_target");
+  });
   it("served with no CNAME is found only when every address is in Cloudflare's proxy ranges", async () => {
     const at = (a: string[], aaaa: string[] = []) => installFakeCloudflare({ doh: { "A:go.example.com": a, "AAAA:go.example.com": aaaa, "A:edge.test": ["192.0.2.7"] } });
     at(["104.16.1.9"], ["2606:4700::6810:109"]);
