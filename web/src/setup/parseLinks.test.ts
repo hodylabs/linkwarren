@@ -15,6 +15,13 @@ describe("parseCsv", () => {
   });
 });
 
+describe("CSV error lines", () => {
+  it("count blank lines and quoted line breaks, so the number is the file's own line", () => {
+    const text = 'slug,url\n\nab,"https://x.test/\nmore"\ncd,\n';
+    expect(parseLinksFile("l.csv", text, "go.test").errors).toEqual([{ line: 5, reason: "destination is empty" }]);
+  });
+});
+
 describe("linksFromCsv", () => {
   it("maps columns, url alias, empty host to the main domain and enabled words", () => {
     const { body, errors } = linksFromCsv(parseCsv("slug,url,host,enabled,start_date\nab,https://x.test,,no,2024-01-02 03:04:05\ncd,https://y.test,other.test,,\n"), "go.test");
