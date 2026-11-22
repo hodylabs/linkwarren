@@ -1,7 +1,7 @@
 import type { Env } from "./env";
 
 /** Provisional: sized for the Workers Free plan's 10 ms CPU; finalised from the live Free measurement. */
-export const PASSWORD_DEFAULT_ITERATIONS = 10000;
+export const PASSWORD_DEFAULT_ITERATIONS = 25000; // about 2.5 ms per check locally; confirm on the Free plan (10 ms CPU) before raising
 /** Workers WebCrypto PBKDF2 maximum; also the DoS ceiling for counts read back from a stored hash. */
 export const PASSWORD_MAX_ITERATIONS = 100000;
 const MIN_SETTING = 1000;
