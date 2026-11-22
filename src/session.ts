@@ -50,7 +50,8 @@ export async function createSession(env: Env, req: Request, user: UserRow, metho
   const now = nowS();
   const stmts: D1PreparedStatement[] = [];
   const old = readCookie(req);
-  if (old) stmts.push(env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256Hex(old)));
+  // Same guard as the insert: a refused sign-in leaves the incoming session alone.
+  if (old) stmts.push(env.DB.prepare("DELETE FROM sessions WHERE token_hash = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')").bind(await sha256Hex(old), user.id));
   stmts.push(
     env.DB.prepare("INSERT INTO sessions (id, token_hash, user_id, method, created_at, last_seen_at, expires_at, device, ip_prefix) SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')")
       .bind(id, await sha256Hex(secret), user.id, method, now, now, now + ROLLING, deviceLabel(req.headers.get("user-agent")), ipPrefix(req.headers.get("cf-connecting-ip")), user.id),

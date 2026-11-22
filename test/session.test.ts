@@ -60,6 +60,16 @@ describe("createSession", () => {
     expect(await only()).toHaveLength(1);
     expect((await me(a.cookie)).status).toBe(401);
   });
+
+  it("keeps the incoming session when the new one is refused (the person was disabled meanwhile)", async () => {
+    const a = await signedIn();
+    const aId = (await only())[0]!.id as string;
+    const b = await signedIn("b@example.com", { status: "disabled" });
+    const { stmts, started } = await createSession(env, new Request("https://dash.test/x", { headers: { cookie: a.cookie } }), b.user, "email");
+    expect(started(await env.DB.batch(stmts))).toBe(false);
+    expect(await row(aId)).not.toBeNull();
+    expect((await me(a.cookie)).status).toBe(200);
+  });
 });
 
 describe("readSession through /api/me (app mode)", () => {
