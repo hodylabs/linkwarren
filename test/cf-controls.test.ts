@@ -266,6 +266,38 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     expect(await audits()).toEqual([]);
   });
 
+  it("a lease reclaimed before the D1 write: 409 conflict, D1 and audit untouched, rules left for the new holder, its lease kept", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("owner", "go.owned.test");
+    const restore = beforeBatch(1, () => run("UPDATE locks SET token = 'other', until = ? WHERE key = ?", Math.floor(Date.now() / 1000) + 60, `domain:${id}`));
+    let r;
+    try { r = await setCf(id, { securityLevel: "high" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
+    expect(await row(id)).toEqual({ security_level: null, rate_limit: null });
+    expect(await audits()).toEqual([]);
+    expect(fake.state.rulesets[SEC]!.rules.map((x) => x.ref)).toEqual([`lw-${id}-sec`]);
+    expect(await one("SELECT token FROM locks WHERE key = ?", `domain:${id}`)).toEqual({ token: "other" });
+    await run("DELETE FROM locks");
+  });
+  it("a lease reclaimed during a Cloudflare step: the next step is not sent, 409 conflict", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("owner", "go.owned.test");
+    let stolen = false;
+    vi.mocked(fetch).mockImplementation(async (i, init) => {
+      const req = new Request(i as RequestInfo, init);
+      if (!stolen && req.method !== "GET" && req.url.includes("/rulesets")) {
+        stolen = true;
+        await run("UPDATE locks SET token = 'other', until = ? WHERE key = ?", Math.floor(Date.now() / 1000) + 60, `domain:${id}`);
+      }
+      return fake.handle(req);
+    });
+    const r = await setCf(id, { securityLevel: "high", rateLimit: 40 });
+    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
+    expect(fake.state.rulesets[RL]?.rules ?? []).toEqual([]);
+    expect(await row(id)).toEqual({ security_level: null, rate_limit: null });
+    await run("DELETE FROM locks");
+  });
+
   it("other Cloudflare failure: 502 cloudflare_error, D1 unchanged", async () => {
     const fake = installFakeCloudflare({ zones });
     const id = await create("owner", "go.owned.test");

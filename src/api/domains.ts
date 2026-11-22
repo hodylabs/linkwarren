@@ -9,7 +9,7 @@ import { apexOf, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
-import { destination, getDomain, loopField, purgeHost as purge, purgeMany, withDomainLock } from "./shared";
+import { destination, getDomain, loopField, purgeHost as purge, purgeMany, withDomainLock, type Lease } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const domains = new Hono<E>();
@@ -192,7 +192,7 @@ domains.patch("/:id/cloudflare", async (c) => {
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const b = body.data;
   if (b.securityLevel === undefined && b.rateLimit === undefined) return c.json({ error: "no_changes" }, 400);
-  return (await withDomainLock(c.env, c.req.param("id"), async () => {
+  return (await withDomainLock(c.env, c.req.param("id"), async (lease) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     const on = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'cf.controls'").first<{ value: string }>();
@@ -217,6 +217,8 @@ domains.patch("/:id/cloudflare", async (c) => {
     // A failure answers with the stored controls too, so the client knows which step landed.
     let failure: { body: { error: string }; status: 409 | 502 } | null = null;
     for (const [run, record] of steps) {
+      // A lost lease stops before the next Cloudflare write; the guarded batch below then writes nothing.
+      if (!(await lease.held())) break;
       try {
         await run();
         record();
@@ -234,18 +236,21 @@ domains.patch("/:id/cloudflare", async (c) => {
         break;
       }
     }
+    if (!failure && Object.keys(done).length < steps.length) return c.json(busy, 409);
     if (Object.keys(done).length === 0) return c.json({ ...failure!.body, securityLevel: cf.securityLevel, rateLimit: cf.rateLimit }, failure!.status);
     const cols: [string, string | number | null][] = [];
     if ("securityLevel" in done) cols.push(["security_level", done.securityLevel!]);
     if ("rateLimit" in done) cols.push(["rate_limit", done.rateLimit!]);
     // Only the keys written go to D1 and the audit, so two edits of different controls do not clobber each other.
     const res = await c.env.DB.batch([
-      c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ? RETURNING security_level, rate_limit`)
-        .bind(...cols.map(([, v]) => v), d.id),
+      c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ? AND ${lease.sql} RETURNING security_level, rate_limit`)
+        .bind(...cols.map(([, v]) => v), d.id, ...lease.binds),
       auditStmt(c.env, { actorId: user.id, action: "domain.cloudflare", targetType: "domain", targetId: d.id, detail: { host: d.host, ...done } },
-        { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?)", binds: [d.id] }),
+        { sql: `EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?) AND ${lease.sql}`, binds: [d.id, ...lease.binds] }),
     ]);
     const after = res[0]!.results[0] as { security_level: string | null; rate_limit: number | null } | undefined;
+    // Fenced out: the request that reclaimed the lease owns these rules now, so nothing is cleaned up.
+    if (!after && !(await lease.held())) return c.json(busy, 409);
     if (!after) {
       // The domain was rejected while Cloudflare was being changed: remove the rules this request made (best effort).
       const late: [Phase, string][] = [];
@@ -340,15 +345,16 @@ const cfIds = (cf: CfRow) => [cf.dnsRecordId, cf.routeId, cf.hostnameId];
 const notConfigured = { error: "cloudflare_not_configured" } as const;
 
 /** Owner-only status change, audit first and both guarded on the status we read: a racing change writes neither a phantom audit nor a stale status. */
-async function setStatus(c: Context<E>, d: DomainRow, verb: "approve" | "disable", to: DomainRow["status"], extra: Record<string, unknown> = {}): Promise<DomainRow | null | "lost"> {
+async function setStatus(c: Context<E>, d: DomainRow, verb: "approve" | "disable", to: DomainRow["status"], extra: Record<string, unknown> = {}, lease?: Lease): Promise<DomainRow | null | "lost" | "fenced"> {
   if (d.status === to) return d;
-  const at = { sql: "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = ?)", binds: [d.id, d.status] };
+  const fence = lease ? { sql: ` AND ${lease.sql}`, binds: lease.binds } : { sql: "", binds: [] };
+  const at = { sql: `EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = ?)${fence.sql}`, binds: [d.id, d.status, ...fence.binds] };
   const res = await c.env.DB.batch([
     auditStmt(c.env, { actorId: c.var.user.id, action: `domain.${verb}`, targetType: "domain", targetId: d.id,
       detail: { host: d.host, from: d.status, ...extra } }, at),
-    c.env.DB.prepare("UPDATE domains SET status = ? WHERE id = ? AND status = ?").bind(to, d.id, d.status),
+    c.env.DB.prepare(`UPDATE domains SET status = ? WHERE id = ? AND status = ?${fence.sql}`).bind(to, d.id, d.status, ...fence.binds),
   ]);
-  if (res[1]!.meta.changes === 0) return (await getDomain(c.env, d.id)) ?? "lost";
+  if (res[1]!.meta.changes === 0) return lease && !(await lease.held()) ? "fenced" : (await getDomain(c.env, d.id)) ?? "lost";
   await purge(c.env, d.host);
   return { ...d, status: to };
 }
@@ -362,7 +368,7 @@ domains.post("/:id/approve", async (c) => {
   const raw = await c.req.json().catch(() => null);
   const body = approveBody.safeParse(raw ?? {});
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
-  return (await withDomainLock(c.env, c.req.param("id"), async () => {
+  return (await withDomainLock(c.env, c.req.param("id"), async (lease) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     let cf = await getCf(c.env, d.id);
@@ -374,6 +380,7 @@ domains.post("/:id/approve", async (c) => {
       const cfg = cfConfig(c.env);
       // Without Cloudflare settings nothing can be checked, so nothing is approved.
       if (!cfg) return c.json(notConfigured, 409);
+      if (!(await lease.held())) return c.json(busy, 409);
       try {
         cf = await syncDomain(c.env, cfg, d, cf, { attach: cf.kind === "account", confirmTakeover: body.data.confirmTakeover });
       } catch (e) {
@@ -389,14 +396,16 @@ domains.post("/:id/approve", async (c) => {
         // A route someone else made is never adopted, so nothing was attached: no audit.
         if (cf.routeId === null) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
         // The route ids are system state that syncDomain already stored; the audit is guarded on that stored route on this row.
-        await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
-          detail: { host: d.host, ...confirmed } }, { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ? AND route_id = ?)", binds: [d.id, cf.routeId] })]);
+        const [a] = await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
+          detail: { host: d.host, ...confirmed } }, { sql: `EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ? AND route_id = ?) AND ${lease.sql}`, binds: [d.id, cf.routeId, ...lease.binds] })]);
+        if (!a!.meta.changes && !(await lease.held())) return c.json(busy, 409);
         return c.json({ ...d, cloudflare: cfView(c.env, d, cf), ...(await loopField(c.env, d.host)) });
       }
       if (!isVerified(cf)) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
     }
     const view = cfView(c.env, d, cf);
-    const out = await setStatus(c, d, "approve", "active", { check: { dns: view.dns, ownership: view.ownership, certificate: view.certificate }, ...confirmed });
+    const out = await setStatus(c, d, "approve", "active", { check: { dns: view.dns, ownership: view.ownership, certificate: view.certificate }, ...confirmed }, lease);
+    if (out === "fenced") return c.json(busy, 409);
     if (out === "lost" || out === null) return c.json(notFound, 404);
     const loop = out.status === "active" ? await loopField(c.env, out.host) : {};
     return c.json({ ...out, cloudflare: cfView(c.env, out, cf), ...loop });
@@ -419,7 +428,7 @@ domains.post("/:id/disable", async (c) => {
 domains.delete("/:id", async (c) => {
   const user = c.var.user;
   if (user.role !== "owner") return c.json(forbidden, 403);
-  return (await withDomainLock(c.env, c.req.param("id"), async () => {
+  return (await withDomainLock(c.env, c.req.param("id"), async (lease) => {
     const d = await getDomain(c.env, c.req.param("id"));
     if (!d) return c.json(notFound, 404);
     if (d.status !== "pending") return c.json({ error: "not_pending" }, 409);
@@ -428,6 +437,7 @@ domains.delete("/:id", async (c) => {
     const cf = await getCf(c.env, d.id);
     if (cf && cfIds(cf).some((v) => v)) {
       if (!cfg) return c.json(notConfigured, 409);
+      if (!(await lease.held())) return c.json(busy, 409);
       try {
         await detachDomain(c.env, cfg, d, cf);
       } catch (e) {
@@ -435,8 +445,9 @@ domains.delete("/:id", async (c) => {
         throw e;
       }
     }
-    const pending = "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = 'pending')";
-    const del = (t: string, col: string) => c.env.DB.prepare(`DELETE FROM ${t} WHERE ${col} = ? AND ${pending}`).bind(d.id, d.id);
+    // Every statement is fenced on the lease too: a holder that lost it deletes nothing.
+    const pending = `EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = 'pending') AND ${lease.sql}`, pb = [d.id, ...lease.binds];
+    const del = (t: string, col: string) => c.env.DB.prepare(`DELETE FROM ${t} WHERE ${col} = ? AND ${pending}`).bind(d.id, ...pb);
     const at = Math.floor(Date.now() / 1000);
     // Reads first in the same batch, so the ids, slugs and link count are exactly what the delete removed.
     const res = await c.env.DB.batch([
@@ -446,11 +457,12 @@ domains.delete("/:id", async (c) => {
         `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
          SELECT ?, ?, NULL, 'domain.reject', 'domain', ?, json_object('host', ?, 'links', (SELECT COUNT(*) FROM links WHERE domain_id = ?), 'owner', ?)
          WHERE ${pending}`,
-      ).bind(at, user.id, d.id, d.host, d.id, d.ownerId, d.id),
+      ).bind(at, user.id, d.id, d.host, d.id, d.ownerId, ...pb),
       del("links", "domain_id"), del("slug_locks", "domain_id"), del("domain_members", "domain_id"), del("domain_cf", "domain_id"),
-      c.env.DB.prepare("DELETE FROM domains WHERE id = ? AND status = 'pending'").bind(d.id),
+      c.env.DB.prepare(`DELETE FROM domains WHERE id = ? AND status = 'pending' AND ${lease.sql}`).bind(d.id, ...lease.binds),
     ]);
     if (res[res.length - 1]!.meta.changes === 0) {
+      if (!(await lease.held())) return c.json(busy, 409);
       // Lost to a concurrent approve after our detach: put the active domain back in Cloudflare (repair, never a takeover).
       const cur = await getDomain(c.env, d.id);
       const now = cur && (await getCf(c.env, d.id).catch(() => null));

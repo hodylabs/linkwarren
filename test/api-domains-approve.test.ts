@@ -289,6 +289,35 @@ describe("approve racing reject", () => {
   });
 });
 
+describe("a reclaimed lease fences its former holder", () => {
+  const steal = (id: string) => run("UPDATE locks SET token = 'other', until = ? WHERE key = ?", Math.floor(Date.now() / 1000) + 60, `domain:${id}`);
+  const theirs = (id: string) => count("SELECT COUNT(*) n FROM locks WHERE key = ? AND token = 'other'", `domain:${id}`);
+  it("approve that lost its lease before the status write: 409 conflict, still pending, no audit, the new lease kept", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("a", "go.outside.test");
+    green(fake, "go.outside.test");
+    const restore = beforeBatch(1, () => steal(id));
+    let r: Response;
+    try { r = await approve(id); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
+    expect(await statusOf(id)).toBe("pending");
+    expect(await audits("domain.approve")).toBe(0);
+    expect(await theirs(id)).toBe(1);
+  });
+  it("reject that lost its lease before the delete batch: 409 conflict, nothing deleted in D1, the new lease kept", async () => {
+    const fake = installFakeCloudflare({ zones });
+    const id = await create("a", "go.outside.test");
+    const restore = beforeBatch(1, () => steal(id));
+    let r: Response;
+    try { r = await reject(id); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([409, { error: "conflict" }]);
+    expect(await statusOf(id)).toBe("pending");
+    expect(await audits("domain.reject")).toBe(0);
+    expect(await theirs(id)).toBe(1);
+    void fake;
+  });
+});
+
 describe("syncs clean up what they could not store", () => {
   it("reject commits while a poll's sync is between create and save: the new hostname and route are deleted", async () => {
     const fake = installFakeCloudflare({ zones });

@@ -44,18 +44,27 @@ export async function loopLinks(env: Env, host: string): Promise<number> {
 // Longer than the slowest Cloudflare-then-D1 flow (each call times out at 10 s); a crashed request blocks the domain at most this long.
 const LEASE_S = 120;
 /**
+ * The fencing token of a held lease. `sql`/`binds` guard a D1 statement on it, so a holder whose lease expired and was
+ * reclaimed writes nothing; `held` checks it before a Cloudflare write.
+ */
+export type Lease = { sql: string; binds: unknown[]; held: () => Promise<boolean> };
+/**
  * Runs `fn` holding the domain's lease, or returns null when another approve, reject or controls change holds it.
  * These flows write Cloudflare first and D1 after, so two of them interleaving could leave the two stores disagreeing.
+ * An expired lease can be reclaimed while its holder still runs, so every write `fn` makes must be guarded on the lease.
  */
-export async function withDomainLock(env: Env, domainId: string, fn: () => Promise<Response>): Promise<Response | null> {
+export async function withDomainLock(env: Env, domainId: string, fn: (lease: Lease) => Promise<Response>): Promise<Response | null> {
   const key = `domain:${domainId}`, token = crypto.randomUUID(), now = Math.floor(Date.now() / 1000);
   const got = await env.DB.prepare(
     "INSERT INTO locks (key, token, until) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET token = excluded.token, until = excluded.until WHERE locks.until <= ?",
   ).bind(key, token, now + LEASE_S, now).run();
   if (!got.meta.changes) return null;
+  const sql = "EXISTS (SELECT 1 FROM locks WHERE key = ? AND token = ?)";
+  const held = async () => !!(await env.DB.prepare(`SELECT ${sql} AS ok`).bind(key, token).first<{ ok: number }>())?.ok;
   try {
-    return await fn();
+    return await fn({ sql, binds: [key, token], held });
   } finally {
+    // Our token only: a lease another request reclaimed stays theirs.
     await env.DB.prepare("DELETE FROM locks WHERE key = ? AND token = ?").bind(key, token).run()
       .catch((e) => console.warn("linkwarren: could not release a domain lock", JSON.stringify({ domainId, error: String(e).slice(0, 200) })));
   }
