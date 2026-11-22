@@ -126,6 +126,12 @@ describe("rules", () => {
     const r2 = await rep(await owner(b));
     expect(r2).toMatchObject({ created: 0, skipped: 2, protected: [{ host: "a.test", slug: "Secret" }] });
   });
+  it("a protected link whose slug is already live is the conflict protected_live, so the owner sees the live open redirect", async () => {
+    // An earlier import (an old export, confirmed) put the password link live; the corrected export marks it protected.
+    await owner(body([{ host: "a.test", slug: "Secret", destination: "https://e.org/private" }]));
+    const r = await rep(await owner(body([{ host: "a.test", slug: "Secret", destination: "https://e.org/private", protected: true }])));
+    expect(r).toMatchObject({ created: 0, conflicts: [{ host: "a.test", slug: "Secret", reason: "protected_live" }], protected: [] });
+  });
   it("protected must be a boolean", async () => {
     expect((await owner({ ...body([]), links: [{ ...link({ host: null, slug: "a", destination: "https://e.org/" }), protected: "yes" }] })).status).toBe(400);
   });

@@ -149,7 +149,8 @@ importApi.post("/", async (c) => {
   for (const i of disabled) {
     const l = b.links[i]!, dom = doms.get(hostOf(l.host))!;
     const key = slugKey(l.slug, dom.cs);
-    if (liveLower.get(dom.id)!.has(key.toLowerCase())) { conflict(i, "exists"); continue; }
+    // protected_live: a former password link already serves as an open redirect here; the owner has to fix it by hand.
+    if (liveLower.get(dom.id)!.has(key.toLowerCase())) { conflict(i, l.protected ? "protected_live" : "exists"); continue; }
     if (locks.get(dom.id)!.has(key.toLowerCase())) { out[i] = { kind: "skip" }; continue; }
     locks.get(dom.id)!.add(key.toLowerCase());
     plans.lock.push({ dom, slug: l.slug, key, url: "", startsAt: null, expiresAt: null });
