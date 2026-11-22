@@ -1,10 +1,8 @@
 // Pure route picking for links that send visitors to different destinations by country or device.
-import { deviceOf } from "./clicks";
+import { deviceOf, UA_MAX } from "./clicks";
 
 import type { Route, RouteDevice } from "./types";
 export type { Route, RouteDevice };
-
-const UA_MAX = 512; // same cap as click recording, before any regex runs
 
 /** Bots and an empty UA are "desktop" for routing. */
 export function routeDeviceOf(ua: string | null): RouteDevice {

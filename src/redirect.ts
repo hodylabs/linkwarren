@@ -1,5 +1,5 @@
 import { type Ctx, getDomainByHost, getLink } from "./cache";
-import { classifyAgent, referrerHost, splitQrMarker, utcDay, visitorHash } from "./clicks";
+import { classifyAgent, referrerHost, splitQrMarker, UA_MAX, utcDay, visitorHash } from "./clicks";
 import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, pendingPage } from "./pages";
@@ -41,8 +41,6 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
   return res;
 }
-
-const UA_MAX = 512;
 
 export async function recordClick(env: Env, req: Request, link: LinkRow, domain: DomainRow, qr: boolean, now: number): Promise<void> {
   try {

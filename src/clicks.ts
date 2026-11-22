@@ -1,6 +1,8 @@
 // Pure click classification for analytics. No raw IP, full user agent or full referrer leaves these helpers.
 export const QR_PARAM = "lw";
 export const QR_VALUE = "qr";
+/** User-agent cap before any regex runs (agent regex cost grows faster than linear on crafted long agents). */
+export const UA_MAX = 512;
 
 export type Device = "mobile" | "tablet" | "desktop" | "other";
 export type Kind = "human" | "bot" | "preview";

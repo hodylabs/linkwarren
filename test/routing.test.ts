@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { countryOf, pickDestination, routeDeviceOf, withQuery } from "../src/routing";
+import { rowToLink } from "../src/types";
 
 const A = "https://a.example/";
 const B = "https://b.example/";
@@ -58,4 +59,12 @@ describe("withQuery", () => {
   it("dest without a query", () => expect(withQuery("https://x.example/p", true, "?a=1")).toBe("https://x.example/p?a=1"));
   it("dest with a query", () => expect(withQuery("https://x.example/p?z=1", true, "?a=1")).toBe("https://x.example/p?z=1&a=1"));
   it("raw bytes kept", () => expect(withQuery("https://x.example/p", true, "?a=%20b&c=1")).toBe("https://x.example/p?a=%20b&c=1"));
+});
+
+describe("stored data never throws", () => {
+  it("pickDestination on a row whose routes JSON holds junk elements falls back to the main url", () => {
+    const row = rowToLink({ id: "i", url: "https://main.example/", routes: '[null, {"url":1}, 3, {"countries":"CA","devices":[],"url":"x"}]' });
+    expect(row.routes).toEqual([]);
+    expect(pickDestination(row, "CA", "mobile")).toBe("https://main.example/");
+  });
 });
