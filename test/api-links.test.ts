@@ -487,6 +487,36 @@ describe("password and routes", () => {
     expect((await post("a", { domainId: "dm", slug: "s3", url: "https://x.com", password: "12345678" })).status).toBe(201);
   });
 
+  it("a password over the 1024-unit cap is password_long when it is the only problem, invalid_body otherwise", async () => {
+    const long = "a".repeat(1025);
+    expect(await err(await post("a", { domainId: "dm", slug: "l1", url: "https://x.com", password: long }))).toEqual([400, { error: "password_long" }]);
+    expect(await err(await post("a", { domainId: "dm", slug: "l2", url: "https://x.com", password: long, extra: 1 }))).toEqual([400, { error: "invalid_body" }]);
+    const { id } = await mk("a", "l3");
+    expect(await err(await call("a", "PATCH", `/api/links/${id}`, { password: long }))).toEqual([400, { error: "password_long" }]);
+    expect(await err(await call("a", "PATCH", `/api/links/${id}`, { password: long, redirectCode: 307 }))).toEqual([400, { error: "invalid_body" }]);
+  });
+
+  it("the host list is read once per request for all route destinations", async () => {
+    const real = env.DB;
+    let reads = 0;
+    (env as { DB: D1Database }).DB = new Proxy(real, {
+      get(t, p) {
+        if (p === "prepare") return (sql: string) => { if (sql.startsWith("SELECT host FROM domains")) reads++; return t.prepare(sql); };
+        const v = Reflect.get(t, p);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    let r: Response;
+    try {
+      r = await post("a", { domainId: "dm", slug: "h1", url: "https://x.com/a", routes: Array.from({ length: 5 }, (_, i) => ({ countries: ["CA"], url: `https://x${i}.ca/` })) });
+    } finally {
+      (env as { DB: D1Database }).DB = real;
+    }
+    expect(r.status).toBe(201);
+    // One for the main destination, one shared by the five routes.
+    expect(reads).toBe(2);
+  });
+
   it("a password link cannot be 301, on create or on a PATCH of a protected link", async () => {
     expect(await err(await post("a", { domainId: "dm", slug: "p3", url: "https://x.com", password: "spring-27", redirectCode: 301 }))).toEqual([400, { error: "password_301" }]);
     const { id } = await mk("a", "p4", { password: "spring-27" });
@@ -516,7 +546,12 @@ describe("password and routes", () => {
     [{ url: "https://x.ca/" }, "route_empty"],
     [{ countries: ["CA"], url: "https://go.test/x" }, "loop"],
     [{ countries: ["CA"], url: "https://dash.test/x" }, "loop"],
-    [{ countries: ["CA"], url: "javascript:alert(1)" }, "bad_scheme"],
+    [{ countries: ["CA"], url: "javascript:alert(1)" }, "scheme"],
+    [{ countries: ["CA"], url: "not a url" }, "not_url"],
+    [{ countries: ["ß"], url: "https://x.ca/" }, "route_country"],
+    [{ countries: ["ﬀ"], url: "https://x.ca/" }, "route_country"],
+    [{ countries: ["ıd"], url: "https://x.ca/" }, "route_country"],
+    [{ countries: ["CAN".repeat(100)], url: "https://x.ca/" }, "route_country"],
     [{ countries: ["CA"], url: "https://u:p@x.com/" }, "userinfo"],
     [{ countries: ["CA"], url: `https://x.com/${"a".repeat(2050)}` }, "url_too_long"],
   ])("bad route case %# is bad_route with its reason", async (route, reason) => {
@@ -525,8 +560,7 @@ describe("password and routes", () => {
     expect(r.status).toBe(400);
     expect(body.error).toBe("bad_route");
     expect(body.index).toBe(0);
-    if (reason === "bad_scheme" || reason === "userinfo") expect(typeof body.reason).toBe("string");
-    else expect(body.reason).toBe(reason);
+    expect(body.reason).toBe(reason);
   });
 
   it("bad_route names the failing index; limits: 11 routes, 51 countries, a fourth device, unknown device or key are invalid_body", async () => {
@@ -613,7 +647,8 @@ describe("password and routes", () => {
 
   it("malformed stored route elements are dropped, never thrown on", async () => {
     const { id } = await mk("a", "junk");
-    await run("UPDATE links SET routes = ? WHERE id = ?", '[null, {"url":1}, {"countries":["CA"],"devices":[],"url":"https://ca.test/"}]', id);
+    await run("UPDATE links SET routes = ? WHERE id = ?",
+      '[null, {"url":1}, {"countries":["CA"],"devices":[],"url":"not a url"}, {"countries":["CA"],"devices":[],"url":"javascript:alert(1)"}, {"countries":["CA"],"devices":[],"url":"https://ca.test/"}]', id);
     const list = (await (await call("a", "GET", "/api/links")).json()) as { items: Record<string, unknown>[] };
     expect(list.items.find((i) => i.id === id)!.routes).toEqual([{ countries: ["CA"], devices: [], url: "https://ca.test/" }]);
     expect((await exports.default.fetch("https://go.test/junk", { redirect: "manual" })).status).toBe(302);

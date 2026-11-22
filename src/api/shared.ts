@@ -21,10 +21,13 @@ export const purgeHost = (env: Env, host: string) => swallow(invalidateHost(env,
 export const purgeMany = (env: Env, domainId: string, keys: string[]) =>
   swallow(Promise.all(keys.map((k) => invalidateLink(env, domainId, k))));
 
-/** Validates the destination and returns the normalized href, or an error code. `also`: more hosts that count as short hosts. */
-export async function destination(env: Env, raw: string, also: string[] = []): Promise<{ href: string } | { error: string }> {
+/**
+ * Validates the destination and returns the normalized href, or an error code. `also`: more hosts that count as short hosts.
+ * `hosts`: the allHosts list already read in this request (saves one D1 read per call).
+ */
+export async function destination(env: Env, raw: string, also: string[] = [], hosts?: string[]): Promise<{ href: string } | { error: string }> {
   const target = cnameTarget(env);
-  const r = checkDestination(raw, [...(await allHosts(env)), env.DASHBOARD_HOST, ...(target ? [target] : []), ...also]);
+  const r = checkDestination(raw, [...(hosts ?? (await allHosts(env))), env.DASHBOARD_HOST, ...(target ? [target] : []), ...also]);
   if (!r.ok) return { error: r.reason === "too_long" ? "url_too_long" : r.reason };
   if (r.url.href.length > 2048) return { error: "url_too_long" };
   return { href: r.url.href };

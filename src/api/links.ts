@@ -2,11 +2,12 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
-import { checkPassword, hashPassword, iterationsOf } from "../password";
+import { hashPassword, iterationsOf } from "../password";
+import { passwordRule } from "../password-rule";
 import { canManageDomain, canUseDomain, usableDomainsSql } from "../perm";
 import { rowToLink, toApiLink, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
-import { destination, getDomain, isMember, purge } from "./shared";
+import { allHosts, destination, getDomain, isMember, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const links = new Hono<E>();
@@ -26,7 +27,8 @@ const routeInput = z.strictObject({
 });
 type RouteInput = z.infer<typeof routeInput>;
 const rules = {
-  // A string sets, null clears, absent keeps. Length is checked by checkPassword (code points), 1024 only caps the body.
+  // A string sets, null clears, absent keeps. Length is checked by passwordRule (code points); 1024 units only caps the work
+  // (a longer one is answered password_long, see bodyError).
   password: z.string().max(1024).nullable().optional(),
   // Replaces the whole list; [] clears it.
   routes: z.array(routeInput).max(10).optional(),
@@ -39,15 +41,20 @@ const patchBody = z.strictObject({
   url: z.string().optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
 });
 
-/** Countries upper-cased, two letters A to Z (never XX or T1, they never match), deduped; each url checked like the main destination. */
+/** Countries two ASCII letters (raw, then upper-cased; never XX or T1, they never match), deduped; each url checked like the main destination. */
 export async function validateRoutes(env: Env, input: RouteInput[]): Promise<{ routes: Route[] } | { error: "bad_route"; index: number; reason: string }> {
   const routes: Route[] = [];
+  // One host read for every route of the request.
+  const hosts = input.length ? await allHosts(env) : [];
   for (const [index, r] of input.entries()) {
-    const countries = [...new Set((r.countries ?? []).map((c) => c.toUpperCase()))];
-    if (countries.some((c) => !/^[A-Z]{2}$/.test(c) || c === "XX")) return { error: "bad_route", index, reason: "route_country" };
+    const raw = r.countries ?? [];
+    // Raw check first: "ß".toUpperCase() is "SS", which must not pass as a code.
+    if (raw.some((c) => !/^[A-Za-z]{2}$/.test(c))) return { error: "bad_route", index, reason: "route_country" };
+    const countries = [...new Set(raw.map((c) => c.toUpperCase()))];
+    if (countries.includes("XX")) return { error: "bad_route", index, reason: "route_country" };
     const devices = [...new Set(r.devices ?? [])];
     if (!countries.length && !devices.length) return { error: "bad_route", index, reason: "route_empty" };
-    const dest = await destination(env, r.url);
+    const dest = await destination(env, r.url, [], hosts);
     if ("error" in dest) return { error: "bad_route", index, reason: dest.error };
     routes.push({ countries, devices, url: dest.href });
   }
@@ -57,9 +64,14 @@ export async function validateRoutes(env: Env, input: RouteInput[]): Promise<{ r
 /** Undefined: keep. Null: clear. Otherwise the new hash (hashed here, before any batch, outside the revision race window). */
 async function passwordInput(env: Env, raw: string | null | undefined): Promise<{ hash: string | null | undefined } | { error: string }> {
   if (raw === undefined || raw === null) return { hash: raw };
-  const p = checkPassword(raw);
+  const p = passwordRule(raw);
   if (!p.ok) return { error: p.reason };
   return { hash: await hashPassword(p.value, iterationsOf(env)) };
+}
+
+/** invalid_body, or password_long when an over-long password is the only problem (zod caps it at 1024 units). */
+function bodyError(e: z.ZodError): string {
+  return e.issues.every((i) => i.code === "too_big" && i.path.length === 1 && i.path[0] === "password") ? "password_long" : "invalid_body";
 }
 
 const hasLock = async (env: Env, domainId: string, key: string) =>
@@ -137,7 +149,7 @@ links.get("/", async (c) => {
 links.post("/", async (c) => {
   const user = c.var.user;
   const body = createBody.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
   const b = body.data;
   const domain = await getDomain(c.env, b.domainId);
   if (!domain) return c.json({ error: "not_found" }, 404);
@@ -202,7 +214,7 @@ async function editable(c: { env: Env; var: { user: UserRow } }, id: string) {
 links.patch("/:id", async (c) => {
   const user = c.var.user;
   const body = patchBody.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
   const b = body.data;
   const found = await editable(c, c.req.param("id"));
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
