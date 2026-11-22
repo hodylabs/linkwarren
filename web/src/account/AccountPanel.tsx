@@ -5,7 +5,7 @@ import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
 import { Tag } from "../shell/ui";
 import { clock, shortDate } from "../time";
-import { addPasskey, passkeysSupported } from "./passkey";
+import { addPasskey, passkeysSupported } from "../signin/passkey";
 
 /** Sign-in and security hotkeys and their text on the shortcuts sheet. */
 export const ACCOUNT_KEYS = {
@@ -71,7 +71,7 @@ export function AccountPanel() {
     const i = sel === null ? (step === 1 ? 0 : ids.length - 1) : Math.min(Math.max(ids.indexOf(sel) + step, 0), ids.length - 1);
     setSel(ids[i]!);
   };
-  const add = () => run(addPasskey, () => void load());
+  const add = () => run(() => addPasskey(), () => void load());
   const startRename = () => {
     if (!passkey) return;
     setName(passkey.name);
