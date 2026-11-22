@@ -42,6 +42,9 @@ describe("who may use /api/roles", () => {
       expect((await call(who.cookie, "DELETE", "/api/roles/rx", {})).status).toBe(403);
     }
     expect((await call(m.cookie, "GET", "/api/roles")).status).toBe(403);
+    // The fixture really stores role_id (helper's roleId option), so this is a people manager, not a plain member.
+    expect(await one("SELECT role_id FROM users WHERE id = ?", p.user.id)).toEqual({ role_id: "pm" });
+    expect(await (await call(p.cookie, "GET", "/api/me")).json()).toMatchObject({ roleId: "pm", roleName: "Managers", perms: ["people.manage"] });
     const g = await call(p.cookie, "GET", "/api/roles");
     expect(g.status).toBe(200);
     const items = (await g.json()) as Item[];
@@ -127,6 +130,9 @@ describe("names and perms", () => {
       expect(await b.json()).toEqual({ error: "bad_name" });
     }
     expect((await create(A.cookie, "\u{1F600}".repeat(40))).status).toBe(201);
+    const nfc = await create(A.cookie, "Caf\u0065\u0301");
+    expect(((await nfc.json()) as Item).name).toBe("Caf\u00e9");
+    expect(await (await create(A.cookie, "caf\u00e9")).json()).toEqual({ error: "name_taken" });
   });
 
   it("refuses unknown perm keys, __proto__ included; stores R2 order without duplicates", async () => {
@@ -198,6 +204,51 @@ describe("delete a role in use", () => {
     expect((await audits("role.delete")).map((a) => a.detail)).toEqual([{ name: "Editors", movedTo: "Writers", people: 1 }]);
   });
 
+  it("an empty role deleted with moveTo records movedTo null", async () => {
+    expect(await (await call(A.cookie, "DELETE", "/api/roles/rx", { moveTo: "ry" })).json()).toEqual({ moved: 0 });
+    expect((await audits("role.delete")).map((a) => a.detail)).toEqual([{ name: "Editors", movedTo: null, people: 0 }]);
+  });
+
+  it("race: the role renamed during DELETE {moveTo}: 409 changed, nobody moved", async () => {
+    const p1 = await signedIn("p1@example.com", { roleId: "rx" });
+    const restore = beforeBatch(1, () => run("UPDATE roles SET name = 'Renamed' WHERE id = 'rx'"));
+    try {
+      expect(await (await call(A.cookie, "DELETE", "/api/roles/rx", { moveTo: "member" })).json()).toEqual({ error: "changed" });
+    } finally { restore(); }
+    expect(await one("SELECT role_id FROM users WHERE id = ?", p1.user.id)).toEqual({ role_id: "rx" });
+    expect(await one("SELECT name FROM roles WHERE id = 'rx'")).toEqual({ name: "Renamed" });
+    expect(await audits("role.delete")).toEqual([]);
+  });
+
+  it("race: a swap in the window (one person off, another on, same count): 409 changed, nobody moved", async () => {
+    const p1 = await signedIn("p1@example.com", { roleId: "rx" });
+    const q = await signedIn("q@example.com");
+    const restore = beforeBatch(1, () => env.DB.batch([
+      env.DB.prepare("UPDATE users SET role_id = NULL WHERE id = ?").bind(p1.user.id),
+      env.DB.prepare("UPDATE users SET role_id = 'rx' WHERE id = ?").bind(q.user.id),
+    ]));
+    try {
+      expect(await (await call(A.cookie, "DELETE", "/api/roles/rx", { moveTo: "ry" })).json()).toEqual({ error: "changed" });
+    } finally { restore(); }
+    expect(await one("SELECT role_id FROM users WHERE id = ?", q.user.id)).toEqual({ role_id: "rx" });
+    expect(await one("SELECT role_id FROM users WHERE id = ?", p1.user.id)).toEqual({ role_id: null });
+    expect(await audits("role.delete")).toEqual([]);
+  });
+
+  it("race: the role or the target deleted in the window: 404, bad_move_to", async () => {
+    await signedIn("p1@example.com", { roleId: "rx" });
+    let restore = beforeBatch(1, () => run("DELETE FROM roles WHERE id = 'ry'"));
+    try {
+      expect(await (await call(A.cookie, "DELETE", "/api/roles/rx", { moveTo: "ry" })).json()).toEqual({ error: "bad_move_to" });
+    } finally { restore(); }
+    await role("rz", "Empty", []);
+    restore = beforeBatch(1, () => run("DELETE FROM roles WHERE id = 'rz'"));
+    try {
+      expect((await call(A.cookie, "DELETE", "/api/roles/rz", {})).status).toBe(404);
+    } finally { restore(); }
+    expect(await audits("role.delete")).toEqual([]);
+  });
+
   it("race: a person assigned between the pre-read and the batch makes the delete 409 changed, nothing changed", async () => {
     const q = await signedIn("q@example.com");
     const restore = beforeBatch(1, () => run("UPDATE users SET role_id = 'rx' WHERE id = ?", q.user.id));
@@ -234,6 +285,44 @@ describe("delete a role in use", () => {
 });
 
 describe("concurrent edits", () => {
+  it("a perms PATCH lands before a name-only PATCH's batch: the rename is 409 changed, perms are not restored", async () => {
+    await role("rx", "Editors", ["links.create"]);
+    const restore = beforeBatch(1, () => run(`UPDATE roles SET perms = '["keys"]' WHERE id = 'rx'`));
+    try {
+      expect(await (await call(A.cookie, "PATCH", "/api/roles/rx", { name: "Writers" })).json()).toEqual({ error: "changed" });
+    } finally { restore(); }
+    expect(await one("SELECT name, perms FROM roles WHERE id = 'rx'")).toEqual({ name: "Editors", perms: '["keys"]' });
+    expect(await audits("role.update")).toEqual([]);
+  });
+
+  it("PATCH: the new name taken or the role deleted in the window: 409 name_taken, 404", async () => {
+    await role("rx", "Editors", []);
+    let restore = beforeBatch(1, () => role("ry", "Writers", []));
+    try {
+      expect(await (await call(A.cookie, "PATCH", "/api/roles/rx", { name: "writers" })).json()).toEqual({ error: "name_taken" });
+    } finally { restore(); }
+    restore = beforeBatch(1, () => run("DELETE FROM roles WHERE id = 'rx'"));
+    try {
+      expect((await call(A.cookie, "PATCH", "/api/roles/rx", { name: "Other" })).status).toBe(404);
+    } finally { restore(); }
+    expect(await audits("role.update")).toEqual([]);
+  });
+
+  it("POST: the name taken or the 20th role made in the window: 409 name_taken, too_many_roles", async () => {
+    let restore = beforeBatch(1, () => role("ry", "Writers", []));
+    try {
+      expect(await (await create(A.cookie, "WRITERS")).json()).toEqual({ error: "name_taken" });
+    } finally { restore(); }
+    for (let i = 0; i < 18; i++) await role(`r${i}`, `Role ${i}`, []);
+    restore = beforeBatch(1, () => role("r19", "Role 19", []));
+    try {
+      const r = await create(A.cookie, "Twenty-first");
+      expect(r.status).toBe(409);
+      expect(await r.json()).toEqual({ error: "too_many_roles" });
+    } finally { restore(); }
+    expect(await audits("role.create")).toEqual([]);
+  });
+
   it("two PATCHes on the same role: one wins, the other 409 changed with nothing written", async () => {
     await role("rx", "Editors", ["links.create"]);
     let inner: Response | undefined;

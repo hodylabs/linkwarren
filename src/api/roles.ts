@@ -27,11 +27,12 @@ const toItem = (r: RoleRow): RoleItem => ({
   perms: r.id === "owner" ? [...PERMS] : parsePerms(r.perms),
   builtin: r.builtin ? (r.id as "owner" | "member") : null,
 });
-const list = async (env: Env, id: string | null = null) => (await env.DB.prepare(LIST).bind(id, id).all<RoleRow>()).results.map(toItem);
+const rawList = async (env: Env, id: string | null = null) => (await env.DB.prepare(LIST).bind(id, id).all<RoleRow>()).results;
+const list = async (env: Env, id: string | null = null) => (await rawList(env, id)).map(toItem);
 
-/** S7 UNSAFE characters out, trimmed, 1 to 40 code points; null when that leaves nothing usable. */
+/** S7 UNSAFE characters out, NFC, trimmed, 1 to 40 code points; null when that leaves nothing usable. */
 const cleanName = (raw: string): string | null => {
-  const n = raw.replace(UNSAFE, "").trim();
+  const n = raw.replace(UNSAFE, "").normalize("NFC").trim();
   const len = [...n].length;
   return len >= 1 && len <= 40 ? n : null;
 };
@@ -42,6 +43,8 @@ const taken = (all: RoleItem[], name: string, self: string | null) =>
   all.some((r) => r.id !== self && r.name.toLowerCase() === name.toLowerCase());
 // SQL twin of `taken` for the batch (NOCASE column; the JS check above also catches non-ASCII case).
 const FREE = "NOT EXISTS (SELECT 1 FROM roles WHERE name = ? AND id != ?)";
+/** The ids of everyone on role `?`, as a JSON array in id order: compared before and inside the delete batch. */
+const HOLDERS = "SELECT json_group_array(id) FROM (SELECT id FROM users WHERE role_id = ? ORDER BY id)";
 
 const invalid = (c: { json: (b: unknown, s: 400) => Response }) => c.json({ error: "invalid_body" }, 400);
 const createBody = z.strictObject({ name: z.string().max(200), perms: z.array(z.string()).max(PERMS.length) });
@@ -96,9 +99,10 @@ roles.patch("/:id", async (c) => {
   if (name === null) return c.json({ error: "bad_name" }, 400);
   const perms = body.data.perms === undefined ? undefined : cleanPerms(body.data.perms);
   if (perms === null) return c.json({ error: "bad_perms" }, 400);
-  const [all, pre] = await Promise.all([list(env), env.DB.prepare("SELECT name, perms FROM roles WHERE id = ?").bind(id).first<{ name: string; perms: string }>()]);
-  const cur = all.find((r) => r.id === id);
-  if (!cur || !pre) return c.json(notFound, 404);
+  // One read: the new values, the audit diff and the conflict guard all come from this same row.
+  const raws = await rawList(env), pre = raws.find((r) => r.id === id);
+  if (!pre) return c.json(notFound, 404);
+  const all = raws.map(toItem), cur = toItem(pre);
   const newName = name ?? cur.name, newPerms = perms ?? cur.perms;
   if (taken(all, newName, id)) return c.json({ error: "name_taken" }, 409);
   const added = newPerms.filter((p) => !cur.perms.includes(p)), removed = cur.perms.filter((p) => !newPerms.includes(p));
@@ -133,26 +137,28 @@ roles.delete("/:id", async (c) => {
   const body = deleteBody.safeParse(raw);
   if (!body.success) return invalid(c);
   const id = c.req.param("id"), moveTo = body.data.moveTo;
-  const pre = await env.DB.prepare(`SELECT r.name, r.builtin, (SELECT COUNT(*) FROM users WHERE role_id = r.id) n,
+  const pre = await env.DB.prepare(`SELECT r.name, r.builtin, (SELECT COUNT(*) FROM users WHERE role_id = r.id) n, (${HOLDERS}) ids,
     (SELECT name FROM roles WHERE id = ? AND id NOT IN ('owner', r.id)) target FROM roles r WHERE r.id = ?`)
-    .bind(moveTo ?? null, id).first<{ name: string; builtin: number; n: number; target: string | null }>();
+    .bind(id, moveTo ?? null, id).first<{ name: string; builtin: number; n: number; ids: string; target: string | null }>();
   if (!pre) return c.json(notFound, 404);
   if (pre.builtin) return c.json({ error: "builtin" }, 409);
   if (moveTo !== undefined && !pre.target) return c.json({ error: "bad_move_to" }, 400);
   if (moveTo === undefined && pre.n) return c.json({ error: "role_in_use", people: pre.n }, 409);
   const stmts: D1PreparedStatement[] = [];
-  // The move runs only when the role still has exactly the people read, and the delete only when that move moved them all
-  // (changes() is the UPDATE's own count) and nobody is left on the role: someone assigned meanwhile makes it 409 changed.
+  // The move runs only while the role is as read (same row, same name) and holds exactly the people read (same ids, not
+  // just the same count), and the delete only when that move moved them all (changes() is the UPDATE's own count) and
+  // nobody is left: any change in the window writes nothing and answers 409 changed.
+  const SRC = "EXISTS (SELECT 1 FROM roles WHERE id = ? AND builtin = 0 AND name = ? COLLATE BINARY)";
   if (moveTo !== undefined) {
-    stmts.push(env.DB.prepare(`UPDATE users SET role_id = ? WHERE role_id = ? AND (SELECT COUNT(*) FROM users WHERE role_id = ?) = ?
-      AND ${ACTOR_OK} AND EXISTS (SELECT 1 FROM roles WHERE id = ? AND id NOT IN ('owner', ?))`)
-      .bind(moveTo === "member" ? null : moveTo, id, id, pre.n, me.id, moveTo, id));
+    stmts.push(env.DB.prepare(`UPDATE users SET role_id = ? WHERE role_id = ? AND id IN (SELECT value FROM json_each(?)) AND (${HOLDERS}) = ?
+      AND ${SRC} AND ${ACTOR_OK} AND EXISTS (SELECT 1 FROM roles WHERE id = ? AND id NOT IN ('owner', ?))`)
+      .bind(moveTo === "member" ? null : moveTo, id, pre.ids, id, pre.ids, id, pre.name, me.id, moveTo, id));
   }
   stmts.push(
     env.DB.prepare(`DELETE FROM roles WHERE id = ? AND builtin = 0 AND name = ? COLLATE BINARY AND ${ACTOR_OK}
       AND NOT EXISTS (SELECT 1 FROM users WHERE role_id = ?)${moveTo !== undefined ? " AND changes() = ?" : ""}`)
       .bind(id, pre.name, me.id, id, ...(moveTo !== undefined ? [pre.n] : [])),
-    auditStmt(env, { actorId: me.id, action: "role.delete", targetType: "role", targetId: id, detail: { name: pre.name, movedTo: pre.target, people: pre.n } },
+    auditStmt(env, { actorId: me.id, action: "role.delete", targetType: "role", targetId: id, detail: { name: pre.name, movedTo: pre.n ? pre.target : null, people: pre.n } },
       { sql: "changes() > 0 AND NOT EXISTS (SELECT 1 FROM roles WHERE id = ?)", binds: [id] }),
   );
   const res = await env.DB.batch(stmts);
