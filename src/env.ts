@@ -29,4 +29,6 @@ export type Env = {
   AE_DATASET?: string;
   /** Secret: daily visitor hash salt; unset leaves the visitor blob empty. */
   VISITOR_SALT?: string;
+  /** PBKDF2 iterations for new link passwords: integer, clamped 1000..100000; unset or invalid uses PASSWORD_DEFAULT_ITERATIONS. */
+  PASSWORD_HASH_ITERATIONS?: string;
 };
