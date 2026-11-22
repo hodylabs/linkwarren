@@ -59,9 +59,11 @@ export async function dnsPointsAt(host: string, target: string, served = false):
     if (cname.includes(t)) return "found";
     const [a, aaaa, ta, taaaa] = await Promise.all([dohLookup(host, "A"), dohLookup(host, "AAAA"), dohLookup(t, "A"), dohLookup(t, "AAAA")]);
     const theirs = new Set([...ta, ...taaaa]);
-    if ([...a, ...aaaa].some((ip) => theirs.has(ip))) return "found"; // flattened apex
+    const ips = [...a, ...aaaa];
+    // Flattened apex: it shares the target's addresses, and no answer points anywhere Cloudflare does not proxy.
+    if (ips.some((ip) => theirs.has(ip)) && ips.every((ip) => theirs.has(ip) || cloudflareProxied(ip))) return "found";
     if (cname.length + a.length + aaaa.length === 0) return "missing";
-    return served && cname.length === 0 && [...a, ...aaaa].every(cloudflareProxied) ? "found" : "wrong_target";
+    return served && cname.length === 0 && ips.every(cloudflareProxied) ? "found" : "wrong_target";
   } catch (e) {
     if (e instanceof CfError) return "unknown";
     throw e;

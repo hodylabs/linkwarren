@@ -156,6 +156,10 @@ describe("dnsPointsAt", () => {
     installFakeCloudflare({ doh: { "A:example.com": ["1.2.3.4"], "A:edge.test": ["9.9.9.9", "1.2.3.4"] } });
     expect(await dnsPointsAt("example.com", T)).toBe("found");
   });
+  it("flattened apex with one extra address outside Cloudflare is wrong_target", async () => {
+    installFakeCloudflare({ doh: { "A:example.com": ["1.2.3.4", "203.0.113.9"], "A:edge.test": ["9.9.9.9", "1.2.3.4"] } });
+    expect(await dnsPointsAt("example.com", T)).toBe("wrong_target");
+  });
   it("no answers is missing", async () => {
     installFakeCloudflare();
     expect(await dnsPointsAt("go.example.com", T)).toBe("missing");
