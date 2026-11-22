@@ -106,9 +106,11 @@ export function InstanceSection({ s, onSaved }: { s: SettingsBody; onSaved: (b: 
   const upload = async (f: File | undefined) => {
     if (file.current) file.current.value = ""; // the same file can be picked again after a fix
     if (!f) return;
-    const r = await readLogoFile(f);
-    if ("error" in r) return setLogoMsg({ text: settingsError(r.error), error: true });
-    await logo(() => putLogo(r));
+    await logo(async () => {
+      const r = await readLogoFile(f);
+      if ("error" in r) throw new ApiError(400, r.error); // shown like the server's own refusal
+      await putLogo(r);
+    });
   };
   return (
     <section className="sblock" aria-labelledby="st-instance" onKeyDown={e.onKeyDown}>
@@ -159,14 +161,17 @@ export function SignInSection({ s }: { s: SettingsBody }) {
   );
 }
 
-const RESEND_HINT = "A new instance needs the RESEND_API_KEY Worker secret first, because signing in needs email. A pasted key only replaces it later.";
+const RESEND_HINT =
+  "A fresh instance needs the RESEND_API_KEY Worker secret, because the owner signs in by email. A key pasted here is used only when no Worker secret is set; a Worker secret always wins.";
 
 export function EmailSection({ s, onSecrets }: { s: SettingsBody; onSecrets: (st: SecretStatus) => void }) {
   const { me } = useApp();
   const [msg, setMsg] = useState<Msg>(null);
   const [busy, setBusy] = useState(false);
+  const sending = useRef(false); // a double click sends one test email
   const test = async () => {
-    if (busy) return;
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setMsg(null);
     try {
@@ -175,6 +180,7 @@ export function EmailSection({ s, onSecrets }: { s: SettingsBody; onSecrets: (st
     } catch (e) {
       setMsg({ text: settingsError(code(e)), error: true });
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };
@@ -232,7 +238,14 @@ export function DataSection({ s }: { s: SettingsBody }) {
   );
 }
 
-type Run = { phase: "idle" } | { phase: "confirm"; start: ExportStart } | { phase: "running"; progress: Record<string, number> } | { phase: "done"; progress: Record<string, number> };
+type Progress = Record<string, number>;
+type Run = { phase: "idle" } | { phase: "confirm"; start: ExportStart } | { phase: "running" | "done"; start: ExportStart; progress: Progress };
+
+/** "About N rows to read, X% of the free daily D1 reads for the whole Cloudflare account." */
+function estimateText(start: ExportStart) {
+  const est = exportEstimate(start);
+  return `About ${est.reads.toLocaleString("en-US")} ${est.reads === 1 ? "row" : "rows"} to read, ${Math.round(est.share * 100)}% of the free daily D1 reads for the whole Cloudflare account.`;
+}
 
 export function BackupsSection() {
   const { overlay } = useApp();
@@ -243,15 +256,15 @@ export function BackupsSection() {
   useEffect(() => () => abort.current?.abort(), []); // leaving the section cancels a running export
 
   const page = async (start: ExportStart, ac: AbortController) => {
-    const progress: Record<string, number> = {};
-    setRun({ phase: "running", progress });
+    const progress: Progress = {};
+    setRun({ phase: "running", start, progress });
     try {
       const blob = await runExport(api, start, (p) => {
         progress[p.table] = p.rows;
-        setRun({ phase: "running", progress: { ...progress } });
+        setRun({ phase: "running", start, progress: { ...progress } });
       }, ac.signal);
       saveBlob(blob, exportFileName(new Date()));
-      setRun({ phase: "done", progress: { ...progress } });
+      setRun({ phase: "done", start, progress: { ...progress } });
     } catch (e) {
       setRun({ phase: "idle" });
       if (!ac.signal.aborted) setError(code(e));
@@ -287,6 +300,10 @@ export function BackupsSection() {
   useHotkeys({ escape: cancel } satisfies Bindings<typeof EXPORT_KEYS>, overlay === null && (run.phase === "running" || run.phase === "confirm"));
 
   const progress = run.phase === "running" || run.phase === "done" ? run.progress : null;
+  const cont0 = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (run.phase === "confirm") cont0.current?.focus(); // the Download button is disabled now: Enter lands on Continue
+  }, [run.phase]);
   return (
     <section className="sblock" aria-labelledby="st-backups">
       <h2 id="st-backups">Backups and export</h2>
@@ -297,21 +314,19 @@ export function BackupsSection() {
       </label>
       <div className="row-actions save-row">
         <button type="button" className="btn" onClick={() => void begin()} disabled={run.phase === "running" || run.phase === "confirm"}>Download full export</button>
-        {run.phase === "running" && <button type="button" className="btn ghost" onClick={cancel}>Cancel<Kbd>Esc</Kbd></button>}
+        {run.phase === "running" && <button type="button" className="btn ghost" onClick={cancel} aria-keyshortcuts="Escape">Cancel<Kbd>Esc</Kbd></button>}
       </div>
-      {run.phase === "confirm" && (() => {
-        const est = exportEstimate(run.start);
-        return (
-          <div className="callout wait gap" role="alert">
-            This export reads about {est.reads.toLocaleString("en-US")} rows, {Math.round(est.share * 100)}% of the free daily D1 reads for the whole Cloudflare account.
-            <div className="row-actions">
-              <button type="button" className="btn" onClick={() => cont(run.start)}>Continue</button>
-              <button type="button" className="btn ghost" onClick={cancel}>Cancel<Kbd>Esc</Kbd></button>
-            </div>
+      {run.phase === "confirm" && (
+        <div className="callout wait gap" role="alert">
+          {estimateText(run.start)} Continue?
+          <div className="row-actions">
+            <button type="button" className="btn" ref={cont0} onClick={() => cont(run.start)}>Continue</button>
+            <button type="button" className="btn ghost" onClick={cancel} aria-keyshortcuts="Escape">Cancel<Kbd>Esc</Kbd></button>
           </div>
-        );
-      })()}
+        </div>
+      )}
       <div aria-live="polite">
+        {run.phase !== "idle" && run.phase !== "confirm" && <p className="muted">{estimateText(run.start)}</p>}
         {progress && (
           <ul className="fails">
             {Object.entries(progress).map(([t, n]) => <li key={t}><span className="mono">{t}</span>: {plural(n, "row")}</li>)}

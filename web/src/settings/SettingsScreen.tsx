@@ -19,11 +19,13 @@ export function SettingsScreen() {
 
   const [s, setS] = useState<SettingsBody | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tries, setTries] = useState(0);
   useEffect(() => {
     const ac = new AbortController();
+    setError(null);
     getSettings(ac.signal).then(setS, (e: unknown) => !ac.signal.aborted && setError(e instanceof ApiError ? e.code : "internal"));
     return () => ac.abort();
-  }, []);
+  }, [tries]);
 
   const nav = useRef<HTMLElement>(null);
   // Arrow keys move between sections like a tab list; each move is a normal navigation, so Back returns.
@@ -31,9 +33,12 @@ export function SettingsScreen() {
     const step = STEP[e.key];
     if (!step || e.altKey || e.ctrlKey || e.metaKey) return;
     e.preventDefault();
-    const i = (SECTIONS.findIndex((x) => x.id === section) + step + SECTIONS.length) % SECTIONS.length;
+    // From the focused link (Tab may have moved past the open section), else from the open section.
+    const links = [...(nav.current?.querySelectorAll("a") ?? [])];
+    const from = links.indexOf(document.activeElement as HTMLAnchorElement);
+    const i = ((from >= 0 ? from : SECTIONS.findIndex((x) => x.id === section)) + step + SECTIONS.length) % SECTIONS.length;
     navigate(`/settings/${SECTIONS[i]!.id}`);
-    nav.current?.querySelectorAll("a")[i]?.focus();
+    links[i]?.focus();
   };
 
   const body = (id: SectionId, v: SettingsBody) => {
@@ -60,7 +65,10 @@ export function SettingsScreen() {
         </nav>
         <div className="setmain">
           {!section ? null : error ? (
-            <p className="err" role="alert">{settingsError(error)}</p>
+            <p className="err" role="alert">
+              {settingsError(error)}
+              <button type="button" className="btn" onClick={() => setTries((n) => n + 1)}>Retry</button>
+            </p>
           ) : !s ? (
             <p className="muted" role="status">Loading</p>
           ) : (

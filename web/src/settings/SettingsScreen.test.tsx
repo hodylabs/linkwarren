@@ -129,7 +129,7 @@ describe("Settings sections", () => {
     const { api, user } = boot("/settings/email", { routes: { "POST /api/settings/email/test": () => ({ status: 429, body: { error: "too_soon" } }) } });
     expect(await screen.findByText("links@example.com")).toBeTruthy();
     expect(screen.getByLabelText("Resend API key")).toBeTruthy();
-    expect(screen.getByText(/A new instance needs the RESEND_API_KEY Worker secret/)).toBeTruthy();
+    expect(screen.getByText(/A fresh instance needs the RESEND_API_KEY Worker secret, because the owner signs in by email\. A key pasted here is used only when no Worker secret is set/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Send test email" }));
     expect((await screen.findByRole("alert")).textContent).toBe("A test email was just sent. Wait a minute before sending another.");
     expect(writes(api)).toHaveLength(1);
@@ -177,7 +177,8 @@ describe("Settings sections", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(writes(api).map((c) => c.path)).toEqual(["/api/export/start", "/api/export/page", "/api/export/page"]);
     expect(writes(api)[0]!.body).toEqual({ includeAnalytics: false });
-    expect((await screen.findByText(/2 rows/)).textContent).toBe("users: 2 rows");
+    expect((await screen.findByText(": 2 rows")).textContent).toBe("users: 2 rows");
+    expect(screen.getByText(/About 2 rows to read, 0% of the free daily D1 reads/)).toBeTruthy();
   });
 
   it("a large export asks first; Cancel reads no page", async () => {
@@ -187,6 +188,7 @@ describe("Settings sections", () => {
     await user.click(await screen.findByLabelText(/Include click analytics/));
     await user.click(screen.getByRole("button", { name: "Download full export" }));
     expect(await screen.findByText(/40% of the free daily D1 reads/)).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("button", { name: /Cancel/ }));
     expect(writes(api).map((c) => c.path)).toEqual(["/api/export/start"]);
     expect(writes(api)[0]!.body).toEqual({ includeAnalytics: true });
@@ -213,6 +215,32 @@ describe("Settings sections", () => {
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(writes(api)).toHaveLength(1));
     expect(writes(api)[0]!.body).toEqual({ linkRedirectCode: 301, linkPassQuery: false });
+  });
+
+  it("a failed settings load offers Retry", async () => {
+    let n = 0;
+    const { user } = boot("/settings/data", { routes: { "GET /api/settings": () => (++n === 1 ? { status: 500, body: { error: "internal" } } : { body: SETTINGS }) } });
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Keep 3 years")).toBeTruthy();
+  });
+
+  it("arrow keys step from the focused section link, not the open one", async () => {
+    const { user } = boot("/settings/instance");
+    await screen.findByLabelText("Name");
+    screen.getByRole("link", { name: "Email" }).focus();
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => expect(location.pathname).toBe("/settings/link-defaults"));
+    expect(document.activeElement?.textContent).toBe("Link defaults");
+  });
+
+  it("a token paste before the Cloudflare variables are set says to set them first", async () => {
+    const { user } = boot("/settings/cloudflare", {
+      settings: { secrets: { pasteAvailable: true, cf: "missing", resend: "missing" } },
+      routes: { "GET /api/settings/cloudflare": () => ({ body: { configured: false } }), "PUT /api/settings/secrets/cf": () => ({ status: 409, body: { error: "cloudflare_not_configured" } }) },
+    });
+    await user.type(await screen.findByLabelText("Cloudflare API token"), "tok_ABCDEFGHIJKLMNOPQRSTUV");
+    await user.click(screen.getByRole("button", { name: /Save/ }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Set the Cloudflare account variables in the Worker config first, then paste the token.");
   });
 
   it("Enter on a focused section link opens it, and the back button returns", async () => {

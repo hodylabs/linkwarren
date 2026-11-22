@@ -18,6 +18,7 @@ describe("SecretField", () => {
     render(<SecretField name="resend" status="missing" pasteAvailable={false} onSaved={() => {}} />);
     expect(screen.getByText("Missing")).toBeTruthy();
     expect(screen.getByText("npx wrangler secret put RESEND_API_KEY")).toBeTruthy();
+    expect(screen.getByText(/Pasting here needs the SECRETS_KEY Worker secret/)).toBeTruthy();
     expect(document.querySelector("input")).toBeNull();
   });
 
@@ -28,7 +29,7 @@ describe("SecretField", () => {
     render(<SecretField name="cf" status="missing" pasteAvailable onSaved={onSaved} />);
     const input = screen.getByLabelText("Cloudflare API token") as HTMLInputElement;
     expect(input.type).toBe("password");
-    expect(input.getAttribute("autocomplete")).toBe("off");
+    expect(input.getAttribute("autocomplete")).toBe("new-password");
     expect(screen.getByText("Stored encrypted with this instance's secret key. It is never shown again.")).toBeTruthy();
     await user.click(input);
     await user.keyboard("tok_ABCDEFGHIJKLMNOPQRSTUV{Control>}{Enter}{/Control}");
@@ -49,7 +50,7 @@ describe("SecretField", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("re_");
   });
 
-  it("Remove shows only for a dashboard value and sends DELETE", async () => {
+  it("Remove shows only for a dashboard value, asks first, and Enter sends DELETE", async () => {
     const api = fakeApi({ "DELETE /api/settings/secrets/resend": () => ({ body: { ...STATUS, resend: "missing" } }) });
     const onSaved = vi.fn();
     const user = userEvent.setup();
@@ -58,8 +59,35 @@ describe("SecretField", () => {
     rerender(<SecretField name="resend" status="dashboard" pasteAvailable onSaved={onSaved} />);
     expect(screen.getByText("Set in dashboard")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain(
+      "Remove the email key? Sign-in links and invites stop until a new key is pasted or set with wrangler secret put. People without a passkey cannot sign in meanwhile.",
+    );
+    expect(api.calls).toHaveLength(0);
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ ...STATUS, resend: "missing" }));
     expect(api.calls.map((c) => c.method)).toEqual(["DELETE"]);
+  });
+
+  it("the Cloudflare remove names what stops; Esc and Cancel send nothing", async () => {
+    const api = fakeApi({ "DELETE /api/settings/secrets/cf": () => ({ body: STATUS }) });
+    const user = userEvent.setup();
+    render(<SecretField name="cf" status="dashboard" pasteAvailable onSaved={() => {}} />);
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByRole("dialog").textContent).toContain("Remove the Cloudflare token? Adding, attaching and checking domains stops until a new token is set.");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it("a dashboard value without pasteAvailable can still be removed, and shows the command", async () => {
+    fakeApi({});
+    render(<SecretField name="cf" status="dashboard" pasteAvailable={false} onSaved={() => {}} />);
+    expect(screen.getByText("npx wrangler secret put CF_API_TOKEN")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
   });
 
   it("Esc clears what was typed", async () => {
