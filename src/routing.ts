@@ -11,7 +11,7 @@ const IOS = /iPhone|iPad|iPod/i;
 const WINDOWS = /Windows NT/i;
 const MACOS = /Macintosh|Mac OS X/i;
 const CHROMEOS = /CrOS/;
-const LINUX = /Linux|X11/i;
+const LINUX = /Linux/i; // not X11: FreeBSD and other Unix desktops send it too
 
 function osOf(ua: string): RouteDevice | null {
   if (WINDOWS_PHONE.test(ua)) return null;

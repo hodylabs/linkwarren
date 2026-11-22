@@ -38,6 +38,8 @@ describe("routeDeviceOf", () => {
     [UA.macSafari, ["desktop", "macos"]],
     [UA.windows, ["desktop", "windows"]],
     [UA.linux, ["desktop", "linux"]],
+    // X11 alone is not Linux: FreeBSD and other Unix desktops send it too.
+    ["Mozilla/5.0 (X11; FreeBSD amd64; rv:133.0) Gecko/20100101 Firefox/133.0", ["desktop"]],
     [UA.chromebook, ["desktop", "chromeos"]],
     [UA.windowsPhone, ["mobile"]],
     [null, ["desktop"]],
