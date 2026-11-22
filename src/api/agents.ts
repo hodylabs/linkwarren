@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
-import { MCP_KEY, mcpState, rememberMcp } from "../mcp/switch";
+import { MCP_KEY, mcpState, rememberMcp, resetMcpCache } from "../mcp/switch";
 import { actor, type Grant } from "../principal";
 import type { UserRow } from "../types";
 
@@ -109,7 +109,13 @@ agents.delete("/connections/:id", async (c) => {
 });
 
 /** The owner's switch for agent connections (R9, R10). Everyone signed in may read it; only the owner changes it. */
-agents.get("/mcp", async (c) => c.json(await mcpState(c.env)));
+agents.get("/mcp", async (c) => {
+  try {
+    return c.json(await mcpState(c.env));
+  } catch {
+    return c.json({ error: "unavailable" }, 503);
+  }
+});
 
 const mcpBody = z.strictObject({ on: z.boolean() });
 agents.put("/mcp", async (c) => {
@@ -118,6 +124,8 @@ agents.put("/mcp", async (c) => {
   const body = mcpBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const { on } = body.data;
+  // Compare against the stored row, never this isolate's cache: a stale "off" must not swallow an owner's "off".
+  resetMcpCache();
   const state = await mcpState(c.env);
   if (state.locked) return c.json({ error: "mcp_locked" }, 409);
   if (state.on === on) return c.json(state);
@@ -129,6 +137,6 @@ agents.put("/mcp", async (c) => {
     auditStmt(c.env, { actorId: u.id, action: "settings.update", targetType: "settings", targetId: MCP_KEY, detail: { key: MCP_KEY, value } },
       { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [MCP_KEY, value] }),
   ]);
-  rememberMcp(value);
+  rememberMcp(c.env, value);
   return c.json({ on, locked: false });
 });

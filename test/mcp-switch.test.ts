@@ -22,15 +22,21 @@ const put = (email: string, body: unknown) => as(email, "/api/agents/mcp", { met
 const audits = () => env.DB.prepare("SELECT * FROM audit_log WHERE action = 'settings.update' ORDER BY id").all<Record<string, unknown>>().then((r) => r.results);
 
 // Every OAuth path, the subpaths and the encoded forms the wrapper and router must close.
-const CLOSED = [...OAUTH_PATHS, "/mcp/x", "/%6dcp", "/%61uthorize"];
+const CLOSED = [...OAUTH_PATHS, "/mcp/x", "/%6dcp", "/%6Dcp", "/mcp%2F", "/%61uthorize",
+  "/.well-known%2Foauth-authorization-server", "/.well-known/oauth-protected-resource%2Fmcp"];
 async function expectClosed() {
   for (const p of CLOSED)
     for (const method of ["GET", "POST"]) {
       const res = await fetchW(`${DASH}${p}`, { method });
       expect([p, method, res.status, await res.json().catch(() => "not json")]).toEqual([p, method, 404, { error: "not_found" }]);
     }
-  const pre = await fetchW(`${DASH}/mcp`, { method: "OPTIONS", headers: { origin: "https://x.example", "access-control-request-method": "POST" } });
-  expect([pre.status, pre.headers.get("access-control-allow-origin")]).toEqual([404, null]);
+  for (const p of ["/mcp", "/token", "/register", "/.well-known/oauth-authorization-server", "/%6Dcp", "/mcp%2F"]) {
+    const pre = await fetchW(`${DASH}${p}`, { method: "OPTIONS", headers: { origin: "https://x.example", "access-control-request-method": "POST" } });
+    expect([p, pre.status, pre.headers.get("access-control-allow-origin")]).toEqual([p, 404, null]);
+  }
+  // Double encoding decodes once to /%6dcp: never the provider (no JSON metadata, no 401 challenge).
+  const dbl = await fetchW(`${DASH}/%256dcp`, { method: "POST" });
+  expect([dbl.status === 200 && /json/.test(dbl.headers.get("content-type") ?? ""), dbl.headers.get("www-authenticate")]).toEqual([false, null]);
 }
 async function expectOpen() {
   const res = await fetchW(`${DASH}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
@@ -79,6 +85,13 @@ describe("mcpState (R10)", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("the cache is per dashboard host: another environment never reads a stale value", async () => {
+    expect((await mcpState(env)).on).toBe(true); // caches "no row" for dash.test
+    await setRow("0");
+    const other = { ...env, DASHBOARD_HOST: "other.test" } as typeof env;
+    expect((await mcpState(other)).on).toBe(false);
+  });
+
   it("a D1 error throws (callers fail closed)", async () => {
     vi.spyOn(env.DB, "prepare").mockImplementation(() => { throw new Error("D1 down"); });
     await expect(mcpState(env)).rejects.toThrow();
@@ -94,6 +107,18 @@ describe("the switch closes and reopens every OAuth path", () => {
     const on = await put(O, { on: true });
     expect([on.status, await on.json()]).toEqual([200, { on: true, locked: false }]);
     await expectOpen();
+  });
+
+  it("the decoded-path check is harmless: dashboard pages still serve while off, malformed encodings give no 500", async () => {
+    expect((await put(O, { on: false })).status).toBe(200);
+    for (const p of ["/", "/links", "/links%20x"]) {
+      const r = await fetchW(`${DASH}${p}`);
+      expect([p, r.status, r.headers.get("x-fake-assets")]).toEqual([p, 200, "1"]);
+    }
+    for (const p of ["/%E0%A4%A", "/%", "/mcp%E0%A4%A"]) {
+      const r = await fetchW(`${DASH}${p}`);
+      expect([p, r.status < 500]).toEqual([p, true]);
+    }
   });
 
   it("a stale cache from another isolate flips within the TTL and not before", async () => {
@@ -160,6 +185,29 @@ describe("GET/PUT /api/agents/mcp", () => {
     const p = await put(A, { on: false });
     expect([p.status, await p.json()]).toEqual([403, { error: "forbidden" }]);
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM settings").first("n")).toBe(0);
+  });
+
+  it("PUT compares against the stored value, never a stale isolate cache", async () => {
+    await setRow("0");
+    expect((await mcpState(env)).on).toBe(false); // this isolate caches "0"
+    await setRow("1"); // another isolate turned agents on
+    const r = await put(O, { on: false });
+    expect([r.status, await r.json()]).toEqual([200, { on: false, locked: false }]);
+    expect(await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(MCP_KEY).first("value")).toBe("0");
+    const rows = await audits();
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(String(rows[0]!.detail))).toEqual({ key: MCP_KEY, value: "0" });
+  });
+
+  it("GET answers 503 unavailable when the D1 read fails", async () => {
+    const auth = await tokenFor(A); // sign-in reads D1 too: fail only the settings read
+    const prepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("FROM settings")) throw new Error("D1 down");
+      return prepare(sql);
+    });
+    const r = await dash("/api/agents/mcp", { headers: { "Cf-Access-Jwt-Assertion": auth } });
+    expect([r.status, await r.json()]).toEqual([503, { error: "unavailable" }]);
   });
 
   it("locked: GET says so, PUT answers 409 mcp_locked and writes nothing", async () => {
