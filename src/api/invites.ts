@@ -15,7 +15,7 @@ type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 /** Mounted at /api/users next to the user list (R1: no invite tokens; the invitee signs in by email link). */
 export const invites = new Hono<E>();
 
-export type InviteResult = { emailed: boolean; emailReason?: "not_configured" | "rejected" | "network" | "too_many" };
+export type InviteResult = { emailed: boolean; emailReason?: "not_configured" | "rejected" | "network" | "settings" | "too_many" };
 
 // Per route, not invites.use("*"): a wildcard here would also guard the other /api/users routes.
 const owner = createMiddleware<E>(async (c, next) => {
