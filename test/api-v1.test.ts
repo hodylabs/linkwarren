@@ -304,3 +304,48 @@ describe("callApi (in-process seam)", () => {
     expect(r.status).toBe(401);
   });
 });
+
+describe("final fix wave", () => {
+  it("a corrupt domain_ids fails closed: no domain is usable; [] stays unrestricted", async () => {
+    const k = await key("ua", { write: true });
+    for (const bad of ["{}", '"dA"', "[1]", '["dA", 2]', "null", "not json", ""]) {
+      await run("UPDATE api_keys SET domain_ids = ? WHERE id = ?", bad, k.id);
+      const d = await v1(k.secret, "/domains");
+      expect([bad, d.status, await d.json()]).toEqual([bad, 200, []]);
+      expect([bad, await ids(await v1(k.secret, "/links"))]).toEqual([bad, []]);
+      const c = await v1(k.secret, "/links", { method: "POST", json: { domainId: "dA", slug: `x${bad.length}`, url: "https://y.com" } });
+      expect([bad, c.status]).toEqual([bad, 403]);
+    }
+    await run("UPDATE api_keys SET domain_ids = '[]' WHERE id = ?", k.id);
+    expect(await ids(await v1(k.secret, "/links"))).toEqual(["la", "la2", "lb"]);
+  });
+
+  it("answers 503 when the key lookup fails", async () => {
+    const k = await key("ua");
+    const prep = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("FROM api_keys k")) throw new Error("D1 down");
+      return prep(sql);
+    });
+    const r = await v1(k.secret, "/links");
+    expect([r.status, await r.json()]).toEqual([503, { error: "unavailable" }]);
+  });
+
+  it("matches the Bearer scheme case-insensitively", async () => {
+    const k = await key("ua");
+    for (const scheme of ["bearer", "BEARER", "BeArEr"])
+      expect([scheme, (await v1(null, "/links", { headers: { authorization: `${scheme} ${k.secret}` } })).status]).toEqual([scheme, 200]);
+    expect((await v1(null, "/links", { headers: { authorization: `Basic ${k.secret}` } })).status).toBe(401);
+  });
+
+  it("paths that only look like /api/v1 never serve machine data or dashboard routes to a key", async () => {
+    const k = await key("uo", { write: true, del: true });
+    const at = (p: string) => exports.default.fetch(`https://dash.test${p}`, { headers: { authorization: `Bearer ${k.secret}` } });
+    for (const [p, status] of [
+      ["/api/v1x/links", 401], ["/api/v1x", 401], ["/api/v1/../keys", 401], ["/api/v1/..%2Fkeys", 404], ["/api/v1%2Fkeys", 401], ["/api/v1/%2E%2E/keys", 401],
+    ] as const) {
+      const r = await at(p);
+      expect([p, r.status]).toEqual([p, status]);
+    }
+  });
+});

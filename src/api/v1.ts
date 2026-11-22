@@ -24,6 +24,14 @@ const invalidKey = { error: "invalid_key" } as const;
 
 type KeyRow = Record<string, unknown> & { key_id: string; key_name: string; can_write: number; can_delete: number; domain_ids: string; last_used_at: number | null };
 
+/** Stored `[]` is unrestricted (null); anything but a JSON array of strings fails closed to no domain at all ([]). */
+function keyDomains(raw: string): string[] | null {
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(v) || !v.every((d) => typeof d === "string")) return [];
+  return v.length ? v : null;
+}
+
 export const v1 = new Hono<E>();
 
 // Bearer keys only (R3): never the Access JWT or the session cookie.
@@ -37,15 +45,20 @@ v1.use("*", async (c, next) => {
   }
   const auth = c.req.header("authorization");
   if (auth === undefined) return c.json({ error: "unauthenticated" }, 401);
-  const secret = /^Bearer (\S+)$/.exec(auth)?.[1];
+  const secret = /^Bearer (\S+)$/i.exec(auth)?.[1]; // RFC 6750: the scheme is case-insensitive
   if (!secret || !KEY_SHAPE.test(secret)) return c.json(invalidKey, 401);
   const now = Math.floor(Date.now() / 1000);
   // The user row is re-read on every call: a disabled person's key stops at once.
-  const row = await c.env.DB.prepare(
-    `SELECT k.id AS key_id, k.name AS key_name, k.can_write, k.can_delete, k.domain_ids, k.last_used_at, u.*
-     FROM api_keys k JOIN users u ON u.id = k.user_id
-     WHERE k.hash = ? AND k.revoked_at IS NULL AND k.expires_at > ? AND u.status = 'active'`,
-  ).bind(await hashKey(secret), now).first<KeyRow>();
+  let row: KeyRow | null;
+  try {
+    row = await c.env.DB.prepare(
+      `SELECT k.id AS key_id, k.name AS key_name, k.can_write, k.can_delete, k.domain_ids, k.last_used_at, u.*
+       FROM api_keys k JOIN users u ON u.id = k.user_id
+       WHERE k.hash = ? AND k.revoked_at IS NULL AND k.expires_at > ? AND u.status = 'active'`,
+    ).bind(await hashKey(secret), now).first<KeyRow>();
+  } catch {
+    return c.json({ error: "unavailable" }, 503); // fail closed, and not a 500 that reads like a bug
+  }
   if (!row) return c.json(invalidKey, 401);
   const user = rowToUser(row);
   const keys = [
@@ -66,10 +79,8 @@ v1.use("*", async (c, next) => {
         .bind(now, row.key_id, now - LAST_USED_EVERY).run()
         .catch((e) => console.error("last_used_at update failed", e instanceof Error ? e.name : "unknown")),
     );
-  const domains = JSON.parse(row.domain_ids) as unknown;
-  const domainIds = Array.isArray(domains) ? domains.filter((d): d is string => typeof d === "string") : [];
   c.set("user", user);
-  c.set("grant", { write: row.can_write === 1, del: row.can_delete === 1, domains: domainIds.length ? domainIds : null, via: `API key ${row.key_name}` });
+  c.set("grant", { write: row.can_write === 1, del: row.can_delete === 1, domains: keyDomains(row.domain_ids), via: `API key ${row.key_name}` });
   await next();
 });
 
