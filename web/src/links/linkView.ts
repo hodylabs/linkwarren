@@ -34,8 +34,6 @@ export function linksQuery(o: LinksFilter): string {
   return p.toString();
 }
 
-/** Per-link 7-day stats from GET /api/analytics/links. `days` is oldest first, today last. */
-export type LinkStats = { linkId: string; days: number[]; clicks: number; qr: number; topCountry: string | null };
 export type StatsLive = "on" | "off" | "unavailable";
 
 /** Polyline points for a 72x20 box. `of` is the full point count when only the first days are known. */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type Link, type Page } from "../api";
+import { api, ApiError, type Link, type LinkStats, type Page } from "../api";
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
@@ -9,7 +9,7 @@ import { useApp } from "../state";
 import { BackBar, useDetailView } from "../shell/narrow";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { Sparkline } from "./Sparkline";
-import { creatorLabel, linkState, linksQuery, type LinkStats, type LinksFilter, type StatsLive } from "./linkView";
+import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
 
 const STATS_CHUNK = 50; // the server takes at most 50 ids per request
 const WORST: StatsLive[] = ["on", "off", "unavailable"];

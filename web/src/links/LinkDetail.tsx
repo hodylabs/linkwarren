@@ -1,11 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
-import { api, ApiError, type Domain, type Link } from "../api";
+import { api, ApiError, type Domain, type Link, type LinkStats } from "../api";
 import { errorText } from "../copy";
 import { rebase } from "../draft";
 import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
-import { creatorLabel, linkState, shortUrl, type LinkStats, type StatsLive } from "./linkView";
+import { creatorLabel, linkState, shortUrl, type StatsLive } from "./linkView";
 
 export type DetailHandle = { focusUrl(): void; copy(): void };
 

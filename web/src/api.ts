@@ -21,7 +21,7 @@ export type AnalyticsReport = {
 };
 /** One item of GET /api/analytics/links: `days` are today-6..today (UTC), oldest first. */
 export type LinkStats = { linkId: string; days: number[]; clicks: number; qr: number; topCountry: string | null };
-export type Method ="GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+export type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export class ApiError extends Error {
   readonly status: number;
