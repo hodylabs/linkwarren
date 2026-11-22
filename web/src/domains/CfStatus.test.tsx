@@ -2,12 +2,13 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { CfView } from "../api";
+import { errorText } from "../copy";
 import { AppContext, type AppState } from "../state";
 import { CfStatus } from "./CfStatus";
 
 const OUT: CfView = {
   kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, securityLevel: null, rateLimit: null,
-  instructions: { type: "CNAME", name: "go", target: "edge.example.net", apex: false }, attachOnApproval: false,
+  instructions: { type: "CNAME", name: "go", target: "edge.example.net", apex: false }, attachOnApproval: false, attached: true,
 };
 const ACC: CfView = { ...OUT, kind: "account", dns: "found", ownership: "verified", certificate: "issued", instructions: null };
 
@@ -51,6 +52,38 @@ describe("CfStatus", () => {
     expect(text()).toContain("Cloudflare did not answer. Retrying.");
     expect(screen.getByText("<b>txt</b> record missing")).toBeTruthy();
     expect(document.querySelector("b")).toBeNull();
+  });
+
+  it.each<[string, string]>([
+    ["cloudflare_unreachable", "Cloudflare did not answer. Retrying."],
+    ["cloudflare_error", "Cloudflare answered with an error. Retrying."],
+    ["cloudflare_forbidden", errorText("cloudflare_forbidden")],
+    ["outside_not_configured", errorText("outside_not_configured")],
+    ["route_in_use", errorText("route_in_use")],
+    ["hostname_in_use", errorText("hostname_in_use")],
+    ["hostname_limit", errorText("hostname_limit")],
+    ["internal_error", errorText("internal_error")],
+  ])("stored %s shows its own text", (code, line) => {
+    show({ ...OUT, lastError: code });
+    expect(text()).toContain(line);
+    expect(text().includes("Retrying")).toBe(code === "cloudflare_unreachable" || code === "cloudflare_error");
+    expect(text()).not.toContain("Something went wrong (");
+  });
+
+  it("an account domain whose attach failed says to finish connecting, not Retrying", () => {
+    show({ ...ACC, attached: false, ownership: "pending", dns: "missing", lastError: "cloudflare_error" });
+    expect(text()).toContain("Not connected to Cloudflare yet");
+    expect(text()).toContain("Use Finish connecting to try again.");
+    expect(text()).not.toContain("Retrying");
+  });
+
+  it("the settled outcome sits in a polite live region that exists before it fills", () => {
+    show(OUT);
+    const live = document.querySelector('[aria-live="polite"]')!;
+    expect(live.textContent).toBe("");
+    cleanup();
+    show({ ...OUT, dns: "found", ownership: "verified", certificate: "issued" });
+    expect(document.querySelector('[aria-live="polite"]')!.textContent).toBe("Record found, ownership verified. Certificate issued by Cloudflare.");
   });
 
   it("apex note only for a bare domain", () => {

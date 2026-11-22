@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type CfView } from "../api";
 
 const POLL_MS = 5000;
+/** Stored errors the next check can clear. Every other code (a refusal, a missing permission, a missing setup) needs a person. */
+export const RETRYABLE = new Set(["cloudflare_unreachable", "cloudflare_error"]);
 
-/** Nothing more to wait for: manual domains, an account domain that only the owner's approval changes, or every check green. */
+/** Nothing more to wait for: manual domains, an account domain only approval or Finish connecting changes, an error no retry fixes, or every check green. */
 export function cfSettled(v: CfView): boolean {
   if (v.kind === "manual") return true;
-  if (v.lastError) return false; // "Retrying"
-  if (v.attachOnApproval) return true;
+  if (v.kind === "account" && !v.attached) return true; // checks never attach: approval or Finish connecting does
+  if (v.lastError) return !RETRYABLE.has(v.lastError);
   return v.dns === "found" && v.ownership === "verified" && (v.kind === "account" || v.certificate === "issued");
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CfView, Domain, Me, UserItem } from "../api";
-import { canManage, domainDiff, draftOf, ownerLabel, parseReserved, sharedWith, statusTag } from "./domainView";
+import { canManage, domainDiff, draftOf, needsFinish, ownerLabel, parseReserved, sharedWith, statusTag } from "./domainView";
+import { cfSettled } from "./useCfPoll";
 
 const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner" };
 const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
@@ -40,7 +41,7 @@ describe("statusTag", () => {
   });
 
   const cf = (dns: CfView["dns"], kind: CfView["kind"] = "outside"): CfView => ({
-    kind, dns, ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, instructions: null, attachOnApproval: false, securityLevel: null, rateLimit: null,
+    kind, dns, ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, instructions: null, attachOnApproval: false, attached: true, securityLevel: null, rateLimit: null,
   });
   it("an outside domain whose record is missing or wrong reads DNS record missing", () => {
     expect(statusTag(dom({ status: "pending", cloudflare: cf("missing") }), true)).toEqual({ label: "DNS record missing", tone: "bad" });
@@ -51,6 +52,27 @@ describe("statusTag", () => {
     expect(statusTag(dom({ cloudflare: cf("unknown") }), true).label).toBe("Active");
     expect(statusTag(dom({ cloudflare: cf("missing", "account") }), true).label).toBe("Active");
     expect(statusTag(dom({ status: "disabled", cloudflare: cf("missing") }), true).label).toBe("Disabled");
+  });
+});
+
+describe("half-attached account domains and stored errors", () => {
+  const acc = (o: Partial<CfView> = {}): CfView => ({
+    kind: "account", dns: "missing", ownership: "pending", certificate: "issued", errors: [], lastError: null, checkedAt: 1, instructions: null, attachOnApproval: false, attached: false, securityLevel: null, rateLimit: null, ...o,
+  });
+  it("an active account domain that is not attached, or that has a stored error, reads Not connected", () => {
+    expect(statusTag(dom({ cloudflare: acc() }), true)).toEqual({ label: "Not connected", tone: "bad" });
+    expect(statusTag(dom({ cloudflare: acc({ attached: true, ownership: "verified", dns: "found", lastError: "route_in_use" }) }), true)).toEqual({ label: "Not connected", tone: "bad" });
+    expect(statusTag(dom({ cloudflare: acc({ attached: true, ownership: "verified", dns: "found" }) }), true).label).toBe("Active");
+    expect(statusTag(dom({ status: "pending", cloudflare: acc({ attachOnApproval: true }) }), true).label).toBe("Needs your approval");
+    expect(needsFinish(acc())).toBe(true);
+    expect(needsFinish(acc({ attachOnApproval: true }))).toBe(false);
+  });
+  it("cfSettled: only unreachable and cloudflare_error keep polling; an unattached account domain never polls", () => {
+    const out = (lastError: string | null): CfView => ({ ...acc({ kind: "outside", attached: true }), lastError });
+    expect(["cloudflare_unreachable", "cloudflare_error"].map((e) => cfSettled(out(e)))).toEqual([false, false]);
+    for (const e of ["cloudflare_forbidden", "outside_not_configured", "route_in_use", "hostname_in_use", "hostname_limit", "dns_record_exists", "dns_not_proxied", "internal_error"])
+      expect([e, cfSettled(out(e))]).toEqual([e, true]);
+    expect(cfSettled(acc({ lastError: "cloudflare_error" }))).toBe(true);
   });
 });
 

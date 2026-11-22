@@ -261,7 +261,7 @@ describe("Domain settings (member)", () => {
 
 const OUT: CfView = {
   kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1,
-  instructions: { type: "CNAME", name: "cafe", target: "edge.example.net", apex: false }, attachOnApproval: false, securityLevel: null, rateLimit: null,
+  instructions: { type: "CNAME", name: "cafe", target: "edge.example.net", apex: false }, attachOnApproval: false, attached: true, securityLevel: null, rateLimit: null,
 };
 const GREEN: CfView = { ...OUT, dns: "found", ownership: "verified", certificate: "issued" };
 const PEND_CF = { ...PEND, cloudflare: GREEN };
@@ -276,6 +276,27 @@ describe("Ownership, approve and reject", () => {
     boot({ me: member, list: () => [{ ...MAIN, cloudflare: OUT }], path: "/domains?sel=d1" });
     await screen.findByLabelText("The bare domain");
     expect(screen.queryByRole("heading", { name: "Ownership and certificate" })).toBeNull();
+  });
+
+  it("a disabled domain's detail never polls, even with checks not green", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { api } = boot({ list: () => [MAIN, { ...PEND, status: "disabled", cloudflare: OUT }], path: "/domains?sel=d2" });
+      await screen.findByRole("heading", { name: "Ownership and certificate" });
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(api.calls.filter((c) => c.path === "/api/domains/d2/cloudflare")).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an attached account domain with a refusal stored shows its copy and offers no Finish connecting", async () => {
+    const acc: CfView = { ...GREEN, kind: "account", instructions: null, lastError: "route_in_use" };
+    boot({ list: () => [{ ...MAIN, cloudflare: acc }], path: "/domains?sel=d1" });
+    await screen.findByRole("heading", { name: "Ownership and certificate" });
+    expect(panel().textContent).toContain(errorText("route_in_use"));
+    expect(within(panel()).getByText("Not connected")).toBeTruthy();
+    expect(within(panel()).queryByRole("button", { name: /Finish connecting/ })).toBeNull();
   });
 
   it("A on a pending unverified domain shows the not-verified text and leaves the tag", async () => {
@@ -341,7 +362,7 @@ describe("Ownership, approve and reject", () => {
     await user.keyboard("a");
     expect(await within(panel()).findByText(/2 existing links point at cafe.test and now loop\./)).toBeTruthy();
     expect(within(panel()).getByRole("link", { name: "Edit them" }).getAttribute("href")).toBe("/links?q=cafe.test");
-    expect(document.querySelector("[aria-live]")!.textContent).toContain("2 existing links point at cafe.test and now loop");
+    expect([...document.querySelectorAll("[aria-live]")].map((n) => n.textContent).join(" ")).toContain("2 existing links point at cafe.test and now loop");
   });
 
   it("Shift+R opens the reject confirm: Esc sends nothing, Enter sends DELETE and removes the row", async () => {
@@ -383,7 +404,7 @@ describe("Ownership, approve and reject", () => {
   });
 
   it("F finishes connecting an active account domain that is not attached", async () => {
-    const half: CfView = { ...OUT, kind: "account", instructions: null, dns: "missing", ownership: "pending", certificate: "issued" };
+    const half: CfView = { ...OUT, kind: "account", instructions: null, dns: "missing", ownership: "pending", certificate: "issued", attached: false };
     const { api, user } = boot({
       list: () => [MAIN, dom("d4", "acc.test", { cloudflare: half })],
       routes: { "POST /api/domains/d4/approve": () => ({ body: { ...dom("d4", "acc.test"), cloudflare: { ...half, dns: "found", ownership: "verified" } } }) },

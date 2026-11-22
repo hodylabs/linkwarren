@@ -21,11 +21,14 @@ const ERRORS: Record<string, string> = {
   pending_limit: "You already have 3 domains waiting for approval.",
   target_in_use: "The DNS target name already has a record that linkwarren did not make. Pick another name or remove that record in Cloudflare.",
   invalid_token_format: "That does not look like a Cloudflare API token. Copy the whole token and try again.",
-  cloudflare_unreachable: "Cloudflare did not answer. Nothing was added. Try again in a minute.",
+  cloudflare_unreachable: "Cloudflare did not answer. Try again in a minute.",
   outside_not_configured: "This domain is not in your Cloudflare account, and outside domains are not set up yet. Ask the owner.",
   dns_record_exists: "This name already has a DNS record in Cloudflare. Confirm to send it to linkwarren, or pick another name.",
   dns_not_proxied: "This domain has a DNS record that is not proxied by Cloudflare, or it is delegated elsewhere. Fix it in Cloudflare first.",
   route_in_use: "Another Worker already serves this domain in Cloudflare.",
+  hostname_in_use: "This domain is already a custom hostname in Cloudflare for another service. linkwarren will not take it over.",
+  hostname_limit: "All 100 free custom hostnames are in use. linkwarren adds no more, because Cloudflare bills each one past 100. Reject or remove an outside domain first.",
+  internal_error: "Something went wrong in linkwarren. Try again, and check the Worker logs if it keeps happening.",
   case_conflict: "Some slugs on this domain differ only by case, so case-sensitivity cannot be turned off.",
   not_verified: "Cloudflare has not confirmed this domain yet. Check the DNS record and try again in a few minutes.",
   not_pending: "Only a domain that is waiting for approval can be rejected.",
@@ -54,8 +57,8 @@ const ERRORS: Record<string, string> = {
   unauthenticated: "You are signed out. Reload the page to sign in.",
 };
 
-/** Plain-language text for an API error code. */
 /** "1 link", "2 links"; pass `many` for irregular plurals. */
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
+/** Plain-language text for an API error code. */
 export const errorText = (code: string): string => (Object.hasOwn(ERRORS, code) ? ERRORS[code]! : `Something went wrong (${code})`);

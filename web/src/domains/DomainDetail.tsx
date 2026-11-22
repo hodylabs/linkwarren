@@ -13,7 +13,7 @@ import { shortDate } from "../time";
 import { CfControls } from "./CfControls";
 import { CfStatus } from "./CfStatus";
 import { MembersEditor } from "./MembersEditor";
-import { canManage, domainDiff, draftOf, ownerLabel, statusTag, type Draft } from "./domainView";
+import { canManage, domainDiff, draftOf, needsFinish, ownerLabel, statusTag, type Draft } from "./domainView";
 import { cfSettled, useCfPoll } from "./useCfPoll";
 
 type Confirm = "case" | "disable" | "reject" | "takeover";
@@ -46,7 +46,8 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
   const [view, setView] = useState<CfView | null>(domain.cloudflare ?? null);
   useEffect(() => void (domain.cloudflare && setView(domain.cloudflare)), [domain.cloudflare]);
   const showCf = canEdit && view !== null && view.kind !== "manual";
-  const poll = useCfPoll(showCf ? domain.id : null, view !== null && !cfSettled(view));
+  // A disabled domain is never rechecked by the server, so there is nothing to poll for.
+  const poll = useCfPoll(showCf ? domain.id : null, domain.status !== "disabled" && view !== null && !cfSettled(view));
   useEffect(() => void (poll.view && setView(poll.view)), [poll.view]);
   // Controls need the owner's "controls on" switch; members never ask (the endpoint is owner only). Errors mean off.
   const [controlsEnabled, setControlsEnabled] = useState(false);
@@ -109,7 +110,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
 
   const canApprove = isOwner && domain.status !== "active";
   // An active same-account domain that Cloudflare does not serve yet: approve finishes the attach.
-  const canFinish = isOwner && domain.status === "active" && view?.kind === "account" && (view.ownership !== "verified" || view.lastError !== null);
+  const canFinish = isOwner && domain.status === "active" && view !== null && needsFinish(view);
   const canReject = isOwner && domain.status === "pending";
   const path = `/api/domains/${encodeURIComponent(domain.id)}`;
 
@@ -251,7 +252,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
           <div className="sect">
             <div className="callout wait">
               {isOwner
-                ? `${domain.linkCount} links are already here. They show a "not active yet" page until you approve the domain.`
+                ? `${plural(domain.linkCount, "link")} ${domain.linkCount === 1 ? "is" : "are"} already here. They show a "not active yet" page until you approve the domain.`
                 : 'Links here show a "not active yet" page until the owner approves the domain.'}
             </div>
           </div>

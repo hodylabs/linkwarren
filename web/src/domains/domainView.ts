@@ -1,12 +1,17 @@
-import type { Domain, Me, UserItem } from "../api";
+import type { CfView, Domain, Me, UserItem } from "../api";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
 import type { Tone } from "../links/linkView";
 
 /** Mirrors the server's canManageDomain: the instance owner, or the domain's own owner. */
 export const canManage = (me: Me, d: Domain): boolean => me.role === "owner" || d.ownerId === me.id;
 
+/** An account domain that is not waiting for approval and that Cloudflare does not serve: only Finish connecting changes that. */
+export const needsFinish = (v: CfView): boolean => v.kind === "account" && !v.attachOnApproval && !v.attached && v.ownership !== "verified";
+
 export function statusTag(d: Domain, isOwner: boolean): { label: string; tone: Tone } {
-  const dns = d.cloudflare?.kind === "outside" ? d.cloudflare.dns : null;
+  const cf = d.cloudflare;
+  if (d.status === "active" && cf?.kind === "account" && (needsFinish(cf) || cf.lastError)) return { label: "Not connected", tone: "bad" };
+  const dns = cf?.kind === "outside" ? cf.dns : null;
   if (d.status !== "disabled" && (dns === "missing" || dns === "wrong_target")) return { label: "DNS record missing", tone: "bad" };
   if (d.status === "active") return { label: "Active", tone: "ok" };
   if (d.status === "pending") return { label: isOwner ? "Needs your approval" : "Waiting for approval", tone: "wait" };

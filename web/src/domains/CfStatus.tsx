@@ -1,10 +1,14 @@
 import type { CfView } from "../api";
+import { errorText } from "../copy";
 import type { Tone } from "../links/linkView";
 import { useApp } from "../state";
+import { needsFinish } from "./domainView";
+import { cfSettled, RETRYABLE } from "./useCfPoll";
 
 type Line = [text: string, tone: Tone];
 
 function check(v: CfView): Line {
+  if (needsFinish(v)) return ["Not connected to Cloudflare yet", "bad"];
   if (v.kind === "account") return ["In your Cloudflare account", v.ownership === "verified" ? "ok" : "wait"];
   if (v.ownership === "failed") return ["Ownership check failed", "bad"];
   if (v.dns === "unknown") return ["Could not check DNS right now. Retrying.", "wait"];
@@ -23,11 +27,20 @@ function https(v: CfView): Line {
   return ["Certificate pending", "wait"];
 }
 
+/** The stored error of the last check: "Retrying" only where the next check can clear it. */
+function problem(v: CfView): Line | null {
+  const e = v.lastError;
+  if (!e) return null;
+  if (!RETRYABLE.has(e)) return [errorText(e), "bad"];
+  if (needsFinish(v)) return ["Connecting to Cloudflare did not finish. Use Finish connecting to try again.", "bad"];
+  return [e === "cloudflare_unreachable" ? "Cloudflare did not answer. Retrying." : "Cloudflare answered with an error. Retrying.", "wait"];
+}
+
 /** The DNS record to add and the live checks for an outside or account domain. Cloudflare's own text is rendered as text only. */
 export function CfStatus({ view }: { view: CfView }) {
   const app = useApp();
   const i = view.instructions;
-  const [c, h] = [check(view), https(view)];
+  const [c, h, p] = [check(view), https(view), problem(view)];
   const copy = (text: string) =>
     navigator.clipboard.writeText(text).then(
       () => app.announce("Copied"),
@@ -58,7 +71,9 @@ export function CfStatus({ view }: { view: CfView }) {
           <dd className={h[1]}>{h[0]}</dd>
         </div>
       </dl>
-      {view.lastError && <p className="hint">Cloudflare did not answer. Retrying.</p>}
+      {p && <p className={p[1] === "bad" ? "err" : "hint"}>{p[0]}</p>}
+      {/* Present from the first render, filled once the checks settle, so the outcome is announced once. */}
+      <p className="sr-only" aria-live="polite">{cfSettled(view) ? `${c[0]}. ${h[0]}.${p ? ` ${p[0]}` : ""}` : ""}</p>
       {view.errors.map((e, n) => (
         <p key={n} className="err">
           {e}

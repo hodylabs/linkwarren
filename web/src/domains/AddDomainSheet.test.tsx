@@ -15,10 +15,10 @@ const MAIN: Domain = {
 
 const OUT: CfView = {
   kind: "outside", dns: "missing", ownership: "pending", certificate: "pending", errors: [], lastError: null, checkedAt: 1, securityLevel: null, rateLimit: null,
-  instructions: { type: "CNAME", name: "go", target: "edge.example.net", apex: false }, attachOnApproval: false,
+  instructions: { type: "CNAME", name: "go", target: "edge.example.net", apex: false }, attachOnApproval: false, attached: true,
 };
 const GREEN: CfView = { ...OUT, dns: "found", ownership: "verified", certificate: "issued" };
-const ACC: CfView = { ...OUT, kind: "account", instructions: null, attachOnApproval: true };
+const ACC: CfView = { ...OUT, kind: "account", instructions: null, attachOnApproval: true, attached: false };
 const made = (cloudflare?: CfView, host = "go.harbor.com") => ({ status: 201, body: { ...MAIN, id: "d9", host, type: "private" as const, status: "pending" as const, ...(cloudflare ? { cloudflare } : {}) } });
 
 function boot(me: Me, routes: FakeRoutes = {}, fakeTimers = false) {
@@ -64,7 +64,7 @@ describe("Add a domain sheet", () => {
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
     expect(within(screen.getByRole("dialog", { name: "Add a domain" })).getByText("Private")).toBeTruthy();
     expect(screen.getByText(/start working once the owner approves the domain/)).toBeTruthy();
-    expect(screen.queryByText(/does not connect domains to Cloudflare/)).toBeNull(); // shown only after create, when not configured
+    expect(screen.queryByText(/Cloudflare is not connected on this linkwarren/)).toBeNull(); // shown only after create, when not configured
   });
 
   it("Ctrl+Enter sends exactly host and type, normalized like the server, then navigates and reloads", async () => {
@@ -189,12 +189,12 @@ describe("Add a domain sheet", () => {
     await open(user);
     await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
     await done();
-    expect(screen.getByText(/does not connect domains to Cloudflare yet/)).toBeTruthy();
+    expect(screen.getByText(/Cloudflare is not connected on this linkwarren/)).toBeTruthy();
     expect(screen.queryByText("Check")).toBeNull();
   });
 
   it("account, owner: linkwarren attaches it directly", async () => {
-    const { user } = boot(owner, { "POST /api/domains": () => made({ ...ACC, attachOnApproval: false, dns: "found", ownership: "verified", certificate: "issued" }) });
+    const { user } = boot(owner, { "POST /api/domains": () => made({ ...ACC, attachOnApproval: false, attached: true, dns: "found", ownership: "verified", certificate: "issued" }) });
     await open(user);
     await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
     await done();
@@ -215,6 +215,53 @@ describe("Add a domain sheet", () => {
     await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
     await done();
     expect(screen.getByText("You can create links on it straight away. They start working once the record is found and the owner approves the domain.")).toBeTruthy();
+  });
+
+  describe("an owner account create whose attach failed", () => {
+    const HALF: CfView = { ...ACC, attachOnApproval: false, attached: false, dns: "missing", ownership: "pending", lastError: "cloudflare_error" };
+    const CONNECTED: CfView = { ...HALF, attached: true, dns: "found", ownership: "verified", certificate: "issued", lastError: null };
+    const activeMade = () => ({ status: 201, body: { ...made(HALF).body, status: "active" as const } });
+
+    it("stops polling and offers Finish connecting; F sends the approve call", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const { api, user } = boot(owner, {
+        "POST /api/domains": activeMade,
+        "POST /api/domains/d9/approve": () => ({ body: { ...activeMade().body, cloudflare: CONNECTED } }),
+      }, true);
+      await open(user);
+      await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+      await done();
+      const dlg = screen.getByRole("dialog", { name: "Add a domain" });
+      expect(dlg.textContent).toContain("Use Finish connecting to try again.");
+      expect(dlg.textContent).not.toContain("Checks keep running");
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(polls(api)).toHaveLength(0);
+      expect(within(dlg).getByRole("button", { name: /Finish connecting/ }).getAttribute("aria-keyshortcuts")).toBe("F");
+      await user.keyboard("f");
+      await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/domains/d9/approve")).toHaveLength(1));
+      expect(await within(dlg).findByText("In your Cloudflare account")).toBeTruthy();
+      expect(within(dlg).queryByRole("button", { name: /Finish connecting/ })).toBeNull();
+    });
+
+    it("409 dns_record_exists opens the takeover confirm on Cancel; Enter on Send traffic resends with confirmTakeover", async () => {
+      const bodies: unknown[] = [];
+      const { user } = boot(owner, {
+        "POST /api/domains": activeMade,
+        "POST /api/domains/d9/approve": ({ body }) => (bodies.push(body), (body as { confirmTakeover?: boolean }).confirmTakeover
+          ? { body: { ...activeMade().body, cloudflare: CONNECTED } }
+          : { status: 409, body: { error: "dns_record_exists" } }),
+      });
+      await open(user);
+      await user.type(field(), "go.harbor.com{Control>}{Enter}{/Control}");
+      await done();
+      await user.click(screen.getByRole("button", { name: /Finish connecting/ }));
+      const confirm = await screen.findByRole("dialog", { name: "Send traffic to linkwarren" });
+      expect(document.activeElement).toBe(within(confirm).getByRole("button", { name: /Cancel/ }));
+      within(confirm).getByRole("button", { name: /Send traffic/ }).focus();
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(bodies).toEqual([{}, { confirmTakeover: true }]));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Send traffic to linkwarren" })).toBeNull());
+    });
   });
 
   it("polls every 5 s, one at a time, and stops when all green", async () => {

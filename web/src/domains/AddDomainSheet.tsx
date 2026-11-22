@@ -8,6 +8,7 @@ import { Seg } from "../shell/ui";
 import { useApp } from "../state";
 import { apexOf, normalizeHost } from "../../../src/host";
 import { CfStatus } from "./CfStatus";
+import { needsFinish } from "./domainView";
 import { cfSettled, useCfPoll } from "./useCfPoll";
 
 type Type = Domain["type"];
@@ -17,13 +18,14 @@ type Made = Pick<Domain, "id" | "host"> & { cloudflare?: CfView };
 export const ADD_DOMAIN_KEYS = {
   "mod+enter": "Add the domain, in the Add a domain sheet",
   "mod+shift+enter": "Add anyway after the DNS records warning, in the Add a domain sheet (owner)",
+  f: "Finish connecting the new domain, in the Add a domain sheet (owner)",
 } as const;
 const TYPES: { value: Type; label: string }[] = [
   { value: "main", label: "Main" },
   { value: "shared", label: "Shared" },
   { value: "private", label: "Private" },
 ];
-const MANUAL_NOTE = "linkwarren does not connect domains to Cloudflare yet. Add this host as a custom domain of the Worker in your Cloudflare dashboard so visits reach it.";
+const MANUAL_NOTE = "Cloudflare is not connected on this linkwarren, so it cannot attach domains itself. Add this host as a custom domain of the Worker in your Cloudflare dashboard so visits reach it.";
 const APPROVAL_LINE = "You can create links on it straight away. They start working once the owner approves the domain.";
 
 export function AddDomainSheet() {
@@ -34,11 +36,14 @@ export function AddDomainSheet() {
   const [error, setError] = useState<string | null>(null);
   const [takeover, setTakeover] = useState<string | null>(null); // the host the DNS records warning was shown for
   const [made, setMade] = useState<Made | null>(null);
+  const [connected, setConnected] = useState<CfView | null>(null); // the view a Finish connecting answer carried
+  const [confirming, setConfirming] = useState(false); // the takeover confirm for Finish connecting
   const busy = useRef(false); // a double Ctrl+Enter sends once
 
   const initial = made?.cloudflare ?? null;
   const poll = useCfPoll(made?.id ?? null, initial !== null && !cfSettled(initial));
-  const view = poll.view ?? initial;
+  const view = connected ?? poll.view ?? initial;
+  const canFinish = isOwner && view !== null && needsFinish(view);
 
   const submit = async (confirmTakeover = false) => {
     if (busy.current || made) return;
@@ -64,6 +69,29 @@ export function AddDomainSheet() {
     }
   };
 
+  /** Same call and takeover flow as Finish connecting in the domain detail. */
+  const connect = async (confirmTakeover = false) => {
+    if (busy.current || !made) return;
+    busy.current = true;
+    setError(null);
+    try {
+      const res = await api<Made>("POST", `/api/domains/${encodeURIComponent(made.id)}/approve`, confirmTakeover ? { confirmTakeover: true } : {});
+      setConfirming(false);
+      if (res.cloudflare) setConnected(res.cloudflare);
+      app.announce("Domain connected");
+      await app.reloadDomains().catch(() => undefined);
+    } catch (e) {
+      setConfirming(false);
+      const code = e instanceof ApiError ? e.code : "internal";
+      if (code === "dns_record_exists") return setConfirming(true);
+      const v = code === "not_verified" && e instanceof ApiError ? (e.data as { cloudflare?: CfView } | undefined)?.cloudflare : undefined;
+      if (v) setConnected(v);
+      setError(code);
+    } finally {
+      busy.current = false;
+    }
+  };
+
   const finish = () => {
     app.close();
     if (made) navigate(`/domains?sel=${encodeURIComponent(made.id)}`);
@@ -72,7 +100,8 @@ export function AddDomainSheet() {
   useHotkeys({
     "mod+enter": () => void submit(),
     "mod+shift+enter": (e) => void (takeover && !e.repeat && submit(true)), // a held chord never confirms
-  } satisfies Bindings<typeof ADD_DOMAIN_KEYS>);
+    f: () => void (canFinish && connect()),
+  } satisfies Bindings<typeof ADD_DOMAIN_KEYS>, !confirming);
 
   const apex = made ? apexOf(made.host) : "";
   const callout = !view || view.kind === "manual"
@@ -96,6 +125,11 @@ export function AddDomainSheet() {
             {callout}
             {view && view.kind !== "manual" && <CfStatus view={view} />}
             {poll.error && <p className="err">{errorText(poll.error)}</p>}
+            {error && (
+              <p className="err" role="alert">
+                {error === "not_verified" ? "Checks have not passed yet" : errorText(error)}
+              </p>
+            )}
             {!isOwner && (
               <p className="hint">
                 {view?.kind === "outside" ? "You can create links on it straight away. They start working once the record is found and the owner approves the domain." : APPROVAL_LINE}
@@ -103,8 +137,14 @@ export function AddDomainSheet() {
             )}
           </div>
           <div className="sh-foot">
-            <span className="left">{isOwner ? "Checks keep running while this is open" : "Members' domains need the owner's approval"}</span>
-            <button type="button" className="btn primary" autoFocus onClick={finish}>
+            <span className="left">{!isOwner ? "Members' domains need the owner's approval" : view && !cfSettled(view) ? "Checks keep running while this is open" : ""}</span>
+            {canFinish && (
+              <button type="button" className="btn" onClick={() => void connect()} aria-keyshortcuts="F">
+                Finish connecting <kbd>F</kbd>
+              </button>
+            )}
+            {/* Keyed: without it React reuses the form's Add domain button here and autoFocus never runs. */}
+            <button key="done" type="button" className="btn primary" autoFocus onClick={finish}>
               Done<span className="k2">Enter</span>
             </button>
           </div>
@@ -160,6 +200,25 @@ export function AddDomainSheet() {
             </button>
           </div>
         </>
+      )}
+      {confirming && made && (
+        <Sheet label="Send traffic to linkwarren" onClose={() => setConfirming(false)}>
+          <div className="sh-head">
+            <h2>Send traffic to linkwarren</h2>
+          </div>
+          <div className="sh-body">
+            <p>{`Connect and send ${made.host} traffic to linkwarren? It already has DNS records in your Cloudflare account.`}</p>
+            <div className="actions">
+              {/* Takeover is hard to undo: focus starts on Cancel and key autorepeat never confirms (as in the domain detail). */}
+              <button type="button" className="btn primary" onClick={() => void connect(true)} onKeyDown={(e) => e.repeat && e.preventDefault()}>
+                Send traffic <span className="k">Enter</span>
+              </button>
+              <button type="button" className="btn" autoFocus onClick={() => setConfirming(false)}>
+                Cancel <kbd>Esc</kbd>
+              </button>
+            </div>
+          </div>
+        </Sheet>
       )}
     </Sheet>
   );
