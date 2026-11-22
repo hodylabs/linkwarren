@@ -1,8 +1,9 @@
 import { type Ctx, getDomainByHost, getLink } from "./cache";
+import { classifyAgent, referrerHost, splitQrMarker, utcDay, visitorHash } from "./clicks";
 import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, pendingPage } from "./pages";
-import type { DomainRow } from "./types";
+import type { DomainRow, LinkRow } from "./types";
 import { checkSlugShape, slugKey } from "./validate";
 
 export async function handleRedirect(req: Request, env: Env, now: number, ctx?: Ctx): Promise<Response> {
@@ -32,13 +33,36 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
     return miss(domain.notfoundRedirect);
   }
 
+  const m = splitQrMarker(url.search);
   let dest = link.url;
-  if (link.passQuery && url.search) {
+  if (link.passQuery && m.search) {
     const d = new URL(dest);
-    d.search = d.search ? `${d.search}&${url.search.slice(1)}` : url.search; // raw bytes, no re-encoding
+    d.search = d.search ? `${d.search}&${m.search.slice(1)}` : m.search; // raw bytes, no re-encoding
     dest = d.toString();
   }
-  return redirect(dest, link.redirectCode, domain);
+  const res = redirect(dest, link.redirectCode, domain);
+  // Off the hot path: the response never waits for, or fails because of, analytics.
+  if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
+  return res;
+}
+
+export async function recordClick(env: Env, req: Request, link: LinkRow, domain: DomainRow, qr: boolean, now: number): Promise<void> {
+  try {
+    const ua = req.headers.get("user-agent");
+    const cf = req.cf as { country?: unknown; verifiedBotCategory?: unknown } | undefined;
+    const vb = typeof cf?.verifiedBotCategory === "string" ? cf.verifiedBotCategory : undefined;
+    const { kind, device } = classifyAgent(ua, vb);
+    const country = typeof cf?.country === "string" && cf.country ? cf.country.toUpperCase() : "XX";
+    const ip = req.headers.get("cf-connecting-ip") ?? "";
+    const visitor = await visitorHash(env.VISITOR_SALT, utcDay(now), ip, ua ?? "");
+    env.CLICKS?.writeDataPoint({
+      indexes: [domain.id],
+      blobs: [domain.id, link.id, link.slug, country, device, referrerHost(req.headers.get("referer")), qr ? "qr" : "typed", kind, visitor],
+      doubles: [1],
+    });
+  } catch (e) {
+    console.warn("click not recorded", e instanceof Error ? e.name : "unknown"); // name only: messages could carry request data
+  }
 }
 
 const robots = (d: DomainRow | null): Record<string, string> => (d?.noindex ? { "x-robots-tag": "noindex" } : {});

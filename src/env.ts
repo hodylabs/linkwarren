@@ -21,4 +21,8 @@ export type Env = {
   CF_WORKER_NAME?: string;
   CF_SAAS_ZONE_ID?: string;
   CF_CNAME_TARGET?: string;
+  /** Analytics Engine dataset for click points; nothing is recorded when unset. */
+  CLICKS?: AnalyticsEngineDataset;
+  /** Secret salt for the daily visitor code; the visitor blob is empty when unset. */
+  VISITOR_SALT?: string;
 };

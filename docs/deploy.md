@@ -100,6 +100,17 @@ In our tests a Worker route created through the API survived `wrangler deploy` w
 
 Disabled domains are skipped. Each call repairs at most 3 domains (in domain id order) so it stays within the Workers Free limit of 50 subrequests per request. The answer is `{ ok, failed, next }`: while `next` is not null, call again with `{ "after": "<next>" }` until it is. Each failure carries one of the codes listed under Status in [domains.md](domains.md). When Cloudflare cannot be reached (`cloudflare_unreachable`) the call stops at that domain and `next` points at it, so the retry starts there; any other code is per domain and the run goes on. The dashboard repeats the calls for you.
 
+## Analytics (optional)
+
+linkwarren records one Workers Analytics Engine data point per redirect to a live link (GET only), after the redirect is sent, so analytics never slow or break a redirect. What is stored, and what never is, is in [privacy.md](privacy.md).
+
+- Binding: `"analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }]` in `wrangler.instance.jsonc`. There is no create step: the dataset appears on the first write. Without the binding nothing is recorded.
+- Var `AE_DATASET`: the dataset name the reports read (default `linkwarren_clicks`, letters, digits and `_` only, at most 64). Reports also use `CF_ACCOUNT_ID` (the account that owns the dataset).
+- Secret `VISITOR_SALT`: 32 random bytes as hex, for the daily visitor code. Create it with `openssl rand -hex 32` and set it with `npx wrangler secret put VISITOR_SALT -c wrangler.instance.jsonc`. Without it the visitor code is left empty and unique visitors are not counted.
+- Secret `AE_READ_TOKEN`: an API token that reads the dataset. Create a custom token (My Profile or Manage Account, API Tokens, Create Custom Token) with only **Account, Account Analytics, Read**, limited to the one account, and set it with `npx wrangler secret put AE_READ_TOKEN -c wrangler.instance.jsonc`. Without it reports show daily totals from D1 only.
+
+Never put `VISITOR_SALT` or `AE_READ_TOKEN` in `vars`. Neither is ever logged, returned by the API or put in an error message. Workers Analytics Engine is available on the Workers Free plan.
+
 ## Sign-in
 
 `AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. The value is trimmed and must then be exactly `app` or `access` (lowercase); any other value fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting.

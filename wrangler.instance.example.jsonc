@@ -13,6 +13,8 @@
     { "binding": "DB", "database_name": "linkwarren", "database_id": "<your-d1-database-id>", "migrations_dir": "migrations" }
   ],
   "kv_namespaces": [{ "binding": "CACHE", "id": "<your-kv-namespace-id>" }],
+  // Click analytics (see docs/deploy.md "Analytics"). The dataset is created on the first write; leave this out to record nothing.
+  "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }],
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
     // "app" (linkwarren's own sign-in, the default) or "access" (Cloudflare Access). See docs/deploy.md "Sign-in".
@@ -27,9 +29,12 @@
     "CF_WORKER_NAME": "linkwarren",
     // Only for outside domains (Cloudflare for SaaS): a zone used only by linkwarren, and a host inside it.
     "CF_SAAS_ZONE_ID": "<your-saas-zone-id>",
-    "CF_CNAME_TARGET": "edge.example.com"
+    "CF_CNAME_TARGET": "edge.example.com",
+    // Analytics: must match the dataset above. Reports also need CF_ACCOUNT_ID.
+    "AE_DATASET": "linkwarren_clicks"
     // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
     // CF_API_TOKEN is a secret, never a var: wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc
+    // AE_READ_TOKEN and VISITOR_SALT are secrets, never vars: wrangler secret put AE_READ_TOKEN (and VISITOR_SALT) -c wrangler.instance.jsonc
   },
   // Add one route per short domain, plus the dashboard host.
   "routes": [

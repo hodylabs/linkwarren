@@ -10,6 +10,10 @@ Copyright (C) 2026 Hody LLC
 
 The name and logo are covered by `TRADEMARK.md`. To contribute, read `CONTRIBUTING.md`.
 
+## Privacy
+
+Short links set no cookies and run no scripts. What linkwarren records per click, and what it never stores, is in `docs/privacy.md`.
+
 ## Development
 
 See `docs/development.md` for tests, the dashboard build and running the dashboard against a local Worker.
