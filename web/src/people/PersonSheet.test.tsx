@@ -24,20 +24,22 @@ const DOMAINS = [
   { id: "dp", host: "dana.test", type: "private", status: "active", ownerId: "ud" },
 ];
 
+let list: UserItem[] = USERS;
 function boot(routes: FakeRoutes = {}) {
+  list = USERS;
   history.replaceState(null, "", "/people");
   const ok = (): FakeRes => ({ body: {} });
   const api = fakeApi({
     "GET /api/me": () => ({ body: owner }),
     "GET /api/domains": () => ({ body: DOMAINS }),
-    "GET /api/users": () => ({ body: { items: USERS } }),
+    "GET /api/users": () => ({ body: { items: list } }),
     "GET /api/audit": () => ({ body: { items: [], next: null } }),
     "POST /api/users/ui/resend": () => ({ body: { emailed: true } }),
     "DELETE /api/users/ui/invite": ok,
     "PATCH /api/users/ud": ({ body }) => ({ body: { user: { ...USERS[2], ...(body as object) } } }),
     "PATCH /api/users/ux": () => ({ body: { user: USERS[5] } }),
     "DELETE /api/users/ud/sessions": () => ({ status: 204 }),
-    "DELETE /api/users/ud": ok,
+    "DELETE /api/users/ud": () => ((list = list.filter((x) => x.id !== "ud")), { body: {} }),
     "DELETE /api/users/uc": ok,
     ...routes,
   });
@@ -135,9 +137,84 @@ describe("Person sheet", () => {
     await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/ux", body: { status: "active" } })]));
   });
 
+  it("opens on a neutral focus: Enter, Enter on an owner's sheet sends no PATCH", async () => {
+    const { api, user, dlg } = await openPerson("Bea");
+    expect(document.activeElement).toBe(within(dlg).getByRole("button", { name: /Activity/ }));
+    expect(document.activeElement?.getAttribute("role")).not.toBe("radio");
+    await user.keyboard("{Enter}{Enter}");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(writes(api)).toHaveLength(0);
+  });
+
+  it("ArrowRight on a member's sheet sends nothing", async () => {
+    const { api, user } = await openPerson("Dana");
+    await user.keyboard("{ArrowRight}");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(writes(api)).toHaveLength(0);
+  });
+
+  it("demote confirms and names the domains that move; Esc sends nothing, Enter sends one PATCH", async () => {
+    const { api, user, dlg } = await openPerson("Cy");
+    within(dlg).getByRole("radio", { name: "Owner" }).focus();
+    await user.keyboard("{ArrowRight}");
+    const c = await screen.findByRole("dialog", { name: "Make uc@example.com a member" });
+    expect(c.textContent).toContain("Make uc@example.com a member? They lose owner rights, and qr.test move to you.");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /a member$/ })).toBeNull());
+    expect(writes(api)).toHaveLength(0);
+    await user.click(within(dlg).getByRole("radio", { name: "Member" }));
+    await screen.findByRole("dialog", { name: "Make uc@example.com a member" });
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/uc", body: { role: "member" } })]));
+  });
+
+  it("demoting an owner with no main or shared domains says none move", async () => {
+    const { user, dlg } = await openPerson("Bea");
+    await user.click(within(dlg).getByRole("radio", { name: "Member" }));
+    expect((await screen.findByRole("dialog", { name: "Make ub@example.com a member" })).textContent).toContain("They lose owner rights. No domains move.");
+  });
+
+  it("promote confirms; Esc sends nothing, Enter sends one PATCH", async () => {
+    const { api, user, dlg } = await openPerson("Dana");
+    await user.click(within(dlg).getByRole("radio", { name: "Owner" }));
+    const c = await screen.findByRole("dialog", { name: "Make ud@example.com an owner" });
+    expect(c.textContent).toContain("Make ud@example.com an owner? They can change every setting and person.");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /an owner$/ })).toBeNull());
+    expect(writes(api)).toHaveLength(0);
+    await user.click(within(dlg).getByRole("radio", { name: "Owner" }));
+    await screen.findByRole("dialog", { name: "Make ud@example.com an owner" });
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    expect(writes(api)[0]).toMatchObject({ method: "PATCH", path: "/api/users/ud", body: { role: "owner" } });
+  });
+
+  it("after Remove, focus goes to the row that took its place", async () => {
+    const { user } = await openPerson("Dana");
+    await user.keyboard("{Shift>}X{/Shift}");
+    await screen.findByRole("dialog", { name: "Remove ud@example.com" });
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(USERS.length));
+    await waitFor(() => expect(document.activeElement).toBe(row("Cy")));
+  });
+
+  it("the transfer target resets after cancel", async () => {
+    const { user } = await openPerson("Dana");
+    await user.keyboard("{Shift>}X{/Shift}");
+    await user.selectOptions(within(await screen.findByRole("dialog", { name: "Remove ud@example.com" })).getByLabelText("Move their links and domains to"), "ub");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /^Remove/ })).toBeNull());
+    await user.keyboard("{Shift>}X{/Shift}");
+    const sel = within(await screen.findByRole("dialog", { name: "Remove ud@example.com" })).getByLabelText("Move their links and domains to") as HTMLSelectElement;
+    expect(sel.value).toBe("uo");
+  });
+
   it("role change sends PATCH role; 409 last_owner shows its copy", async () => {
     const { api, user, dlg } = await openPerson("Bea", { "PATCH /api/users/ub": () => ({ status: 409, body: { error: "last_owner" } }) });
     await user.click(within(dlg).getByRole("radio", { name: "Member" }));
+    await screen.findByRole("dialog", { name: "Make ub@example.com a member" });
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/ub", body: { role: "member" } })]));
     expect((await within(dlg).findByRole("alert")).textContent).toBe("linkwarren needs at least one active owner. Make someone else an owner first.");
   });

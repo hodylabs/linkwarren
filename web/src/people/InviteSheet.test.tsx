@@ -128,10 +128,20 @@ describe("Invite sheet", () => {
     await screen.findByRole("dialog", { name: "Invite a person" });
     await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
     await within(sheet()).findByText(/Invite saved/);
+    expect(within(sheet()).getByText("Email is not set up yet. Set it up in Settings, or send them the dashboard address.")).toBeTruthy();
     expect(sheet().textContent).toContain("Invite saved. No email was sent. Send them this address: https://links.example.com/");
     expect(within(sheet()).getByRole("button", { name: /Close/ })).toBeTruthy();
     await user.keyboard("c");
     await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("https://links.example.com/"));
+  });
+
+  it("a saved invite that was not emailed says why", async () => {
+    const { user } = boot({ invite: () => ({ status: 201, body: { user: {}, emailed: false, emailReason: "too_many" } }) });
+    await ready();
+    await user.keyboard("n");
+    await screen.findByRole("dialog", { name: "Invite a person" });
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    expect(await within(sheet()).findByText("Too many emails were sent this hour. Try again later.")).toBeTruthy();
   });
 
   it("the footer says who sends it, or that email is not set up", async () => {

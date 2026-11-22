@@ -69,6 +69,8 @@ export function PeopleScreen() {
   const lastScope = useRef<unknown>(null);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const focusRow = useRef(false);
+  const lastFocus = useRef<{ id: string; at: number } | null>(null);
+  const listRef = useRef<HTMLElement>(null);
 
   const all = users ?? [];
   const list = useMemo(
@@ -144,6 +146,16 @@ export function PeopleScreen() {
     focusRow.current = false;
   }, [sel, list]);
 
+  // A focused row that goes away (removed, revoked) hands focus to the row in its place, else the list.
+  useEffect(() => {
+    const f = lastFocus.current;
+    if (!f || list.some((u) => u.id === f.id)) return;
+    lastFocus.current = null;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const to = list[Math.min(f.at, list.length - 1)];
+    (to ? rowRefs.current.get(to.id) : listRef.current)?.focus();
+  }, [list]);
+
   const move = (step: 1 | -1) => {
     if (list.length === 0) return;
     const to = at < 0 ? list[step === 1 ? 0 : list.length - 1] : list[at + step];
@@ -181,7 +193,7 @@ export function PeopleScreen() {
         {isOwner && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
       </ScreenHeader>
       <div className={open ? "body people open" : "body people"}>
-        <section className="list" aria-label="People">
+        <section className="list" aria-label="People" ref={listRef} tabIndex={-1}>
           <table>
             <thead>
               <tr>
@@ -199,6 +211,7 @@ export function PeopleScreen() {
                   ref={(el) => void (el ? rowRefs.current.set(u.id, el) : rowRefs.current.delete(u.id))}
                   aria-selected={u.id === sel}
                   tabIndex={u.id === sel || (at < 0 && i === 0) ? 0 : -1}
+                  onFocus={() => (lastFocus.current = { id: u.id, at: i })}
                   onClick={() => app.open({ kind: "person", id: u.id })}
                   onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && (e.preventDefault(), app.open({ kind: "person", id: u.id }))}
                 >

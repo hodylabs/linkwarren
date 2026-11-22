@@ -119,8 +119,8 @@ users.patch("/:id", async (c) => {
   );
   const now = Math.floor(Date.now() / 1000);
   const stmts: D1PreparedStatement[] = [];
-  if (newRole) stmts.push(auditStmt(env, { actorId: me.id, action: "user.role", targetType: "user", targetId: id, detail: { from: t.role, to: newRole, movedDomains: moved } }, g));
-  if (status) stmts.push(auditStmt(env, { actorId: me.id, action: status === "disabled" ? "user.disable" : "user.enable", targetType: "user", targetId: id }, g));
+  if (newRole) stmts.push(auditStmt(env, { actorId: me.id, action: "user.role", targetType: "user", targetId: id, detail: { email: t.email, from: t.role, to: newRole, movedDomains: moved } }, g));
+  if (status) stmts.push(auditStmt(env, { actorId: me.id, action: status === "disabled" ? "user.disable" : "user.enable", targetType: "user", targetId: id, detail: { email: t.email } }, g));
   // R5: a member never owns a main or shared domain.
   if (demote) stmts.push(env.DB.prepare(`UPDATE domains SET owner_id = ? WHERE owner_id = ? AND ${SHARED} AND ${g.sql}`).bind(me.id, id, ...g.binds));
   if (status === "disabled") {

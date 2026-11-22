@@ -19,6 +19,9 @@ const ROLES: { value: "member" | "owner"; label: string }[] = [
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 type Mail = { emailFrom: string | null; emailConfigured: boolean; dashboardHost: string };
 
+/** The error code for an invite saved or re-sent without its email. */
+export const notSent = (reason: InviteResult["emailReason"]) => (reason === "too_many" ? "invite_too_many" : reason === "not_configured" ? "invite_email_off" : "not_sent");
+
 /** Some codes mean something else here than at sign-in. */
 const inviteError = (code: string) => errorText({ invalid_body: "invite_email", too_many: "invite_too_many", email_not_configured: "invite_email_off" }[code] ?? code);
 
@@ -33,6 +36,7 @@ export function InviteSheet() {
   const [mail, setMail] = useState<Mail | null>(null);
   // Set when the invite is saved but no email went out: the address to send them by hand.
   const [address, setAddress] = useState<string | null>(null);
+  const [why, setWhy] = useState<string | null>(null);
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
 
@@ -53,7 +57,10 @@ export function InviteSheet() {
       if (res.emailed) {
         app.close();
         app.announce(`Invited ${e}`);
-      } else setAddress(`https://${mail?.dashboardHost ?? location.host}/`);
+      } else {
+        setWhy(notSent(res.emailReason));
+        setAddress(`https://${mail?.dashboardHost ?? location.host}/`);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.code : "internal"); // the typed values stay in the form
     } finally {
@@ -85,6 +92,7 @@ export function InviteSheet() {
         <>
           <div className="sh-body">
             <p>Invite saved. No email was sent. Send them this address: {address}</p>
+            {why && <p className="hint">{errorText(why)}</p>}
             <div className="actions">
               <button type="button" className="btn" onClick={copy} aria-keyshortcuts="C">
                 Copy <kbd>C</kbd>

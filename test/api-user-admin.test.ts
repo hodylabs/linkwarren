@@ -57,7 +57,7 @@ describe("PATCH /api/users/:id role", () => {
     expect(r.status).toBe(200);
     const { user: u } = (await r.json()) as { user: { id: string; role: string; linkCount: number; domains: unknown[] } };
     expect(u).toMatchObject({ id: m.user.id, role: "owner", status: "active", linkCount: 0, domains: [] });
-    expect(await audits("user.role")).toEqual([{ actor_id: A.user.id, target_id: m.user.id, detail: JSON.stringify({ from: "member", to: "owner", movedDomains: [] }) }]);
+    expect(await audits("user.role")).toEqual([{ actor_id: A.user.id, target_id: m.user.id, detail: JSON.stringify({ email: "m@example.com", from: "member", to: "owner", movedDomains: [] }) }]);
   });
 
   it("demoting owner B moves B's main and shared domains to the actor, leaves the private one", async () => {
@@ -72,7 +72,7 @@ describe("PATCH /api/users/:id role", () => {
       { id: "dm", owner_id: A.user.id }, { id: "dp", owner_id: B.user.id }, { id: "ds", owner_id: A.user.id },
     ]);
     const [a] = await audits("user.role");
-    expect(JSON.parse(a!.detail as string)).toEqual({ from: "owner", to: "member", movedDomains: ["go.test", "s.test"] });
+    expect(JSON.parse(a!.detail as string)).toEqual({ email: "b@example.com", from: "owner", to: "member", movedDomains: ["go.test", "s.test"] });
   });
 
   it("member 403 (PATCH and DELETE), unknown id 404, empty body 400 no_changes, extra key 400", async () => {
@@ -151,13 +151,13 @@ describe("disable and enable", () => {
     expect(await mcpRefused(agent.accessToken)).toBe(true);
     expect((await refresh(agent.clientId, agent.refreshToken)).status).toBeGreaterThanOrEqual(400);
     expect(await grantsOf(P.user.id)).toEqual([]);
-    expect(await audits("user.disable")).toEqual([{ actor_id: A.user.id, target_id: P.user.id, detail: "{}" }]);
+    expect(await audits("user.disable")).toEqual([{ actor_id: A.user.id, target_id: P.user.id, detail: JSON.stringify({ email: P.user.email }) }]);
 
     const again = await patch(A.cookie, P.user.id, { status: "disabled" });
     expect([again.status, await again.json()]).toEqual([409, { error: "bad_state" }]);
 
     expect((await patch(A.cookie, P.user.id, { status: "active" })).status).toBe(200);
-    expect(await audits("user.enable")).toHaveLength(1);
+    expect((await audits("user.enable")).map((a) => a.detail)).toEqual([JSON.stringify({ email: P.user.email })]);
     const cookie = await signInApp("p@example.com");
     expect((await dash("/api/me", withCookie(cookie))).status).toBe(200);
 

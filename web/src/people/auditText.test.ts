@@ -137,6 +137,9 @@ describe("describeAudit agents and keys", () => {
     expect(pd({ action: "user.role", targetId: "ub", detail: { from: "owner", to: "member", movedDomains: [] } }).suffix).toBe(" a member");
     expect(pd({ action: "user.disable", targetId: "ub" })).toMatchObject({ text: "turned off access for", code: "bea@example.com" });
     expect(pd({ action: "user.enable", targetType: "user", targetId: "gone" })).toMatchObject({ text: "turned on access for", code: "user gone" });
+    // The server writes the email, so a removed person still reads by name.
+    expect(pd({ action: "user.disable", targetType: "user", targetId: "gone", detail: { email: "jo@example.com" } }).code).toBe("jo@example.com");
+    expect(pd({ action: "user.role", targetType: "user", targetId: "gone", detail: { email: "jo@example.com", to: "owner" } }).code).toBe("jo@example.com");
   });
   it("user.remove names who got their links", () => {
     expect(pd({ action: "user.remove", detail: { email: "jo@example.com", role: "member", transferTo: "ub", links: 3, domains: [] } }))

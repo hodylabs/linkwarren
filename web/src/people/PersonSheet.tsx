@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type InviteResult, type UserItem } from "../api";
+import { notSent } from "./InviteSheet";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
@@ -24,11 +25,10 @@ const ROLES: { value: "member" | "owner"; label: string }[] = [
   { value: "owner", label: "Owner" },
 ];
 const STATUS = { invited: ["wait", "Invited"], active: ["ok", "Active"], disabled: ["off", "Disabled"] } as const;
-type Ask = "revoke" | "disable" | "signout" | "remove";
+type Ask = "revoke" | "disable" | "signout" | "remove" | "promote" | "demote";
 
 const label = (u: UserItem) => u.name || u.email;
 const peopleError = (code: string) => errorText({ too_many: "invite_too_many", email_not_configured: "invite_email_off" }[code] ?? code);
-const notSent = (r: InviteResult) => (r.emailReason === "too_many" ? "invite_too_many" : r.emailReason === "not_configured" ? "invite_email_off" : "not_sent");
 
 /** R6: role and access here; who can use a domain is set on the domain. The owner never acts on themselves (R4). */
 export function PersonSheet({ id }: { id: string }) {
@@ -73,14 +73,19 @@ export function PersonSheet({ id }: { id: string }) {
   const act = {
     resend: () => run(async () => {
       const r = await api<InviteResult>("POST", `${path}/resend`);
-      return r.emailed ? null : notSent(r);
+      return r.emailed ? null : notSent(r.emailReason);
     }, { msg: `Re-sent the invite to ${email}` }),
     revoke: () => run(() => api("DELETE", `${path}/invite`).then(() => null), { msg: `Revoked the invite for ${email}`, close: true }),
     disable: () => run(() => patch({ status: "disabled" }), { msg: `Turned off access for ${email}` }),
     enable: () => run(() => patch({ status: "active" }), { msg: `Turned on access for ${email}` }),
     signout: () => run(() => api("DELETE", `${path}/sessions`).then(() => null), { msg: `Signed ${email} out everywhere` }),
     remove: () => run(() => api("DELETE", `${path}?transferTo=${encodeURIComponent(to)}`).then(() => null), { msg: `Removed ${email}`, close: true }),
-    role: (role: "member" | "owner") => role !== u?.role && run(() => patch({ role }), { msg: `Made ${email} ${role === "owner" ? "an owner" : "a member"}` }),
+    role: (role: "member" | "owner") => run(() => patch({ role }), { msg: `Made ${email} ${role === "owner" ? "an owner" : "a member"}` }),
+  };
+  // The transfer target starts at you each time, so a target removed or disabled since never lingers.
+  const askRemove = () => {
+    setTo(me.id);
+    setAsk("remove");
   };
   const activity = () => {
     app.close();
@@ -96,7 +101,7 @@ export function PersonSheet({ id }: { id: string }) {
       "shift+d": () => can("active") && setAsk("disable"),
       "shift+s": () => can("active") && setAsk("signout"),
       e: (e) => void (!e.shiftKey && can("disabled") && act.enable()),
-      "shift+x": () => !self && setAsk("remove"),
+      "shift+x": () => !self && askRemove(),
       a: (e) => void (!e.shiftKey && activity()),
     } satisfies Bindings<typeof PERSON_KEYS>,
     ask === null,
@@ -105,14 +110,15 @@ export function PersonSheet({ id }: { id: string }) {
   if (!u) return null;
   const [tone, status] = STATUS[u.status];
   // R5: main and shared domains may only move to an owner.
-  const needsOwner = u.domains.some((d) => d.via === "owner" && (domains.find((x) => x.id === d.id)?.type ?? "main") !== "private");
+  const moving = u.domains.filter((d) => d.via === "owner" && (domains.find((x) => x.id === d.id)?.type ?? "main") !== "private").map((d) => d.host);
+  const needsOwner = moving.length > 0;
   const targets = (users ?? [])
     .filter((x) => x.id !== id && x.status === "active" && (!needsOwner || x.role === "owner"))
     .sort((a, b) => Number(b.id === me.id) - Number(a.id === me.id));
   const target = targets.find((x) => x.id === to) ?? null;
   const choice = !target || target.id === me.id ? "you" : label(target);
-  const btn = (text: string, keys: string, aria: string, onClick: () => void, cls = "btn") => (
-    <button type="button" className={cls} aria-keyshortcuts={aria} onClick={onClick}>
+  const btn = (text: string, keys: string, aria: string, onClick: () => void, cls = "btn", autoFocus = false) => (
+    <button type="button" className={cls} aria-keyshortcuts={aria} onClick={onClick} autoFocus={autoFocus}>
       {text} <kbd>{keys}</kbd>
     </button>
   );
@@ -130,7 +136,7 @@ export function PersonSheet({ id }: { id: string }) {
         </p>
         <div className="f">
           <h3 className="lbl">Role</h3>
-          {self ? <p>Owner (you)</p> : <Seg label="Role" options={ROLES} value={u.role} onChange={(v) => void act.role(v)} />}
+          {self ? <p>Owner (you)</p> : <Seg label="Role" options={ROLES} value={u.role} onChange={(v) => v !== u.role && setAsk(v === "owner" ? "promote" : "demote")} />}
         </div>
         <div className="f">
           <h3 className="lbl">Domains</h3>
@@ -150,13 +156,14 @@ export function PersonSheet({ id }: { id: string }) {
         </div>
         {error && <p className="err" role="alert">{peopleError(error)}</p>}
         <div className="actions">
-          {btn("Activity", "A", "A", activity)}
+          {/* The first focus: never a control that changes data, so a stray Enter or arrow does nothing harmful. */}
+          {btn("Activity", "A", "A", activity, "btn", true)}
           {can("invited") && btn("Resend", "R", "R", () => void act.resend())}
           {can("invited") && btn("Revoke", "Shift R", "Shift+R", () => setAsk("revoke"))}
           {can("active") && btn("Turn off access", "Shift D", "Shift+D", () => setAsk("disable"))}
           {can("active") && btn("Sign out everywhere", "Shift S", "Shift+S", () => setAsk("signout"))}
           {can("disabled") && btn("Turn on access", "E", "E", () => void act.enable())}
-          {!self && btn("Remove", "Shift X", "Shift+X", () => setAsk("remove"), "btn bad")}
+          {!self && btn("Remove", "Shift X", "Shift+X", askRemove, "btn bad")}
         </div>
       </div>
       {ask === "revoke" && (
@@ -167,6 +174,13 @@ export function PersonSheet({ id }: { id: string }) {
       )}
       {ask === "signout" && (
         <Confirm title="Sign out everywhere" text={`Sign ${email} out on every device?`} ok="Sign out" onOk={() => void act.signout()} onCancel={() => setAsk(null)} />
+      )}
+      {ask === "demote" && (
+        <Confirm title={`Make ${email} a member`} ok="Make member" onOk={() => void act.role("member")} onCancel={() => setAsk(null)}
+          text={`Make ${email} a member? They lose owner rights${moving.length ? `, and ${moving.join(", ")} move to you.` : ". No domains move."}`} />
+      )}
+      {ask === "promote" && (
+        <Confirm title={`Make ${email} an owner`} text={`Make ${email} an owner? They can change every setting and person.`} ok="Make owner" onOk={() => void act.role("owner")} onCancel={() => setAsk(null)} />
       )}
       {ask === "remove" && (
         <Confirm title={`Remove ${email}`} ok="Remove" onOk={() => void act.remove()} onCancel={() => setAsk(null)}
