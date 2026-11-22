@@ -113,7 +113,7 @@ curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<l
 
 ### Bulk changes
 
-`POST /api/v1/links/bulk` changes up to 50 distinct links in one request (a list of up to 100 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The person's role must allow bulk edits (`403 forbidden` otherwise), and each link follows the single-edit rights of their role. The body has an `action` and the `ids`, plus the fields of that action:
+`POST /api/v1/links/bulk` changes up to 50 distinct links in one request (a list of up to 100 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The person's role must allow bulk edits (`403 forbidden` otherwise), a `copy` move also needs the right to create links, and each link follows the single-edit rights of their role. The body has an `action` and the `ids`, plus the fields of that action:
 
 | `action` | Other fields |
 | --- | --- |

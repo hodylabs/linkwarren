@@ -126,6 +126,29 @@ describe("links.editAny", () => {
   });
 });
 
+describe("creator and domain-owner paths", () => {
+  it("a domain owner without links.create edits and deletes a teammate's link on their domain", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dv','v.test','private','active','v',1)");
+    await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dv','a')");
+    await seed("lav", "a", "dv");
+    expect((await call("v", "PATCH", "/api/links/lav", { url: "https://y.com" })).status).toBe(200);
+    expect((await call("v", "DELETE", "/api/links/lav")).status).toBe(204);
+  });
+
+  it("race: a creator who loses links.create but keeps links.editAny still edits and deletes their link", async () => {
+    await seed("le", "e");
+    await seed("le2", "e");
+    let restore = beforeBatch(2, () => setPerms("ea", ["links.editAny"]));
+    let r;
+    try { r = await call("e", "PATCH", "/api/links/le", { url: "https://y.com" }); } finally { restore(); }
+    expect(r.status).toBe(200);
+    await setPerms("ea", ["links.create", "links.editAny"]);
+    restore = beforeBatch(2, () => setPerms("ea", ["links.editAny"]));
+    try { r = await call("e", "DELETE", "/api/links/le2"); } finally { restore(); }
+    expect(r.status).toBe(204);
+  });
+});
+
 describe("slug lock release", () => {
   beforeEach(() => run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dm','gone',1,'owner'),('ds','gone',1,'owner')"));
 
@@ -133,6 +156,8 @@ describe("slug lock release", () => {
     expect(await answer(await call("a", "DELETE", "/api/locks/dm/gone"))).toEqual(forbidden);
     expect(await answer(await call("d", "DELETE", "/api/locks/dm/gone"))).toEqual(forbidden);
     expect(await answer(await call("a", "DELETE", "/api/locks/nope/gone"))).toEqual(forbidden);
+    // unknown and unusable answer alike, so a domain id is never confirmed
+    expect(await answer(await call("e", "DELETE", "/api/locks/nope/gone"))).toEqual(forbidden);
     expect(await answer(await call("e", "DELETE", "/api/locks/ds/gone"))).toEqual(forbidden);
     expect(await count("slug_locks")).toBe(2);
     expect((await call("e", "DELETE", "/api/locks/dm/gone")).status).toBe(204);

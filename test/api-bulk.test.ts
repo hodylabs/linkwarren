@@ -288,13 +288,19 @@ describe("budget and guards", () => {
     await run(`${seq} INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,routes,created_by,updated_by,created_at,updated_at)
       SELECT 'm' || i, 'dm', 'm' || i, 'm' || i, 'https://x.com/', 302, 1, '[]', 'uo', 'uo', 1, 10 FROM n`);
     await run(`${seq} INSERT INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT 'dm', 'k' || i, 1, 'uo' FROM n`);
-    for (const [action, extra, from] of [["schedule", { endNow: true }, 0], ["delete", {}, 500]] as const) {
+    // Also as a non-owner whose right on these links is links.editAny: the role guards must not add per-link reads.
+    await run(`INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('ea','Editors','["links.create","links.bulk","links.editAny"]',0,1,1)
+      ON CONFLICT(id) DO UPDATE SET perms = excluded.perms`);
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('uea','ea@example.com','member','ea','active',1)");
+    EMAIL.ea = "ea@example.com";
+    for (const [who, action, extra, from] of [["owner", "schedule", { endNow: true }, 0], ["owner", "delete", {}, 500],
+      ["ea", "schedule", { endNow: true }, 50], ["ea", "delete", {}, 600]] as const) {
       const ids = Array.from({ length: 50 }, (_, i) => `m${from + i}`);
       const m = meter();
       let r;
-      try { r = await answer(await bulk("owner", { action, ids, ...extra })); } finally { m.restore(); }
+      try { r = await answer(await bulk(who, { action, ids, ...extra })); } finally { m.restore(); }
       expect(r.results.every((x) => x.ok)).toBe(true);
-      console.log(`bulk ${action} x50: rows_read ${m.rows}`);
+      console.log(`bulk ${action} x50 as ${who}: rows_read ${m.rows}`);
       expect(m.rows).toBeGreaterThan(0);
       // Delete measures 1205 with only the budget table's forms (link read 200, domains and membership 3, lock insert 200,
       // audit 202, DELETE 600: json_each rows count as read), so it gets 50 rows of headroom over 10 x N + 200.
@@ -351,6 +357,34 @@ describe("roles (S8 R9)", () => {
       .toEqual([{ id: "a1", domain_id: "dm", redirect_code: 302 }, { id: "e1", domain_id: "dm", redirect_code: 302 }]);
     expect(await count("slug_locks")).toBe(0);
     expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
+  });
+
+  it("copy needs links.create: 403 without it, nothing written", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dm2','go2.test','main','active','uo',1)");
+    await setPerms("ea", ["links.bulk", "links.editAny"]);
+    const r = await as("ea@example.com", { action: "move", ids: ["a1"], domainId: "dm2", oldAddress: "copy" });
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    // forward creates no new link of its own, so it still works
+    expect(byId((await answer(await as("ea@example.com", { action: "move", ids: ["a1"], domainId: "dm2", oldAddress: "forward" }))).results)).toEqual({ a1: "ok" });
+    expect(await count("links WHERE domain_id = 'dm2' AND forward_to IS NULL")).toBe(1);
+  });
+
+  it("race: links.create removed before a copy's batch: 403, no copy, no audit", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dm2','go2.test','main','active','uo',1)");
+    const restore = beforeBatch(4, () => setPerms("ea", ["links.bulk", "links.editAny"]));
+    let r;
+    try { r = await as("ea@example.com", { action: "move", ids: ["a1"], domainId: "dm2", oldAddress: "copy" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await count("links WHERE domain_id = 'dm2'")).toBe(0);
+    expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
+  });
+
+  it("race: a creator who loses links.create but keeps links.editAny still edits their link in bulk", async () => {
+    await seed("e1", "uea");
+    const restore = beforeBatch(3, () => setPerms("ea", ["links.bulk", "links.editAny"]));
+    let r;
+    try { r = await answer(await as("ea@example.com", { action: "redirect", ids: ["e1"], redirectCode: 301 })); } finally { restore(); }
+    expect(byId(r.results)).toEqual({ e1: "ok" });
   });
 
   it("race: links.editAny removed mid-request: the teammate's link is refused, the own link still written", async () => {

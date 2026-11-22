@@ -8,9 +8,9 @@ import { actor, type Grant } from "../principal";
 import { rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
 import { normalizeHost } from "../host";
 import { canUseDomain } from "../perm";
-import { actorCan, can, type Guard, type Perm } from "../roles";
+import { actorCan, can, type Guard } from "../roles";
 import { checkSlug, slugKey } from "../validate";
-import { badWindow, bodyError, canEditLink, code, editPerm, forwarderDeletes, passwordInput, purgeReturned, rules, times } from "./links";
+import { badWindow, bodyError, canEditLink, code, editRight, forwarderDeletes, type EditRight, passwordInput, purgeReturned, rules, times } from "./links";
 import { isV1, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -67,16 +67,16 @@ const UNLOCKED = "NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND l
 const FREE = "NOT EXISTS (SELECT 1 FROM links o WHERE o.domain_id = ? AND o.slug_key = json_extract(j.value,'$.k'))";
 
 /**
- * S8: every statement's re-check of links.bulk and, per row, of the permission `g` (editPerm) that let this person edit the
- * link, so a role edit between the reads and the batch writes nothing it no longer allows. Its EXISTS subqueries name no
- * column of the row, so D1 runs each once per statement, not once per link.
+ * S8: every statement's re-check of links.bulk (and links.create for a copy, which creates links) and, per row, of the edit
+ * right `g` (editRight, as editGuard re-checks it), so a role edit between the reads and the batch writes nothing it no
+ * longer allows. Its EXISTS subqueries name no column of the row, so D1 runs each once per statement, not once per link.
  */
-const permGuard = (userId: string): Guard => {
+const permGuard = (userId: string, copy: boolean): Guard => {
   const b = actorCan(userId, "links.bulk"), cr = actorCan(userId, "links.create"), a = actorCan(userId, "links.editAny");
   const g = "json_extract(j.value,'$.g')";
   return {
-    sql: `(${b.sql} AND (${g} IS NULL OR (${g} = 'links.create' AND ${cr.sql}) OR (${g} = 'links.editAny' AND ${a.sql})))`,
-    binds: [...b.binds, ...cr.binds, ...a.binds],
+    sql: `(${b.sql}${copy ? ` AND ${cr.sql}` : ""} AND (${g} = 'none' OR (${g} = 'own' AND (${cr.sql} OR ${a.sql})) OR (${g} = 'any' AND ${a.sql})))`,
+    binds: [...b.binds, ...(copy ? cr.binds : []), ...cr.binds, ...a.binds, ...a.binds],
   };
 };
 
@@ -86,6 +86,9 @@ export async function bulk(c: Context<E>) {
   const parsed = (schema ??= makeSchema()).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: bodyError(parsed.error) }, 400);
   const b = parsed.data;
+  const copy = b.action === "move" && b.oldAddress === "copy";
+  // A copy creates links (R9), refused like a missing links.bulk: before anything is read.
+  if (copy && !can(c.var.user, "links.create")) return c.json({ error: "forbidden" }, 403);
   // Defense in depth: the /api/v1 scope gate checks only the HTTP method, and every bulk action is a POST.
   const g = c.var.grant;
   if (b.action === "delete" && !(g.write && g.del)) return c.json({ error: "delete_not_allowed" }, 403);
@@ -126,7 +129,7 @@ export async function bulk(c: Context<E>) {
   }
 
   const out = new Map<string, BulkResult>();
-  const accepted: { link: LinkRow; domain: DomainRow; k: string; g: Perm | null }[] = [];
+  const accepted: { link: LinkRow; domain: DomainRow; k: string; g: EditRight | null }[] = [];
   const pending: string[] = [];
   for (const id of order) {
     const link = found.get(id), domain = link && domains.get(link.domainId);
@@ -145,7 +148,7 @@ export async function bulk(c: Context<E>) {
       if (!s.ok) { out.set(id, { id, ok: false, error: s.reason === "too_long" ? "slug_too_long" : s.reason }); continue; }
       k = slugKey(link.slug, target.caseSensitive);
     }
-    accepted.push({ link, domain, k, g: editPerm(user, link, domain) });
+    accepted.push({ link, domain, k, g: editRight(user, link, domain) });
   }
   // Move: per accepted link, a lock on its new key, who holds that key, and how many forwarders point at it (a forward move
   // repoints them). One statement driven from json_each, index probes only (slug_locks_lower, the links unique key, links_forward_to).
@@ -215,7 +218,8 @@ export async function bulk(c: Context<E>) {
     : [];
 
   const base = { ...actor(c), targetType: "link" };
-  const G = permGuard(user.id);
+  // A null right (never accepted: canEditLink refused it) fails the guard too.
+  const G = permGuard(user.id, copy);
   const rows = accepted.map(({ link, g }, i) => ({ t: link.id, r: link.updatedAt, g, h: hashes[i] ?? null }));
   const json = JSON.stringify(rows);
   let stmts: D1PreparedStatement[];
@@ -342,13 +346,13 @@ export async function bulk(c: Context<E>) {
   const applied = new Set(newIds.size ? returned.map((n) => newIds.get(n)!) : returned);
   const done = accepted.filter(({ link }) => applied.has(link.id));
   // Something not written: tell a permission lost since the reads (forbidden) from a changed link (conflict). One read, only then.
-  let lostPerm = (_: Perm | null) => false;
+  let lostPerm = (_: EditRight | null) => false;
   if (done.length < accepted.length) {
     const q = (["links.bulk", "links.create", "links.editAny"] as const).map((p) => actorCan(user.id, p));
     const r = await env.DB.prepare(`SELECT ${q.map((x) => x.sql).join(", ")}`).bind(...q.flatMap((x) => x.binds)).raw<number[]>();
-    const [b, cr, a] = r[0] ?? [0, 0, 0];
-    if (!b && !done.length) return c.json({ error: "forbidden" }, 403);
-    lostPerm = (g) => (g === "links.create" && !cr) || (g === "links.editAny" && !a);
+    const [hasBulk, hasCreate, hasAny] = r[0] ?? [0, 0, 0];
+    if ((!hasBulk || (copy && !hasCreate)) && !done.length) return c.json({ error: "forbidden" }, 403);
+    lostPerm = (g) => (g === "own" && !hasCreate && !hasAny) || (g === "any" && !hasAny);
   }
   const keys: [string, string][] = b.action !== "move" ? done.map(({ link }) => [link.domainId, link.slugKey])
     : done.map(({ k }): [string, string] => [target!.id, k]).concat(

@@ -6,7 +6,7 @@ import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
 import { parseSettings, settingsQ } from "../settings";
 import { canUseDomain, usableDomains } from "../perm";
-import { actorCan, can, type Guard, type Perm } from "../roles";
+import { actorCan, can, type Guard } from "../roles";
 import { actor, type Grant } from "../principal";
 import { ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
@@ -245,25 +245,29 @@ links.post("/", async (c) => {
 const stillCan = async (env: Env, g: Guard) => !!(await env.DB.prepare(`SELECT ${g.sql} ok`).bind(...g.binds).first<{ ok: number }>())?.ok;
 
 /**
- * The role permission that lets `user` edit `link` (S8 R9), or null when no permission is needed (an owner, the domain's
- * owner) or none applies. The creator rule wins over editAny. canEditLink decides; this names what the write re-checks.
+ * Which R9 path lets `user` edit `link` (domain use aside): "none" needs no permission (an owner, the domain's owner), "own"
+ * is the creator with links.create, "any" is links.editAny, null is no right at all. The write re-checks it (editGuard).
  */
-export function editPerm(user: UserRow, link: LinkRow, domain: DomainRow): Perm | null {
-  if (user.role === "owner" || domain.ownerId === user.id) return null;
-  if (link.createdBy === user.id && can(user, "links.create")) return "links.create";
-  return can(user, "links.editAny") ? "links.editAny" : null;
+export type EditRight = "none" | "own" | "any";
+export function editRight(user: UserRow, link: LinkRow, domain: DomainRow): EditRight | null {
+  if (user.role === "owner" || domain.ownerId === user.id) return "none";
+  if (link.createdBy === user.id && can(user, "links.create")) return "own";
+  return can(user, "links.editAny") ? "any" : null;
 }
 
 /** The edit rule (R9): domain use (narrowed by the grant's domains), and (owner, domain owner, creator with links.create, or links.editAny). Shared with the bulk route. */
 export const canEditLink = (user: UserRow, link: LinkRow, domain: DomainRow, member: boolean, only: readonly string[] | null): boolean =>
-  canUseDomain(user, domain, member, only) && (user.role === "owner" || domain.ownerId === user.id || editPerm(user, link, domain) !== null);
+  canUseDomain(user, domain, member, only) && editRight(user, link, domain) !== null;
 
-/** The SQL re-check of editPerm for a write's batch, or null for the owner and domain-owner paths. */
-export const editGuard = (user: UserRow, link: LinkRow, domain: DomainRow): Guard | null => {
-  const p = editPerm(user, link, domain);
-  return p ? actorCan(user.id, p) : null;
+/**
+ * The SQL re-check of editRight for a write's batch. A creator keeps the right while they hold links.create or links.editAny;
+ * no right at all is a guard that never holds, so a caller that skipped canEditLink still writes nothing.
+ */
+export const editGuard = (user: UserRow, link: LinkRow, domain: DomainRow): Guard => {
+  const r = editRight(user, link, domain), cr = actorCan(user.id, "links.create"), a = actorCan(user.id, "links.editAny");
+  return r === "none" ? { sql: "1", binds: [] } : r === "own" ? { sql: `(${cr.sql} OR ${a.sql})`, binds: [...cr.binds, ...a.binds] }
+    : r === "any" ? a : { sql: "0", binds: [] };
 };
-const TRUE: Guard = { sql: "1", binds: [] };
 
 /** Loads a link and enforces edit rights (canEditLink); `withHosts` also reads the active hosts in the same batch. */
 async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, id: string, withHosts = false) {
@@ -293,7 +297,7 @@ links.patch("/:id", async (c) => {
   const found = await editable(c, c.req.param("id"), b.url !== undefined || !!b.routes?.length);
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain, hosts } = found;
-  const g = editGuard(user, link, domain) ?? TRUE;
+  const g = editGuard(user, link, domain);
   // A forwarder is never edited: it can only be deleted.
   if (link.forwardTo) return c.json({ error: "forwarder" }, 409);
   let url = link.url;
@@ -385,7 +389,7 @@ links.delete("/:id", async (c) => {
   const found = await editable(c, c.req.param("id"));
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain } = found;
-  const g = editGuard(user, link, domain) ?? TRUE;
+  const g = editGuard(user, link, domain);
   // Every write runs only while the link is still the revision read (same address, same updated_at): a racing second delete or
   // a move in between writes nothing, so a moved link's new address is never left unlocked.
   const rev = "id = ? AND domain_id = ? AND slug_key = ? AND updated_at = ?", revBinds = [link.id, link.domainId, link.slugKey, link.updatedAt];
@@ -415,8 +419,8 @@ locks.delete("/:domainId/:slugKey", async (c) => {
   if (!can(user, "links.editAny")) return c.json(forbidden, 403);
   const { domainId, slugKey: raw } = c.req.param();
   const domain = await getDomain(c.env, domainId);
-  if (!domain) return c.json({ error: "not_found" }, 404);
-  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
+  // Unknown and unusable answer alike, so a domain id is never confirmed to someone who cannot use it.
+  if (!domain || !canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
   const key = slugKey(raw, domain.caseSensitive);
   const g = actorCan(user.id, "links.editAny");
   const match = `domain_id = ? AND lower(slug_key) = lower(?) AND ${g.sql}`;
