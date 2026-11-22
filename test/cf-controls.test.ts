@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { rateLimitRule, securityRule } from "../src/cf/controls";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare } from "./helpers/cf";
+import { beforeBatch } from "./helpers/race";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -75,7 +76,7 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     expect(fake.state.rulesets[SEC]!.rules).toHaveLength(1);
     const ruleId = fake.state.rulesets[SEC]!.rules[0]!.id;
     expect(await row(id)).toEqual({ security_level: "high", rate_limit: null });
-    expect(await audits()).toEqual([{ host: "go.owned.test", securityLevel: "high", rateLimit: null }]);
+    expect(await audits()).toEqual([{ host: "go.owned.test", securityLevel: "high" }]);
 
     fake.calls.length = 0;
     expect((await setCf(id, { securityLevel: "low" })).status).toBe(200);
@@ -116,7 +117,7 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     expect(r.status).toBe(200);
     expect(fake.state.rulesets[RL]!.rules).toEqual([fr]);
     expect(await row(id)).toEqual({ security_level: null, rate_limit: null });
-    expect((await audits()).at(-1)).toEqual({ host: "go.owned.test", securityLevel: null, rateLimit: null });
+    expect((await audits()).at(-1)).toEqual({ host: "go.owned.test", rateLimit: null });
   });
 
   it("null with no rule in Cloudflare is a no-op there and still clears D1", async () => {
@@ -192,6 +193,53 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     // Changing the existing rule is still allowed.
     expect((await setCf(a, { rateLimit: 30 })).status).toBe(200);
     expect(fake.state.rulesets[RL]!.rules).toHaveLength(1);
+  });
+
+  it("a validation 400 (code 20125) on adding is 502 cloudflare_error, never a plan limit", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.rulesets[RL] = { id: "rs-rl", kind: "zone", phase: "http_ratelimit", rules: [] };
+    const id = await create("owner", "go.owned.test");
+    fake.failNext(/rulesets\/rs-rl\/rules$/, 400, { success: false, errors: [{ code: 20125, message: "x" }], result: null });
+    const r = await setCf(id, { rateLimit: 20 });
+    expect(r.status).toBe(502);
+    expect(await r.json()).toEqual({ error: "cloudflare_error" });
+    // Same on a failed entrypoint create that is not "already exists".
+    fake.state.rulesets = {};
+    fake.failNext(/\/zones\/zo\/rulesets$/, 400, { success: false, errors: [{ code: 20125, message: "x" }], result: null });
+    expect((await setCf(id, { rateLimit: 20 })).status).toBe(502);
+    expect((await row(id))!.rate_limit).toBeNull();
+  });
+
+  it("both controls, second fails: the first is stored and audited alone, the error is returned", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.ratelimitMax = 1;
+    const a = await create("owner", "a.owned.test"), id = await create("owner", "go.owned.test");
+    expect((await setCf(a, { rateLimit: 20 })).status).toBe(200);
+    const r = await setCf(id, { securityLevel: "under_attack", rateLimit: 30 });
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual({ error: "cloudflare_plan_limit" });
+    expect(await row(id)).toEqual({ security_level: "under_attack", rate_limit: null });
+    expect((await audits()).filter((x) => x.host === "go.owned.test")).toEqual([{ host: "go.owned.test", securityLevel: "under_attack" }]);
+  });
+
+  it("a reject committing between Cloudflare and D1: our new rules are removed, 404, no audit", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.rulesets[SEC] = { id: "rs-x", kind: "zone", phase: "http_config_settings", rules: [{ ...foreign }] };
+    const id = await create("owner", "go.owned.test");
+    const restore = beforeBatch(1, async () => {
+      await run("DELETE FROM domain_cf WHERE domain_id = ?", id);
+      await run("DELETE FROM domains WHERE id = ?", id);
+    });
+    let r;
+    try {
+      r = await setCf(id, { securityLevel: "high", rateLimit: 40 });
+    } finally {
+      restore();
+    }
+    expect(r.status).toBe(404);
+    expect(fake.state.rulesets[SEC]!.rules).toEqual([foreign]);
+    expect(fake.state.rulesets[RL]!.rules).toEqual([]);
+    expect(await audits()).toEqual([]);
   });
 
   it("other Cloudflare failure: 502 cloudflare_error, D1 unchanged", async () => {

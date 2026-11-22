@@ -51,14 +51,11 @@ async function entrypoint(cfg: CfConfig, zoneId: string, phase: Phase): Promise<
 export const isForbidden = (e: unknown) =>
   e instanceof CfError && (e.status === 401 || (e.status === 403 && (e.codes.length === 0 || e.codes.includes(10000))));
 
-/**
- * A 400/403 on adding our rule, other than a missing permission, reads as a plan limit (Free allows one rate limiting
- * rule per zone). Cloudflare's docs publish no rulesets quota or entitlement codes (checked 2026-11), so this is a
- * fallback on status only: our rule shape is fixed, so a validation 400 would be a linkwarren bug, not user input.
- */
-function onAdd(e: unknown): unknown {
-  return e instanceof CfError && (e.status === 400 || e.status === 403) && !isForbidden(e) ? new PlanLimitError() : e;
-}
+// Measured live on a Free zone 2026-11-21: 400 20217 = the phase entrypoint already exists; 400 50001 = the phase rule quota is full.
+const EXISTS = 20217, QUOTA = 50001;
+const has = (e: unknown, code: number) => e instanceof CfError && e.status === 400 && e.codes.includes(code);
+/** Only the quota code is a plan limit; every other error stays a CfError (permission or a plain Cloudflare failure). */
+const onAdd = (e: unknown): unknown => (has(e, QUOTA) ? new PlanLimitError() : e);
 
 /**
  * Adds or updates the one rule with `rule.ref` in the zone's phase entrypoint. Never PUTs an entrypoint and never sends a
@@ -72,8 +69,8 @@ export async function upsertHostRule(cfg: CfConfig, zoneId: string, phase: Phase
       await cf(cfg, "POST", base, { name: "default", kind: "zone", phase, rules: [rule] });
       return;
     } catch (e) {
-      // Any 4xx: assume another tool created the entrypoint since our GET, and re-read it.
-      if (!(e instanceof CfError && e.status >= 400 && e.status < 500)) throw e;
+      // Another tool created the entrypoint since our GET: re-read it and add to it.
+      if (!has(e, EXISTS)) throw onAdd(e);
       rs = await entrypoint(cfg, zoneId, phase);
       if (!rs) throw onAdd(e);
     }

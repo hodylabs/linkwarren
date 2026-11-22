@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import { CfError, cfConfig } from "../cf/api";
-import { PlanLimitError, SECURITY_LEVELS, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
+import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
@@ -202,33 +202,61 @@ domains.patch("/:id/cloudflare", async (c) => {
   if (!cf || cf.kind !== "account" || !cf.routeId || !cf.zoneId) return c.json({ error: "not_same_account" }, 409);
   const cfg = cfConfig(c.env);
   if (!cfg) return c.json(notConfigured, 409);
-  try {
-    if (b.securityLevel !== undefined) {
-      if (b.securityLevel === null) await deleteHostRule(cfg, cf.zoneId, "http_config_settings", secRef(d.id));
-      else await upsertHostRule(cfg, cf.zoneId, "http_config_settings", securityRule(d.id, d.host, b.securityLevel));
-    }
-    if (b.rateLimit !== undefined) {
-      if (b.rateLimit === null) await deleteHostRule(cfg, cf.zoneId, "http_ratelimit", rlRef(d.id));
-      else await upsertHostRule(cfg, cf.zoneId, "http_ratelimit", rateLimitRule(d.id, d.host, b.rateLimit));
-    }
-  } catch (e) {
-    if (e instanceof PlanLimitError) return c.json({ error: "cloudflare_plan_limit" }, 409);
-    if (isForbidden(e)) return c.json({ error: "cloudflare_forbidden" }, 409);
-    if (e instanceof CfError) return c.json({ error: e.status === 0 ? "cloudflare_unreachable" : "cloudflare_error" }, 502);
-    logInternal(d.id, e);
-    throw e;
+  // Each step that succeeds in Cloudflare is recorded, so a later failure never leaves D1 claiming the old value.
+  const done: { securityLevel?: string | null; rateLimit?: number | null } = {};
+  const steps: [() => Promise<void>, () => void][] = [];
+  if (b.securityLevel !== undefined) {
+    const v = b.securityLevel;
+    steps.push([() => v === null ? deleteHostRule(cfg, cf.zoneId!, "http_config_settings", secRef(d.id))
+      : upsertHostRule(cfg, cf.zoneId!, "http_config_settings", securityRule(d.id, d.host, v)), () => { done.securityLevel = v; }]);
   }
-  const next = { securityLevel: b.securityLevel === undefined ? cf.securityLevel : b.securityLevel, rateLimit: b.rateLimit === undefined ? cf.rateLimit : b.rateLimit };
-  // Only the keys sent are written, so two edits of different controls do not clobber each other.
+  if (b.rateLimit !== undefined) {
+    const v = b.rateLimit;
+    steps.push([() => v === null ? deleteHostRule(cfg, cf.zoneId!, "http_ratelimit", rlRef(d.id))
+      : upsertHostRule(cfg, cf.zoneId!, "http_ratelimit", rateLimitRule(d.id, d.host, v)), () => { done.rateLimit = v; }]);
+  }
+  let failure: Response | null = null;
+  for (const [run, record] of steps) {
+    try {
+      await run();
+      record();
+    } catch (e) {
+      if (e instanceof PlanLimitError) failure = c.json({ error: "cloudflare_plan_limit" }, 409);
+      else if (isForbidden(e)) failure = c.json({ error: "cloudflare_forbidden" }, 409);
+      else if (e instanceof CfError) {
+        // Status and codes only: never Cloudflare's own text.
+        console.warn("linkwarren: Cloudflare rule change failed", JSON.stringify({ domainId: d.id, status: e.status, codes: e.codes }));
+        failure = c.json({ error: e.status === 0 ? "cloudflare_unreachable" : "cloudflare_error" }, 502);
+      } else {
+        logInternal(d.id, e);
+        throw e;
+      }
+      break;
+    }
+  }
+  if (Object.keys(done).length === 0) return failure!;
   const cols: [string, string | number | null][] = [];
-  if (b.securityLevel !== undefined) cols.push(["security_level", b.securityLevel]);
-  if (b.rateLimit !== undefined) cols.push(["rate_limit", b.rateLimit]);
-  await c.env.DB.batch([
-    c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ?`).bind(...cols.map(([, v]) => v), d.id),
-    auditStmt(c.env, { actorId: user.id, action: "domain.cloudflare", targetType: "domain", targetId: d.id, detail: { host: d.host, ...next } },
+  if ("securityLevel" in done) cols.push(["security_level", done.securityLevel!]);
+  if ("rateLimit" in done) cols.push(["rate_limit", done.rateLimit!]);
+  // Only the keys written go to D1 and the audit, so two edits of different controls do not clobber each other.
+  const res = await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE domain_cf SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE domain_id = ? RETURNING security_level, rate_limit`)
+      .bind(...cols.map(([, v]) => v), d.id),
+    auditStmt(c.env, { actorId: user.id, action: "domain.cloudflare", targetType: "domain", targetId: d.id, detail: { host: d.host, ...done } },
       { sql: "EXISTS (SELECT 1 FROM domain_cf WHERE domain_id = ?)", binds: [d.id] }),
   ]);
-  return c.json(next);
+  const after = res[0]!.results[0] as { security_level: string | null; rate_limit: number | null } | undefined;
+  if (!after) {
+    // The domain was rejected while Cloudflare was being changed: remove the rules this request made (best effort).
+    const late: [Phase, string][] = [];
+    if (done.securityLevel) late.push(["http_config_settings", secRef(d.id)]);
+    if (done.rateLimit) late.push(["http_ratelimit", rlRef(d.id)]);
+    for (const [phase, ref] of late)
+      await deleteHostRule(cfg, cf.zoneId, phase, ref).catch((e) => console.warn("linkwarren: could not remove a rule of a deleted domain",
+        JSON.stringify({ domainId: d.id, zoneId: cf.zoneId, ref, error: e instanceof CfError ? e.message : "internal_error" })));
+    return c.json(notFound, 404);
+  }
+  return failure ?? c.json({ securityLevel: after.security_level, rateLimit: after.rate_limit });
 });
 
 domains.patch("/:id", async (c) => {
