@@ -626,7 +626,8 @@ describe("Link detail rules", () => {
     fireEvent.change(screen.getByLabelText("Rule 1 countries"), { target: { value: "fr" } });
     release();
     expect(await within(detail()).findByText("https://example.com/saved")).toBeTruthy();
-    expect(urlInput().value).toBe("https://example.com/saved");
+    // The summary text lands a commit before the form rebases onto the saved revision, so wait on the field itself.
+    await waitFor(() => expect(urlInput().value).toBe("https://example.com/saved"));
     expect(pw().value).toBe("second-pass");
     expect((screen.getByLabelText("Rule 1 countries") as HTMLInputElement).value).toBe("fr");
   });
