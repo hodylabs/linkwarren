@@ -1,8 +1,8 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import { CfError, cfConfig } from "../cf/api";
-import { classify, logInternal, syncDomain, takeoverCheck } from "../cf/attach";
+import { AttachError, classify, detachDomain, isVerified, logInternal, syncDomain, takeoverCheck } from "../cf/attach";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
@@ -252,31 +252,127 @@ domains.patch("/:id", async (c) => {
   return c.json(next);
 });
 
-/** approve: pending or disabled -> active; disable: any -> disabled. Both owner-only and idempotent. */
-for (const [verb, to] of [["approve", "active"], ["disable", "disabled"]] as const) {
-  domains.post(`/:id/${verb}`, async (c) => {
-    const user = c.var.user;
-    if (user.role !== "owner") return c.json(forbidden, 403);
-    const d = await getDomain(c.env, c.req.param("id"));
-    if (!d) return c.json(notFound, 404);
-    if (d.status !== to) {
-      // Audit first, both guarded on the status we read: a racing change writes neither a phantom audit nor a stale status.
-      const at = { sql: "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = ?)", binds: [d.id, d.status] };
-      const res = await c.env.DB.batch([
-        auditStmt(c.env, { actorId: user.id, action: `domain.${verb}`, targetType: "domain", targetId: d.id,
-          detail: { host: d.host, from: d.status } }, at),
-        c.env.DB.prepare("UPDATE domains SET status = ? WHERE id = ? AND status = ?").bind(to, d.id, d.status),
-      ]);
-      if (res[1]!.meta.changes === 0) {
-        const cur = await getDomain(c.env, d.id);
-        if (!cur) return c.json(notFound, 404);
-        return c.json(verb === "approve" && cur.status === "active" ? { ...cur, ...(await loopField(c.env, cur.host)) } : cur);
-      }
-      await purge(c.env, d.host);
-    }
-    return c.json(verb === "approve" ? { ...d, status: to, ...(await loopField(c.env, d.host)) } : { ...d, status: to });
-  });
+const approveBody = z.strictObject({ confirmTakeover: z.boolean().optional() });
+const cfIds = (cf: CfRow) => [cf.zoneId, cf.dnsRecordId, cf.routeId, cf.hostnameId];
+
+/** Owner-only status change, audit first and both guarded on the status we read: a racing change writes neither a phantom audit nor a stale status. */
+async function setStatus(c: Context<E>, d: DomainRow, verb: "approve" | "disable", to: DomainRow["status"], extra: Record<string, unknown> = {}): Promise<DomainRow | null | "lost"> {
+  if (d.status === to) return d;
+  const at = { sql: "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = ?)", binds: [d.id, d.status] };
+  const res = await c.env.DB.batch([
+    auditStmt(c.env, { actorId: c.var.user.id, action: `domain.${verb}`, targetType: "domain", targetId: d.id,
+      detail: { host: d.host, from: d.status, ...extra } }, at),
+    c.env.DB.prepare("UPDATE domains SET status = ? WHERE id = ? AND status = ?").bind(to, d.id, d.status),
+  ]);
+  if (res[1]!.meta.changes === 0) return (await getDomain(c.env, d.id)) ?? "lost";
+  await purge(c.env, d.host);
+  return { ...d, status: to };
 }
+
+/**
+ * approve: pending or disabled -> active, gated (R5) only on the row a fresh sync inside this request returned.
+ * An active `account` domain without a route is a half-finished attach: approve finishes it ("Finish connecting").
+ */
+domains.post("/:id/approve", async (c) => {
+  if (c.var.user.role !== "owner") return c.json(forbidden, 403);
+  const raw = await c.req.json().catch(() => null);
+  const body = approveBody.safeParse(raw ?? {});
+  if (!body.success) return c.json({ error: "invalid_body" }, 400);
+  const d = await getDomain(c.env, c.req.param("id"));
+  if (!d) return c.json(notFound, 404);
+  let cf = await getCf(c.env, d.id);
+  const finish = d.status === "active" && cf?.kind === "account" && cf.routeId === null;
+  if (d.status === "active" && !finish) return c.json({ ...d, ...(await loopField(c.env, d.host)) });
+  if (cf && cf.kind !== "manual") {
+    const cfg = cfConfig(c.env);
+    // Without Cloudflare settings nothing can be checked, so nothing is approved.
+    if (!cfg) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
+    try {
+      cf = await syncDomain(c.env, cfg, d, cf, { attach: cf.kind === "account", confirmTakeover: body.data.confirmTakeover });
+    } catch (e) {
+      if (e instanceof AttachError) return c.json({ error: e.code }, 409);
+      if (e instanceof CfError) return c.json({ error: "cloudflare_error" }, 502);
+      throw e; // syncDomain logged it
+    }
+    if (finish) {
+      await c.env.DB.batch([auditStmt(c.env, { actorId: c.var.user.id, action: "domain.attach", targetType: "domain", targetId: d.id,
+        detail: { host: d.host } }, exists(d.id))]);
+      return c.json({ ...d, cloudflare: cfView(c.env, d, cf) });
+    }
+    if (!isVerified(cf)) return c.json({ error: "not_verified", cloudflare: cfView(c.env, d, cf) }, 409);
+  }
+  const view = cfView(c.env, d, cf);
+  const out = await setStatus(c, d, "approve", "active", { check: { dns: view.dns, ownership: view.ownership, certificate: view.certificate } });
+  if (out === "lost" || out === null) return c.json(notFound, 404);
+  const loop = out.status === "active" ? await loopField(c.env, out.host) : {};
+  return c.json({ ...out, cloudflare: cfView(c.env, out, cf), ...loop });
+});
+
+/** disable: any -> disabled. Owner-only and idempotent. */
+domains.post("/:id/disable", async (c) => {
+  if (c.var.user.role !== "owner") return c.json(forbidden, 403);
+  const d = await getDomain(c.env, c.req.param("id"));
+  if (!d) return c.json(notFound, 404);
+  const out = await setStatus(c, d, "disable", "disabled");
+  return out === "lost" || out === null ? c.json(notFound, 404) : c.json(out);
+});
+
+/**
+ * Reject (R7): owner only, pending only. Cloudflare cleanup first (404 counts as gone); any other Cloudflare failure
+ * leaves D1 untouched so the owner can retry. Then one guarded batch removes the domain and everything on it.
+ */
+domains.delete("/:id", async (c) => {
+  const user = c.var.user;
+  if (user.role !== "owner") return c.json(forbidden, 403);
+  const d = await getDomain(c.env, c.req.param("id"));
+  if (!d) return c.json(notFound, 404);
+  if (d.status !== "pending") return c.json({ error: "not_pending" }, 409);
+  const cfg = cfConfig(c.env);
+  // Re-read right before detach, so ids a sync stored earlier in this request's lifetime are included.
+  const cf = await getCf(c.env, d.id);
+  if (cf && cfIds(cf).some((v) => v)) {
+    if (!cfg) return c.json({ error: "cloudflare_error" }, 502);
+    try {
+      await detachDomain(c.env, cfg, d, cf);
+    } catch (e) {
+      if (e instanceof CfError) return c.json({ error: "cloudflare_error" }, 502);
+      throw e;
+    }
+  }
+  const pending = "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = 'pending')";
+  const del = (t: string, col: string) => c.env.DB.prepare(`DELETE FROM ${t} WHERE ${col} = ? AND ${pending}`).bind(d.id, d.id);
+  const at = Math.floor(Date.now() / 1000);
+  // Reads first in the same batch, so the ids, slugs and link count are exactly what the delete removed.
+  const res = await c.env.DB.batch([
+    c.env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(d.id),
+    c.env.DB.prepare("SELECT slug FROM links WHERE domain_id = ?").bind(d.id),
+    c.env.DB.prepare(
+      `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
+       SELECT ?, ?, NULL, 'domain.reject', 'domain', ?, json_object('host', ?, 'links', (SELECT COUNT(*) FROM links WHERE domain_id = ?), 'owner', ?)
+       WHERE ${pending}`,
+    ).bind(at, user.id, d.id, d.host, d.id, d.ownerId, d.id),
+    del("links", "domain_id"), del("slug_locks", "domain_id"), del("domain_members", "domain_id"), del("domain_cf", "domain_id"),
+    c.env.DB.prepare("DELETE FROM domains WHERE id = ? AND status = 'pending'").bind(d.id),
+  ]);
+  if (res[res.length - 1]!.meta.changes === 0) {
+    // Lost to a concurrent approve after our detach: put the active domain back in Cloudflare (repair, never a takeover).
+    const cur = await getDomain(c.env, d.id);
+    const now = cur && (await getCf(c.env, d.id).catch(() => null));
+    if (cur && now && cur.status === "active") await trySync(c.env, cur, now, { attach: false });
+    return c.json({ error: "conflict" }, 409);
+  }
+  // M-4: a sync running concurrently may have stored a new id after detach read the row. Best-effort, never fails the reject.
+  const last = res[0]!.results[0] as Record<string, unknown> | undefined;
+  const atDelete = last ? rowToCf(last) : null;
+  if (cfg && atDelete && cf && cfIds(atDelete).some((v, i) => v && v !== cfIds(cf)[i])) {
+    await detachDomain(c.env, cfg, d, atDelete).catch((e) =>
+      console.warn("linkwarren: second cleanup after reject failed", JSON.stringify({ domainId: d.id, error: e instanceof CfError ? e.message : "internal_error" })));
+  }
+  const slugs = (res[1]!.results as { slug: string }[]).flatMap((r) => [r.slug, r.slug.toLowerCase()]);
+  // shortcut: one KV delete per key (subrequest cap on huge domains); the 300 s TTL covers the rest, and the host purge alone already ends serving.
+  await Promise.all([purge(c.env, d.host), purgeMany(c.env, d.id, [...new Set(slugs)])]);
+  return c.body(null, 204);
+});
 
 domains.put("/:id/members", async (c) => {
   const user = c.var.user;
