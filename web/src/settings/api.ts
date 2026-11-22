@@ -20,12 +20,12 @@ export type ControlsPatch = { securityLevel?: string | null; rateLimit?: number 
 
 /** Copied from the server's permission list (src/cf/perms.ts); the UI never imports server code. */
 export const PERMISSIONS: readonly { key: PermKey; label: string; why: string }[] = [
-  { key: "zone_read", label: "Zone, Zone, Read", why: "See which domains are in this account" },
-  { key: "dns_edit", label: "Zone, DNS, Edit", why: "Point your domains at linkwarren" },
-  { key: "routes_edit", label: "Zone, Workers Routes, Edit", why: "Send each domain's traffic to the app" },
-  { key: "ssl_edit", label: "Zone, SSL and Certificates, Edit", why: "Add outside domains with a CNAME (Cloudflare for SaaS)" },
-  { key: "config_rules_edit", label: "Zone, Config Rules, Edit", why: "Security level per domain" },
-  { key: "waf_edit", label: "Zone, Zone WAF, Edit", why: "Rate limit per domain" },
+  { key: "zone_read", label: "Zone: Read", why: "See which domains are in this account" },
+  { key: "dns_edit", label: "DNS: Edit", why: "Point your domains at linkwarren" },
+  { key: "routes_edit", label: "Workers Routes: Edit", why: "Send each domain's traffic to the app" },
+  { key: "ssl_edit", label: "SSL and Certificates: Edit", why: "Add outside domains with a CNAME (Cloudflare for SaaS)" },
+  { key: "config_rules_edit", label: "Config Rules: Edit", why: "Security level per domain" },
+  { key: "waf_edit", label: "Zone WAF: Edit", why: "Rate limit per domain" },
 ];
 
 export const getCloudflare = (signal?: AbortSignal) => api<CloudflareSettings>("GET", "/api/settings/cloudflare", undefined, signal);

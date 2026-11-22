@@ -16,12 +16,12 @@ afterEach(() => {
 describe("PERMISSIONS", () => {
   it("lists the six permissions with groups and exact labels", () => {
     expect(PERMISSIONS.map((p) => [p.key, p.group, p.label])).toEqual([
-      ["zone_read", "core", "Zone, Zone, Read"],
-      ["dns_edit", "core", "Zone, DNS, Edit"],
-      ["routes_edit", "core", "Zone, Workers Routes, Edit"],
-      ["ssl_edit", "outside", "Zone, SSL and Certificates, Edit"],
-      ["config_rules_edit", "controls", "Zone, Config Rules, Edit"],
-      ["waf_edit", "controls", "Zone, Zone WAF, Edit"],
+      ["zone_read", "core", "Zone: Read"],
+      ["dns_edit", "core", "DNS: Edit"],
+      ["routes_edit", "core", "Workers Routes: Edit"],
+      ["ssl_edit", "outside", "SSL and Certificates: Edit"],
+      ["config_rules_edit", "controls", "Config Rules: Edit"],
+      ["waf_edit", "controls", "Zone WAF: Edit"],
     ]);
     expect(PERMISSIONS[0]!.why).toBe("See which domains are in this account");
   });

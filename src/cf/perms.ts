@@ -5,12 +5,12 @@ type Key = "zone_read" | "dns_edit" | "routes_edit" | "ssl_edit" | "config_rules
 type State = "ok" | "missing" | "unknown";
 
 export const PERMISSIONS: readonly { key: Key; label: string; why: string; group: "core" | "outside" | "controls" }[] = [
-  { key: "zone_read", label: "Zone, Zone, Read", why: "See which domains are in this account", group: "core" },
-  { key: "dns_edit", label: "Zone, DNS, Edit", why: "Point your domains at linkwarren", group: "core" },
-  { key: "routes_edit", label: "Zone, Workers Routes, Edit", why: "Send each domain's traffic to the app", group: "core" },
-  { key: "ssl_edit", label: "Zone, SSL and Certificates, Edit", why: "Add outside domains with a CNAME (Cloudflare for SaaS)", group: "outside" },
-  { key: "config_rules_edit", label: "Zone, Config Rules, Edit", why: "Security level per domain", group: "controls" },
-  { key: "waf_edit", label: "Zone, Zone WAF, Edit", why: "Rate limit per domain", group: "controls" },
+  { key: "zone_read", label: "Zone: Read", why: "See which domains are in this account", group: "core" },
+  { key: "dns_edit", label: "DNS: Edit", why: "Point your domains at linkwarren", group: "core" },
+  { key: "routes_edit", label: "Workers Routes: Edit", why: "Send each domain's traffic to the app", group: "core" },
+  { key: "ssl_edit", label: "SSL and Certificates: Edit", why: "Add outside domains with a CNAME (Cloudflare for SaaS)", group: "outside" },
+  { key: "config_rules_edit", label: "Config Rules: Edit", why: "Security level per domain", group: "controls" },
+  { key: "waf_edit", label: "Zone WAF: Edit", why: "Rate limit per domain", group: "controls" },
 ];
 
 const AUTH_CODES = new Set([9109, 10000]);

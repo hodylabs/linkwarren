@@ -159,7 +159,7 @@ export function CloudflareSection() {
       </section>
     );
 
-  const okLabels = check?.permissions.filter((p) => p.state === "ok").map((p) => PERMISSIONS.find((q) => q.key === p.key)?.label).filter(Boolean);
+  const okCount = check?.permissions.filter((p) => p.state === "ok").length ?? 0;
   const n = s.attachedCount;
   const shown = resync.checked + resync.failed.length > 0 || resync.done;
   return (
@@ -175,7 +175,7 @@ export function CloudflareSection() {
           <small>Stored as a Worker secret, never shown again</small>
         </div>
         <div className="row-actions">
-          <span className="muted">{okLabels?.length ? okLabels.join(", ") : "Not checked yet"}</span>
+          <span className="muted">{!check ? "Not checked yet" : check.token === "invalid" ? "Not accepted" : `${okCount} of ${PERMISSIONS.length} permissions confirmed`}</span>
           <button type="button" className="btn" onClick={() => void runCheck()} disabled={checking} aria-keyshortcuts="C">
             Check token<Kbd>C</Kbd>
           </button>
@@ -195,7 +195,7 @@ export function CloudflareSection() {
                     <li className="perm" key={p.key}>
                       <span className={st === "ok" ? "pk ok" : st === "missing" ? "pk miss" : "pk"} aria-hidden="true">{st === "ok" ? "✓" : st === "missing" ? "!" : "?"}</span>
                       <div>
-                        <span className="mono">{p.label}</span>
+                        <b className="perm-name">{p.label}</b>
                         <small>{st === "ok" ? "OK" : st === "missing" ? "Missing" : "Checked on first use"}. {p.why}</small>
                       </div>
                     </li>
