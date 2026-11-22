@@ -63,6 +63,14 @@ describe("rule builders", () => {
 });
 
 describe("PATCH /api/domains/:id/cloudflare", () => {
+  it("the domain list carries the stored controls so the dashboard can show them", async () => {
+    installFakeCloudflare({ zones });
+    const id = await create("owner", "go.owned.test");
+    expect((await setCf(id, { securityLevel: "high", rateLimit: 40 })).status).toBe(200);
+    const list = await (await call("owner", "GET", "/api/domains")).json<{ id: string; cloudflare: { securityLevel: string | null; rateLimit: number | null } }[]>();
+    expect(list.find((d) => d.id === id)!.cloudflare).toMatchObject({ securityLevel: "high", rateLimit: 40 });
+  });
+
   it("high creates the entrypoint with only our rule, stores it, one audit; low patches the same rule", async () => {
     const fake = installFakeCloudflare({ zones });
     const id = await create("owner", "go.owned.test");
@@ -176,7 +184,7 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     fake.failNext(/\/rulesets/, 403);
     const r = await setCf(id, { securityLevel: "high" });
     expect(r.status).toBe(409);
-    expect(await r.json()).toEqual({ error: "cloudflare_forbidden" });
+    expect(await r.json()).toEqual({ error: "cloudflare_forbidden", securityLevel: null, rateLimit: null });
     expect(await row(id)).toEqual({ security_level: null, rate_limit: null });
     expect(await audits()).toEqual([]);
   });
@@ -188,7 +196,7 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     expect((await setCf(a, { rateLimit: 20 })).status).toBe(200);
     const r = await setCf(b, { rateLimit: 20 });
     expect(r.status).toBe(409);
-    expect(await r.json()).toEqual({ error: "cloudflare_plan_limit" });
+    expect(await r.json()).toEqual({ error: "cloudflare_plan_limit", securityLevel: null, rateLimit: null });
     expect((await row(b))!.rate_limit).toBeNull();
     // Changing the existing rule is still allowed.
     expect((await setCf(a, { rateLimit: 30 })).status).toBe(200);
@@ -202,7 +210,7 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     fake.failNext(/rulesets\/rs-rl\/rules$/, 400, { success: false, errors: [{ code: 20125, message: "x" }], result: null });
     const r = await setCf(id, { rateLimit: 20 });
     expect(r.status).toBe(502);
-    expect(await r.json()).toEqual({ error: "cloudflare_error" });
+    expect(await r.json()).toEqual({ error: "cloudflare_error", securityLevel: null, rateLimit: null });
     // Same on a failed entrypoint create that is not "already exists".
     fake.state.rulesets = {};
     fake.failNext(/\/zones\/zo\/rulesets$/, 400, { success: false, errors: [{ code: 20125, message: "x" }], result: null });
@@ -217,7 +225,7 @@ describe("PATCH /api/domains/:id/cloudflare", () => {
     expect((await setCf(a, { rateLimit: 20 })).status).toBe(200);
     const r = await setCf(id, { securityLevel: "under_attack", rateLimit: 30 });
     expect(r.status).toBe(409);
-    expect(await r.json()).toEqual({ error: "cloudflare_plan_limit" });
+    expect(await r.json()).toEqual({ error: "cloudflare_plan_limit", securityLevel: "under_attack", rateLimit: null });
     expect(await row(id)).toEqual({ security_level: "under_attack", rate_limit: null });
     expect((await audits()).filter((x) => x.host === "go.owned.test")).toEqual([{ host: "go.owned.test", securityLevel: "under_attack" }]);
   });

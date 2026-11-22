@@ -50,7 +50,7 @@ export type CfRow = {
   updatedAt: number;
 };
 /** What the API shows about a domain's Cloudflare state. `instructions` only for `outside`. */
-export type CfView = Pick<CfRow, "kind" | "dns" | "ownership" | "certificate" | "errors" | "lastError" | "checkedAt"> & {
+export type CfView = Pick<CfRow, "kind" | "dns" | "ownership" | "certificate" | "errors" | "lastError" | "checkedAt" | "securityLevel" | "rateLimit"> & {
   instructions: { type: "CNAME"; name: string; target: string; apex: boolean } | null;
   attachOnApproval: boolean;
 };

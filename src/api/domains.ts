@@ -59,10 +59,10 @@ function cfView(env: Env, d: DomainRow, cf: CfRow | null): CfView {
   const t = env.CF_CNAME_TARGET?.trim();
   const target = t ? normalizeHost(t) : null;
   const apex = apexOf(d.host);
-  const base = cf ?? { kind: "manual", dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, routeId: null };
+  const base = cf ?? { kind: "manual", dns: "unknown", ownership: "unknown", certificate: "unknown", errors: [], lastError: null, checkedAt: null, routeId: null, securityLevel: null, rateLimit: null };
   return {
     kind: base.kind, dns: base.dns, ownership: base.ownership, certificate: base.certificate,
-    errors: base.errors, lastError: base.lastError, checkedAt: base.checkedAt,
+    errors: base.errors, lastError: base.lastError, checkedAt: base.checkedAt, securityLevel: base.securityLevel, rateLimit: base.rateLimit,
     instructions: base.kind === "outside" && target
       ? { type: "CNAME", name: d.host === apex ? "@" : d.host.slice(0, -apex.length - 1), target, apex: d.host === apex }
       : null,
@@ -215,18 +215,19 @@ domains.patch("/:id/cloudflare", async (c) => {
     steps.push([() => v === null ? deleteHostRule(cfg, cf.zoneId!, "http_ratelimit", rlRef(d.id))
       : upsertHostRule(cfg, cf.zoneId!, "http_ratelimit", rateLimitRule(d.id, d.host, v)), () => { done.rateLimit = v; }]);
   }
-  let failure: Response | null = null;
+  // A failure answers with the stored controls too, so the client knows which step landed.
+  let failure: { body: { error: string }; status: 409 | 502 } | null = null;
   for (const [run, record] of steps) {
     try {
       await run();
       record();
     } catch (e) {
-      if (e instanceof PlanLimitError) failure = c.json({ error: "cloudflare_plan_limit" }, 409);
-      else if (isForbidden(e)) failure = c.json({ error: "cloudflare_forbidden" }, 409);
+      if (e instanceof PlanLimitError) failure = { body: { error: "cloudflare_plan_limit" }, status: 409 };
+      else if (isForbidden(e)) failure = { body: { error: "cloudflare_forbidden" }, status: 409 };
       else if (e instanceof CfError) {
         // Status and codes only: never Cloudflare's own text.
         console.warn("linkwarren: Cloudflare rule change failed", JSON.stringify({ domainId: d.id, status: e.status, codes: e.codes }));
-        failure = c.json({ error: e.status === 0 ? "cloudflare_unreachable" : "cloudflare_error" }, 502);
+        failure = { body: { error: e.status === 0 ? "cloudflare_unreachable" : "cloudflare_error" }, status: 502 };
       } else {
         logInternal(d.id, e);
         throw e;
@@ -234,7 +235,7 @@ domains.patch("/:id/cloudflare", async (c) => {
       break;
     }
   }
-  if (Object.keys(done).length === 0) return failure!;
+  if (Object.keys(done).length === 0) return c.json({ ...failure!.body, securityLevel: cf.securityLevel, rateLimit: cf.rateLimit }, failure!.status);
   const cols: [string, string | number | null][] = [];
   if ("securityLevel" in done) cols.push(["security_level", done.securityLevel!]);
   if ("rateLimit" in done) cols.push(["rate_limit", done.rateLimit!]);
@@ -256,7 +257,8 @@ domains.patch("/:id/cloudflare", async (c) => {
         JSON.stringify({ domainId: d.id, zoneId: cf.zoneId, ref, error: e instanceof CfError ? e.message : "internal_error" })));
     return c.json(notFound, 404);
   }
-  return failure ?? c.json({ securityLevel: after.security_level, rateLimit: after.rate_limit });
+  const controls = { securityLevel: after.security_level, rateLimit: after.rate_limit };
+  return failure ? c.json({ ...failure.body, ...controls }, failure.status) : c.json(controls);
 });
 
 domains.patch("/:id", async (c) => {
