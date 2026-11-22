@@ -82,15 +82,19 @@ agents.patch("/connections/:id", async (c) => {
   const { row } = f;
   const own = row.user_id === u.id;
   const item = toItem(row, !own);
+  const raise = (write && !item.write) || (del && !item.del);
+  // S8 R7: raising needs `agents` (lowering stays open, R3); re-checked in the update's batch below.
+  if (own && raise && !can(u, "agents")) return c.json({ error: "forbidden" }, 403);
   // R6: an owner or people manager may only lower someone else's connection; raising needs that person's own sign-in.
-  if (!own && ((write && !item.write) || (del && !item.del))) return c.json({ error: "owner_cannot_raise" }, 403);
+  if (!own && raise) return c.json({ error: "owner_cannot_raise" }, 403);
   if (write === item.write && del === item.del) return c.json(item);
   const w = write ? 1 : 0, d = del ? 1 : 0, g = mayManage(row.user_id, u.id);
+  const ag = raise ? actorCan(u.id, "agents") : { sql: "1", binds: [] };
   const res = await c.env.DB.batch([
     // Optimistic: write only if the row still holds what we read, so a change in between answers 409 and `before`
     // is never stale; with the owner's lowering-only check above, this can never raise what the person set.
-    c.env.DB.prepare(`UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL AND can_write = ? AND can_delete = ? AND ${g.sql}`)
-      .bind(w, d, id, item.write ? 1 : 0, item.del ? 1 : 0, ...g.binds),
+    c.env.DB.prepare(`UPDATE agent_connections SET can_write = ?, can_delete = ? WHERE id = ? AND revoked_at IS NULL AND can_write = ? AND can_delete = ? AND ${g.sql} AND ${ag.sql}`)
+      .bind(w, d, id, item.write ? 1 : 0, item.del ? 1 : 0, ...g.binds, ...ag.binds),
     auditStmt(c.env, { ...actor(c), action: "agent.access", targetType: "agent_connection", targetId: id,
       detail: { write, del, before: { write: item.write, del: item.del } } },
       { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM agent_connections WHERE id = ? AND revoked_at IS NULL)", binds: [id] }),
@@ -98,6 +102,7 @@ agents.patch("/connections/:id", async (c) => {
   if (!res[0]!.meta.changes) {
     const why = await lost(c.env, u, row.user_id);
     if (why) return c.json({ error: why }, 403);
+    if (raise && !(await c.env.DB.prepare(`SELECT ${ag.sql} ok`).bind(...ag.binds).first<{ ok: number }>())?.ok) return c.json({ error: "forbidden" }, 403);
     return "row" in (await find(c.env, u, id)) ? c.json({ error: "changed" }, 409) : c.json(notFound, 404); // revoked in between
   }
   return c.json({ ...item, write, del });

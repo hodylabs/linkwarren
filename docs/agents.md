@@ -41,7 +41,7 @@ Select the connection and press `Shift+D` (or Disconnect), then confirm. The age
 
 ### When a role loses AI agents
 
-Agents follow the person's current role. When an owner turns off **Connect AI agents** for a role, every agent of its people is refused from its next call: each tool answers "Your role no longer allows AI agents. Ask an owner." (no tool call is logged), a refresh or code exchange answers `403 access_denied`, and the approval page answers "Your role does not allow connecting AI agents." Nothing is disconnected or revoked: turning the permission back on restores the same connections with the same tokens (until they expire). Listing and disconnecting your own connections still works without it. Turning off **Personal API keys** does not affect agents, and the other way round.
+Agents follow the person's current role. When an owner turns off **Connect AI agents** for a role, every agent of its people is refused from its next call: each tool answers "Your role no longer allows AI agents. Ask an owner." (no tool call is logged), and the approval page answers "Your role does not allow connecting AI agents." (Deny still returns to the agent as usual.) Tokens keep refreshing, but every tool call is refused. Nothing is disconnected or revoked: turning the permission back on restores the same connections. Listing, lowering and disconnecting your own connections still work without it; raising one to write or delete needs it (`403 forbidden`). Turning off **Personal API keys** does not affect agents, and the other way round.
 
 ## Tools
 

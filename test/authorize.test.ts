@@ -436,6 +436,8 @@ describe("/authorize and the agents permission", () => {
     const auth = await signInHeaders(email, "pa");
     const page = await openConsent(path, auth);
     expect(page.res.status).toBe(200);
+    // signInHeaders(email, roleId) really puts the person on the named role
+    expect(await env.DB.prepare("SELECT role, role_id FROM users WHERE email = ?").bind(email).first()).toEqual({ role: "member", role_id: "pa" });
     await role("pa", []);
     const r = await postConsent(auth, page.binding, { handle: page.handle, uid: page.uid, action: "approve", access: "read" });
     expect(r.status).toBe(403);
@@ -455,5 +457,18 @@ describe("/authorize and the agents permission", () => {
     expect(r.status).toBe(403);
     expect(await r.text()).toContain(COPY);
     await nothingFor(email);
+  });
+
+  it("POST deny with agents off: the standard access_denied redirect, nothing stored", async () => {
+    const email = "deny-agents@example.com";
+    await role("da", ["agents"]);
+    const { path, clientId } = await request();
+    const auth = await signInHeaders(email, "da");
+    const page = await openConsent(path, auth);
+    await role("da", []);
+    const r = await postConsent(auth, page.binding, { handle: page.handle, uid: page.uid, action: "deny" });
+    expect(r.status).toBe(302);
+    expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBe("access_denied");
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(clientId).first("n")).toBe(0);
   });
 });

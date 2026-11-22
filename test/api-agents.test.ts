@@ -332,3 +332,33 @@ describe("a people manager and other people's connections (S8 R4)", () => {
     expect(await open()).toEqual([a.connId]);
   });
 });
+
+// S8 R7: raising your own connection needs `agents`; lowering and disconnecting stay open (R3).
+describe("raising a connection needs agents", () => {
+  const role = (id: string, perms: readonly string[]) =>
+    run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms", id, `Role ${id}`, JSON.stringify(perms));
+
+  it("without agents: raise is 403 forbidden and writes nothing; lowering and disconnecting work", async () => {
+    await role("rz", ["agents"]);
+    await run("UPDATE users SET role_id = 'rz' WHERE id = 'ua'");
+    const a = await connectAgent(A, { write: true });
+    await role("rz", []);
+    const r = await patch(A, a.connId, { write: true, del: true });
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await one("SELECT can_write, can_delete FROM agent_connections WHERE id = ?", a.connId)).toEqual({ can_write: 1, can_delete: 0 });
+    expect((await patch(A, a.connId, { write: false, del: false })).status).toBe(200);
+    expect((await del(A, a.connId)).status).toBe(204);
+  });
+
+  it("race: agents removed between the read and the raise writes nothing and answers 403", async () => {
+    await role("ry", ["agents"]);
+    await run("UPDATE users SET role_id = 'ry' WHERE id = 'ua'");
+    const a = await connectAgent(A);
+    const restore = beforeBatch(1, () => role("ry", []));
+    let r: Response;
+    try { r = await patch(A, a.connId, { write: true, del: false }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await one("SELECT can_write FROM agent_connections WHERE id = ?", a.connId)).toEqual({ can_write: 0 });
+    expect(await audits("agent.access")).toEqual([]);
+  });
+});

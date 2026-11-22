@@ -152,7 +152,6 @@ authorize.post("/", async (c) => {
   const w = await who(c.req.raw, c.env);
   if (!w.user) return w.fail;
   const user = w.user;
-  if (!can(user, "agents")) return NO_AGENTS();
   const oauth = helpers(c.env);
   if (!oauth) return msg(503, "Unavailable", "Connecting agents is unavailable right now.");
   const limited = await limitedFor(c.env, user.id);
@@ -176,6 +175,8 @@ authorize.post("/", async (c) => {
     }
   }
   if (form.action !== "approve") return EXPIRED();
+  // After deny, so a refused person's agent still gets the standard access_denied redirect.
+  if (!can(user, "agents")) return NO_AGENTS();
 
   const write = form.access === "write";
   const del = write && form.del === "1";

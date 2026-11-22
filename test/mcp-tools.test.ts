@@ -584,6 +584,8 @@ describe("agents follow the role", () => {
   it("agents off: every call refused with the role copy, nothing written; on again: the same token works", async () => {
     await role("ag", ["agents", "links.create"]);
     const t = await connectAgent(A, { write: true, roleId: "ag" });
+    // connectAgent's roleId really puts the person on the named role
+    expect(await one("SELECT role_id FROM users WHERE id = 'ua'")).toEqual({ role_id: "ag" });
     expect((await tool(t.accessToken, "server_info")).isError).toBeFalsy();
     await role("ag", ["links.create"]);
     const limits = await all<Row>("SELECT * FROM auth_limits ORDER BY key");

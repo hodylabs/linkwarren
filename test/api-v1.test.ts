@@ -2,6 +2,7 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { callApi } from "../src/call";
+import worker from "../src/index";
 import { ROLE_JOIN, USER_COLS } from "../src/roles";
 import { rowToUser, type UserRow } from "../src/types";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
@@ -373,19 +374,20 @@ describe("final fix wave", () => {
 describe("keys follow the role", () => {
   const role = (id: string, perms: readonly string[]) =>
     run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms", id, `Role ${id}`, JSON.stringify(perms));
-  const settle = () => new Promise((r) => setTimeout(r, 100)); // let a waitUntil last_used_at write land if one was sent
 
   it("keys off: every route 403 keys_not_allowed, no limiter row, no last_used_at write; on again: the same key works", async () => {
     await role("kr", ["keys", "links.create"]);
     await run("UPDATE users SET role_id = 'kr' WHERE id = 'ua'");
     const k = await key("ua", { write: true });
     await role("kr", ["links.create"]);
+    const ctx = createExecutionContext();
     for (const [method, path, json] of [["GET", "/links"], ["GET", "/domains"], ["GET", "/analytics/links"], ["GET", "/links/la"], ["GET", "/nope"],
       ["POST", "/links", { domainId: "dA", slug: "late", url: "https://y.com" }]] as const) {
-      const r = await v1(k.secret, path, { method, json });
+      const headers: Record<string, string> = { authorization: `Bearer ${k.secret}`, ...(json ? { "content-type": "application/json" } : {}) };
+      const r = await worker.fetch(new Request(`https://dash.test/api/v1${path}`, { method, headers, body: json ? JSON.stringify(json) : undefined }), env, ctx);
       expect([method, path, r.status, await r.json()]).toEqual([method, path, 403, { error: "keys_not_allowed" }]);
     }
-    await settle();
+    await waitOnExecutionContext(ctx); // any last_used_at write would have landed by now
     expect(await count("auth_limits")).toBe(0);
     expect(await one("SELECT last_used_at, revoked_at FROM api_keys WHERE id = ?", k.id)).toEqual({ last_used_at: null, revoked_at: null });
     expect(await one("SELECT 1 FROM links WHERE slug = 'late'")).toBeNull();
