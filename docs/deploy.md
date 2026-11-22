@@ -172,6 +172,19 @@ Instances deployed before the sign-in modes used Access. The default is now app 
 1. **Keep Access:** set `AUTH_MODE` to `access` before deploying this version. Nothing else changes.
 2. **Move to app mode later**, as its own step: set `EMAIL_FROM` and `RESEND_API_KEY`, apply the migrations, then set `AUTH_MODE` to `app` (or remove the `access` value; unset also means `app`) and deploy. Check that you can sign in, and only then remove the Access application.
 
+## Password-protected links
+
+A link with a password answers its short URL with a small form page instead of a redirect. The form posts back to the same URL (query included); a right password answers `303` to the destination (routes and query pass-through apply, the QR marker is stripped), with `Cache-Control: private, no-store` and `Referrer-Policy: no-referrer`. A wrong one shows the form again with a generic message (`401`). There is no unlock cookie: every visit asks again, and short hosts never set cookies. The unlock POST must carry `Origin: https://<short host>` and a form body of at most 1024 bytes, else `403`, `415`, `411` or `413`. Showing the form records no click; a right unlock records one.
+
+Limits (D1, the same table as sign-in, global across Cloudflare locations, no paid features), both checked before any hashing work:
+
+- 5 unlock attempts per link per IP range (/24 or /48) every 15 minutes, right or wrong. The counter is one atomic upsert, so parallel guesses cannot slip past it.
+- 20 wrong passwords per IP range every 15 minutes, across all links.
+
+Past a limit the form answers `429` with `Retry-After: 900`. If D1 cannot be reached the form answers `503` ("Password check is unavailable right now.") and no password is checked. A guesser with many IP ranges gets more tries, so use long passwords for sensitive links. Every unlock POST writes one D1 row, and the Free plan allows 100,000 D1 rows written per day for the whole account, so a flood of POSTs (the Origin header is easy to forge outside a browser) can spend that quota. If that is a concern, add a Cloudflare WAF rate limiting rule for `POST` on your short hosts.
+
+Hashing: PBKDF2-SHA256 with the iteration count from the optional var `PASSWORD_HASH_ITERATIONS` (integer, clamped to 1000..100000; unset uses the built-in default of 25000). The count is stored in each hash, so changing the var only affects passwords set afterwards. One unlock attempt costs one PBKDF2 run: at 25000 iterations about 2.5 to 3 ms locally (the whole unlock, D1 included, about 5 ms of wall time), inside the Workers Free plan's 10 ms CPU per request. Keep the default on the Free plan; on Workers Paid you may raise it up to 100000.
+
 ## Behaviour to know
 
 - Turning a domain case-sensitive changes which URLs match: `/Spring` and `/spring` become different links. Existing links keep their exact slug as the key. Turning it back off is refused while case twins conflict.

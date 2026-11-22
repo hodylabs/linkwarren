@@ -247,10 +247,12 @@ describe("redirect rules (S5)", () => {
   it("a password-protected link never redirects, sets no cookie and records nothing", async () => {
     const d = await seedLink({ routes, password: "pbkdf2-sha256$1000$c2FsdA$aGFzaA" });
     const h = harness();
-    for (const method of ["GET", "HEAD", "POST"]) {
+    // Malformed stored hash, no Origin on the POST: form, form, 403. Exact statuses; the unlock itself is test/unlock.test.ts.
+    for (const [method, status] of [["GET", 200], ["HEAD", 200], ["POST", 403]] as const) {
       const r = await h.go(d.host, "/spring?lw=qr", { ...visit(), method });
-      expect(r.status).not.toBeLessThan(400);
-      expect(loc(r)).toBeNull();
+      expect([method, r.status, loc(r)]).toEqual([method, status, null]);
+      expect(r.headers.get("cache-control")).toBe("no-store");
+      expect(r.headers.get("x-robots-tag")).toBe("noindex");
       expect(r.headers.get("set-cookie")).toBeNull();
       expect(await r.text()).not.toMatch(/dest\.test|ca\.test|m\.test/);
     }

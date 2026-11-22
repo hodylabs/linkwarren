@@ -587,7 +587,10 @@ describe("password and routes", () => {
     expect(await env.CACHE.get("l2:dm:rf1")).not.toBeNull();
     expect((await call("a", "PATCH", `/api/links/${id}`, { password: "spring-27" })).status).toBe(200);
     expect(await env.CACHE.get("l2:dm:rf1")).toBeNull();
-    // Task 7 asserts the 200 form on the short host; here the next lookup must read the protected row.
+    // The short host now answers the form, never the cached public redirect.
+    const r = await exports.default.fetch("https://go.test/rf1", { redirect: "manual" });
+    expect([r.status, r.headers.get("location"), r.headers.get("set-cookie")]).toEqual([200, null, null]);
+    expect(await r.text()).toContain('name="password"');
     expect(await verifyPassword("spring-27", (await getLink(env, "dm", "rf1"))!.passwordHash!)).toBe(true);
   });
 

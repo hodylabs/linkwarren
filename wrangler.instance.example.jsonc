@@ -36,6 +36,9 @@
     // Only for outside domains (Cloudflare for SaaS): a zone used only by linkwarren, and a host inside it.
     "CF_SAAS_ZONE_ID": "<your-saas-zone-id>",
     "CF_CNAME_TARGET": "edge.example.com",
+    // Optional: PBKDF2 iterations for new link passwords (1000..100000, default 25000; see docs/deploy.md
+    // "Password-protected links"). Keep the default on the Workers Free plan (10 ms CPU); Workers Paid may raise it to 100000.
+    // "PASSWORD_HASH_ITERATIONS": "25000",
     // Analytics: must match the dataset above. Reports also need CF_ACCOUNT_ID.
     "AE_DATASET": "linkwarren_clicks"
     // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc

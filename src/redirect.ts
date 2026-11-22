@@ -4,6 +4,7 @@ import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, pendingPage } from "./pages";
 import { countryOf, pickDestination, routeDeviceOf, withQuery } from "./routing";
+import { handleProtected } from "./unlock";
 import type { DomainRow, LinkRow } from "./types";
 import { checkSlugShape, slugKey } from "./validate";
 
@@ -38,17 +39,22 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
     return miss(domain.notfoundRedirect);
   }
 
-  if (link.passwordHash) return protectedLink(head);
+  // Same predicate as the API's hasPassword: any stored hash, even a malformed one, gates the link (fails closed).
+  if (link.passwordHash !== null) return handleProtected(req, env, link, domain, url, now, ctx);
   if (post) return notAllowed();
 
   const m = splitQrMarker(url.search);
-  // The UA is read (capped) only when a route needs the device: a plain link does no agent work before it answers.
-  const device = link.routes.some((r) => r.devices.length) ? routeDeviceOf(req.headers.get("user-agent")) : "desktop";
-  const dest = withQuery(pickDestination(link, countryOf(req), device), link.passQuery, m.search);
-  const res = redirect(dest, link.redirectCode, domain);
+  const res = redirect(destinationOf(req, link, m.search), link.redirectCode, domain);
   // Off the hot path: the response never waits for, or fails because of, analytics.
   if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
   return res;
+}
+
+/** Routed destination plus pass-through query (`search` already has the QR marker stripped); shared by the redirect and the unlock. */
+export function destinationOf(req: Request, link: LinkRow, search: string): string {
+  // The UA is read (capped) only when a route needs the device: a plain link does no agent work before it answers.
+  const device = link.routes.some((r) => r.devices.length) ? routeDeviceOf(req.headers.get("user-agent")) : "desktop";
+  return withQuery(pickDestination(link, countryOf(req), device), link.passQuery, search);
 }
 
 export async function recordClick(env: Env, req: Request, link: LinkRow, domain: DomainRow, qr: boolean, now: number): Promise<void> {
@@ -73,17 +79,10 @@ export async function recordClick(env: Env, req: Request, link: LinkRow, domain:
   }
 }
 
-const robots = (d: DomainRow | null): Record<string, string> => (d?.noindex ? { "x-robots-tag": "noindex" } : {});
+export const robots = (d: DomainRow | null): Record<string, string> => (d?.noindex ? { "x-robots-tag": "noindex" } : {});
 
 const redirect = (to: string, status: number, d: DomainRow) =>
   new Response(null, { status, headers: { location: to, "cache-control": "private, max-age=0", ...robots(d) } });
 
 const notAllowed = () =>
   new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD", "content-type": "text/plain; charset=utf-8" } });
-
-// shortcut: fails closed until the Task 7 password page and unlock replace it; never the destination, no cookie, no click.
-const protectedLink = (head: boolean) =>
-  new Response(head ? null : "Password check is unavailable right now.", {
-    status: 503,
-    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
-  });
