@@ -15,7 +15,12 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "linkwarren", "database_id": "<your-d1-database-id>", "migrations_dir": "migrations" }
   ],
-  "kv_namespaces": [{ "binding": "CACHE", "id": "<your-kv-namespace-id>" }],
+  // OAUTH_KV holds the OAuth state for agents (/mcp); the binding name is fixed by the OAuth library. Its writes share the
+  // account's 1,000 KV writes/day (Free) with CACHE.
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "<your-kv-namespace-id>" },
+    { "binding": "OAUTH_KV", "id": "<your-oauth-kv-namespace-id>" }
+  ],
   // Click analytics (see docs/deploy.md "Analytics"). Enable Workers Analytics Engine on the account first, or the deploy
   // fails with code 10089; keep this line commented out until then. The dataset is created on the first write; leave this out to record nothing.
   "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }],
@@ -40,7 +45,9 @@
     // "Password-protected links"). Keep the default on the Workers Free plan (10 ms CPU); Workers Paid may raise it to 100000.
     // "PASSWORD_HASH_ITERATIONS": "10000",
     // Analytics: must match the dataset above. Reports also need CF_ACCOUNT_ID.
-    "AE_DATASET": "linkwarren_clicks"
+    "AE_DATASET": "linkwarren_clicks",
+    // Agents (MCP at https://<DASHBOARD_HOST>/mcp with OAuth): off unless "1". API keys on /api/v1 work either way.
+    "MCP_ENABLED": "0"
     // OWNER_EMAIL is a secret, never a var: wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
     // CF_API_TOKEN is a secret, never a var: wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc
     // AE_READ_TOKEN and VISITOR_SALT are secrets, never vars: wrangler secret put AE_READ_TOKEN (and VISITOR_SALT) -c wrangler.instance.jsonc

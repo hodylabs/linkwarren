@@ -17,6 +17,9 @@ import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
 import { scheduled } from "./cron";
+import { blocked, hit, LIMITS, limitKey } from "./limits";
+import { isOAuthPath, provider } from "./oauth";
+import { ipPrefix } from "./session";
 
 export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } }>();
 
@@ -102,4 +105,41 @@ app.onError((err, c) => {
   return c.json({ error: "internal" }, 500);
 });
 
-export default { fetch: app.fetch, scheduled } satisfies ExportedHandler<Env>;
+const notFound = () => Response.json({ error: "not_found" }, { status: 404 });
+
+/** POST /register spends a KV write: D1 limits per IP range and per UTC day, reads first so a refused call writes nothing. */
+async function registerLimited(req: Request, env: Env): Promise<Response | null> {
+  const ipKey = limitKey.reg(ipPrefix(req.headers.get("cf-connecting-ip")));
+  try {
+    if (
+      (await blocked(env, ipKey, LIMITS.reg)) ||
+      (await blocked(env, limitKey.regDay, LIMITS.regDay)) ||
+      !(await hit(env, ipKey, LIMITS.reg)) ||
+      !(await hit(env, limitKey.regDay, LIMITS.regDay))
+    )
+      return Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "3600" } });
+  } catch {
+    return Response.json({ error: "unavailable" }, { status: 503 }); // fail closed: no limiter, no registration
+  }
+  return null;
+}
+
+/** OAuth front door. Short hosts and a misconfigured instance never reach the provider; the app answers them. */
+export async function wrapper(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (!env.DASHBOARD_HOST?.trim()) return app.fetch(req, env, ctx);
+  const url = new URL(req.url);
+  if (normalizeHost(req.headers.get("host") ?? url.host) !== normalizeHost(env.DASHBOARD_HOST)) return app.fetch(req, env, ctx);
+  const p = url.pathname;
+  if (isOAuthPath(p)) {
+    if (env.MCP_ENABLED !== "1") return notFound();
+    // The library serves only the RFC 9728 suffix form; the bare form gets the same metadata, never the dashboard HTML.
+    if (p === "/.well-known/oauth-protected-resource") return provider(env).fetch(new Request(new URL("/.well-known/oauth-protected-resource/mcp", url), req), env, ctx);
+    if (p === "/register" && req.method === "POST") {
+      const limited = await registerLimited(req, env);
+      if (limited) return limited;
+    }
+  }
+  return provider(env).fetch(req, env, ctx);
+}
+
+export default { fetch: wrapper, scheduled } satisfies ExportedHandler<Env>;

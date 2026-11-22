@@ -1,6 +1,14 @@
+import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+
 export type Env = {
   DB: D1Database;
   CACHE: KVNamespace;
+  /** OAuth grants, tokens, clients and consent (the library hard-codes this binding name). */
+  OAUTH_KV: KVNamespace;
+  /** Injected by the OAuth provider for the handlers behind it. */
+  OAUTH_PROVIDER?: OAuthHelpers;
+  /** MCP and the OAuth endpoints are off unless this is exactly "1". */
+  MCP_ENABLED?: string;
   DASHBOARD_HOST: string;
   /** "app" (default when unset or blank) or "access"; any other value fails closed with 500 misconfigured. */
   AUTH_MODE?: string;

@@ -20,6 +20,7 @@ export default defineConfig(async () => {
             EMAIL_FROM: "links@example.com",
             RESEND_API_KEY: "re_test",
             CF_CNAME_TARGET: "edge.test",
+            MCP_ENABLED: "1",
           },
           // Test-only stand-in for the Workers static-assets binding (real one is instance config).
           serviceBindings: {

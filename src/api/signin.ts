@@ -4,7 +4,7 @@ import { resolveUser } from "../auth";
 import { emailConfigured, sendEmail, signInEmail } from "../email";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
-import { LIMITS, blocked, hit, limitKey } from "../limits";
+import { DAY_KEYS_SQL, LIMITS, blocked, hit, limitKey } from "../limits";
 import { createSession, ipPrefix, newSecret, safeNext, sha256Hex } from "../session";
 import { PasskeyError, authenticationOptions, verifyAuthentication } from "../webauthn";
 
@@ -64,12 +64,12 @@ export async function parse<T extends z.ZodType>(c: Context, schema: T): Promise
 
 /** R6 opportunistic prune, one bounded DELETE per table (D1 has no DELETE ... LIMIT). Over-90-day sessions already have expires_at <= now. */
 function prunes(env: Env, now: number): D1PreparedStatement[] {
-  const prune = (t: string, col: string, before: number) =>
-    env.DB.prepare(`DELETE FROM ${t} WHERE rowid IN (SELECT rowid FROM ${t} WHERE ${col} <= ? LIMIT 100)`).bind(before);
+  const prune = (t: string, col: string, before: number, where = "1") =>
+    env.DB.prepare(`DELETE FROM ${t} WHERE rowid IN (SELECT rowid FROM ${t} WHERE ${col} <= ? AND ${where} LIMIT 100)`).bind(before);
   return [
     prune("login_tokens", "expires_at", now),
     prune("auth_challenges", "expires_at", now),
-    prune("auth_limits", "window_start", now - 3600),
+    prune("auth_limits", "window_start", now - 3600, `NOT (${DAY_KEYS_SQL})`),
     prune("sessions", "expires_at", now),
   ];
 }

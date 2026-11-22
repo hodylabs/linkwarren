@@ -1,6 +1,7 @@
 import { AeError, aeConfigured, aeDay } from "./ae";
 import { utcDay } from "./clicks";
 import type { Env } from "./env";
+import { DAY_KEYS_SQL } from "./limits";
 
 const DAY_MS = 86_400_000;
 export const MAX_DAYS = 3; // per hourly run: 3 x 5 AE queries and a few D1 calls; a 90-day backlog clears in about 30 hours
@@ -129,13 +130,14 @@ export async function purgeAudit(env: Env, nowSec: number): Promise<number> {
 }
 
 export const PRUNE_MAX = 2000; // rows deleted per table per run; a backlog clears over the next runs
-/** Expired rows of the sign-in and unlock tables; auth_limits windows are at most an hour (LIMITS.instance). */
-const PRUNES = [
-  ["auth_limits", "window_start", 3600],
+/** Expired rows of the sign-in and unlock tables; auth_limits windows are at most an hour (LIMITS.instance), except the day keys. */
+const PRUNES: readonly (readonly [table: string, col: string, age: number, where?: string])[] = [
+  ["auth_limits", "window_start", 3600, `NOT (${DAY_KEYS_SQL})`],
+  ["auth_limits", "window_start", 86400, DAY_KEYS_SQL],
   ["login_tokens", "expires_at", 0],
   ["auth_challenges", "expires_at", 0],
   ["sessions", "expires_at", 0],
-] as const;
+];
 
 /**
  * Deletes expired rows, at most PRUNE_MAX per table and within `budget` D1 writes (WRITES_PER_ROW per deleted row,
@@ -144,11 +146,11 @@ const PRUNES = [
 export async function pruneExpired(env: Env, nowSec: number, budget: number, spent = { writes: 0 }, today?: string): Promise<number> {
   const charge = today ? COUNTER_WRITES : 0; // the counter row and its key index, when this run records its writes
   let used = 0;
-  for (const [table, col, age] of PRUNES) {
+  for (const [table, col, age, where] of PRUNES) {
     const rows = Math.min(PRUNE_MAX, Math.floor((budget - used - charge) / WRITES_PER_ROW));
     if (rows <= 0) break;
     // D1 has no DELETE ... LIMIT: the same bounded subquery as the sign-in prune.
-    const del = env.DB.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${col} <= ? LIMIT ?)`).bind(nowSec - age, rows);
+    const del = env.DB.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${col} <= ?${where ? ` AND ${where}` : ""} LIMIT ?)`).bind(nowSec - age, rows);
     // One batch per table: a deletion and its charge to the daily counter commit together or not at all.
     const res = today ? await env.DB.batch([del, chargeStmt(env, today)]) : [await del.run()];
     const n = res[0]!.meta.changes;
