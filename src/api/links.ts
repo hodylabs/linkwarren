@@ -163,8 +163,9 @@ links.get("/", async (c) => {
   const cursor = c.req.query("cursor");
   if (cursor !== undefined) {
     const dot = cursor.indexOf(".");
-    const at = Number(cursor.slice(0, dot)), id = cursor.slice(dot + 1);
-    if (dot < 1 || !Number.isInteger(at) || !id) return c.json({ error: "bad_cursor" }, 400);
+    const head = cursor.slice(0, dot), at = Number(head), id = cursor.slice(dot + 1);
+    // Digits only: Number() alone would take 1e3, -5, 0x10 or padded spaces.
+    if (dot < 1 || !/^\d{1,15}$/.test(head) || !id) return c.json({ error: "bad_cursor" }, 400);
     where.push("(created_at < ? OR (created_at = ? AND id < ?))");
     binds.push(at, at, id);
   }

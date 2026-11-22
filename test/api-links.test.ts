@@ -700,3 +700,10 @@ describe("R12 read routes: GET /:id and /by-slug", () => {
     }
   });
 });
+
+describe("list cursor shape (S1 deferral: Number() accepted 1e3 and negatives)", () => {
+  it.each(["1e3.x", "-5.x", " 7.x", "0x10.x", ".x"])("cursor %s is 400 bad_cursor", async (cur) => {
+    const r = await call("a", "GET", `/api/links?cursor=${encodeURIComponent(cur)}`);
+    expect([r.status, await r.json()]).toEqual([400, { error: "bad_cursor" }]);
+  });
+});

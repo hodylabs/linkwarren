@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -162,8 +162,8 @@ describe("settings", () => {
     await env.CACHE.put("l2:dm:fall", "null");
     await env.CACHE.put("l2:dm:Fall", "null");
     await call("owner", "PATCH", "/api/domains/dm", { caseSensitive: true });
-    await new Promise((r) => setTimeout(r, 50));
-    expect([await env.CACHE.get("l2:dm:fall"), await env.CACHE.get("l2:dm:Fall")]).toEqual([null, null]);
+    // Polled, not a fixed sleep: the purge may land after the response.
+    await vi.waitFor(async () => expect([await env.CACHE.get("l2:dm:fall"), await env.CACHE.get("l2:dm:Fall")]).toEqual([null, null]));
   });
   it("a redirect target whose normalized href exceeds 2048 is refused", async () => {
     const raw = `https://example.com/${"a".repeat(2000)}${"\u00e9".repeat(10)}`; // raw 2030 chars, href 2080
