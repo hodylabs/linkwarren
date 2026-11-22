@@ -57,7 +57,7 @@ async function writtenToday(env: Env, today: string): Promise<number> {
  * from Analytics Engine into D1, oldest first: at most MAX_DAYS per run, one AE round per day, inside the write
  * budgets. Returns the days written.
  */
-export async function rollup(env: Env, nowSec: number): Promise<string[]> {
+export async function rollup(env: Env, nowSec: number, spent = { writes: 0 }): Promise<string[]> {
   if (!aeConfigured(env)) {
     console.log("analytics rollup skipped: not configured");
     return [];
@@ -108,6 +108,7 @@ export async function rollup(env: Env, nowSec: number): Promise<string[]> {
       throw fail(d, e); // stops here: later days stay in AE for the next run
     }
     runUsed += cost;
+    spent.writes = runUsed;
     dayUsed += cost;
     written.push(d);
   }
@@ -127,16 +128,49 @@ export async function purgeAudit(env: Env, nowSec: number): Promise<number> {
   return res[0].meta.changes;
 }
 
+export const PRUNE_MAX = 2000; // rows deleted per table per run; a backlog clears over the next runs
+/** Expired rows of the sign-in and unlock tables; auth_limits windows are at most an hour (LIMITS.instance). */
+const PRUNES = [
+  ["auth_limits", "window_start", 3600],
+  ["login_tokens", "expires_at", 0],
+  ["auth_challenges", "expires_at", 0],
+  ["sessions", "expires_at", 0],
+] as const;
+
+/**
+ * Deletes expired rows, at most PRUNE_MAX per table and within `budget` D1 writes (WRITES_PER_ROW per deleted row,
+ * counted before each DELETE). Returns the writes used. Hourly, so visitors' IP ranges in auth_limits do not linger.
+ */
+export async function pruneExpired(env: Env, nowSec: number, budget: number): Promise<number> {
+  let used = 0;
+  for (const [table, col, age] of PRUNES) {
+    const rows = Math.min(PRUNE_MAX, Math.floor((budget - used) / WRITES_PER_ROW));
+    if (rows <= 0) break;
+    // D1 has no DELETE ... LIMIT: the same bounded subquery as the sign-in prune.
+    const r = await env.DB.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${col} <= ? LIMIT ?)`)
+      .bind(nowSec - age, rows)
+      .run();
+    used += r.meta.changes * WRITES_PER_ROW;
+  }
+  return used;
+}
+
 const errName = (e: unknown) => (e instanceof Error ? e.name : "unknown"); // name only: messages could carry data
 
-/** Hourly at :15. Every run rolls up; only the 00:15 UTC run purges the audit log. */
+/** Hourly at :15. Every run rolls up, then prunes expired rows with what is left of the run budget; only the 00:15 UTC run purges the audit log. */
 export async function scheduled(c: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
   const now = Math.floor(c.scheduledTime / 1000);
+  const spent = { writes: 0 };
   try {
-    const days = await rollup(env, now);
+    const days = await rollup(env, now, spent);
     console.log(`analytics rollup: ${days.length ? days.join(",") : "none"}`);
   } catch (e) {
     console.error("analytics rollup failed", errName(e));
+  }
+  try {
+    console.log(`expired rows pruned: ${(await pruneExpired(env, now, RUN_WRITE_BUDGET - spent.writes)) / WRITES_PER_ROW}`);
+  } catch (e) {
+    console.error("expired rows prune failed", errName(e));
   }
   if (new Date(c.scheduledTime).getUTCHours() !== 0) return;
   try {

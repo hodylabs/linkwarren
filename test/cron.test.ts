@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DAY_WRITE_BUDGET, MAX_DAYS, PURGE_MAX, purgeAudit, rolledThrough, rollup, RUN_WRITE_BUDGET, watermarkStmt } from "../src/cron";
+import { DAY_WRITE_BUDGET, MAX_DAYS, PRUNE_MAX, pruneExpired, PURGE_MAX, purgeAudit, rolledThrough, rollup, RUN_WRITE_BUDGET, watermarkStmt } from "../src/cron";
 import type { Env } from "../src/env";
 import worker from "../src/index";
 
@@ -268,6 +268,49 @@ describe("purgeAudit", () => {
     await add(CUTOFF + 1);
     expect(await purgeAudit(env, NOW)).toBe(0);
     expect(await all("SELECT id FROM audit_log WHERE action = 'audit.purge'")).toHaveLength(0);
+  });
+});
+
+describe("pruneExpired", () => {
+  const T = NOW;
+  async function fill(expired: number, live: number) {
+    await env.DB.batch(["auth_limits", "login_tokens", "auth_challenges", "sessions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+    await env.DB.prepare("INSERT OR IGNORE INTO users (id,email,role,status,created_at) VALUES ('u1','o@x.com','owner','active',1)").run();
+    const rows = (n: number, old: boolean) => Array.from({ length: n }, (_, i) => `${old ? "o" : "l"}${i}`);
+    const stmts: D1PreparedStatement[] = [];
+    for (const [old, n] of [[true, expired], [false, live]] as const)
+      for (const k of rows(n, old)) {
+        const exp = old ? T - 10 : T + 3600;
+        stmts.push(
+          env.DB.prepare("INSERT INTO auth_limits (key, window_start, count) VALUES (?, ?, 1)").bind(`unlock:${k}`, old ? T - 3700 : T - 60),
+          env.DB.prepare("INSERT INTO login_tokens (token_hash, email, created_at, expires_at) VALUES (?, 'o@x.com', 1, ?)").bind(k, exp),
+          env.DB.prepare("INSERT INTO auth_challenges (challenge, purpose, expires_at) VALUES (?, 'login', ?)").bind(k, exp),
+          env.DB.prepare("INSERT INTO sessions (id, token_hash, user_id, method, created_at, last_seen_at, expires_at) VALUES (?, ?, 'u1', 'email', 1, 1, ?)").bind(k, `h${k}`, exp),
+        );
+      }
+    for (let i = 0; i < stmts.length; i += 200) await env.DB.batch(stmts.slice(i, i + 200));
+  }
+  const count = async (t: string) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first<{ n: number }>())!.n;
+
+  it("deletes expired limiter rows, link tokens, challenges and sessions; keeps live ones; counts 3 writes per row", async () => {
+    await fill(3, 2);
+    expect(await pruneExpired(env, T, RUN_WRITE_BUDGET)).toBe(4 * 3 * 3);
+    for (const t of ["auth_limits", "login_tokens", "auth_challenges", "sessions"]) expect([t, await count(t)]).toEqual([t, 2]);
+  });
+
+  it("stays inside the budget it is given and at most PRUNE_MAX rows per table; the next run continues", async () => {
+    await fill(5, 0);
+    expect(await pruneExpired(env, T, 3 * 7)).toBe(21); // 5 limiter rows, then 2 link tokens, then out of budget
+    expect([await count("auth_limits"), await count("login_tokens"), await count("auth_challenges")]).toEqual([0, 3, 5]);
+    expect(await pruneExpired(env, T, 0)).toBe(0);
+    expect(PRUNE_MAX).toBe(2000);
+  });
+
+  it("runs every hour from scheduled, with what the rollup left of the run budget", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await fill(2, 1);
+    await worker.scheduled({ cron: "15 * * * *", scheduledTime: Date.parse("2026-11-20T12:15:00Z"), noRetry() {} } as ScheduledController, env, {} as ExecutionContext);
+    expect([await count("auth_limits"), await count("sessions")]).toEqual([1, 1]);
   });
 });
 
