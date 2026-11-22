@@ -496,14 +496,13 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .fails{margin:0 0 8px;padding-left:18px}
 .hint{margin:0 0 8px}
 @media (max-width: 1080px){
-  .setwrap{grid-template-columns:minmax(0,1fr)}
+  .setwrap{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);align-content:start}
   .subnav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}
   .subnav button{white-space:nowrap}
   .sfield{grid-template-columns:minmax(0,1fr);gap:6px}
 }
 @media (max-width: 760px){
-  .sblock .btn,.subnav button,.sblock .sw{min-height:44px}
-  .sblock .sw{min-width:44px}
+  .sblock .btn,.subnav button{min-height:44px}
   .sblock input,.sect input{font-size:16px}
   .sect .btn,.seg button{min-height:44px}
 }
