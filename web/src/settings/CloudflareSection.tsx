@@ -36,11 +36,16 @@ export function CloudflareSection() {
   const busy = useRef(false); // one check at a time: a double C sends once
   const abort = useRef<AbortController | null>(null);
   const edits = useRef(0); // bumped by every controls toggle: older loads and toggles must not overwrite a newer one
+  const saved = useRef<boolean | null>(null); // the last controls value the server confirmed
+  const failed = useRef(0); // the newest toggle that failed
 
   // A load that a toggle overtook keeps the toggled value and takes the rest.
   const load = useCallback((signal?: AbortSignal) => {
     const at = edits.current;
-    return getCloudflare(signal).then((v) => setS((cur) => (cur && at !== edits.current ? { ...v, controlsEnabled: cur.controlsEnabled } : v)));
+    return getCloudflare(signal).then((v) => {
+      if (at === edits.current) saved.current = v.controlsEnabled;
+      setS((cur) => (cur && at !== edits.current ? { ...v, controlsEnabled: cur.controlsEnabled } : v));
+    });
   }, []);
   useEffect(() => {
     const ac = new AbortController();
@@ -73,9 +78,14 @@ export function CloudflareSection() {
     setS({ ...s, controlsEnabled: on });
     try {
       await setControls(on);
+      saved.current = on;
+      // An older toggle landing after the newest one failed: the switch shows what is now saved.
+      if (mine !== edits.current && failed.current === edits.current) setS((cur) => cur && { ...cur, controlsEnabled: on });
     } catch (e) {
       if (mine !== edits.current) return; // a newer toggle owns the switch now
-      setS((cur) => cur && { ...cur, controlsEnabled: !on });
+      failed.current = mine;
+      // Back to what the server last confirmed, not the opposite of this toggle: an older one may have failed too.
+      setS((cur) => cur && { ...cur, controlsEnabled: saved.current ?? !on });
       setControlsError(code(e));
     }
   };

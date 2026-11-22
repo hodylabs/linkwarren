@@ -80,6 +80,21 @@ describe("Cloudflare settings", () => {
     expect(sw.getAttribute("aria-checked")).toBe("true");
   });
 
+  it("overlapping toggles that both fail restore the saved value", async () => {
+    const fails: (() => void)[] = [];
+    const { api, user } = boot({
+      routes: { "PATCH /api/settings/cloudflare": () => new Promise((r) => fails.push(() => r({ status: 500, body: { error: "internal" } }))) },
+    });
+    const sw = await screen.findByRole("switch", { name: "Cloudflare controls in domain settings" });
+    await user.click(sw); // on
+    await user.click(sw); // off
+    await waitFor(() => expect(writes(api)).toHaveLength(2));
+    fails[0]!();
+    fails[1]!();
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("internal"));
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+  });
+
   it("a settings load that a toggle overtook keeps the toggled value", async () => {
     let release!: () => void;
     let gets = 0;
