@@ -112,4 +112,27 @@ describe("New API key sheet", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New API key" })).toBeNull());
     expect(screen.queryByText(SECRET)).toBeNull();
   });
+
+  it("Escape does nothing while the key is being created, so its secret is never lost", async () => {
+    let release: (() => void) | undefined;
+    const api = fakeApi({
+      "GET /api/me": () => ({ body: member }),
+      "GET /api/domains": () => ({ body: [dom("d1", "go.test")] }),
+      "GET /api/agents/connections": () => ({ body: { items: [] } }),
+      "GET /api/keys": () => ({ body: { items: [] } }),
+      "POST /api/keys": () => new Promise((r) => (release = () => r({ status: 201, body: { key: KEY, secret: SECRET } }))),
+    });
+    history.replaceState(null, "", "/agents");
+    const user = userEvent.setup();
+    render(<App />);
+    const dlg = await openSheet(user);
+    await user.type(within(dlg).getByLabelText("Name"), "zap-1");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(within(dlg).getByRole("button", { name: /Creating/ })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "New API key" })).toBeTruthy();
+    release!();
+    expect(await screen.findByText(SECRET)).toBeTruthy();
+  });
 });

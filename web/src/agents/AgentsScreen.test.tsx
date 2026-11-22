@@ -94,11 +94,12 @@ describe("API & agents screen", () => {
     claude.focus();
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("button", { name: "ChatGPT" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByText("Settings, Connectors, add a custom connector, paste the address")).toBeTruthy();
+    expect(screen.getByText(HOWTO.chatgpt(mcpUrl()))).toBeTruthy();
+    expect(HOWTO.chatgpt(mcpUrl())).toContain("Add custom MCP server");
     await user.keyboard("{ArrowRight}");
     expect(await screen.findByText(`claude mcp add --transport http linkwarren ${mcpUrl()}`)).toBeTruthy();
     await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
-    expect(screen.getByText(`codex mcp add linkwarren --url ${mcpUrl()}`)).toBeTruthy();
+    expect(screen.getByText(`codex mcp add linkwarren --url ${mcpUrl()}, then codex mcp login linkwarren`)).toBeTruthy();
   });
 
   it("shows the off copy when /mcp answers 404", async () => {
@@ -120,6 +121,36 @@ describe("API & agents screen", () => {
     await waitFor(() => expect(screen.queryByRole("cell", { name: "Claude" })).toBeNull());
     // Focus lands on the next row (the key), not on the page body.
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("cell", { name: "zapier" }).closest("tr")));
+  });
+
+  it("a list read that started before a disconnect cannot bring the row back", async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const { user } = boot(member, {
+      "GET /api/agents/connections": () => {
+        calls++;
+        if (calls === 1) return { body: { items: [conn({})] } };
+        // The second read (after the key sheet closes) answers late, with the row still in it.
+        if (calls === 2) return new Promise((r) => (release = () => r({ body: { items: [conn({})] } })));
+        return { body: { items: [] } };
+      },
+      "DELETE /api/agents/connections/c1": () => ({ status: 204 }),
+    });
+    await loaded();
+    await user.keyboard("n");
+    await screen.findByRole("dialog", { name: "New API key" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(calls).toBe(2));
+    await user.keyboard("j");
+    await screen.findByText("Claude, for You");
+    await user.keyboard("{Shift>}D{/Shift}");
+    await screen.findByRole("dialog", { name: "Disconnect Claude" });
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("cell", { name: "Claude" })).toBeNull());
+    release!();
+    await waitFor(() => expect(calls).toBe(3));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("cell", { name: "Claude" })).toBeNull();
   });
 
   it("the detail shows read as always on (not a switch) and recent calls", async () => {

@@ -39,12 +39,14 @@ export function NewKeySheet() {
   const [copied, setCopied] = useState(false);
   const [ask, setAsk] = useState(false);
   const busy = useRef(false);
+  const [pending, setPending] = useState(false);
   const nameError = (name !== "" && !NAME.test(name)) || error === "key_name";
 
   const submit = async () => {
     if (busy.current || secret !== null) return;
     if (!NAME.test(name)) return setError("key_name");
     busy.current = true;
+    setPending(true);
     setError(null);
     try {
       const res = await api<{ key: KeyItem; secret: string }>("POST", "/api/keys", { name, write, del: write && del, domainIds: picked, expiresInDays: days });
@@ -54,6 +56,7 @@ export function NewKeySheet() {
       setError(e instanceof ApiError ? e.code : "internal"); // typed values stay in the form
     } finally {
       busy.current = false;
+      setPending(false);
     }
   };
   const copy = () => {
@@ -67,7 +70,8 @@ export function NewKeySheet() {
     );
   };
   // Closing before copying loses the key for good, so ask first.
-  const dismiss = () => (secret !== null && !copied ? setAsk(true) : app.close());
+  // While the create is in flight, closing would lose a key that is about to exist.
+  const dismiss = () => (busy.current ? undefined : secret !== null && !copied ? setAsk(true) : app.close());
 
   useHotkeys({ "mod+enter": () => void submit(), c: (e) => void (!e.shiftKey && copy()) } satisfies Bindings<typeof NEW_KEY_KEYS>, !ask);
 
@@ -146,8 +150,9 @@ export function NewKeySheet() {
           </div>
           <div className="sh-foot">
             <span className="left">Works on /api/v1 only</span>
-            <button type="button" className="btn primary" aria-keyshortcuts="Control+Enter" onClick={() => void submit()}>
-              Create key<span className="k2">Ctrl Enter</span>
+            <button type="button" className="btn primary" aria-keyshortcuts="Control+Enter" aria-disabled={pending || undefined} onClick={() => void submit()}>
+              {pending ? "Creating key" : "Create key"}
+              <span className="k2">Ctrl Enter</span>
             </button>
           </div>
         </>

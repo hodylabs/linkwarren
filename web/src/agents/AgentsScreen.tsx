@@ -297,18 +297,24 @@ export function AgentsScreen() {
   // The owner sees everyone's; members get their own (the server enforces it either way).
   const all = isOwner ? "?all=1" : "";
   const gen = useRef(0);
+  const reading = useRef(false);
   const load = useCallback(() => {
     const g = ++gen.current;
+    reading.current = true;
     setError(null);
-    Promise.all([api<{ items: ConnectionItem[] }>("GET", `/api/agents/connections${all}`), api<{ items: KeyItem[] }>("GET", `/api/keys${all}`)]).then(
-      ([c, k]) => {
-        if (g !== gen.current) return;
-        setConns(c.items);
-        setKeys(k.items);
-      },
-      (e: unknown) => void (g === gen.current && setError(errorText(code(e)))),
-    );
+    Promise.all([api<{ items: ConnectionItem[] }>("GET", `/api/agents/connections${all}`), api<{ items: KeyItem[] }>("GET", `/api/keys${all}`)])
+      .then(
+        ([c, k]) => {
+          if (g !== gen.current) return;
+          setConns(c.items);
+          setKeys(k.items);
+        },
+        (e: unknown) => void (g === gen.current && setError(errorText(code(e)))),
+      )
+      .finally(() => void (g === gen.current && (reading.current = false)));
   }, [all]);
+  // A read still in flight was taken before this change: drop it and read again.
+  const changed = () => void (reading.current && load());
   useEffect(load, [load]);
   // A key made in the New API key sheet shows up once the sheet closes.
   const lastOverlay = useRef(overlay?.kind);
@@ -372,6 +378,7 @@ export function AgentsScreen() {
     setConns((l) => l && l.filter((c) => c.id !== sel));
     setKeys((l) => l && l.filter((k) => k.id !== sel));
     select(null);
+    changed();
   };
   useEffect(() => {
     const id = focusAfter.current;
@@ -419,7 +426,7 @@ export function AgentsScreen() {
   const selected = selConn ?? selKey;
   return (
     <>
-      <ScreenHeader title="API & agents" text="connect Claude, ChatGPT, Codex or your own scripts">
+      <ScreenHeader title="API & agents" text="connect Claude, ChatGPT, Claude Code, Codex or your own scripts">
         <PrimaryButton label="New API key" shortcut="N" onClick={() => app.open({ kind: "newKey" })} />
       </ScreenHeader>
       <div className={`body agents${open ? " open" : ""}${selected ? "" : " solo"}`}>
@@ -428,7 +435,7 @@ export function AgentsScreen() {
             <div>
               <h3>Connect an agent</h3>
               <p>
-                Add this address as a connector in Claude, ChatGPT or Codex. You sign in, choose read only or read and write, and the agent acts as you: it can
+                Add this address as a connector in Claude, ChatGPT, Claude Code or Codex. You sign in, choose read only or read and write, and the agent acts as you: it can
                 never see or change more than you can.
               </p>
             </div>
@@ -524,7 +531,10 @@ export function AgentsScreen() {
         {open && <BackBar label="All agents and keys" onBack={back} />}
         {selConn && (
           <ConnDetail key={selConn.id} item={selConn} person={person(selConn.userId, selConn.userEmail)} onModal={setModal} onClose={closeDetail} onGone={gone}
-            onSaved={(c) => setConns((l) => l && l.map((x) => (x.id === c.id ? c : x)))} />
+            onSaved={(c) => {
+              setConns((l) => l && l.map((x) => (x.id === c.id ? c : x)));
+              changed();
+            }} />
         )}
         {selKey && <KeyDetail key={selKey.id} item={selKey} person={person(selKey.userId, selKey.userEmail)} hosts={hosts} onModal={setModal} onClose={closeDetail} onGone={gone} />}
       </div>
