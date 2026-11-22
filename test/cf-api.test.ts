@@ -164,6 +164,20 @@ describe("dnsPointsAt", () => {
     installFakeCloudflare({ doh: { "CNAME:go.example.com": ["other.test."] } });
     expect(await dnsPointsAt("go.example.com", T)).toBe("wrong_target");
   });
+  it("served with no CNAME is found only when every address is in Cloudflare's proxy ranges", async () => {
+    const at = (a: string[], aaaa: string[] = []) => installFakeCloudflare({ doh: { "A:go.example.com": a, "AAAA:go.example.com": aaaa, "A:edge.test": ["192.0.2.7"] } });
+    at(["104.16.1.9"], ["2606:4700::6810:109"]);
+    expect(await dnsPointsAt("go.example.com", T, true)).toBe("found");
+    expect(await dnsPointsAt("go.example.com", T, false)).toBe("wrong_target");
+    at(["172.67.1.1"], ["2a06:98c7::1"]);
+    expect(await dnsPointsAt("go.example.com", T, true)).toBe("found");
+    at(["104.16.1.9", "198.51.100.9"]); // one address bypasses the proxy
+    expect(await dnsPointsAt("go.example.com", T, true)).toBe("wrong_target");
+    at([], ["2001:db8::1"]);
+    expect(await dnsPointsAt("go.example.com", T, true)).toBe("wrong_target");
+    at(["104.32.0.1"]); // past 104.16.0.0/13 and 104.24.0.0/14
+    expect(await dnsPointsAt("go.example.com", T, true)).toBe("wrong_target");
+  });
   it("a 503 from DoH is unknown, not missing", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("down", { status: 503 }));
     expect(await dnsPointsAt("go.example.com", T)).toBe("unknown");

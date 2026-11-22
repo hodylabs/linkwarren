@@ -104,13 +104,16 @@ describe("syncDomain outside", () => {
   });
 
   it("dns: a host proxied by its own Cloudflare zone (no CNAME, other edge IPs) is found once Cloudflare serves the hostname", async () => {
-    const fake = installFakeCloudflare({ zones, doh: { "A:go.outside.test": ["198.51.100.9"], "A:edge.test": ["192.0.2.7"] } });
+    const fake = installFakeCloudflare({ zones, doh: { "A:go.outside.test": ["104.16.1.9"], "A:edge.test": ["192.0.2.7"] } });
     const { d, cf } = await mk("go.outside.test", "outside");
     const first = await syncDomain(e, cfg, d, cf, { attach: true });
     expect(first.dns).toBe("wrong_target"); // hostname still pending: nothing says requests reach us
     fake.state.hostnames[0]!.status = "active";
     fake.state.hostnames[0]!.ssl = { status: "active" };
     expect((await syncDomain(e, cfg, d, first, { attach: false })).dns).toBe("found");
+    fake.state.doh["A:go.outside.test"] = ["198.51.100.9"]; // an address outside Cloudflare's proxy ranges is not served by it
+    expect((await syncDomain(e, cfg, d, first, { attach: false })).dns).toBe("wrong_target");
+    fake.state.doh["A:go.outside.test"] = ["104.16.1.9"];
     fake.state.doh["CNAME:go.outside.test"] = ["other.test"]; // a visible CNAME elsewhere is never overridden
     expect((await syncDomain(e, cfg, d, first, { attach: false })).dns).toBe("wrong_target");
   });
