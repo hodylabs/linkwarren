@@ -6,8 +6,9 @@ import { ABSOLUTE, clearCookie, deviceLabel, endSessionStmt } from "../session";
 import type { PasskeyItem, SessionItem, SessionRef, UserRow } from "../types";
 import { MAX_PASSKEYS, PasskeyError, registrationOptions, verifyRegistration } from "../webauthn";
 import { parse } from "./signin";
+import type { Grant } from "../principal";
 
-type E = { Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } };
+type E = { Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } };
 /** The signed-in person's own account (app mode only, behind requireUser): passkeys, sessions, sign out. */
 export const account = new Hono<E>();
 

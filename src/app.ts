@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { authMode, requireUser } from "./auth";
 import type { Env } from "./env";
 import type { SessionRef, UserRow } from "./types";
+import type { Grant } from "./principal";
 import { normalizeHost } from "./host";
 import { handleRedirect } from "./redirect";
 import { links, locks } from "./api/links";
@@ -17,7 +18,7 @@ import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
 
-export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } }>();
+export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>();
 
 // Missing config fails closed with a clear error instead of a throw.
 app.use("*", async (c, next) => {

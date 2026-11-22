@@ -3,8 +3,9 @@ import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { clearCookie, endSessionStmt } from "../session";
 import { rowToUser, type UserListItem, type UserRow } from "../types";
+import type { Grant } from "../principal";
 
-type E = { Bindings: Env; Variables: { user: UserRow } };
+type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const users = new Hono<E>();
 
 users.get("/", async (c) => {

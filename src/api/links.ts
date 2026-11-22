@@ -4,12 +4,13 @@ import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
-import { canManageDomain, canUseDomain, usableDomainsSql } from "../perm";
+import { canManageDomain, canUseDomain, usableDomains } from "../perm";
+import { actor, type Grant } from "../principal";
 import { rowToLink, toApiLink, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
 import { allHosts, destination, getDomain, isMember, purge } from "./shared";
 
-type E = { Bindings: Env; Variables: { user: UserRow } };
+type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const links = new Hono<E>();
 
 const PAGE = 50;
@@ -83,7 +84,7 @@ links.get("/check", async (c) => {
   const user = c.var.user;
   const domain = await getDomain(c.env, c.req.query("domain") ?? "");
   if (!domain) return c.json({ error: "not_found" }, 404);
-  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))) return c.json(forbidden, 403);
+  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
   const slug = c.req.query("slug") ?? "";
   const s = checkSlug(slug, domain.reservedExtra);
   if (!s.ok) return c.json(s.reason === "reserved" ? { status: "reserved" } : { status: "invalid", reason: s.reason === "too_long" ? "slug_too_long" : s.reason });
@@ -100,13 +101,14 @@ links.get("/", async (c) => {
   if (want) {
     const d = await getDomain(c.env, want);
     if (!d) return c.json({ error: "not_found" }, 404);
-    if (!canUseDomain(user, d, await isMember(c.env, d.id, user.id))) return c.json(forbidden, 403);
+    if (!canUseDomain(user, d, await isMember(c.env, d.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
     where.push("domain_id = ?");
     binds.push(want);
-  } else if (user.role !== "owner") {
-    // The owner can use every domain, so only members need the authorization subquery.
-    where.push(`domain_id IN (${usableDomainsSql})`);
-    binds.push(user.id);
+  } else if (user.role !== "owner" || c.var.grant.domains) {
+    // An unrestricted owner can use every domain; everyone else (a restricted owner too) needs the authorization subquery.
+    const u = usableDomains(user.id, c.var.grant.domains);
+    where.push(`domain_id IN (${u.sql})`);
+    binds.push(...u.binds);
   }
   const q = c.req.query("q");
   if (q) {
@@ -153,7 +155,7 @@ links.post("/", async (c) => {
   const b = body.data;
   const domain = await getDomain(c.env, b.domainId);
   if (!domain) return c.json({ error: "not_found" }, 404);
-  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))) return c.json(forbidden, 403);
+  if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
   const s = checkSlug(b.slug, domain.reservedExtra);
   if (!s.ok) return c.json({ error: s.reason === "too_long" ? "slug_too_long" : s.reason }, 400);
   const dest = await destination(c.env, b.url);
@@ -185,7 +187,7 @@ links.post("/", async (c) => {
          SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
       ).bind(link.id, domain.id, link.slug, key, link.url, link.redirectCode, startsAt, expiresAt, link.passQuery ? 1 : 0,
         passwordHash, JSON.stringify(link.routes), user.id, user.id, now, now, domain.id, key),
-      auditStmt(c.env, { actorId: user.id, action: "link.create", targetType: "link", targetId: link.id,
+      auditStmt(c.env, { ...actor(c), action: "link.create", targetType: "link", targetId: link.id,
         detail: { host: domain.host, slug: link.slug, url: link.url, ...(passwordHash ? { protection: "set" } : {}), ...(link.routes.length ? { routes: link.routes.length } : {}) } },
       { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] }),
     ]);
@@ -199,14 +201,14 @@ links.post("/", async (c) => {
 });
 
 /** Loads a link and enforces edit rights: domain use, and (creator or domain manager). */
-async function editable(c: { env: Env; var: { user: UserRow } }, id: string) {
+async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, id: string) {
   const user = c.var.user;
   const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(id).first();
   if (!row) return { status: 404 as const };
   const link = rowToLink(row);
   const domain = await getDomain(c.env, link.domainId);
   if (!domain) return { status: 404 as const };
-  const ok = canUseDomain(user, domain, await isMember(c.env, domain.id, user.id))
+  const ok = canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)
     && (link.createdBy === user.id || canManageDomain(user, domain));
   return ok ? { link, domain } : { status: 403 as const };
 }
@@ -259,7 +261,7 @@ links.patch("/:id", async (c) => {
   cols.push(["updated_by", user.id], ["updated_at", next.updatedAt]);
   // Audit first, only while the row is still the revision read, so a lost race writes neither.
   const res = await c.env.DB.batch([
-    auditStmt(c.env, { actorId: user.id, action: "link.update", targetType: "link", targetId: link.id,
+    auditStmt(c.env, { ...actor(c), action: "link.update", targetType: "link", targetId: link.id,
       detail: { host: domain.host, slug: link.slug, url: next.url, ...(protection ? { protection } : {}), ...(b.routes !== undefined ? { routes: next.routes.length } : {}) } },
     { sql: "EXISTS (SELECT 1 FROM links WHERE id = ? AND updated_at = ?)", binds: [link.id, link.updatedAt] }),
     c.env.DB.prepare(`UPDATE links SET ${cols.map(([k]) => `${k}=?`).join(", ")} WHERE id=? AND updated_at=?`)
@@ -284,7 +286,7 @@ links.delete("/:id", async (c) => {
     c.env.DB.prepare(
       "INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM links WHERE id = ?)",
     ).bind(link.domainId, link.slugKey, Math.floor(Date.now() / 1000), user.id, link.id),
-    auditStmt(c.env, { actorId: user.id, action: "link.delete", targetType: "link", targetId: link.id,
+    auditStmt(c.env, { ...actor(c), action: "link.delete", targetType: "link", targetId: link.id,
       detail: { host: domain.host, slug: link.slug, url: link.url } }, here),
     c.env.DB.prepare("DELETE FROM links WHERE id = ?").bind(link.id),
   ]);

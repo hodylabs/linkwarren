@@ -2,8 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import type { AuditItem, UserRow } from "../types";
+import type { Grant } from "../principal";
 
-type E = { Bindings: Env; Variables: { user: UserRow } };
+type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const audit = new Hono<E>();
 
 const PAGE = 50;

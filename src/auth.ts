@@ -4,6 +4,7 @@ import { auditStmt } from "./audit";
 import { readSession } from "./session";
 import type { Env } from "./env";
 import { rowToUser, type SessionRef, type UserRow } from "./types";
+import { FULL_GRANT, type Grant } from "./principal";
 
 // shortcut: remote JWKS cached per team URL for the isolate lifetime; jose refetches on unknown kid.
 const remoteKeys = new Map<string, JWTVerifyGetKey>();
@@ -114,7 +115,7 @@ export async function authenticate(req: Request, env: Env): Promise<{ user: User
   return s;
 }
 
-export const requireUser = createMiddleware<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null } }>(async (c, next) => {
+export const requireUser = createMiddleware<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>(async (c, next) => {
   const mode = authMode(c.env);
   if (!mode) return c.json({ error: "misconfigured" }, 500);
   const r = await authenticate(c.req.raw, c.env);
@@ -124,5 +125,6 @@ export const requireUser = createMiddleware<{ Bindings: Env; Variables: { user: 
   }
   c.set("user", r.user);
   c.set("session", r.session);
+  c.set("grant", FULL_GRANT);
   await next();
 });

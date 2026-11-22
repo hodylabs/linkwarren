@@ -7,8 +7,9 @@ import { checkToken, sampleZone } from "../cf/perms";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { rowToCf, rowToDomain, type UserRow } from "../types";
+import type { Grant } from "../principal";
 
-type E = { Bindings: Env; Variables: { user: UserRow } };
+type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const settings = new Hono<E>();
 
 const CONTROLS = "cf.controls";

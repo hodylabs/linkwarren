@@ -2,7 +2,7 @@ import { aeConfigured, AeError, aeReport, type DayRow, type DimCount, type LinkR
 import { utcDay } from "./clicks";
 import { rolledThrough } from "./cron";
 import type { Env } from "./env";
-import { usableDomainsSql } from "./perm";
+import { usableDomains } from "./perm";
 import type { UserRow } from "./types";
 
 /**
@@ -69,11 +69,13 @@ export function resolveRange(q: RangeQuery, nowSec: number): Range | { error: "b
 const ids = (r: { results: Record<string, unknown>[] }) => r.results.map((x) => String(x.id));
 
 export async function resolveScope(
-  env: Env, user: UserRow, domainIds: string[] | null, q: string,
+  env: Env, user: UserRow, domainIds: string[] | null, q: string, only: readonly string[] | null = null,
 ): Promise<{ scope: Scope; truncated: boolean } | { error: "forbidden" }> {
   let scopeDomains: string[] | null = null;
-  if (domainIds || user.role !== "owner") {
-    const usable = new Set(ids(await env.DB.prepare(usableDomainsSql).bind(user.id).all()));
+  // `only` is a grant's domain restriction: it narrows the owner too.
+  if (domainIds || user.role !== "owner" || only) {
+    const u = usableDomains(user.id, only);
+    const usable = new Set(ids(await env.DB.prepare(u.sql).bind(...u.binds).all()));
     if (domainIds) {
       if (domainIds.some((id) => !usable.has(id))) return { error: "forbidden" };
       scopeDomains = domainIds;

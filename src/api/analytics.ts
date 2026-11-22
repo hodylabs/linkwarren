@@ -5,10 +5,11 @@ import { buildReport, loadRows, resolveRange, resolveScope, type RangeQuery } fr
 import { utcDay } from "../clicks";
 import { rolledThrough } from "../cron";
 import type { Env } from "../env";
-import { usableDomainsSql } from "../perm";
+import { usableDomains } from "../perm";
+import type { Grant } from "../principal";
 import type { UserRow } from "../types";
 
-type E = { Bindings: Env; Variables: { user: UserRow } };
+type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const analytics = new Hono<E>();
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -32,7 +33,7 @@ analytics.get("/", async (c) => {
   const nowSec = Math.floor(Date.now() / 1000);
   const range = resolveRange({ range: r as RangeQuery["range"], from, to }, nowSec);
   if ("error" in range) return c.json({ error: "bad_range" }, 400);
-  const s = await resolveScope(c.env, c.var.user, domains?.length ? domains : null, q);
+  const s = await resolveScope(c.env, c.var.user, domains?.length ? domains : null, q, c.var.grant.domains);
   if ("error" in s) return c.json({ error: "forbidden" }, 403);
   const rows = await loadRows(c.env, range, s.scope, nowSec);
   const hosts = new Map(
@@ -51,7 +52,8 @@ analytics.get("/links", async (c) => {
   const env = c.env;
   const found = (await env.DB.prepare("SELECT id, domain_id FROM links WHERE id IN (SELECT value FROM json_each(?))")
     .bind(JSON.stringify(asked)).all<{ id: string; domain_id: string }>()).results;
-  const usable = new Set((await env.DB.prepare(usableDomainsSql).bind(c.var.user.id).all<{ id: string }>()).results.map((d) => d.id));
+  const u = usableDomains(c.var.user.id, c.var.grant.domains);
+  const usable = new Set((await env.DB.prepare(u.sql).bind(...u.binds).all<{ id: string }>()).results.map((d) => d.id));
   if (found.some((l) => !usable.has(l.domain_id))) return c.json({ error: "forbidden" }, 403);
   const linkIds = found.map((l) => l.id);
 

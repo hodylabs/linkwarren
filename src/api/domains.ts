@@ -10,8 +10,9 @@ import { canManageDomain, canUseDomain } from "../perm";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
 import { checkSlugShape } from "../validate";
 import { destination, getDomain, loopField, purgeHost as purge, purgeMany, withDomainLock, type Lease } from "./shared";
+import type { Grant } from "../principal";
 
-type E = { Bindings: Env; Variables: { user: UserRow } };
+type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const domains = new Hono<E>();
 
 const forbidden = { error: "forbidden" } as const;
@@ -93,7 +94,7 @@ domains.get("/", async (c) => {
   const cfs = new Map((await c.env.DB.prepare("SELECT * FROM domain_cf").all()).results.map((r) => [r.domain_id as string, rowToCf(r)]));
   // shortcut: no pagination, the domain list is small; add a cursor if an instance ever hosts thousands.
   const items = (await c.env.DB.prepare("SELECT * FROM domains ORDER BY host").all()).results.map(rowToDomain)
-    .filter((d) => canUseDomain(user, d, members.has(d.id)))
+    .filter((d) => canUseDomain(user, d, members.has(d.id), c.var.grant.domains))
     .map((d) => ({ ...d, linkCount: counts.get(d.id) ?? 0, isMember: members.has(d.id), cloudflare: cfView(c.env, d, cfs.get(d.id) ?? null, canManageDomain(user, d)) }));
   return c.json(items);
 });
