@@ -51,6 +51,13 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("scopes", () => {
+  it("never scans links to count them on /domains", async () => {
+    const k = await key("ua");
+    const prep = vi.spyOn(env.DB, "prepare");
+    expect((await v1(k.secret, "/domains")).status).toBe(200);
+    expect(prep.mock.calls.map(([sql]) => sql).filter((sql) => /FROM links/i.test(sql))).toEqual([]);
+  });
+
   it("a read key lists links and domains (bare array, no cloudflare view)", async () => {
     const k = await key("ua");
     const r = await v1(k.secret, "/links");
@@ -61,6 +68,7 @@ describe("scopes", () => {
     expect(Array.isArray(list)).toBe(true);
     expect(list.map((x) => x.id).sort()).toEqual(["dA", "dB"]);
     for (const x of list) expect(x).not.toHaveProperty("cloudflare");
+    for (const x of list) expect(x).not.toHaveProperty("linkCount"); // I2: no COUNT over every link per machine call
     const ok = await key("uo", { name: "own" });
     for (const x of (await (await v1(ok.secret, "/domains")).json()) as Record<string, unknown>[]) expect(x).not.toHaveProperty("cloudflare");
   });

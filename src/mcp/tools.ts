@@ -8,7 +8,7 @@ import { ApiError } from "./run";
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 type Api = (method: Method, path: string, body?: unknown) => Promise<unknown>;
-type Domain = { id: string; host: string; type: string; status: string; linkCount: number };
+type Domain = { id: string; host: string; type: string; status: string };
 
 /** /api/v1 as the principal; a 4xx/5xx becomes ApiError({ error, status }), never the rest of the body. */
 export const apiAs = (env: Env, ctx: ExecutionContext, p: Principal): Api => async (method, path, body) => {
@@ -131,7 +131,7 @@ export const TOOLS: Record<string, ToolDef> = {
     description: "The domains you can create links on." + DATA,
     input: z.strictObject({}),
     run: async (api) => ({
-      items: ((await api("GET", "/domains")) as Domain[]).map(({ host, type, status, linkCount }) => ({ host, type, status, linkCount })),
+      items: ((await api("GET", "/domains")) as Domain[]).map(({ host, type, status }) => ({ host, type, status })),
     }),
   },
   check_slug: {

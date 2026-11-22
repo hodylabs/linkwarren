@@ -134,12 +134,12 @@ describe("reads as member A", () => {
     expect(errOf(await tool(t.accessToken, "get_link", { id: "la", shortUrl: "go.test/spring" }))?.error).toBe("bad_input");
   });
 
-  it("list_domains maps to host, type, status, linkCount; check_slug answers", async () => {
+  it("list_domains maps to host, type, status (no link counts per tool call); check_slug answers", async () => {
     const t = await connectAgent(A);
     const d = await tool(t.accessToken, "list_domains");
     expect(d.structuredContent.items).toEqual([
-      { host: "a.test", type: "private", status: "active", linkCount: 1 },
-      { host: "go.test", type: "main", status: "active", linkCount: 1 },
+      { host: "a.test", type: "private", status: "active" },
+      { host: "go.test", type: "main", status: "active" },
     ]);
     expect((await tool(t.accessToken, "check_slug", { domain: "go.test", slug: "spring" })).structuredContent).toEqual({ status: "taken" });
     expect((await tool(t.accessToken, "check_slug", { domain: "dgo", slug: "fresh" })).structuredContent).toEqual({ status: "available" });
