@@ -7,7 +7,7 @@ import { AE_DAYS } from "../analytics";
 import { AUDIT_KEEP_DAYS } from "../cron";
 import { checkLogo, LOGO_HEADERS, LOGO_KEY, LOGO_MAX_BYTES, LOGO_TYPES, type LogoType } from "../logo";
 import { getSettings, settingStmts, type InstanceSettings } from "../settings";
-import { emailConfigured, sendEmail } from "../email";
+import { emailConfigured, sendEmail, UNSAFE } from "../email";
 import { LIMITS, hitAll, limitKey } from "../limits";
 import { CfError, cfConfig, cfConfigFor, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
 import { syncDomain, syncErrorCode } from "../cf/attach";
@@ -75,10 +75,10 @@ settings.patch("/", async (c) => {
   const patch: Partial<InstanceSettings> = { ...rest };
   if (!Object.values(body.data).some((v) => v !== undefined)) return c.json({ error: "no_changes" }, 400);
   if (rawName !== undefined) {
-    const name = rawName.trim();
+    // Control, bidi and zero-width characters are stripped, never stored: the rail, the title and email all see the same name.
+    const name = rawName.replace(UNSAFE, "").trim();
     const len = [...name].length;
-    // Control characters (CR/LF included) and line separators never reach the rail, the title or an email header.
-    if (len < 1 || len > NAME_MAX || /[\p{Cc}\u2028\u2029]/u.test(name)) return c.json({ error: "bad_name" }, 400);
+    if (len < 1 || len > NAME_MAX) return c.json({ error: "bad_name" }, 400);
     patch.name = name;
   }
   if (rest.mainDomainId !== undefined && !(await validMain(c.env, rest.mainDomainId))) return c.json({ error: "bad_main_domain" }, 400);
@@ -88,7 +88,8 @@ settings.patch("/", async (c) => {
 
 // Base64 of 64 KiB plus the JSON around it; a larger body is refused before it is parsed.
 const LOGO_BODY_MAX = Math.ceil(LOGO_MAX_BYTES / 3) * 4 + 256;
-const logoBody = z.strictObject({ type: z.enum(LOGO_TYPES), data: z.string().min(1).max(LOGO_BODY_MAX).regex(/^[A-Za-z0-9+/]+={0,2}$/) });
+// `type` is the browser's label, accepted but ignored: the bytes decide (checkLogo).
+const logoBody = z.strictObject({ type: z.string().max(100).optional(), data: z.string().min(1).max(LOGO_BODY_MAX).regex(/^[A-Za-z0-9+/]+={0,2}$/) });
 const logoAudit = (env: Env, actorId: string, action: string, detail: object, guard: { sql: string; binds: unknown[] }) =>
   auditStmt(env, { actorId, action, targetType: "settings", targetId: "instance.logo", detail }, guard);
 settings.put("/logo", bodyLimit({ maxSize: LOGO_BODY_MAX + 256, onError: (c) => c.json({ error: "too_large" }, 413) }), async (c) => {
@@ -100,14 +101,15 @@ settings.put("/logo", bodyLimit({ maxSize: LOGO_BODY_MAX + 256, onError: (c) => 
   } catch {
     return c.json({ error: "invalid_body" }, 400);
   }
-  const check = checkLogo(body.data.type, bytes);
+  const check = checkLogo(bytes);
   if (!check.ok) return c.json({ error: check.reason }, 400);
+  const type = check.type;
   const v = Date.now();
   // One KV write per upload (R7). The stored name is fixed: no user-provided filename is ever kept.
-  await c.env.CACHE.put(LOGO_KEY, bytes, { metadata: { type: body.data.type, v } });
+  await c.env.CACHE.put(LOGO_KEY, bytes, { metadata: { type, v } });
   await c.env.DB.batch([
     ...settingStmts(c.env, c.var.user.id, { logoVersion: v }),
-    logoAudit(c.env, c.var.user.id, "logo.update", { type: body.data.type, bytes: bytes.length },
+    logoAudit(c.env, c.var.user.id, "logo.update", { type, bytes: bytes.length },
       { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: ["instance.logoVersion", JSON.stringify(v)] }),
   ]);
   return c.json({ logoVersion: v });

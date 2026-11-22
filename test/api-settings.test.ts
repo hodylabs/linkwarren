@@ -462,7 +462,7 @@ describe("instance and settings", () => {
     await mainDom("dp", "p.test", "private");
     await mainDom("dx", "x.test", "main", "disabled");
     const bad: [unknown, string][] = [
-      [{}, "no_changes"], [{ name: "" }, "bad_name"], [{ name: "   " }, "bad_name"], [{ name: "a".repeat(61) }, "bad_name"], [{ name: "a\nb" }, "bad_name"],
+      [{}, "no_changes"], [{ name: "" }, "bad_name"], [{ name: "   " }, "bad_name"], [{ name: "a".repeat(61) }, "bad_name"], [{ name: "\u200b\u202e\n" }, "bad_name"],
       [{ mainDomainId: "dp" }, "bad_main_domain"], [{ mainDomainId: "dx" }, "bad_main_domain"], [{ mainDomainId: "nope" }, "bad_main_domain"],
       [{ linkRedirectCode: 307 }, "invalid_body"], [{ linkPassQuery: "yes" }, "invalid_body"], [{ other: 1 }, "invalid_body"], [{ mainDomainId: "x".repeat(65) }, "invalid_body"],
     ];
@@ -475,6 +475,9 @@ describe("instance and settings", () => {
     expect(r.status).toBe(200);
     expect(await r.json()).toMatchObject({ name: "Acme links", mainDomainId: "dm", linkRedirectCode: 301, linkPassQuery: false });
     expect((await actions()).map((a) => a[1].key).sort()).toEqual(["instance.mainDomainId", "instance.name", "links.defaultPassQuery", "links.defaultRedirectCode"]);
+    // Control, bidi and zero-width characters are stripped on write, the same set the email path strips.
+    const clean = await call("owner", "PATCH", "/api/settings", { name: "Ac\u202eme\u200b\r\n links\u2066" });
+    expect(await clean.json()).toMatchObject({ name: "Acme links" });
     expect((await (await call("a", "GET", "/api/instance")).json())).toMatchObject({ name: "Acme links", mainDomainId: "dm", linkDefaults: { redirectCode: 301, passQuery: false } });
   });
 
@@ -507,16 +510,26 @@ describe("instance and settings", () => {
     expect(acts).toEqual([["logo.update", { type: "image/png", bytes: bytes.length }], ["logo.remove", {}]]);
   });
 
-  it("logo: an SVG is refused when hostile, a foreign Origin is refused", async () => {
-    const svg = (s: string) => b64(new TextEncoder().encode(s));
-    const r = await call("owner", "PUT", "/api/settings/logo", { type: "image/svg+xml", data: svg(`<svg onload="x"></svg>`) });
-    expect([r.status, await r.json()]).toEqual([400, { error: "unsafe_svg" }]);
-    const o = await dash("/api/settings/logo", { method: "PUT", headers: { "Cf-Access-Jwt-Assertion": await tokenFor(EMAIL.owner!), "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ type: "image/png", data: b64(pngBytes(1, 1)) }) });
+  it("logo: SVG refused, the bytes decide the type, 413 over the limit, Bearer and foreign Origin refused", async () => {
+    const svg = b64(new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`));
+    const r = await call("owner", "PUT", "/api/settings/logo", { type: "image/svg+xml", data: svg });
+    expect([r.status, await r.json()]).toEqual([400, { error: "logo_type" }]);
+    const r2 = await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: svg });
+    expect([r2.status, await r2.json()]).toEqual([400, { error: "logo_type" }]);
+    const big = await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: "A".repeat(200_000) });
+    expect([big.status, await big.json()]).toEqual([413, { error: "too_large" }]);
+    const bearer = { authorization: "Bearer lw_x", "content-type": "application/json" };
+    expect((await dash("/api/settings/logo", { method: "PUT", headers: bearer, body: JSON.stringify({ data: b64(pngBytes(1, 1)) }) })).status).toBe(401);
+    expect((await dash("/api/settings/logo", { method: "DELETE", headers: bearer })).status).toBe(401);
+    expect((await dash("/api/instance", { headers: bearer })).status).toBe(401);
+    expect((await dash("/api/instance/logo", { headers: bearer })).status).toBe(401);
+    const o = await dash("/api/settings/logo", { method: "PUT", headers: { "Cf-Access-Jwt-Assertion": await tokenFor(EMAIL.owner!), "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ data: b64(pngBytes(1, 1)) }) });
     expect(o.status).toBe(403);
     expect(await env.CACHE.get("instance:logo")).toBe(null);
-    const ok = await call("owner", "PUT", "/api/settings/logo", { type: "image/svg+xml", data: svg(`<svg viewBox="0 0 1 1"><rect/></svg>`) });
+    // A PNG declared as JPEG is stored and served as PNG.
+    const ok = await call("owner", "PUT", "/api/settings/logo", { type: "image/jpeg", data: b64(pngBytes(4, 4)) });
     expect(ok.status).toBe(200);
-    expect((await call("a", "GET", "/api/instance/logo")).headers.get("content-type")).toBe("image/svg+xml");
+    expect((await call("a", "GET", "/api/instance/logo")).headers.get("content-type")).toBe("image/png");
   });
 
   it("link defaults apply when the request leaves them out, an explicit value wins, /api/v1 follows", async () => {

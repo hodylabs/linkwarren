@@ -27,7 +27,7 @@ const D = (host: string, i: string | null = null, n: string | null = null) => ({
 
 beforeAll(setupAccess);
 beforeEach(async () => {
-  await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domains", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["links", "slug_locks", "audit_log", "domain_members", "domains", "settings", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('uo','owner@example.com','owner','active',1)");
   await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('um','m@example.com','member','active',1)");
 });
@@ -51,6 +51,16 @@ describe("fixture import (main.example only)", () => {
     expect(r2).toMatchObject({ created: 0, skipped: 4, conflicts: [] });
     expect(await count("links")).toBe(3);
     expect(await audits("import.run")).toBe(2);
+  });
+});
+
+describe("instance link defaults", () => {
+  it("imported links use the instance redirect code and query pass-through", async () => {
+    expect(await rep(await owner(body([{ host: null, slug: "a", destination: "https://example.org/a" }])))).toMatchObject({ created: 1 });
+    expect(await all("SELECT redirect_code, pass_query FROM links")).toEqual([{ redirect_code: 302, pass_query: 1 }]);
+    await run(`INSERT INTO settings (key,value,updated_at,updated_by) VALUES ('links.defaultRedirectCode','301',1,'uo'),('links.defaultPassQuery','false',1,'uo')`);
+    expect(await rep(await owner(body([{ host: null, slug: "b", destination: "https://example.org/b" }])))).toMatchObject({ created: 1 });
+    expect(await all("SELECT redirect_code, pass_query FROM links WHERE slug = 'b'")).toEqual([{ redirect_code: 301, pass_query: 0 }]);
   });
 });
 

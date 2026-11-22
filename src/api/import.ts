@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
+import { parseSettings, settingsQ } from "../settings";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
 import { checkDestination, checkSlugShape, slugKey } from "../validate";
 import { hostError } from "./domains";
@@ -100,10 +101,13 @@ importApi.post("/", async (c) => {
   for (const d of doms.values()) { live.set(d.id, new Map()); locks.set(d.id, new Set()); }
   // Two queries in total, whatever the domain count: ids go in as one JSON bind (D1 caps queries per invocation and binds per query).
   const reused = JSON.stringify([...doms.values()].filter((d) => !d.isNew).map((d) => d.id));
-  const [liveRows, lockRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string }>([
+  const [liveRows, lockRows, setRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string }>([
     c.env.DB.prepare("SELECT domain_id, slug_key, url FROM links WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
     c.env.DB.prepare("SELECT domain_id, slug_key FROM slug_locks WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
+    settingsQ(c.env),
   ]);
+  // The legacy export carries no redirect code or query rule, so imported links take the instance defaults.
+  const defaults = parseSettings(setRows!.results as unknown as { key: string; value: string }[]);
   for (const r of liveRows!.results) live.get(r.domain_id)!.set(r.slug_key, r.url!);
   for (const r of lockRows!.results) locks.get(r.domain_id)!.add(r.slug_key.toLowerCase());
 
@@ -174,9 +178,9 @@ importApi.post("/", async (c) => {
   for (const p of plans.link) {
     work.push({ kind: "link", host: p.dom.host, counted: true, plan: p, stmt: db.prepare(
       `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
-       SELECT ?,?,?,?,?,302,?,?,1,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
        AND EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?)`,
-    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, p.startsAt, p.expiresAt, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0) });
+    ).bind(crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0) });
   }
   // A live link committed after planning wins its key over a planned lock.
   for (const p of plans.lock) {

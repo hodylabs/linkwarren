@@ -8,8 +8,9 @@ export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => E
 /** EMAIL_FROM set and a Resend key from the Worker secret or the dashboard. */
 export const emailConfigured = async (env: Env): Promise<boolean> => !!env.EMAIL_FROM?.trim() && !!(await getSecret(env, "RESEND_API_KEY"));
 
-// Controls, C1, line/paragraph separators and bidi overrides/isolates: nothing that can break a header or reorder text.
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+// Controls, C1, zero-width and bidi marks, line/paragraph separators, bidi overrides/isolates: nothing that can break a header or reorder text.
+// Shared with the instance name write (src/api/settings.ts), so every surface sees the same name.
+export const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
 const cut = (s: string, n: number): string => [...s].slice(0, n).join("");
 
 /** Sender display name: unsafe characters, quotes and backslashes removed, at most 60 code points; empty is linkwarren. Callers emit it as a quoted string. */
