@@ -160,6 +160,16 @@ describe("removal by a people manager transfers to an owner, never to the manage
     expect(await owned(P.user.id)).toEqual({ links: [X.user.id, X.user.id], domain: X.user.id, person: null });
   });
 
+  it("an owner demoted to a people.manage role between read and batch cannot move things to a non-owner: 403, nothing written", async () => {
+    const X = await signedIn("x@example.com");
+    const restore = beforeBatch(1, () => run("UPDATE users SET role = 'member', role_id = 'mg' WHERE id = ?", O.user.id));
+    let r: Response;
+    try { r = await call(O.cookie, "DELETE", `/api/users/${P.user.id}?transferTo=${X.user.id}`); } finally { restore(); }
+    expect(await answer(r)).toEqual([403, { error: "forbidden" }]);
+    expect(await owned(P.user.id)).toEqual({ links: [P.user.id, P.user.id], domain: P.user.id, person: { role: "member", role_id: null, status: "active" } });
+    expect(await audits()).toEqual([]);
+  });
+
   for (const [what, sql] of [["demoted", "UPDATE users SET role = 'member' WHERE id = ?"], ["disabled", "UPDATE users SET status = 'disabled' WHERE id = ?"]] as const) {
     it(`the chosen owner is ${what} between read and batch: 400 bad_transfer and nothing written`, async () => {
       const restore = beforeBatch(1, () => run(sql, B.user.id));

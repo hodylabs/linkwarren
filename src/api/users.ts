@@ -215,6 +215,8 @@ users.delete("/:id", async (c) => {
     { sql: "EXISTS (SELECT 1 FROM users WHERE id = ? AND role = ? AND status = ?)", binds: [id, p.role, p.status] },
     { sql: `EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active'${t.role === "owner" ? " AND role = 'owner'" : ""})`, binds: [to] },
     t.role !== "owner" && { sql: `NOT EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED})`, binds: [id] },
+    // R4: only an owner may hand things to a non-owner; checked at write time, not from the request-start read.
+    t.role !== "owner" && { sql: ACTOR_OK, binds: [me.id] },
     peopleOk(me.id, id),
     p.role === "owner" && p.status === "active" && { sql: OTHER_OWNER, binds: [id] },
   );
@@ -235,9 +237,10 @@ users.delete("/:id", async (c) => {
   if (!res[res.length - 1]!.meta.changes) {
     const [r, w] = await Promise.all([refusal(env, me.id, id), env.DB.prepare(
       `SELECT EXISTS (SELECT 1 FROM users WHERE id = ?) e, EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active') t,
-       EXISTS (SELECT 1 FROM users WHERE id = ? AND role = 'owner') tOwner, EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED}) needs, ${OTHER_OWNER} o`,
-    ).bind(id, to, to, id, id).first<{ e: number; t: number; tOwner: number; needs: number; o: number }>()]);
-    if (!r.a) return c.json(forbidden, 403);
+       EXISTS (SELECT 1 FROM users WHERE id = ? AND role = 'owner') tOwner, EXISTS (SELECT 1 FROM domains WHERE owner_id = ? AND ${SHARED}) needs, ${OTHER_OWNER} o,
+       ${ACTOR_OK} ao`,
+    ).bind(id, to, to, id, id, me.id).first<{ e: number; t: number; tOwner: number; needs: number; o: number; ao: number }>()]);
+    if (!r.a || (t.role !== "owner" && !w?.ao)) return c.json(forbidden, 403);
     if (!w?.e) return c.json(notFound, 404);
     if (!r.w) return c.json(above, 403);
     if (!w.t || (!owner && !w.tOwner)) return c.json({ error: "bad_transfer" }, 400);
