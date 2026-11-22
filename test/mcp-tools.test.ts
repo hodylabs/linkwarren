@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import pkg from "../package.json";
 import { INSTRUCTIONS } from "../src/mcp/server";
-import { apiAs } from "../src/mcp/tools";
+import { apiAs, TOOLS } from "../src/mcp/tools";
 import { ApiError } from "../src/mcp/run";
 import { rowToUser } from "../src/types";
 import { VERSION } from "../src/version";
@@ -204,7 +204,7 @@ describe("writes", () => {
     const r = await tool(t.accessToken, "delete_link", { id: "lgo" });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({
-      refused: true, summary: "Deleting go.test/spring sends visitors to the domain's not-found page and locks the slug.",
+      refused: true, summary: "Deleting go.test/spring sends visitors to the domain's not-found page and locks the slug; old addresses that forward to it are deleted and locked too.",
     });
     expect(await lastCall()).toMatchObject({ tool: "delete_link", status: "refused" });
     expect(await one("SELECT 1 FROM links WHERE id = 'lgo'")).not.toBeNull();
@@ -251,7 +251,7 @@ describe("bulk_links", () => {
     const r = await tool(t.accessToken, "bulk_links", { action: "delete", ids: ["lgo", "la", "lgo"] });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({
-      refused: true, summary: "Deleting 2 links sends their visitors to each domain's not-found page and locks the slugs.",
+      refused: true, summary: "Deleting 2 links sends their visitors to each domain's not-found page and locks the slugs; old addresses that forward to them are deleted and locked too.",
     });
     expect(await lastCall()).toMatchObject({ tool: "bulk_links", status: "refused" });
     expect((await all("SELECT id FROM links WHERE id IN ('lgo','la')")).length).toBe(2);
@@ -333,6 +333,7 @@ describe("bulk_links", () => {
       { action: "delete", ids: ["../keys"], confirm: true },
       { action: "move", ids: ["lgo"], domain: "a.test", oldAddress: "lock", confirm: true },
       { action: "password", ids: ["lgo"], password: "p".repeat(1025) },
+      { action: "schedule", ids: ["lgo"], endNow: false, startsAt: 1 },
       { action: "rename", ids: ["lgo"] },
       { action: "delete", ids: ["lgo"], confirm: "true" },
       { action: "delete", ids: ["lgo"], confirm: 1 },
@@ -345,6 +346,20 @@ describe("bulk_links", () => {
     }
     expect(await all("SELECT * FROM auth_limits WHERE key LIKE 'api:%'")).toEqual([]);
     expect(await one("SELECT 1 FROM links WHERE id = 'lgo'")).not.toBeNull();
+  });
+
+  it("the links changed even when the domain lookup for short URLs fails: results and pending come back, shortUrl null", async () => {
+    const link = { id: "lgo", domainId: "dgo", slug: "spring", url: "https://x.com/", hasPassword: false, forwardTo: null };
+    const api = async (method: string, path: string) => {
+      if (method === "POST" && path === "/links/bulk") return { results: [{ id: "lgo", ok: true, link }, { id: "la", ok: false, error: "conflict" }], pending: ["l3"] };
+      throw new ApiError("unavailable", 503);
+    };
+    const p = { grant: { write: true, del: false } } as Parameters<NonNullable<typeof TOOLS.bulk_links>["run"]>[2];
+    const out = await TOOLS.bulk_links!.run(api as never, { action: "redirect", ids: ["lgo", "la", "l3"], passQuery: false }, p, env);
+    expect(out).toEqual({
+      results: [{ id: "lgo", ok: true, link: { id: "lgo", shortUrl: null, url: "https://x.com/", hasPassword: false, forwardTo: null } }, { id: "la", ok: false, error: "conflict" }],
+      pending: ["l3"],
+    });
   });
 
   it("domain on a non-move action, or a move without one, is bad_input", async () => {

@@ -115,14 +115,14 @@ export const TOOLS: Record<string, ToolDef> = {
     run: async (api, { id: linkId, ...rest }) => (await api("PATCH", `/links/${enc(linkId)}`, rest)) as Record<string, unknown>,
   },
   delete_link: {
-    description: "Delete a link and lock its slug. Refuses without confirm: true; show the person the summary and ask first.",
+    description: "Delete a link and lock its slug (old addresses that forward to it go too). Refuses without confirm: true; show the person the summary and ask first.",
     input: z.strictObject({ id, confirm: z.boolean().optional() }),
     write: true,
     run: async (api, a) => {
       if (a.confirm !== true) {
         const link = (await api("GET", `/links/${enc(a.id)}`)) as { domainId: string; slug: string };
         const d = await domainOf(api, link.domainId);
-        return { refused: true, summary: `Deleting ${d.host}/${link.slug} sends visitors to the domain's not-found page and locks the slug.` };
+        return { refused: true, summary: `Deleting ${d.host}/${link.slug} sends visitors to the domain's not-found page and locks the slug; old addresses that forward to it are deleted and locked too.` };
       }
       await api("DELETE", `/links/${enc(a.id)}`);
       return { deleted: true, id: a.id };
@@ -159,7 +159,7 @@ export const TOOLS: Record<string, ToolDef> = {
       domain: hostOrId.optional().describe("Move only: the target domain"),
       startsAt: time,
       expiresAt: time,
-      endNow: z.boolean().optional(),
+      endNow: z.literal(true).optional().describe("Schedule only: true ends the links now; leave it out otherwise"),
       oldAddress: z.enum(["forward", "copy"]).optional().describe("Move only, required: forward keeps the old address working as a forwarder to the new short link; copy makes an independent copy on the new domain and leaves the original. Ask the person; never choose for them."),
       redirectCode: rules.redirectCode,
       passQuery: rules.passQuery,
@@ -186,14 +186,16 @@ export const TOOLS: Record<string, ToolDef> = {
         refused: true,
         summary: offline ? `This schedule takes ${n} offline now; visitors stop reaching the destination.`
           : unprotect ? `Removing the password from ${n} lets anyone with the address reach the destination.`
-          : !target ? `Deleting ${n} sends their visitors to each domain's not-found page and locks the slugs.`
+          : !target ? `Deleting ${n} sends their visitors to each domain's not-found page and locks the slugs; old addresses that forward to them are deleted and locked too.`
           : rest.oldAddress === "forward" ? `Moving ${n} to ${target.host}; each old address will forward to the new one.`
           : `Copying ${n} to ${target.host}; the originals stay as they are.`,
       };
       const r = (await api("POST", "/links/bulk", { action, ids, ...rest, ...(target ? { domainId: target.id } : {}) })) as
         { results: BulkResult[]; pending: string[] };
+      // Best effort: the links already changed, so a failed lookup only leaves shortUrl null.
       const hosts = r.results.some((x) => x.ok && x.link)
-        ? new Map(((await api("GET", "/domains")) as Domain[]).map((d) => [d.id, d.host])) : new Map<string, string>();
+        ? await api("GET", "/domains").then((l) => new Map((l as Domain[]).map((d) => [d.id, d.host])), () => new Map<string, string>())
+        : new Map<string, string>();
       // Only what the agent needs per link: never the full row (smaller output, no rules or routes echoed back).
       const results = r.results.map((x) => {
         if (!x.ok || !x.link) return x;
