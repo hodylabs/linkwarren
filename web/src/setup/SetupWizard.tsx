@@ -79,6 +79,8 @@ export function SetupWizard() {
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const checking = useRef(false);
+  const tokenGen = useRef(0); // bumped by every token save: a check started before it is ignored
+  const [tokenSaves, setTokenSaves] = useState(0);
   const [host, setHost] = useState("");
   const [takeover, setTakeover] = useState<{ host: string; records: Record_[] } | null>(null);
   const [choice, setChoice] = useState<string | null>(null);
@@ -147,18 +149,22 @@ export function SetupWizard() {
     if (checking.current) return;
     checking.current = true;
     setCheckError(null);
+    const g = tokenGen.current;
     try {
-      setCheck(await checkCloudflare());
+      const r = await checkCloudflare();
+      if (g === tokenGen.current) setCheck(r);
     } catch (e) {
-      setCheckError(settingsError(code(e)));
+      if (g === tokenGen.current) setCheckError(settingsError(code(e)));
     } finally {
       checking.current = false;
     }
+    // A token saved while this check ran: its result was dropped, so check the new one.
+    if (g !== tokenGen.current) setTokenSaves((n) => n + 1);
   }, []);
-  // A token that is set (by any source) is checked when the step opens, and again after a new one is pasted.
+  // A token that is set (by any source) is checked when the step opens, and again after every token save.
   useEffect(() => {
     if (step === 2 && cfSet && check === null) void runCheck();
-  }, [step, cfSet, check, runCheck]);
+  }, [step, cfSet, check, runCheck, tokenSaves]);
 
   const addMain = (confirm: boolean) =>
     run(async () => {
@@ -349,7 +355,10 @@ export function SetupWizard() {
       <>
         <SecretField name="cf" status={settings.secrets.cf} pasteAvailable={settings.secrets.pasteAvailable} onSaved={(s) => {
           onSecrets(s);
+          tokenGen.current++;
+          setTokenSaves((n) => n + 1);
           setCheck(null);
+          setCheckError(null);
         }} />
         <p className="muted hint">CF_ACCOUNT_ID and CF_WORKER_NAME are set in the Worker config.</p>
         {cfSet && (

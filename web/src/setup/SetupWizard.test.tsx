@@ -128,6 +128,33 @@ describe("setup wizard steps", () => {
     expect(await heading("Main domain")).toBeTruthy();
   });
 
+  it("saving a replacement token checks again, even after a failed check, and an older check never wins", async () => {
+    let n = 0, release!: () => void;
+    const { api, user } = boot({
+      steps: { ...NONE, name: true }, settings: { secrets: { pasteAvailable: true, cf: "dashboard", resend: "secret" } },
+      routes: {
+        "PUT /api/settings/secrets/cf": () => ({ body: { pasteAvailable: true, cf: "dashboard", resend: "secret" } }),
+        "POST /api/settings/cloudflare/check": () => {
+          n++;
+          if (n === 1) return { status: 500, body: { error: "internal" } };
+          if (n === 2) return new Promise((r) => (release = () => r({ body: { ...PERMS, accountName: "Old" } })));
+          return { body: PERMS };
+        },
+      },
+    });
+    const input = await screen.findByLabelText("Cloudflare API token");
+    await screen.findByRole("alert");
+    // After a failed check, a new token starts a check (n = 2, held open).
+    await user.type(input, "tok_ABCDEFGHIJKLMNOPQRSTUV{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(n).toBe(2));
+    // A second token while that check is still running: its result is dropped and a check for this token follows.
+    await user.type(input, "tok_BBCDEFGHIJKLMNOPQRSTUV{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(writes(api).filter((c) => c.method === "PUT")).toHaveLength(2));
+    release();
+    await waitFor(() => expect(n).toBe(3));
+    expect(await screen.findByRole("list", { name: "Token permissions" })).toBeTruthy();
+  });
+
   it("Cloudflare missing without paste shows the wrangler command", async () => {
     boot({ steps: { ...NONE, name: true }, settings: { secrets: { pasteAvailable: false, cf: "missing", resend: "secret" } } });
     expect(await screen.findByText("npx wrangler secret put CF_API_TOKEN -c wrangler.instance.jsonc")).toBeTruthy();
