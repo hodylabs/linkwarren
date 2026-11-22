@@ -253,6 +253,20 @@ describe("POST /auth/email/verify", () => {
     expect((await all("SELECT action, detail FROM audit_log")).map((a) => [a.action, a.detail])).toEqual([["auth.sign_in", '{"method":"email"}']]);
   });
 
+  it("a disable that lands after the token check creates no session and sets no cookie", async () => {
+    await addUser("a@example.com", "active");
+    const t = await linkFor("a@example.com");
+    const batch = env.DB.batch.bind(env.DB);
+    vi.spyOn(env.DB, "batch").mockImplementationOnce(async (stmts) => {
+      await env.DB.prepare("UPDATE users SET status = 'disabled' WHERE email = 'a@example.com'").run();
+      return batch(stmts);
+    });
+    const r = await verify(t);
+    expect([r.status, await r.text(), r.headers.get("set-cookie")]).toEqual([403, '{"error":"disabled"}', null]);
+    expect(await all("SELECT * FROM sessions")).toEqual([]);
+    expect(await all("SELECT * FROM audit_log WHERE action = 'auth.sign_in'")).toEqual([]);
+  });
+
   describe("replay and leakage (Review Focus 2)", () => {
     it("refuses the same token twice", async () => {
       await addUser("a@example.com", "active");

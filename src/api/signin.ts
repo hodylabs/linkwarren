@@ -149,7 +149,7 @@ signin.post("/email/verify", async (c) => {
   const r = await resolveUser(env, t.email);
   if (!("user" in r)) return c.json({ error: r.error }, r.status);
   const s = await createSession(env, c.req.raw, r.user, "email");
-  await env.DB.batch(s.stmts);
+  if (!s.started(await env.DB.batch(s.stmts))) return c.json({ error: "disabled" }, 403); // disabled after the check above
   c.header("Set-Cookie", s.setCookie);
   return c.json({ next: safeNext(t.next, origin(env)) });
 });
@@ -189,7 +189,7 @@ signin.post("/passkey/verify", async (c) => {
     return c.json(passkeyFailed, 400);
   }
   const s = await createSession(env, c.req.raw, v.user, "passkey");
-  await env.DB.batch(s.stmts);
+  if (!s.started(await env.DB.batch(s.stmts))) return c.json({ error: "disabled" }, 403); // disabled after the check above
   c.header("Set-Cookie", s.setCookie);
   return c.json({ next: safeNext(b.next, origin(env)) });
 });

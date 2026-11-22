@@ -41,9 +41,10 @@ const nowS = () => Math.floor(Date.now() / 1000);
 
 /**
  * A fresh session for `user`: statements for the caller's batch (drop the incoming cookie's session (R8, fixation), insert, audit)
- * and the Set-Cookie value. The secret leaves this function only inside `setCookie`.
+ * and the Set-Cookie value. The secret leaves this function only inside `setCookie`. The insert requires the person to still be
+ * active, so a disable that lands after the caller's check creates nothing; `started` tells the caller from the batch result.
  */
-export async function createSession(env: Env, req: Request, user: UserRow, method: "email" | "passkey"): Promise<{ setCookie: string; stmts: D1PreparedStatement[] }> {
+export async function createSession(env: Env, req: Request, user: UserRow, method: "email" | "passkey"): Promise<{ setCookie: string; stmts: D1PreparedStatement[]; started: (res: D1Result[]) => boolean }> {
   const secret = newSecret();
   const id = crypto.randomUUID();
   const now = nowS();
@@ -51,13 +52,14 @@ export async function createSession(env: Env, req: Request, user: UserRow, metho
   const old = readCookie(req);
   if (old) stmts.push(env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256Hex(old)));
   stmts.push(
-    env.DB.prepare("INSERT INTO sessions (id, token_hash, user_id, method, created_at, last_seen_at, expires_at, device, ip_prefix) VALUES (?,?,?,?,?,?,?,?,?)")
-      .bind(id, await sha256Hex(secret), user.id, method, now, now, now + ROLLING, deviceLabel(req.headers.get("user-agent")), ipPrefix(req.headers.get("cf-connecting-ip"))),
+    env.DB.prepare("INSERT INTO sessions (id, token_hash, user_id, method, created_at, last_seen_at, expires_at, device, ip_prefix) SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')")
+      .bind(id, await sha256Hex(secret), user.id, method, now, now, now + ROLLING, deviceLabel(req.headers.get("user-agent")), ipPrefix(req.headers.get("cf-connecting-ip")), user.id),
     auditStmt(env, { actorId: user.id, action: "auth.sign_in", targetType: "session", targetId: id, detail: { method } },
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE id = ?)", binds: [id] }),
   );
   // __Host- forces Secure, Path=/ and no Domain: host-only, so short-link hosts never receive it.
-  return { setCookie: `${SESSION_COOKIE}=${secret}; Path=/; Max-Age=${ABSOLUTE}; Secure; HttpOnly; SameSite=Lax`, stmts };
+  const at = stmts.length - 2; // the insert
+  return { setCookie: `${SESSION_COOKIE}=${secret}; Path=/; Max-Age=${ABSOLUTE}; Secure; HttpOnly; SameSite=Lax`, stmts, started: (res) => !!res[at]?.meta.changes };
 }
 
 /** The signed-in person for the request's cookie, refused past `expires_at` (rolling) or the absolute cap; refreshes at most every TOUCH_EVERY. */

@@ -164,6 +164,21 @@ describe("passkey registration", () => {
     }
   });
 
+  it("a passkey sign-in whose account is disabled after verification gets no session", async () => {
+    const cookie = await signInApp("a@example.com");
+    const { dev } = await addPasskey(cookie);
+    await env.DB.prepare("DELETE FROM sessions").run();
+    const resp = await dev.authenticate(await loginOptions());
+    const batch = env.DB.batch.bind(env.DB);
+    vi.spyOn(env.DB, "batch").mockImplementationOnce(async (stmts) => {
+      await env.DB.prepare("UPDATE users SET status = 'disabled' WHERE email = 'a@example.com'").run();
+      return batch(stmts);
+    });
+    const r = await signIn(resp);
+    expect([r.status, await r.text(), r.headers.get("set-cookie")]).toEqual([403, '{"error":"disabled"}', null]);
+    expect(await all("SELECT COUNT(*) n FROM sessions")).toEqual([{ n: 0 }]);
+  });
+
   it("sanitizes the name like a rename: strips hidden characters, collapses whitespace", async () => {
     const cookie = await signInApp("a@example.com");
     for (const [raw, want] of [["evil\u202Eexe", "evilexe"], ["a\u2060\u2064b", "ab"], ["a\nb", "ab"], ["  a    b\u200B ", "a b"], ["a\u061Cb\uFEFFc", "abc"]] as const) {
