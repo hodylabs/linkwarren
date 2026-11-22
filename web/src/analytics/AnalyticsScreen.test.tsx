@@ -267,7 +267,7 @@ describe("Analytics screen", () => {
 
   it.each([
     ["unavailable", "Clicks from the last day or two could not be loaded. Try again shortly."],
-    ["off", "Live clicks need the analytics read token. Showing daily totals only."],
+    ["off", "Live clicks are not set up on this instance (Analytics Engine, see the deploy guide). Showing daily totals only."],
   ] as const)("live %s shows its note", async (live, text) => {
     boot("/analytics", () => ({ body: report(5, { live }) }));
     expect(await screen.findByText(text)).toBeTruthy();

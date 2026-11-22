@@ -32,7 +32,7 @@ const RANGE_OPTIONS: { value: Range; label: string }[] = [
   { value: "custom", label: "Custom" },
 ];
 const LIVE_NOTE = {
-  off: "Live clicks need the analytics read token. Showing daily totals only.",
+  off: "Live clicks are not set up on this instance (Analytics Engine, see the deploy guide). Showing daily totals only.",
   unavailable: "Clicks from the last day or two could not be loaded. Try again shortly.",
 } as const;
 /** The 24 hour view reads the live data only, so with live off or unavailable it has no clicks to show. */
