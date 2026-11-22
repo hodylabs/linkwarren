@@ -190,19 +190,22 @@ describe("Link detail", () => {
   });
 
   it("a URL typed while the save is pending is kept, not replaced by the saved revision", async () => {
+    // The save answer is held until the test releases it; every step waits on UI state or the recorded call, never on time.
     let release!: () => void;
-    const { user } = boot({
+    const held = new Promise<void>((r) => (release = r));
+    const { api } = boot({
       path: "/links?sel=l1",
-      routes: { "PATCH /api/links/l1": ({ body }) => new Promise((r) => (release = () => r({ body: { ...L1, ...(body as object), updatedAt: 101 } }))) },
+      routes: { "PATCH /api/links/l1": async ({ body }) => (await held, { body: { ...L1, ...(body as object), updatedAt: 101 } }) },
     });
-    await ready();
+    await waitFor(() => expect(urlInput().value).toBe("https://example.com/spring"));
+    urlInput().focus();
     fireEvent.change(urlInput(), { target: { value: "https://example.com/b" } });
-    await user.click(urlInput());
-    await user.keyboard("{Control>}{Enter}{/Control}");
-    await waitFor(() => expect(release).toBeTypeOf("function"));
+    fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
     fireEvent.change(urlInput(), { target: { value: "https://example.com/c" } });
+    expect(urlInput().value).toBe("https://example.com/c");
     release();
-    await waitFor(() => expect(within(detail()).getByText("https://example.com/b")).toBeTruthy());
+    expect(await within(detail()).findByText("https://example.com/b")).toBeTruthy();
     expect(urlInput().value).toBe("https://example.com/c");
     expect(document.activeElement).toBe(urlInput());
   });
