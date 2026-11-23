@@ -1,6 +1,6 @@
 // S9 vCard links through the dashboard API, /api/v1, bulk, import and MCP.
 import { env, exports } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { connectAgent, mcpCall } from "./helpers/oauth";
 import { PHOTO_B64_MAX, VCARD_URL } from "../src/vcard";
@@ -203,6 +203,25 @@ describe("/api/v1, import and MCP", () => {
     expect(await (await imp(CARD)).json()).toMatchObject({ created: 1 });
     expect(await (await imp(CARD)).json()).toMatchObject({ created: 0, skipped: 1, conflicts: [] });
     expect(await (await imp({ ...CARD, lastName: "Byron" })).json()).toMatchObject({ created: 0, skipped: 0, conflicts: [{ slug: "ada", reason: "exists" }] });
+  });
+
+  it("import reads only the requested cards' data and photos, never every card of the domain", async () => {
+    const other = btoa(String.fromCharCode(0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 9, 9, 9, 9, 9));
+    await mkCard("owner");
+    expect((await call("owner", "POST", "/api/links", { domainId: "dm", slug: "bob", kind: "vcard", vcard: { firstName: "Bob", photo: other } })).status).toBe(201);
+    const real = env.DB.batch.bind(env.DB);
+    let seen = "";
+    vi.spyOn(env.DB, "batch").mockImplementation(async (s) => {
+      const r = await real(s);
+      seen += JSON.stringify(r);
+      return r;
+    });
+    const row = { host: null, slug: "ada", destination: "x", enabled: true, startDate: null, endDate: null, protected: false, vcard: CARD };
+    let r;
+    try { r = await call("owner", "POST", "/api/import", { mainHost: "go.test", domains: [], links: [row] }); } finally { vi.restoreAllMocks(); }
+    expect(await r.json()).toMatchObject({ created: 0, skipped: 1 });
+    expect(seen).toContain(JPEG); // the requested card was compared by its photo
+    expect(seen).not.toContain(other); // bob's photo was never read
   });
 
   it("import keeps every card in its link's batch across a batch boundary", async () => {

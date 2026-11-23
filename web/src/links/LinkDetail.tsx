@@ -68,6 +68,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     const [routeErrors, setRouteErrors] = useState<Record<number, string>>({});
     const [changePw, setChangePw] = useState(false); // the new-password input of a link that already has one
     const [cardField, setCardField] = useState<string | null>(null); // the bad_vcard field of a contact card
+    const [photoBusy, setPhotoBusy] = useState(false); // a picked photo is still being resized: Save waits
     const urlRef = useRef<HTMLInputElement>(null);
     const qrRef = useRef<HTMLButtonElement>(null);
     const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
@@ -104,7 +105,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     useImperativeHandle(ref, () => ({ focusUrl: focusEdit, copy, focusQr: () => qrRef.current?.focus() }));
 
     const save = async () => {
-      if (!canEdit || busy) return;
+      if (!canEdit || busy || photoBusy) return;
       // Password switched on with nothing stored and nothing typed: refuse, never save the link as if it were protected.
       if (draft.passwordOn && !link.hasPassword && draft.password === "") return setError({ code: "password_short" });
       // Route errors first: a bad country in a device-only rule leaves the diff empty and would otherwise be ignored silently.
@@ -241,7 +242,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
           {isCard && (
             <div className="sect">
               <h3>Contact card</h3>
-              <VcardForm id="ld-vc" value={draft.vcard ?? emptyVcard()} field={cardField} readOnly={!canEdit} onChange={(vcard) => {
+              <VcardForm id="ld-vc" value={draft.vcard ?? emptyVcard()} field={cardField} readOnly={!canEdit} onBusy={setPhotoBusy} onChange={(vcard) => {
                   set({ vcard });
                   setCardField(null);
                 }} />
@@ -378,7 +379,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         {host && <QrPanel ref={qrRef} host={host} slug={link.slug} />}
         {canEdit && (
           <div className="actions">
-            <button type="button" className="btn primary" onClick={() => void save()} disabled={busy} aria-keyshortcuts="Control+Enter">
+            <button type="button" className="btn primary" onClick={() => void save()} disabled={busy || photoBusy} aria-keyshortcuts="Control+Enter">
               Save <span className="k">Ctrl Enter</span>
             </button>
             <button type="button" className="btn" onClick={onDelete} aria-keyshortcuts="Shift+D">

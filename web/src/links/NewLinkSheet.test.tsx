@@ -6,6 +6,9 @@ import type { Domain, Link, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
 import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
+import { resizePhoto } from "./photo";
+
+vi.mock("./photo", async (orig) => ({ ...(await orig<typeof import("./photo")>()), resizePhoto: vi.fn(async () => "/9j/AAAA") }));
 
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
@@ -477,6 +480,27 @@ describe("New link sheet: contact card (S9)", () => {
     expect(screen.getByLabelText("Email 2").getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
     expect(posts(api)).toEqual([]);
+  });
+
+  it("Create waits for a photo that is still being resized, then sends it", async () => {
+    let finish: (b64: string) => void = () => undefined;
+    vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
+    const { api, user } = boot();
+    await open(user);
+    await user.click(screen.getByRole("radio", { name: "Contact card" }));
+    setVal(slugBox(), "ada");
+    await screen.findByText(/Available/);
+    setVal(screen.getByLabelText("First name"), "Ada");
+    fireEvent.change(screen.getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    const create = screen.getByRole("button", { name: /Create link/ }) as HTMLButtonElement;
+    await waitFor(() => expect(create.disabled).toBe(true));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(posts(api)).toEqual([]);
+    finish("/9j/NEWA");
+    await waitFor(() => expect(create.disabled).toBe(false));
+    await user.click(create);
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect((posts(api)[0] as { vcard: { photo: string } }).vcard.photo).toBe("/9j/NEWA");
   });
 
   it("a bad_vcard answer marks the field it names", async () => {
