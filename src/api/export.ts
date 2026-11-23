@@ -22,9 +22,11 @@ export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]
   { table: "domain_members", columns: ["domain_id", "user_id"] },
   {
     table: "links",
-    columns: ["id", "domain_id", "slug", "slug_key", "url", "redirect_code", "starts_at", "expires_at", "pass_query", "created_by", "updated_by", "created_at", "updated_at", "routes", "forward_to"],
+    columns: ["id", "domain_id", "slug", "slug_key", "url", "redirect_code", "starts_at", "expires_at", "pass_query", "created_by", "updated_by", "created_at", "updated_at", "routes", "forward_to", "kind"],
     computed: { protected: "password_hash IS NOT NULL" },
   },
+  // S9: the contact card of each vCard link (`data` its fields as JSON, `photo` base64).
+  { table: "vcards", columns: ["link_id", "data", "photo"] },
   { table: "slug_locks", columns: ["domain_id", "slug_key", "locked_at", "locked_by"] },
   // Only for people who may read the audit log (owners always): `data` alone never crosses the `audit` boundary.
   { table: "audit_log", columns: ["id", "at", "actor_id", "via", "action", "target_type", "target_id", "detail"], audit: true },

@@ -11,6 +11,8 @@ import { checkDestination, checkSlugShape, slugKey } from "../validate";
 import { reservedSlugs } from "../dash";
 import { isLegacyHost, refusedDashboard } from "./domains";
 import { purgeHost, purgeMany } from "./shared";
+import { cardOf, vcardSchema } from "./links";
+import { VCARD_URL, vcardData, type VCard } from "../vcard";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
 export const importApi = new Hono<E>();
@@ -28,6 +30,8 @@ const body = z.object({
     startDate: z.string().max(32).nullable().optional(), endDate: z.string().max(32).nullable().optional(),
     // A legacy password link: its hash cannot be carried over, so it is imported like a disabled link (a lock) and listed.
     protected: z.boolean().optional(),
+    // S9: a contact card (a vCard link); its destination is ignored.
+    vcard: vcardSchema.optional(),
   })),
   confirmNoPasswords: z.boolean().optional(),
 });
@@ -41,6 +45,11 @@ function parseDate(s: string | null | undefined): number | null | undefined {
   const t = new Date(Date.UTC(y, mo - 1, d, h, mi, se));
   const ok = t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d && t.getUTCHours() === h && t.getUTCMinutes() === mi && t.getUTCSeconds() === se;
   return ok ? t.getTime() / 1000 : undefined;
+}
+
+/** What makes two cards the same for skip-or-conflict: the stored data and photo (the live-link query builds the same string in SQL). */
+function cardKey(v: VCard): string {
+  return `${VCARD_URL}#${vcardData(v)}#${v.photo ?? ""}`;
 }
 
 type Dom = { id: string; host: string; isNew: boolean; cs: boolean; bare: string | null; nf: string | null; fillBare: boolean; fillNf: boolean };
@@ -118,7 +127,9 @@ importApi.post("/", async (c) => {
   // Two queries in total, whatever the domain count: ids go in as one JSON bind (D1 caps queries per invocation and binds per query).
   const reused = JSON.stringify([...doms.values()].filter((d) => !d.isNew).map((d) => d.id));
   const [liveRows, lockRows, setRows, usableRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string; id?: string }>([
-    c.env.DB.prepare("SELECT domain_id, slug_key, url FROM links WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
+    // A card link compares by its contents (the same string cardKey builds), every other link by its url.
+    c.env.DB.prepare(`SELECT links.domain_id, links.slug_key, CASE WHEN links.kind = 'vcard' THEN '${VCARD_URL}#' || coalesce(v.data, '') || '#' || coalesce(v.photo, '')
+      ELSE links.url END AS url FROM links LEFT JOIN vcards v ON v.link_id = links.id WHERE links.domain_id IN (SELECT value FROM json_each(?))`).bind(reused),
     c.env.DB.prepare("SELECT domain_id, slug_key FROM slug_locks WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
     settingsQ(c.env),
     c.env.DB.prepare(usableDomainsSql).bind(user.id),
@@ -135,7 +146,7 @@ importApi.post("/", async (c) => {
   for (const r of liveRows!.results) live.get(r.domain_id)!.set(r.slug_key, r.url!);
   for (const r of lockRows!.results) locks.get(r.domain_id)!.add(r.slug_key.toLowerCase());
 
-  type Plan = { dom: Dom; slug: string; key: string; url: string; startsAt: number | null; expiresAt: number | null };
+  type Plan = { dom: Dom; slug: string; key: string; url: string; startsAt: number | null; expiresAt: number | null; vcard?: VCard };
   const out: Out[] = new Array(b.links.length);
   const plans: { link: Plan[]; lock: Plan[] } = { link: [], lock: [] };
   const conflict = (i: number, reason: string) => { out[i] = { kind: "conflict", reason }; };
@@ -151,16 +162,20 @@ importApi.post("/", async (c) => {
     if (reservedSlugs(c.env, host).includes(l.slug.toLowerCase())) return conflict(i, "reserved_path");
     if (!dom.cs && isTwin(host, l.slug)) return conflict(i, "case_twin");
     if (!l.enabled || l.protected) { disabled.push(i); return; }
-    const href = dest(l.destination);
+    const card = l.vcard ? cardOf(l.vcard) : null;
+    if (card && "error" in card) return conflict(i, "invalid_vcard");
+    const href = card ? VCARD_URL : dest(l.destination);
     if (!href) return conflict(i, "invalid_destination");
     const startsAt = parseDate(l.startDate), expiresAt = parseDate(l.endDate);
     if (startsAt === undefined || expiresAt === undefined || (startsAt !== null && expiresAt !== null && expiresAt <= startsAt)) return conflict(i, "bad_date");
     const key = slugKey(l.slug, dom.cs);
+    // A card is the same only with the same contents (the url is one placeholder for every card): see cardKey.
+    const same = card ? cardKey(card.vcard) : href;
     const have = live.get(dom.id)!.get(key);
-    if (have !== undefined) { out[i] = have === href ? { kind: "skip" } : { kind: "conflict", reason: "exists" }; return; }
+    if (have !== undefined) { out[i] = have === same ? { kind: "skip" } : { kind: "conflict", reason: "exists" }; return; }
     if (locks.get(dom.id)!.has(key.toLowerCase())) return conflict(i, "locked");
-    live.get(dom.id)!.set(key, href);
-    plans.link.push({ dom, slug: l.slug, key, url: href, startsAt, expiresAt });
+    live.get(dom.id)!.set(key, same);
+    plans.link.push({ dom, slug: l.slug, key, url: href, startsAt, expiresAt, ...(card ? { vcard: card.vcard } : {}) });
     out[i] = { kind: "create", sql: "link" };
   });
   // Case variants count as the same key here (locks are case-insensitive): disabled `abc` beside live `Abc` is a conflict.
@@ -196,7 +211,7 @@ importApi.post("/", async (c) => {
   const use = (domainId: string): Guard => ({ sql: `${may.sql} AND ? IN (${usableDomainsSql})`, binds: [...may.binds, domainId, user.id] });
   // Work statements carry their kind and host so each D1 batch can audit exactly what it touches. Each is SQL ending in its
   // WHERE plus binds, prepared per chunk so the chunk's own guard can be added to every write in it.
-  type Work = { sql: string; binds: unknown[]; kind: "domain" | "fill" | "link" | "lock"; host: string; counted: boolean; plan?: Plan };
+  type Work = { sql: string; binds: unknown[]; kind: "domain" | "fill" | "link" | "lock" | "vcard"; host: string; counted: boolean; plan?: Plan };
   const work: Work[] = [];
   for (const d of newDoms) {
     work.push({ kind: "domain", host: d.host, counted: false,
@@ -211,11 +226,17 @@ importApi.post("/", async (c) => {
   }
   // The slug key was computed from the case mode read at planning time; insert only while the domain still has it.
   for (const p of plans.link) {
+    const id = crypto.randomUUID();
     work.push({ kind: "link", host: p.dom.host, counted: true, plan: p,
-      sql: `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,created_by,updated_by,created_at,updated_at)
-       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
+      sql: `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,kind,created_by,updated_by,created_at,updated_at)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
        AND EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?) AND ${use(p.dom.id).sql}`,
-      binds: [crypto.randomUUID(), p.dom.id, p.slug, p.key, p.url, defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0, ...use(p.dom.id).binds] });
+      binds: [id, p.dom.id, p.slug, p.key, p.url, p.vcard ? 302 : defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, p.vcard ? "vcard" : "url",
+        user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0, ...use(p.dom.id).binds] });
+    // The card right after its link, only if that insert ran (a fresh id); never counted on its own.
+    if (p.vcard) work.push({ kind: "vcard", host: p.dom.host, counted: false,
+      sql: "INSERT INTO vcards (link_id, data, photo) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM links WHERE id = ?)",
+      binds: [id, vcardData(p.vcard), p.vcard.photo, id] });
   }
   // A live link committed after planning wins its key over a planned lock.
   for (const p of plans.lock) {
@@ -229,8 +250,12 @@ importApi.post("/", async (c) => {
   let inserted = 0; // INSERT OR IGNORE can lose a race; report what was really written
   const lostLinks: Plan[] = [], lostLocks: Plan[] = [];
   const SIZE = CHUNK - 2; // room for the run row (first batch) and the chunk row
-  for (let i = 0; i === 0 || i < work.length; i += SIZE) {
-    const part = work.slice(i, i + SIZE);
+  // One batch even with no work (the run row), as before.
+  for (let i = 0, end = 0, first = true; first || i < work.length; i = end, first = false) {
+    // A card never starts a batch: it is written in the same batch as its link, so a failed batch never leaves a link without its card.
+    end = Math.min(i + SIZE, work.length);
+    if (work[end]?.kind === "vcard") end--;
+    const part = work.slice(i, end);
     const n = (k: Work["kind"]) => part.filter((w) => w.kind === k).length;
     // A chunk that adds a domain needs domains.manage for all of it: every write carries that guard too, so a loss refuses
     // the whole chunk (audit included) rather than letting its links land unaudited behind a 403.
