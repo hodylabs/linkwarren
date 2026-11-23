@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildReport, resolveRange } from "../src/analytics";
-import { digestEmail, sendDigests, startWeek, unsubToken, weekOf } from "../src/digest";
+import { digestEmail, outcomeOf, sendDigests, startWeek, unsubToken, weekOf } from "../src/digest";
 import { dash } from "./helpers/access";
 import { fakeResend } from "./helpers/resend";
 import { signedIn, withCookie } from "./helpers/session";
@@ -95,7 +95,7 @@ describe("sendDigests", () => {
     await sendDigests(env, MON_8_PARIS + 3600);
     expect(fake.sent).toHaveLength(2);
     const keys = spy.mock.calls.map((c) => (c[1] as RequestInit).headers as Record<string, string>).map((h) => h["idempotency-key"]);
-    expect(keys.every((k) => /^digest-.+-2026-11-23$/.test(k!))).toBe(true);
+    expect(keys.every((k) => /^digest-.+-2026-11-23-0$/.test(k!))).toBe(true);
     const rows = (await env.DB.prepare("SELECT last_week FROM digest_prefs").all<{ last_week: string }>()).results;
     expect(rows.every((r) => r.last_week === "2026-11-23")).toBe(true);
   });
@@ -147,6 +147,55 @@ describe("sendDigests", () => {
     expect(ok.status).toBe(200);
     expect(ok.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect((await env.DB.prepare("SELECT enabled FROM digest_prefs WHERE user_id = ?").bind(a.user.id).first<{ enabled: number }>())!.enabled).toBe(0);
+  });
+});
+
+describe("failed sends never starve the others", () => {
+  /** Two failing recipients that sort first, one good one last; Resend answers `bad` for the failing ones. */
+  async function three(bad: number) {
+    const ids = ["u-a1", "u-a2", "u-z9"];
+    for (const id of ids) {
+      await signedIn(`${id}@example.com`, { id });
+      await run("INSERT INTO digest_prefs (user_id,enabled,tz,secret,last_week,updated_at) VALUES (?,1,'UTC',?, '2026-11-16', 1)", id, "s".repeat(64));
+    }
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dM','main.example.com','main','active','u-a1',1)");
+    const calls: { to: string; key: string }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_u, init) => {
+      const to = (JSON.parse(String(init!.body)) as { to: string[] }).to[0]!;
+      calls.push({ to, key: (init!.headers as Record<string, string>)["idempotency-key"]! });
+      return to.startsWith("u-z9") ? Response.json({ id: "e1" }) : Response.json({ message: "no" }, { status: bad });
+    });
+    const state = async (id: string) => (await env.DB.prepare("SELECT last_week, tries, last_error FROM digest_prefs WHERE user_id = ?").bind(id).first())!;
+    return { calls, state };
+  }
+
+  it("2 refused recipients and 1 good one: the good one gets its email on the next run, the refused are not retried this week", async () => {
+    const { calls, state } = await three(422);
+    expect(await sendDigests(env, MON_8_PARIS)).toBe(0); // both attempts go to the refused addresses
+    expect(await sendDigests(env, MON_8_PARIS + 3600)).toBe(1);
+    expect(calls.map((c) => c.to)).toEqual(["u-a1@example.com", "u-a2@example.com", "u-z9@example.com"]);
+    expect(await state("u-a1")).toMatchObject({ last_week: "2026-11-23", last_error: "refused_422" });
+    expect(await sendDigests(env, MON_8_PARIS + 7200)).toBe(0);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("transient failures go behind the others and retry with a new key; out of tries the week is given up", async () => {
+    const { calls, state } = await three(503);
+    await sendDigests(env, MON_8_PARIS);
+    expect(await sendDigests(env, MON_8_PARIS + 3600)).toBe(1);
+    expect(calls.map((c) => c.to)).toEqual(["u-a1@example.com", "u-a2@example.com", "u-z9@example.com", "u-a1@example.com"]);
+    expect(calls.filter((c) => c.to.startsWith("u-a1")).map((c) => c.key.slice(-2))).toEqual(["-0", "-1"]);
+    expect(await state("u-a1")).toMatchObject({ last_week: "2026-11-16", tries: 2, last_error: "rejected_503" });
+    for (let h = 2; h < 12; h++) await sendDigests(env, MON_8_PARIS + h * 3600);
+    expect(calls.filter((c) => c.to.startsWith("u-a1"))).toHaveLength(6);
+    expect(await state("u-a1")).toMatchObject({ last_week: "2026-11-23", last_error: "gave_up" });
+  });
+
+  it("outcomeOf: 409 and sends keep the week; network keeps the same key", () => {
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 409 })).toMatchObject({ keep: true });
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 429 })).toEqual({ keep: false, nextTry: true, error: "rejected_429" });
+    expect(outcomeOf({ ok: false, reason: "network" })).toEqual({ keep: false, nextTry: false, error: "network" });
+    expect(outcomeOf(null)).toMatchObject({ keep: false, nextTry: false });
   });
 });
 

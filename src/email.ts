@@ -28,7 +28,8 @@ export type Mail = {
   /** Extra mail headers (List-Unsubscribe); values are built by us, never from input. */
   headers?: Record<string, string>;
 };
-export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings" };
+/** `status`: Resend's HTTP status on a rejection, for callers that decide on a retry (never shown to people). */
+export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings"; status?: number };
 
 /** One POST to Resend. Never throws; logs the status code only (Resend's error body can echo the request, link included). */
 export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Promise<SendResult> {
@@ -54,7 +55,7 @@ export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Pro
     await r.body?.cancel();
     if (!r.ok) {
       console.warn("resend_rejected", r.status);
-      return { ok: false, reason: "rejected" };
+      return { ok: false, reason: "rejected", status: r.status };
     }
     return { ok: true };
   } catch {
