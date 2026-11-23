@@ -90,7 +90,7 @@ describe("New API key sheet", () => {
     expect(within(dlg).getByText(SECRET)).toBeTruthy();
     expect(location.href).not.toContain(SECRET);
     // The machine API is at the root of the host in both modes, never under the dashboard base.
-    expect(within(dlg).getByText(`Send it as a Bearer token to https://${location.host}/api/v1`)).toBeTruthy();
+    expect(within(dlg).getByText(`Send it as a Bearer token to ${location.protocol}//${location.host}/api/v1`)).toBeTruthy();
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     await user.keyboard("c");

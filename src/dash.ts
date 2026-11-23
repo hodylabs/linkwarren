@@ -90,6 +90,10 @@ export const isDiscoveryPath = (pathname: string) =>
  */
 export function legacyAnswer(req: Request, d: Dash): Response {
   const url = new URL(req.url);
+  // The machine API and MCP live at the root of the new host, never under the dashboard: point callers there (no redirect,
+  // so a Bearer credential is never re-sent on its own).
+  const root = /^\/(?:api\/v1|mcp)(?:\/|$)/.exec(url.pathname)?.[0].replace(/\/$/, "");
+  if (root) return Response.json({ error: "moved", to: d.origin + root }, { status: 410 });
   if ((req.method === "GET" || req.method === "HEAD") && !url.pathname.startsWith("/.well-known/")) {
     const loc = d.base + url.pathname + url.search;
     const to = URL.parse(loc);

@@ -26,7 +26,7 @@ const key = (o: Partial<KeyItem>): KeyItem => ({
   createdAt: now - 50 * DAY, lastUsedAt: null, expiresAt: now + 40 * DAY, ...o,
 });
 const dana: UserItem = { id: "ud", email: "dana@example.com", name: "Dana R.", role: "member", roleId: "member", roleName: "Member", perms: MEMBER_ROLE.perms, status: "active", createdAt: 1, linkCount: 0, agentCount: 1, domains: [] };
-const mcpUrl = () => `https://${location.host}/mcp`;
+const mcpUrl = () => `${location.protocol}//${location.host}/mcp`;
 
 function boot(me: Me, routes: FakeRoutes = {}) {
   history.replaceState(null, "", "/agents");

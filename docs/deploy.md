@@ -43,7 +43,7 @@ Optional vars (see [Dashboard at a path](#dashboard-at-a-path)):
 - Use path mode only on a domain whose subdomains you all control: unlike `__Host-`, a `__Secure-` cookie does not stop a sibling host under the same registrable domain from setting a cookie with the same name and `Domain=` (cookie tossing), which could sign a visitor in as someone else or out.
 - Passkeys belong to the dashboard's host. Moving the dashboard to the main short domain means passkeys made on the old dashboard host stop working: people sign in with an email link and add a new passkey.
 
-`LEGACY_DASHBOARD_HOST` (optional, either mode) is the dashboard host you used before. Keep it routed to the Worker: `GET` and `HEAD` there answer `301` to the same path and query under the dashboard (`https://old.example.com/links?x=1` to `https://example.com/dashboard/links?x=1`), so bookmarks and recent sign-in links keep working. Every other method, and every `/.well-known/` path, answers `410 {"error":"moved","to":"<dashboard>/"}`: API scripts and agent connections must be pointed at the new address. The old host never serves short links or the dashboard. It must be a valid host name and differ from `DASHBOARD_HOST`, or every request answers `500 misconfigured`.
+`LEGACY_DASHBOARD_HOST` (optional, either mode) is the dashboard host you used before. Keep it routed to the Worker: `GET` and `HEAD` there answer `301` to the same path and query under the dashboard (`https://old.example.com/links?x=1` to `https://example.com/dashboard/links?x=1`), so bookmarks and recent sign-in links keep working. Every other method, and every `/.well-known/` path, answers `410 {"error":"moved","to":"<dashboard>/"}`, and any request to `/api/v1` or `/mcp` answers `410` with the new root address (`https://example.com/api/v1` or `https://example.com/mcp`): API scripts and agent connections must be pointed at the new address. The old host never serves short links or the dashboard. It must be a valid host name and differ from `DASHBOARD_HOST`, or every request answers `500 misconfigured`.
 
 ## Switching to path mode
 
@@ -126,7 +126,7 @@ curl -si https://example.com/<an existing slug>           # 301 or 302 to its de
 curl -si https://example.com/dashboard/                   # 200, HTML
 # the old host redirects pages and refuses API calls
 curl -si https://dash.example.com/links                   # 301, Location: https://example.com/dashboard/links
-curl -si -X POST https://dash.example.com/api/v1/links    # 410, {"error":"moved","to":"https://example.com/dashboard/"}
+curl -si -X POST https://dash.example.com/api/v1/links    # 410, {"error":"moved","to":"https://example.com/api/v1"}
 # the machine API at the root of the main domain, never under the path
 curl -si https://example.com/api/v1/domains               # 401 {"error":"unauthenticated"} without a key, 200 with one
 curl -si https://example.com/dashboard/api/v1/domains     # 404, {"error":"not_found"}

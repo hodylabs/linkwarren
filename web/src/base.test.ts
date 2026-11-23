@@ -45,7 +45,7 @@ describe("BASE", () => {
   });
   it.each(["/dashboard", null])("rootUrl ignores the base (%j): MCP and the machine API live at the root of the host", async (content) => {
     const { rootUrl } = (await load(content)).base;
-    expect([rootUrl("/mcp"), rootUrl("/api/v1")]).toEqual([`https://${location.host}/mcp`, `https://${location.host}/api/v1`]);
+    expect([rootUrl("/mcp"), rootUrl("/api/v1")]).toEqual([`${location.protocol}//${location.host}/mcp`, `${location.protocol}//${location.host}/api/v1`]);
   });
 });
 

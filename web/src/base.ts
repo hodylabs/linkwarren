@@ -13,4 +13,4 @@ export const stripBase = (pathname: string): string =>
   BASE !== "" && (pathname === BASE || pathname.startsWith(BASE + "/")) ? pathname.slice(BASE.length) || "/" : pathname;
 
 /** The MCP server and the machine API: always at the root of this host, in both modes (never under the base). */
-export const rootUrl = (p: "/mcp" | "/api/v1"): string => `https://${location.host}${p}`;
+export const rootUrl = (p: "/mcp" | "/api/v1"): string => `${location.protocol}//${location.host}${p}`; // http only in local dev

@@ -100,7 +100,7 @@ For scripts, create a key on the API & agents screen: New API key (`N`), give it
 
 Keys follow the person's current role. Creating a key needs **Personal API keys** in the role (`403 forbidden` otherwise). When an owner turns it off, every key of the role's people answers `403 {"error":"keys_not_allowed"}` from the next request, without counting on any limit or updating its last use; nothing is revoked, so turning it back on restores the same keys (until they expire). Listing and revoking your own keys still works without it. A key never does more than the role allows: with write access it still gets `403 forbidden` for what the role cannot do.
 
-A key works only on `/api/v1` at the root of the dashboard host (`https://dash.example.com/api/v1`, or `https://example.com/api/v1` with the dashboard at `https://example.com/dashboard`; never under the dashboard path, where `/dashboard/api/v1` answers `404`), sent as a Bearer token (`Authorization: Bearer <key>`, the word `Bearer` in any case). It never works on the dashboard API (`/api`) or on `/mcp`. Keep it in an environment variable, not on the command line or in a file you commit:
+A key works only on `/api/v1` at the root of the dashboard host (`https://dash.example.com/api/v1`, or `https://example.com/api/v1` with the dashboard at `https://example.com/dashboard`; never under the dashboard path, where `/dashboard/api/v1` answers `404`), sent as a Bearer token (`Authorization: Bearer <key>`, the word `Bearer` in any case). It never works on the dashboard's own API (`<dashboard URL>/api`) or on `/mcp`. Keep it in an environment variable, not on the command line or in a file you commit:
 
 ```sh
 export LW_KEY='<your key>'

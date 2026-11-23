@@ -134,13 +134,23 @@ describe("legacy dashboard host (R10)", () => {
   });
 
   it.each([
-    ["POST", "/api/links"], ["PUT", "/x"], ["DELETE", "/api/links/1"], ["OPTIONS", "/mcp"], ["GET", "/.well-known/oauth-authorization-server"],
+    ["POST", "/api/links"], ["PUT", "/x"], ["DELETE", "/api/links/1"], ["GET", "/.well-known/oauth-authorization-server"],
     ["HEAD", "/.well-known/oauth-protected-resource"], ["GET", "/.well-known/security.txt"],
   ])("%s %s is 410 moved", async (method, p) => {
     const r = await old(p, { method, ...(method === "POST" ? { body: "{}", headers: { "content-type": "application/json" } } : {}) });
     expect(r.status).toBe(410);
     expect(r.headers.get("location")).toBeNull();
     if (method !== "HEAD") expect(await r.json()).toEqual({ error: "moved", to: "https://short.test/dashboard/" });
+  });
+
+  it.each([
+    ["POST", "/api/v1/links", "https://short.test/api/v1"], ["GET", "/api/v1/links?q=1", "https://short.test/api/v1"], ["GET", "/api/v1", "https://short.test/api/v1"],
+    ["POST", "/mcp", "https://short.test/mcp"], ["GET", "/mcp", "https://short.test/mcp"], ["OPTIONS", "/mcp", "https://short.test/mcp"],
+  ])("%s %s on the old host is 410 pointing at the root address %s", async (method, p, to) => {
+    const r = await old(p, { method, ...(method === "POST" ? { body: "{}", headers: { "content-type": "application/json" } } : {}) });
+    expect(r.status).toBe(410);
+    expect(r.headers.get("location")).toBeNull();
+    expect(await r.json()).toEqual({ error: "moved", to });
   });
 
   it("never touches D1", async () => {
