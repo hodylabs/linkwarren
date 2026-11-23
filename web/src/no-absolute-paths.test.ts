@@ -14,7 +14,7 @@ const RULES: { name: string; bad: RegExp; before?: RegExp; at?: RegExp }[] = [
   // or compared with a stripped pathname.
   {
     name: "dashboard path literal", bad: new RegExp(`${Q}/(linkwarren-mark|sign-in|join\\b|mcp\\b)`),
-    before: /(\b(withBase|stripBase|navigate)\(\s*|\bto=\{?|\bapi(<[^>]*>)?\([^()]*,\s*|\bstripBase\([^()]*\)\s*[!=]==\s*)$/,
+    before: /(\b(withBase|stripBase|navigate|rootUrl)\(\s*|\bto=\{?|\bapi(<[^>]*>)?\([^()]*,\s*|\bstripBase\([^()]*\)\s*[!=]==\s*)$/,
   },
   // API paths travel to api(), which adds the base; these sinks would send them raw.
   { name: "API path in a raw sink", bad: new RegExp(`(\\bsrc=|\\bhref=|\\bfetch\\(|\\bassign\\(|new URL\\(|State\\([^)]*,)\\s*\\{?${Q}/(api|auth)/`) },

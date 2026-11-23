@@ -1,4 +1,4 @@
-// S8c Task 4: OAuth and MCP under the dashboard path (R4, R5, R13), the wire contract the live checks use.
+// S8c Task 4: OAuth under the dashboard path, MCP at the root /mcp of the main domain (R4, R5, R13), the wire contract the live checks use.
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
@@ -12,7 +12,7 @@ import {
 import { call, pathEnv, seedShort, testCtx } from "./helpers/path";
 
 const O = "https://short.test";
-const PR = "/.well-known/oauth-protected-resource/dashboard/mcp";
+const PR = "/.well-known/oauth-protected-resource/mcp";
 const on = (over: Partial<Env> = {}) => pathEnv({ MCP_ENABLED: "1", ...over });
 const off = () => pathEnv({ MCP_ENABLED: "0" });
 const json = async (r: Response) => [r.status, r.headers.get("content-type")?.split(";")[0], await r.json()];
@@ -31,8 +31,8 @@ afterEach(() => {
 });
 
 describe("path mode wire contract (agents on)", () => {
-  it("POST /dashboard/mcp without a token is 401 pointing at the path-inserted metadata", async () => {
-    const r = await call("/dashboard/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }, on());
+  it("POST /mcp without a token is 401 pointing at the path-inserted metadata", async () => {
+    const r = await call("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }, on());
     expect(r.status).toBe(401);
     expect(r.headers.get("www-authenticate")).toContain(`resource_metadata="${O}${PR}"`);
   });
@@ -40,7 +40,7 @@ describe("path mode wire contract (agents on)", () => {
   it.each([PR, "/.well-known/oauth-protected-resource"])("GET %s is the protected resource metadata", async (p) => {
     const r = await call(p, {}, on());
     expect(r.status).toBe(200);
-    expect(await r.json()).toMatchObject({ resource: `${O}/dashboard/mcp`, authorization_servers: [O] });
+    expect(await r.json()).toMatchObject({ resource: `${O}/mcp`, authorization_servers: [O] });
   });
 
   it("GET /.well-known/oauth-authorization-server has the origin issuer and prefixed endpoints", async () => {
@@ -56,7 +56,7 @@ describe("path mode wire contract (agents on)", () => {
   });
 
   it.each([
-    "/.well-known/oauth-authorization-server/dashboard", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource/x",
+    "/.well-known/oauth-authorization-server/dashboard", "/.well-known/oauth-protected-resource/dashboard/mcp", "/.well-known/oauth-protected-resource/x",
     "/.well-known/openid-configuration", "/.well-known/openid-configuration/dashboard", "/.well-known/oauth-authorization-serverx",
     // Under the prefix a discovery document is never the dashboard HTML.
     "/dashboard/.well-known/oauth-authorization-server", "/dashboard/.well-known/oauth-protected-resource", `/dashboard${PR}`,
@@ -65,9 +65,9 @@ describe("path mode wire contract (agents on)", () => {
     expect(await json(await call(p, {}, on()))).toEqual(NOT_FOUND);
   });
 
-  it("the root /mcp, /authorize, /token and /register are short-link answers, never the provider", async () => {
+  it("the root /authorize, /token, /register and an encoded /mcp are short-link answers, never the provider", async () => {
     const answer = async (r: Response) => [r.status, r.headers.get("location"), r.headers.get("www-authenticate"), await r.text()];
-    for (const p of ["/mcp", "/authorize", "/token", "/register", "/mcp/x"])
+    for (const p of ["/authorize", "/token", "/register", "/%6dcp"])
       for (const method of ["GET", "POST"]) {
         const ref = await handleRedirect(new Request(`${O}/no-such-slug-xyz`, { method }), on(), Math.floor(Date.now() / 1000), testCtx());
         expect([p, method, ...(await answer(await call(p, { method }, on())))]).toEqual([p, method, ...(await answer(ref))]);
@@ -85,7 +85,7 @@ describe("path mode with agents off", () => {
   it("every discovery path and /dashboard/{mcp,authorize,token,register}, raw and encoded, is JSON 404; short links still work", async () => {
     const paths = [
       PR, "/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
-      "/dashboard/mcp", "/dashboard/mcp/x", "/dashboard/authorize", "/dashboard/token", "/dashboard/register",
+      "/mcp", "/dashboard/mcp", "/dashboard/mcp/x", "/dashboard/authorize", "/dashboard/token", "/dashboard/register",
       "/dashboard/%6dcp", "/dashboard/%61uthorize", "/dashboard/%74oken", "/dashboard/%72egister", "/dashboard/.well-known/oauth-authorization-server",
     ];
     for (const p of paths)
@@ -132,7 +132,7 @@ describe("path mode full flow", () => {
     expect(list.status).toBe(200);
     expect((list.body.result.tools as { name: string }[]).map((x) => x.name)).toContain("server_info");
     const who = await mcpCall(tok.access_token, "tools/call", { name: "server_info", arguments: {} }, testCtx(), e); // ctx and env: still path mode
-    expect(JSON.parse(who.body.result.content[0].text).mcpUrl).toBe(`${O}/dashboard/mcp`);
+    expect(JSON.parse(who.body.result.content[0].text).mcpUrl).toBe(`${O}/mcp`);
 
     const r = await token({ grant_type: "refresh_token", refresh_token: tok.refresh_token, client_id: clientId }, e);
     expect(r.status).toBe(200);
@@ -154,18 +154,63 @@ describe("path mode full flow", () => {
 });
 
 describe("switching an instance to path mode (R13)", () => {
-  it("a token and refresh token from the host-mode provider are refused under the prefix on the same host", async () => {
-    // Host mode on dash.test (the default test env), then the same host in path mode.
+  it("a host-mode token and refresh token from another host are refused at the main domain's /mcp, and back", async () => {
+    // Host mode on dash.test (the default test env), then path mode on short.test: another resource.
     const old = await connectAgentFull(`sw-${crypto.randomUUID()}@example.com`);
     expect((await mcpCall(old.accessToken, "tools/list")).status).toBe(200);
-    const e = on({ DASHBOARD_HOST: "dash.test" });
-    const r = await mcpCall(old.accessToken, "tools/list", undefined, undefined, e);
-    expect(r.status).toBe(401);
+    const e = on();
+    expect((await mcpCall(old.accessToken, "tools/list", undefined, undefined, e)).status).toBe(401);
     const refreshed = await token({ grant_type: "refresh_token", refresh_token: old.refreshToken, client_id: old.clientId }, e);
     expect([refreshed.status, await refreshed.json()]).toMatchObject([400, { error: "invalid_grant" }]);
-    // And the other way round: a path-mode token is refused once the instance is back in host mode.
     const fresh = await connectAgent(`sw2-${crypto.randomUUID()}@example.com`, { env: e });
     expect((await mcpCall(fresh.accessToken, "tools/list", undefined, undefined, e)).status).toBe(200);
     expect((await mcpCall(fresh.accessToken, "tools/list")).status).toBe(401);
+  });
+
+  it("a token bound to the old <base>/mcp resource is refused at /mcp, and its refresh is refused", async () => {
+    const e = on();
+    const t = await connectAgentFull(`old-${crypto.randomUUID()}@example.com`, { env: e });
+    expect((await mcpCall(t.accessToken, "tools/list", undefined, undefined, e)).status).toBe(200);
+    // Rebind the stored token and grant to the resource earlier path-mode builds issued.
+    const OLD = `${O}/dashboard/mcp`;
+    for (const k of (await env.OAUTH_KV.list()).keys) {
+      const v = await env.OAUTH_KV.get<Record<string, unknown>>(k.name, "json");
+      if (k.name.startsWith("token:") && v?.audience === `${O}/mcp`) await env.OAUTH_KV.put(k.name, JSON.stringify({ ...v, audience: OLD }));
+      if (k.name.startsWith("grant:") && v?.resource === `${O}/mcp`) await env.OAUTH_KV.put(k.name, JSON.stringify({ ...v, resource: OLD }));
+    }
+    expect((await mcpCall(t.accessToken, "tools/list", undefined, undefined, e)).status).toBe(401);
+    const r = await token({ grant_type: "refresh_token", refresh_token: t.refreshToken, client_id: t.clientId }, e);
+    expect(r.status).toBe(400);
+  });
+});
+
+describe("MCP at the root of the main domain", () => {
+  it("<base>/mcp never serves MCP, with or without a valid token, raw or encoded", async () => {
+    const e = on();
+    const t = await connectAgent(`b-${crypto.randomUUID()}@example.com`, { env: e });
+    for (const p of ["/dashboard/mcp", "/dashboard/mcp/x", "/dashboard/%6dcp"])
+      for (const auth of [{}, { authorization: `Bearer ${t.accessToken}` }] as Record<string, string>[])
+        for (const method of ["GET", "POST"]) {
+          const r = await call(p, { method, headers: { ...auth, "content-type": "application/json", accept: "application/json, text/event-stream" },
+            ...(method === "POST" ? { body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) } : {}) }, e);
+          expect([p, method, ...(await json(r))]).toEqual([p, method, ...NOT_FOUND]);
+        }
+  });
+
+  it("the agents switch gates /mcp: off is JSON 404 for any method, on with a token works", async () => {
+    const t = await connectAgent(`g-${crypto.randomUUID()}@example.com`, { env: on() });
+    for (const method of ["GET", "POST", "OPTIONS"])
+      expect([method, ...(await json(await call("/mcp", { method, headers: { authorization: `Bearer ${t.accessToken}` } }, off())))]).toEqual([method, ...NOT_FOUND]);
+    expect((await mcpCall(t.accessToken, "tools/list", undefined, undefined, off())).status).toBe(404);
+    // The owner's D1 switch too, not only the deploy lock.
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at, updated_by) VALUES ('mcp.enabled', '0', 1, 'x')").run();
+    resetMcpCache();
+    expect((await mcpCall(t.accessToken, "tools/list", undefined, undefined, on())).status).toBe(404);
+  });
+
+  it("/mcp on another domain is a short link", async () => {
+    const ref = await call("https://other.test/no-such-slug-xyz", {}, on());
+    const r = await call("https://other.test/mcp", { method: "POST" }, on());
+    expect([r.status, r.headers.get("www-authenticate"), await r.text()]).toEqual([ref.status, null, await ref.text()]);
   });
 });

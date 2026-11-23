@@ -87,9 +87,10 @@ const helpersBase = new WeakMap<object, string>();
 const tag = (e: Env, key: string) => { if (e.OAUTH_PROVIDER && !helpersBase.has(e.OAUTH_PROVIDER)) helpersBase.set(e.OAUTH_PROVIDER, key); };
 
 /**
- * One provider per dashboard base (host + prefix; the resource URL is derived from it, so a token is bound to one base and
- * refused after a switch). R5: every endpoint under the prefix, the issuer stays the origin (the token endpoint's origin),
- * so the authorization-server metadata is the root RFC 8414 document. The library reads its KV as env.OAUTH_KV.
+ * One provider per dashboard base (host + prefix). The resource is https://<host>/mcp in both modes, so a token is bound to
+ * one host and refused after a host change. R5: the authorize, token and register endpoints under the prefix, the MCP
+ * endpoint at the root /mcp, the issuer the origin (the token endpoint's origin), so the authorization-server metadata is
+ * the root RFC 8414 document. The library reads its KV as env.OAUTH_KV.
  */
 export function provider(env: Env): OAuthProvider<Env> {
   const d = dash(env);
@@ -102,7 +103,7 @@ export function provider(env: Env): OAuthProvider<Env> {
     cached = {
       key,
       p: new OAuthProvider<Env>({
-        apiRoute: `${P}/mcp`,
+        apiRoute: "/mcp", // always the root of the host: in path mode the wrapper sends the main domain's /mcp here
         // The library has just set the helpers when it calls either handler.
         apiHandler: { fetch: (req, e, ctx) => (tag(e, key), mcpHandler.fetch(req, e, ctx)) },
         // Path mode: the app only ever sees inner (root) paths (R3); the wrapper sends nothing outside the prefix here.
@@ -124,7 +125,7 @@ export function provider(env: Env): OAuthProvider<Env> {
         clientRegistrationTTL: 2592000, // abandoned DCR clients age out
         scopesSupported: ["offline_access", "read", "write", "delete"],
         clientIdMetadataDocumentEnabled: false,
-        resourceMetadata: { resource: `https://${host}${P}/mcp` },
+        resourceMetadata: { resource: `https://${host}/mcp` },
       }),
     };
   return cached.p;

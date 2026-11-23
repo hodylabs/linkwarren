@@ -33,11 +33,11 @@ Optional vars (see [Dashboard at a path](#dashboard-at-a-path)):
 
 **Host mode** (default, `DASHBOARD_PATH` unset): the dashboard owns `DASHBOARD_HOST` entirely, for example `https://dash.example.com`. Route that host to the Worker as well as every short domain.
 
-**Path mode** (`DASHBOARD_PATH` set, for example `/dashboard`): `DASHBOARD_HOST` is your main short domain, for example `example.com`, and the dashboard, API and health check live at `https://example.com/dashboard`. Every other path on that host is a short link, exactly as on any other short domain. The rules:
+**Path mode** (`DASHBOARD_PATH` set, for example `/dashboard`): `DASHBOARD_HOST` is your main short domain, for example `example.com`, and the dashboard, its own session API, the OAuth endpoints and the health check live at `https://example.com/dashboard`. The MCP server (`https://example.com/mcp`) and the machine API for API keys (`https://example.com/api/v1/...`) stay at the root of the domain, as in host mode. Every other path on that host is a short link, exactly as on any other short domain. The rules:
 
 - `DASHBOARD_PATH` is one lowercase segment: a slash, then 1 to 32 of `a-z`, `0-9` and `-`, not starting or ending with `-`, no trailing slash. Anything else answers every request with `500 {"error":"misconfigured"}` and logs `dashboard config invalid: DASHBOARD_PATH` (the name, never the value).
 - Path mode needs `AUTH_MODE` `app` (or unset). `access` is refused as misconfigured: an Access application cannot cover the prefix while leaving the short links and the OAuth discovery documents open.
-- Only the prefix and its subpaths belong to the dashboard (`/dashboard`, `/dashboard/...`), matched exactly and case-sensitively: `/dashboardx`, `/Dashboard` and `/%64ashboard` are short-link paths. Paths starting with `/.well-known/oauth-` or `/.well-known/openid-configuration` are never short links (they answer JSON).
+- Only the prefix and its subpaths belong to the dashboard (`/dashboard`, `/dashboard/...`), matched exactly and case-sensitively: `/dashboardx`, `/Dashboard` and `/%64ashboard` are short-link paths. Paths starting with `/.well-known/oauth-` or `/.well-known/openid-configuration` are never short links (they answer JSON). Neither are `/mcp`, `/mcp/...`, `/api` and `/api/...`: `/mcp` is the MCP server, `/api/v1/...` the machine API (Bearer keys only, never the session cookie), and every other path there answers `404 {"error":"not_found"}` JSON. So `mcp` and `api` are reserved slugs on the main domain, with the dashboard's segment. Under the prefix, `/dashboard/mcp` and `/dashboard/api/v1/...` answer `404` JSON: each has one address only.
 - The health check is `https://<DASHBOARD_HOST><DASHBOARD_PATH>/healthz`; `/healthz` on the main domain is an ordinary short-link path.
 - The session cookie is `__Secure-lw_session` with `Path=<DASHBOARD_PATH>` (host mode: `__Host-lw_session`, `Path=/`), host-only, `Secure`, `HttpOnly`, `SameSite=Lax`, so browsers never send it with a short-link visit on the main domain. Each mode reads only its own cookie name: switching modes signs everyone out.
 - Use path mode only on a domain whose subdomains you all control: unlike `__Host-`, a `__Secure-` cookie does not stop a sibling host under the same registrable domain from setting a cookie with the same name and `Domain=` (cookie tossing), which could sign a visitor in as someone else or out.
@@ -53,8 +53,8 @@ This moves an instance that already has data from host mode (`dash.example.com`)
 
 - Everyone is signed out and signs in again with an email link (the session cookie has a new name and path).
 - Passkeys stop working (they belong to the old host). After the email sign-in, people add a new passkey.
-- AI agents must be connected again at `https://example.com/dashboard/mcp`: old tokens are bound to the old address and are refused.
-- Scripts must change their base URL to `https://example.com/dashboard/api/v1`. API keys themselves keep working.
+- AI agents must be connected again at `https://example.com/mcp`: old tokens are bound to the old address and are refused. (When the dashboard host does not change, the MCP address does not change either and connections keep working.)
+- Scripts must change their base URL to `https://example.com/api/v1` (only the host changes; it is never under `/dashboard`). API keys themselves keep working. A script that used `https://example.com/dashboard/api/v1` with an earlier build must drop the `/dashboard`.
 - Bookmarks, invite links and sign-in links that were already sent keep working: the old host answers `301` to the same path under the dashboard. Anything that is not a `GET` or `HEAD` (API calls, OAuth) answers `410` with the new address.
 
 ### 1. Preconditions
@@ -68,21 +68,21 @@ This moves an instance that already has data from host mode (`dash.example.com`)
 Run each query and read what it prints (`<db>` and `<config>` are your database name and instance config):
 
 ```sh
-npx wrangler d1 execute <db> --remote -c <config> --command "SELECT d.host, l.slug, l.id FROM links l JOIN domains d ON d.id = l.domain_id WHERE d.host = 'example.com' AND lower(l.slug) = 'dashboard'"
+npx wrangler d1 execute <db> --remote -c <config> --command "SELECT d.host, l.slug, l.id FROM links l JOIN domains d ON d.id = l.domain_id WHERE d.host = 'example.com' AND lower(l.slug) IN ('dashboard', 'mcp', 'api')"
 npx wrangler d1 execute <db> --remote -c <config> --command "SELECT COUNT(*) FROM passkeys"
 npx wrangler d1 execute <db> --remote -c <config> --command "SELECT COUNT(*) FROM agent_connections WHERE revoked_at IS NULL"
 npx wrangler d1 execute <db> --remote -c <config> --command "SELECT COUNT(*) FROM api_keys"
 ```
 
 - Use your main domain for `host` and your `DASHBOARD_PATH` segment (without the slash, lowercase) for `slug`.
-- The first query **must print no rows**. A row is a short link whose slug is the dashboard's segment: after the switch the dashboard answers there and the link is shadowed. Move it to another slug (or delete it) first, and tell whoever shares that link.
+- The first query **must print no rows**. A row is a short link whose slug is the dashboard's segment, `mcp` or `api`: after the switch the dashboard, the MCP server or the machine API answers there and the link is shadowed. Move it to another slug (or delete it) first, and tell whoever shares that link.
 - The three counts tell you how many passkeys, agent connections and API keys you are about to ask people to redo.
 
 ### 3. Tell people
 
 Send this before the switch (change the hosts):
 
-> On DATE we are moving the dashboard from `dash.example.com` to `example.com/dashboard`. Short links do not change. After the move: sign in again with an email link, then add a passkey again in Sign-in and security; reconnect AI agents at `https://example.com/dashboard/mcp` (remove the old connection first); change scripts to use `https://example.com/dashboard/api/v1` (your API keys keep working). Old dashboard links still redirect.
+> On DATE we are moving the dashboard from `dash.example.com` to `example.com/dashboard`. Short links do not change. After the move: sign in again with an email link, then add a passkey again in Sign-in and security; reconnect AI agents at `https://example.com/mcp` (remove the old connection first); change scripts to use `https://example.com/api/v1` (your API keys keep working). Old dashboard links still redirect.
 
 ### 4. Change the config
 
@@ -127,12 +127,16 @@ curl -si https://example.com/dashboard/                   # 200, HTML
 # the old host redirects pages and refuses API calls
 curl -si https://dash.example.com/links                   # 301, Location: https://example.com/dashboard/links
 curl -si -X POST https://dash.example.com/api/v1/links    # 410, {"error":"moved","to":"https://example.com/dashboard/"}
+# the machine API at the root of the main domain, never under the path
+curl -si https://example.com/api/v1/domains               # 401 {"error":"unauthenticated"} without a key, 200 with one
+curl -si https://example.com/dashboard/api/v1/domains     # 404, {"error":"not_found"}
 ```
 
 If agents are on, also check discovery (the table is in [agents.md](agents.md#dashboard-at-a-path)):
 
 ```sh
-curl -si -X POST https://example.com/dashboard/mcp        # 401, resource_metadata="https://example.com/.well-known/oauth-protected-resource/dashboard/mcp"
+curl -si -X POST https://example.com/mcp                  # 401, resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp"
+curl -si -X POST https://example.com/dashboard/mcp        # 404, {"error":"not_found"}
 curl -s https://example.com/.well-known/oauth-authorization-server   # JSON, issuer "https://example.com"
 ```
 
@@ -140,7 +144,7 @@ Then sign in with an email link in a browser and open `https://example.com/dashb
 
 Update uptime monitors and any other check to `https://example.com/dashboard/healthz`. `/healthz` on the main domain is now an ordinary short-link path.
 
-Path mode changes the paths that answer when agents are off. With `MCP_ENABLED` off or the dashboard switch off, `/dashboard/mcp`, `/dashboard/authorize`, `/dashboard/token`, `/dashboard/register` and the OAuth discovery paths (`/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource`, with or without `/dashboard/mcp`) answer `404 {"error":"not_found"}`; `/mcp`, `/authorize`, `/token` and `/register` at the root are short links either way. The routes you need are the main domain and the old dashboard host, each routed to the Worker.
+Path mode changes the paths that answer when agents are off. With `MCP_ENABLED` off or the dashboard switch off, `/mcp`, `/dashboard/authorize`, `/dashboard/token`, `/dashboard/register` and the OAuth discovery paths (`/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource`, with or without `/mcp`) answer `404 {"error":"not_found"}`; `/dashboard/mcp` is `404` either way, and `/authorize`, `/token` and `/register` at the root are short links either way. `/api/v1` is not affected by the switch. The routes you need are the main domain and the old dashboard host, each routed to the Worker.
 
 ### 9. Clean up
 
@@ -384,7 +388,7 @@ Agents (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) conne
 
 1. Create a second KV namespace for the OAuth state: `npx wrangler kv namespace create linkwarren-oauth`. Put its id in `wrangler.instance.jsonc` under the binding **`OAUTH_KV`** (the name is fixed by the OAuth library; see `wrangler.instance.example.jsonc`). Keep the binding on every deploy, also with MCP off: requests to the dashboard host pass through the OAuth library.
 2. Apply the migrations, which include `0007_agents.sql` (tables `api_keys`, `agent_connections`, `tool_calls`): `npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
-3. Leave `MCP_ENABLED` unset and deploy, then sign in as the owner and turn agents on with the switch on the API & agents screen (see [MCP_ENABLED](#mcp_enabled)). Check it: `curl -si -X POST https://<dashboard host>/mcp` answers `401` with a `WWW-Authenticate` header that contains `resource_metadata="https://<dashboard host>/.well-known/oauth-protected-resource/mcp"`, and `curl -s https://<dashboard host>/.well-known/oauth-authorization-server` answers JSON. With the dashboard at a path (`DASHBOARD_PATH`), the address is `https://<main short domain>/dashboard/mcp`, the `resource_metadata` URL is `https://<main short domain>/.well-known/oauth-protected-resource/dashboard/mcp`, the authorization server metadata stays at the root `/.well-known/oauth-authorization-server` (issuer: the origin), and the switch closes the same paths under the prefix; the full table is in [agents.md](agents.md#dashboard-at-a-path).
+3. Leave `MCP_ENABLED` unset and deploy, then sign in as the owner and turn agents on with the switch on the API & agents screen (see [MCP_ENABLED](#mcp_enabled)). Check it: `curl -si -X POST https://<dashboard host>/mcp` answers `401` with a `WWW-Authenticate` header that contains `resource_metadata="https://<dashboard host>/.well-known/oauth-protected-resource/mcp"`, and `curl -s https://<dashboard host>/.well-known/oauth-authorization-server` answers JSON. With the dashboard at a path (`DASHBOARD_PATH`), the address is still the root, `https://<main short domain>/mcp` (never under the path), the `resource_metadata` URL is `https://<main short domain>/.well-known/oauth-protected-resource/mcp`, the authorization server metadata stays at the root `/.well-known/oauth-authorization-server` (issuer: the origin) with its endpoints under the prefix, and the switch closes `/mcp` and those endpoints; the full table is in [agents.md](agents.md#dashboard-at-a-path).
 
 ### MCP_ENABLED
 

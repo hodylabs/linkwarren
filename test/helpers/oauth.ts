@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { vi } from "vitest";
-import { dashUrl } from "../../src/dash";
+import { dashUrl, mcpUrl } from "../../src/dash";
 import type { Env } from "../../src/env";
 import worker, { wrapper } from "../../src/index";
 import { ORIGIN, tokenFor } from "./access";
@@ -10,14 +10,14 @@ import { signInApp } from "./session";
 
 export const CLAUDE_CB = "https://claude.ai/api/mcp/auth_callback";
 /**
- * `path` is an inner (dashboard) path. Without `e`: the default worker on the host-mode ORIGIN. With `e`: straight through
+ * `path` is an inner (dashboard) path, or an absolute URL. Without `e`: the default worker on the host-mode ORIGIN. With `e`: straight through
  * the wrapper at dashUrl(e, path) (path mode: under the prefix), with a context whose waitUntil work is awaited.
  */
 async function fetchW(path: string, init?: RequestInit, e?: Env): Promise<Response> {
   if (!e) return exports.default.fetch(`${ORIGIN}${path}`, init);
   const bg: Promise<unknown>[] = [];
   const ctx = { ...testCtx(), waitUntil: (p: Promise<unknown>) => void bg.push(p) } as unknown as ExecutionContext;
-  const r = await wrapper(new Request(dashUrl(e, path), { redirect: "manual", ...init }), e, ctx);
+  const r = await wrapper(new Request(path.startsWith("https://") ? path : dashUrl(e, path), { redirect: "manual", ...init }), e, ctx);
   await Promise.all(bg);
   return r;
 }
@@ -152,8 +152,8 @@ export async function mcpCall(token: string, method: string, params?: unknown, c
     headers: { host: new URL(originOf(e)).host, authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
   };
-  const r = !ctx ? await fetchW("/mcp", init, e)
-    : e ? await wrapper(new Request(dashUrl(e, "/mcp"), init), e, ctx) : await worker.fetch(new Request(`${ORIGIN}/mcp`, init), env, ctx);
+  const r = !ctx ? await fetchW(e ? mcpUrl(e) : "/mcp", init, e)
+    : e ? await wrapper(new Request(mcpUrl(e), init), e, ctx) : await worker.fetch(new Request(`${ORIGIN}/mcp`, init), env, ctx);
   const text = await r.text();
   const data = (r.headers.get("content-type") ?? "").includes("text/event-stream") ? /^data: ?(.*)$/m.exec(text)?.[1] ?? "" : text;
   let body: unknown = null;

@@ -1,7 +1,6 @@
 import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import type { Env } from "../env";
-import { dash } from "../dash";
 import { normalizeHost } from "../host";
 import { VERSION } from "../version";
 import { runTool } from "./run";
@@ -29,6 +28,6 @@ export function createServer(env: Env, ctx: ExecutionContext): McpServer {
 export const mcpHandler = {
   fetch: (req: Request, env: Env, ctx: ExecutionContext) =>
     createMcpHandler(() => createServer(env, ctx), {
-      route: `${dash(env)?.prefix ?? ""}/mcp`, corsOptions: false, allowedHostnames: [normalizeHost(env.DASHBOARD_HOST)],
+      route: "/mcp", corsOptions: false, allowedHostnames: [normalizeHost(env.DASHBOARD_HOST)],
     })(req, env, ctx),
 };

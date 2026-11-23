@@ -46,8 +46,13 @@ describe("path mode on the main short domain", () => {
     ["/x/../dashboard", "/"], ["/x/../dashboard/api/me", "/api/me"], ["/dashboard/%61pi/me", "/%61pi/me"],
     ["/Dashboard", null], ["/Dashboard/api/me", null], ["/DASHBOARD/x", null], ["/%64ashboard", null], ["/%64ashboard/api/me", null],
     ["/dashboard%2fx", null], ["/dashboard%2fapi/me", null], ["//dashboard", null], ["//dashboard/api/me", null],
-    ["/dashboard/../x", null], ["/dashboard/%2e%2e/api/me", null], ["/dashboardapi", null], ["/healthz", null], ["/api/me", null],
+    ["/dashboard/../x", null], ["/dashboardapi", null], ["/healthz", null],
   ];
+  // /api/... at the root is the machine API's space: JSON 404 outside /api/v1, never the dashboard or a short link.
+  it.each(["/api/me", "/dashboard/%2e%2e/api/me"])("%s is JSON 404", async (path) => {
+    const r = await call(path);
+    expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
+  });
   it.each(table)("%s", async (path, inner) => {
     const got = await answer(await call(path));
     const resolved = new URL(`https://short.test${path}`).pathname;

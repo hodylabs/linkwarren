@@ -6,7 +6,7 @@ import { Sheet } from "../shell/Sheet";
 import { Chip, Seg } from "../shell/ui";
 import { canUseDomain, isOwner } from "../perms";
 import { useApp } from "../state";
-import { withBase } from "../base";
+import { rootUrl } from "../base";
 
 /** New API key sheet hotkeys and their text on the shortcuts sheet. */
 export const NEW_KEY_KEYS = {
@@ -96,7 +96,7 @@ export function NewKeySheet() {
             </div>
           </div>
           <div className="sh-foot">
-            <span className="left">{`Send it as a Bearer token to ${withBase("/api/v1")}`}</span>
+            <span className="left">{`Send it as a Bearer token to ${rootUrl("/api/v1")}`}</span>
             {/* Keyed: without it React reuses the form's Create button here and autoFocus never runs. */}
             <button key="done" type="button" className="btn primary" autoFocus onClick={dismiss}>
               Done<span className="k2">Enter</span>
@@ -149,7 +149,7 @@ export function NewKeySheet() {
             )}
           </div>
           <div className="sh-foot">
-            <span className="left">{`Works on ${withBase("/api/v1")} only`}</span>
+            <span className="left">{`Works on ${rootUrl("/api/v1")} only`}</span>
             <button type="button" className="btn primary" aria-keyshortcuts="Control+Enter" aria-disabled={pending || undefined} onClick={() => void submit()}>
               {pending ? "Creating key" : "Create key"}
               <span className="k2">Ctrl Enter</span>

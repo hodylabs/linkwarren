@@ -66,8 +66,8 @@ describe("dash config (R1)", () => {
     expect(() => dashUrl(pathEnv({ DASHBOARD_PATH: "x" }), "/")).toThrow();
   });
 
-  it("reservedSlugs: the prefix segment on the dashboard host in path mode only", () => {
-    expect(reservedSlugs(pathEnv(), "short.test")).toEqual(["dashboard"]);
+  it("reservedSlugs: the prefix segment, mcp and api on the dashboard host in path mode only", () => {
+    expect(reservedSlugs(pathEnv(), "short.test")).toEqual(["dashboard", "mcp", "api"]);
     expect(reservedSlugs(pathEnv(), "other.test")).toEqual([]);
     expect(reservedSlugs(hostEnv(), "dash.test")).toEqual([]);
   });

@@ -11,7 +11,7 @@ import { can } from "../perms";
 import { useApp } from "../state";
 import { clock, shortDate } from "../time";
 import { CLIENTS, HOWTO, type Client } from "./howto";
-import { withBase } from "../base";
+import { rootUrl } from "../base";
 
 /** API & agents screen hotkeys and their text on the shortcuts sheet. */
 export const AGENTS_KEYS = {
@@ -274,7 +274,7 @@ export function AgentsScreen() {
   const [modal, setModal] = useState(false);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const focusRow = useRef(false);
-  const url = `https://${location.host}${withBase("/mcp")}`;
+  const url = rootUrl("/mcp");
   const hosts = new Map(domains.map((d) => [d.id, d.host]));
 
   // Owners and people managers see everyone's they may manage; others get their own (the server enforces it either way).

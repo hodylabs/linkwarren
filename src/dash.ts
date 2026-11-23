@@ -63,6 +63,9 @@ export function dashUrl(env: Env, path: string): string {
   return d.base + path;
 }
 
+/** The one MCP resource: always the root /mcp of the dashboard host, in both modes (never under the prefix). */
+export const mcpUrl = (env: Env): string => `https://${normalizeHost(env.DASHBOARD_HOST)}/mcp`;
+
 /** Exact, case-sensitive, on the raw (parser-normalized, not decoded) pathname: "P" or "P/...", never "Px". */
 export const underPrefix = (pathname: string, prefix: string) =>
   prefix === "" || pathname === prefix || pathname.startsWith(prefix + "/");
@@ -96,8 +99,9 @@ export function legacyAnswer(req: Request, d: Dash): Response {
   return Response.json({ error: "moved", to: d.base + "/" }, { status: 410 });
 }
 
-/** Slugs the dashboard shadows on `host`: the prefix segment on the dashboard host in path mode, else none. */
+/** Slugs the dashboard shadows on `host`: in path mode on the dashboard host the prefix segment, `mcp` and `api` (the MCP
+ * server and the machine API live at the root there), else none. */
 export function reservedSlugs(env: Env, host: string): string[] {
   const d = dash(env);
-  return d?.pathMode && host === d.host ? [d.prefix.slice(1)] : [];
+  return d?.pathMode && host === d.host ? [d.prefix.slice(1), "mcp", "api"] : [];
 }

@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { wrapper } from "../src/index";
 import { resetMcpCache } from "../src/mcp/switch";
-import { handleRedirect } from "../src/redirect";
 import { clearCookie, createSession, readCookie, safeNext } from "../src/session";
 import { rp } from "../src/webauthn";
 import { pathEnv, seedShort, testCtx } from "./helpers/path";
@@ -16,7 +15,6 @@ import { softAuthenticator } from "./helpers/webauthn";
 const O = "https://short.test";
 const PATH_COOKIE = /^__Secure-lw_session=[A-Za-z0-9_-]{43}; Path=\/dashboard; Max-Age=7776000; Secure; HttpOnly; SameSite=Lax$/;
 const hostEnv = () => ({ ...env, DASHBOARD_HOST: "dash.test", AUTH_MODE: "app" }) as Env;
-const now = () => Math.floor(Date.now() / 1000);
 
 /** The wrapper with a context whose waitUntil work (the mail) can be awaited. */
 async function go(path: string, init: RequestInit = {}, e: Env = pathEnv()): Promise<Response> {
@@ -63,9 +61,9 @@ describe("path mode session cookie (R6)", () => {
     const hello = await go("/hello", { headers: { cookie } });
     expect([hello.status, hello.headers.get("location"), hello.headers.get("set-cookie")]).toEqual([302, "https://dest.example.com/hello", null]);
 
+    // The root /api/me is JSON 404 (the machine API's space), never the dashboard API with this cookie.
     const root = await go("/api/me", { headers: { cookie } });
-    const plain = await handleRedirect(new Request(`${O}/api/me`), pathEnv(), now(), testCtx());
-    expect([root.status, root.headers.get("location"), await root.text()]).toEqual([plain.status, plain.headers.get("location"), await plain.text()]);
+    expect([root.status, await root.json()]).toEqual([404, { error: "not_found" }]);
   });
 
   it("sign-out clears the cookie with the same name and Path", async () => {

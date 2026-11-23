@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { BulkResult } from "../api/bulk";
 import { callApi, type Principal } from "../call";
-import { dashUrl } from "../dash";
+import { mcpUrl } from "../dash";
 import type { Env } from "../env";
 import { normalizeHost, slugFromPath } from "../host";
 import { LIMITS } from "../limits";
@@ -77,7 +77,7 @@ export const TOOLS: Record<string, ToolDef> = {
       role: p.user.role,
       roleName: p.user.roleName,
       perms: p.user.perms,
-      mcpUrl: dashUrl(env, "/mcp"),
+      mcpUrl: mcpUrl(env),
       limits: { perUserPerMinute: LIMITS.apiUser.n, perConnectionPerMinute: LIMITS.apiConn.n, perUserPerDay: LIMITS.apiDay.n },
     }),
   },

@@ -43,6 +43,10 @@ describe("BASE", () => {
     const { withBase, stripBase } = (await load(null)).base;
     expect([withBase("/links"), stripBase("/links")]).toEqual(["/links", "/links"]);
   });
+  it.each(["/dashboard", null])("rootUrl ignores the base (%j): MCP and the machine API live at the root of the host", async (content) => {
+    const { rootUrl } = (await load(content)).base;
+    expect([rootUrl("/mcp"), rootUrl("/api/v1")]).toEqual([`https://${location.host}/mcp`, `https://${location.host}/api/v1`]);
+  });
 });
 
 describe("under a /dashboard base", () => {
