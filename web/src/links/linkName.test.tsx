@@ -144,6 +144,20 @@ describe("one search", () => {
     expect(api.calls.filter((c) => c.path === "/api/links/l1")).toHaveLength(1);
   });
 
+  it("the link read by id is never listed twice when a later page brings it, and a new list (a filter change) reads it again", async () => {
+    const { api, user } = boot("/links?q=spring&sel=l1", {
+      "GET /api/links": (r) => ({ body: r.url.searchParams.get("cursor") ? { items: [NAMED], next: null } : { items: [PLAIN], next: "100.l2" } }),
+      "GET /api/links/l1": () => ({ body: NAMED }),
+    });
+    await waitFor(() => expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(api.calls.filter((c) => c.path.includes("cursor="))).toHaveLength(1));
+    await waitFor(() => expect(rows().map((r) => r.querySelector(".slug")!.textContent)).toEqual(["spring", "menu"]));
+    await user.click(screen.getByRole("button", { name: "Active" }));
+    await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/links/l1")).toHaveLength(2));
+    await waitFor(() => expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy());
+  });
+
   it("clearing the search on Domains drops only q, so the selected domain stays", async () => {
     const { user } = boot("/domains?q=go&sel=d1");
     await screen.findByText("go", { selector: ".qchip b" });

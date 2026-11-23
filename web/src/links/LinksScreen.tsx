@@ -145,7 +145,8 @@ export function LinksScreen() {
     try {
       const p = await fetchPage(next);
       if (g !== generation.current) return [];
-      setItems((cur) => [...cur, ...p.items]);
+      // A link read by id (?sel= past the first page) is already listed first: never twice.
+      setItems((cur) => [...cur, ...p.items.filter((x) => !cur.some((c) => c.id === x.id))]);
       setNext(p.next);
       void loadStats(g, p.items.map((l) => l.id));
       return p.items;
@@ -188,8 +189,10 @@ export function LinksScreen() {
   // so the jump always lands on its panel. One that is gone or not visible stays unselected.
   const fetchedSel = useRef<string | null>(null);
   useEffect(() => {
-    if (!loaded || !sel || at >= 0 || fetchedSel.current === sel) return;
-    fetchedSel.current = sel;
+    // Once per id and list generation: a reload, a filter change or a domain switch starts a new list, so it may read again.
+    const key = `${generation.current}:${sel}`;
+    if (!loaded || !sel || at >= 0 || fetchedSel.current === key) return;
+    fetchedSel.current = key;
     const g = generation.current;
     api<Link>("GET", `/api/links/${encodeURIComponent(sel)}`).then(
       (l) => {
