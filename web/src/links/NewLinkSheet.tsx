@@ -9,6 +9,8 @@ import { can, canUseDomain, mayOpen } from "../perms";
 import { useApp } from "../state";
 import { fromLocalInput } from "../time";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
+import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
+import { cleanVcard, VcardForm } from "./VcardForm";
 import { readUtm, suggestSlugs, withUtm, type Utm } from "./compose";
 import { shortUrl } from "./linkView";
 import { parseCountries, passwordProblem, routeSummary } from "./rules";
@@ -80,6 +82,11 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [routeErrors, setRouteErrors] = useState<Record<number, string>>({});
   const [qr, setQr] = useState(false);
+  // S9: a plain link, or a contact card the short link downloads.
+  const [kind, setKind] = useState<"url" | "vcard">("url");
+  const [card, setCard] = useState<VCard>(emptyVcard);
+  const [cardField, setCardField] = useState<string | null>(null);
+  const isCard = kind === "vcard";
   const pwRef = useRef<HTMLInputElement>(null);
   const routesRef = useRef<HTMLDivElement>(null);
   const [check, setCheck] = useState<Check | null>(null);
@@ -129,10 +136,10 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const blocked = (): { field: Field; code: string } | null => {
     if (check && check.status !== "available") return { field: "slug", code: check.status === "invalid" ? check.reason : check.status };
     if (!slug) return { field: "slug", code: "empty" };
-    const dest = checkDestination(url, usable.map((d) => d.host));
-    if (!dest.ok) return { field: "url", code: dest.reason === "too_long" ? "url_too_long" : dest.reason };
+    const dest = isCard ? null : checkDestination(url, usable.map((d) => d.host));
+    if (dest && !dest.ok) return { field: "url", code: dest.reason === "too_long" ? "url_too_long" : dest.reason };
     if (startSec !== null && endSec !== null && endSec <= startSec) return { field: "schedule", code: "bad_window" };
-    if (pwOpen) {
+    if (pwOpen && !isCard) {
       const p = passwordProblem(password);
       if (p) return { field: "password", code: p };
       if (code === 301) return { field: "password", code: "password_301" };
@@ -154,20 +161,23 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const submit = async (copy: boolean) => {
     if (busy || releasing || !domainId) return;
     const stop = blocked();
-    const rb = routeBody();
+    // A card has no routing: its rules are never sent or checked.
+    const rb = isCard ? ({ ok: true, routes: [] } as const) : routeBody();
     setRouteErrors(rb.ok ? {} : rb.errors);
     if (!rb.ok) setRoutesOpen(true);
-    if (stop || !rb.ok) {
+    const cv = isCard ? checkVcard(cleanVcard(card)) : null;
+    setCardField(cv && !cv.ok ? cv.field : null);
+    if (stop || !rb.ok || (cv && !cv.ok)) {
       setError(stop);
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const body: Record<string, unknown> = { domainId, slug, url, redirectCode: code };
+      const body: Record<string, unknown> = cv?.ok ? { domainId, slug, kind: "vcard", vcard: cv.vcard } : { domainId, slug, url, redirectCode: code };
       if (startSec !== null) body.startsAt = startSec;
       if (endSec !== null) body.expiresAt = endSec;
-      if (pwOpen) body.password = password;
+      if (pwOpen && !isCard) body.password = password;
       if (rb.routes.length) body.routes = rb.routes;
       const link = await api<Link>("POST", "/api/links", body);
       setPassword("");
@@ -183,7 +193,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       const c = e instanceof ApiError ? e.code : "internal";
       const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
       const row = c === "bad_route" && typeof d?.index === "number" ? filled[d.index] : undefined;
-      if (row) {
+      if (c === "bad_vcard") setCardField(typeof (d as { field?: unknown } | undefined)?.field === "string" ? (d as { field: string }).field : "vcard");
+      else if (row) {
         // the server's index counts the rows sent (the non-blank ones), so map it back to the editor row
         setRouteErrors({ [routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
         setRoutesOpen(true);
@@ -240,10 +251,10 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
     "mod+enter": () => void submit(false),
     "mod+shift+enter": () => void submit(true),
     "alt+d": () => domainRef.current?.focus(),
-    t: () => setTagsOpen((v) => !v),
+    t: () => !isCard && setTagsOpen((v) => !v),
     s: () => setSchedOpen((v) => !v),
-    p: togglePw,
-    r: toggleRoutes,
+    p: () => !isCard && togglePw(),
+    r: () => !isCard && toggleRoutes(),
     q: () => setQr((v) => !v),
   } satisfies Bindings<typeof NEW_LINK_KEYS>, !releasing);
 
@@ -296,6 +307,32 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         </span>
       </div>
       <div className="sh-body">
+        <div className="redir">
+          <span id="nl-kind">Type</span>
+          <Seg
+            label="Type"
+            value={kind}
+            onChange={(k) => {
+              if (busy) return; // the answer of a pending create belongs to the type it was sent as
+              setKind(k);
+              setError(null);
+              setCardField(null);
+            }}
+            options={[
+              { value: "url", label: "Link" },
+              { value: "vcard", label: "Contact card" },
+            ]}
+          />
+        </div>
+        {isCard ? (
+          <div className="f">
+            <p className="lbl">Contact card: opening or scanning the short link downloads it to the phone's contacts.</p>
+            <VcardForm id="nl-vc" value={card} field={cardField} onChange={(v) => {
+                setCard(v);
+                setCardField(null);
+              }} />
+          </div>
+        ) : (
         <div className="f">
           <label htmlFor="nl-dest">
             Goes to <span>a URL, tel: or mailto:</span>
@@ -309,6 +346,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             </p>
           )}
         </div>
+        )}
         <div className="f">
           <label htmlFor="nl-slug">
             Short link{" "}
@@ -343,7 +381,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
               </button>
             </p>
           )}
-          {suggestions.length > 0 && (
+          {!isCard && suggestions.length > 0 && (
             <div className="sugs">
               <span>Suggestions</span>
               {suggestions.map((s) => (
@@ -358,6 +396,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           )}
         </div>
         <div className="rules" aria-label="Rules">
+          {!isCard && (
           <Rule
             icon="M4 20V10M10 20V4M16 20v-7M22 20H2"
             label="Campaign tags"
@@ -366,7 +405,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             open={tagsOpen}
             onClick={() => setTagsOpen((v) => !v)}
           />
-          {tagsOpen && (
+          )}
+          {!isCard && tagsOpen && (
             <div className="utm">
               {(["source", "medium", "campaign"] as const).map((k) => (
                 <div key={k}>
@@ -403,6 +443,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
               </div>
             </div>
           )}
+          {!isCard && (
           <Rule
             icon="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z"
             label="Password"
@@ -411,7 +452,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             open={pwOpen}
             onClick={togglePw}
           />
-          {pwOpen && (
+          )}
+          {!isCard && pwOpen && (
             <div className="pw">
               <label htmlFor="nl-pw">Password</label>
               <div className={err("password") ? "ctl bad" : "ctl"}>
@@ -441,6 +483,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
               )}
             </div>
           )}
+          {!isCard && (
           <Rule
             icon="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12zM12 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"
             label="Country and device routing"
@@ -449,7 +492,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             open={routesOpen}
             onClick={toggleRoutes}
           />
-          {routesOpen && (
+          )}
+          {!isCard && routesOpen && (
             <div ref={routesRef}>
               <RoutesEditor
                 value={routes}
@@ -476,6 +520,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             {errorText(err("schedule")!)}
           </p>
         )}
+        {!isCard && (
         <div className="redir">
           <span>Redirect</span>
           <Seg
@@ -488,12 +533,13 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             ]}
           />
         </div>
+        )}
         <div className="route">
           <span>
             {host}/<b>{slug}</b>
           </span>
-          <span className="arr">{code}</span>
-          <span>{finalUrl || "..."}</span>
+          <span className="arr">{isCard ? "200" : code}</span>
+          <span>{isCard ? "downloads the contact card" : finalUrl || "..."}</span>
         </div>
         {err("form") && (
           <p className="err" role="alert">
@@ -507,7 +553,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         )}
       </div>
       <div className="sh-foot">
-        <span className="left kh">Rule keys T S P R Q work outside text boxes</span>
+        <span className="left kh">{isCard ? "Rule keys S Q work outside text boxes" : "Rule keys T S P R Q work outside text boxes"}</span>
         <button type="button" className="btn" disabled={busy || !domainId} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
           Create and copy <span className="k2">Ctrl ⇧ Enter</span>
         </button>

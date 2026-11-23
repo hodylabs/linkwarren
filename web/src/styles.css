@@ -337,6 +337,18 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .rt-g .rt-l{margin:0;flex-basis:100%}
 .rt-sw{display:inline-flex;gap:5px;align-items:center;font-size:12px;color:var(--muted)}
 .routes .utm-note{margin:0}
+/* S9 contact card form (new link sheet and link detail) */
+.vc{display:flex;flex-direction:column;gap:2px}
+.vc h4{font-size:12px;font-weight:600;margin:10px 0 4px;color:var(--muted)}
+.vc-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px}
+.vc-list{display:flex;flex-direction:column;align-items:flex-start;gap:0}
+.vc-list>div{width:100%}
+.vc-row{display:flex;gap:6px;align-items:center;margin-bottom:6px;width:100%}
+.vc-row .input{flex:1;min-width:0}
+.vc-row select.input{flex:0 0 auto;font-family:var(--sans)}
+.vc-photo{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.vc-img{width:64px;height:64px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:var(--bg);display:inline-block}
+.vc textarea.input{white-space:pre-wrap;resize:vertical;min-height:64px;width:100%}
 .sh-body .route{margin:0}
 .redir{display:flex;align-items:center;gap:10px;justify-content:space-between}
 .sh-foot .btn .k2{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-left:4px}
@@ -480,7 +492,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .sub-h{padding-left:0;padding-right:0}
   .mcp{flex-wrap:wrap}
   .input,.ctl{min-height:44px}
-  .utm,.sched{grid-template-columns:minmax(0,1fr)}
+  .utm,.sched,.vc-two{grid-template-columns:minmax(0,1fr)}
   .sh-foot{flex-wrap:wrap}
 
   /* overlays: sheets rise from the bottom at full width; the palette and switcher hang from the top so the keyboard never covers the box */

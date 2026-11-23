@@ -15,7 +15,7 @@ const domain: Domain = {
 };
 const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
   id, domainId: "d1", slug, slugKey: slug, url: `https://example.com/${slug}`, redirectCode: 302, startsAt: null, expiresAt: null,
-  passQuery: true, hasPassword: false, routes: [], forwardTo: null, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
+  passQuery: true, hasPassword: false, routes: [], forwardTo: null, kind: "url", createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
 });
 const L1 = mk("l1", "spring"), L2 = mk("l2", "menu"), L3 = mk("l3", "app", { createdBy: "u9" });
 
@@ -1147,5 +1147,38 @@ describe("Links screen follows the role", () => {
     boot({ me: { ...member, ...customRole(["links.editAny"]) }, path: "/links?sel=l3" });
     await ready();
     expect(within(detail()).getByRole("button", { name: /^Delete/ })).toBeTruthy();
+  });
+});
+
+describe("contact card links (S9)", () => {
+  const card = { firstName: "Ada", lastName: "Lovelace", org: "", title: "", phones: [], emails: [], websites: [],
+    address: { street: "", city: "", region: "", postalCode: "", country: "" }, note: "", photo: null };
+  const C1 = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
+
+  it("the list marks it as a contact card with the name, not the placeholder url", async () => {
+    boot({ page: () => ({ body: { items: [C1, L2], next: null } }) });
+    await ready();
+    expect(rows()[0]!.textContent).toContain("Contact cardAda Lovelace");
+    expect(rows()[0]!.textContent).not.toContain("vcard.invalid");
+  });
+
+  it("the detail edits the card (no URL, password or routing) and saves only the card", async () => {
+    const calls: unknown[] = [];
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [C1], next: null } }),
+      routes: { "PATCH /api/links/l1": ({ body }) => (calls.push(body), { body: { ...C1, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    expect(within(detail()).queryByLabelText("URL")).toBeNull();
+    expect(within(detail()).queryByRole("switch", { name: "Password" })).toBeNull();
+    await user.keyboard("e");
+    expect(document.activeElement).toBe(within(detail()).getByLabelText("First name"));
+    const last = within(detail()).getByLabelText("Last name");
+    await user.clear(last);
+    await user.type(last, "Byron");
+    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ vcard: { ...card, lastName: "Byron" } });
   });
 });
