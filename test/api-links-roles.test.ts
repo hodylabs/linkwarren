@@ -149,6 +149,42 @@ describe("creator and domain-owner paths", () => {
   });
 });
 
+describe("write-time re-check of the owner and creator paths", () => {
+  // As a real demotion does: the person's main and shared domains move to another owner in the same batch.
+  const demote = async () => {
+    await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('o2','o2@example.com','owner','active',2)");
+    await run("UPDATE users SET role = 'member', role_id = 'ro' WHERE id = 'owner'");
+    await run("UPDATE domains SET owner_id = 'o2' WHERE owner_id = 'owner'");
+  };
+
+  it("race: an owner demoted to a role with no edit right before the PATCH write: 403, nothing written", async () => {
+    const restore = beforeBatch(2, demote);
+    let r;
+    try { r = await call("owner", "PATCH", "/api/links/la", { url: "https://y.com" }); } finally { restore(); }
+    expect(await answer(r)).toEqual(forbidden);
+    expect(await one("SELECT url FROM links WHERE id = 'la'")).toEqual({ url: "https://x.com/a" });
+    expect(await count("audit_log WHERE action LIKE 'link.%'")).toBe(0);
+  });
+
+  it("race: an owner demoted to a role with no edit right before the DELETE write: 403, nothing deleted", async () => {
+    const restore = beforeBatch(2, demote);
+    let r;
+    try { r = await call("owner", "DELETE", "/api/links/la"); } finally { restore(); }
+    expect(await answer(r)).toEqual(forbidden);
+    expect(await count("links WHERE id = 'la'")).toBe(1);
+    expect(await count("slug_locks")).toBe(0);
+  });
+
+  it("race: a creator admitted by links.editAny who keeps only links.create still edits their link", async () => {
+    await seed("le", "e");
+    await setPerms("ea", ["links.editAny"]);
+    const restore = beforeBatch(2, () => setPerms("ea", ["links.create"]));
+    let r;
+    try { r = await call("e", "PATCH", "/api/links/le", { url: "https://y.com" }); } finally { restore(); }
+    expect(r.status).toBe(200);
+  });
+});
+
 describe("slug lock release", () => {
   beforeEach(() => run("INSERT INTO slug_locks (domain_id,slug_key,locked_at,locked_by) VALUES ('dm','gone',1,'owner'),('ds','gone',1,'owner')"));
 

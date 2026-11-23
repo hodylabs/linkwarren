@@ -387,6 +387,19 @@ describe("roles (S8 R9)", () => {
     expect(byId(r.results)).toEqual({ e1: "ok" });
   });
 
+  it("race: an owner demoted (main and shared domains moved away) before the batch: a teammate's link is refused", async () => {
+    const restore = beforeBatch(3, async () => {
+      await run("INSERT INTO users (id,email,role,status,created_at) VALUES ('uo2','o2@example.com','owner','active',2)");
+      await run("UPDATE users SET role = 'member', role_id = 'dmg' WHERE id = 'uo'");
+      await run("UPDATE domains SET owner_id = 'uo2' WHERE owner_id = 'uo' AND type != 'private'");
+    });
+    let r;
+    try { r = await answer(await bulk("owner", { action: "redirect", ids: ["a1"], redirectCode: 301 })); } finally { restore(); }
+    expect(byId(r.results)).toEqual({ a1: "forbidden" });
+    expect(await one("SELECT redirect_code FROM links WHERE id = 'a1'")).toEqual({ redirect_code: 302 });
+    expect(await count("audit_log WHERE action = 'link.update'")).toBe(0);
+  });
+
   it("race: links.editAny removed mid-request: the teammate's link is refused, the own link still written", async () => {
     await seed("e1", "uea");
     const restore = beforeBatch(3, () => setPerms("ea", ["links.create", "links.bulk"]));

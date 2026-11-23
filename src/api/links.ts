@@ -260,13 +260,32 @@ export const canEditLink = (user: UserRow, link: LinkRow, domain: DomainRow, mem
   canUseDomain(user, domain, member, only) && editRight(user, link, domain) !== null;
 
 /**
- * The SQL re-check of editRight for a write's batch. A creator keeps the right while they hold links.create or links.editAny;
- * no right at all is a guard that never holds, so a caller that skipped canEditLink still writes nothing.
+ * What a write's edit right is re-checked from (liveEdit): `c` 1 when the actor created the link, `d` the link's domain id
+ * when the actor owned that domain at read time (else null: a domain-owner path gained in flight is not taken, fail closed).
  */
+export type EditFacts = { c: 0 | 1; d: string | null };
+export const editFacts = (user: UserRow, link: LinkRow, domain: DomainRow): EditFacts =>
+  ({ c: link.createdBy === user.id ? 1 : 0, d: domain.ownerId === user.id ? domain.id : null });
+
+/**
+ * The R9 right as it stands at write time, from SQL expressions for the facts (`c`, `d`): the actor is an active owner, holds
+ * links.editAny, created the link and holds links.create, or (active) still owns the domain. Never the right read earlier, so a
+ * demotion or role edit in flight cannot keep a path it removed. The row-free checks come first: only a domain owner's rows
+ * reach the per-row probe.
+ */
+export const liveEdit = (userId: string, c: string, d: string, dBinds: unknown[] = []): Guard => {
+  const cr = actorCan(userId, "links.create"), a = actorCan(userId, "links.editAny");
+  return {
+    sql: `(EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active' AND role = 'owner') OR ${a.sql} OR (${c} = 1 AND ${cr.sql})
+      OR (${d} IS NOT NULL AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active') AND EXISTS (SELECT 1 FROM domains WHERE id = ${d} AND owner_id = ?)))`,
+    binds: [userId, ...a.binds, ...cr.binds, ...dBinds, userId, ...dBinds, userId],
+  };
+};
+
+/** The SQL re-check of the edit rule for a single link's write batch (domain use is checked by the caller). */
 export const editGuard = (user: UserRow, link: LinkRow, domain: DomainRow): Guard => {
-  const r = editRight(user, link, domain), cr = actorCan(user.id, "links.create"), a = actorCan(user.id, "links.editAny");
-  return r === "none" ? { sql: "1", binds: [] } : r === "own" ? { sql: `(${cr.sql} OR ${a.sql})`, binds: [...cr.binds, ...a.binds] }
-    : r === "any" ? a : { sql: "0", binds: [] };
+  const f = editFacts(user, link, domain);
+  return liveEdit(user.id, String(f.c), "?", [f.d]);
 };
 
 /** Loads a link and enforces edit rights (canEditLink); `withHosts` also reads the active hosts in the same batch. */

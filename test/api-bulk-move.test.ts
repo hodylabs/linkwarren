@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { Hono } from "hono";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { bulk as bulkHandler } from "../src/api/bulk";
 import { loopLinks } from "../src/api/shared";
 import { getLink } from "../src/cache";
@@ -387,6 +387,33 @@ describe("delete removes forwarders (QR codes never land on a new link)", () => 
     const r = await answer(await bulk("owner", { action: "delete", ids: [fwd[0]!, "X"] }));
     expect(byId(r.results)).toEqual({ [fwd[0]!]: "ok", X: "ok" });
     await gone(fwd);
+  });
+
+  it("race: a permission lost before the batch: the link and its selected forwarder both answer forbidden", async () => {
+    const fwd = await chain();
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('bo','Bulk only','[\"links.bulk\"]',0,1,1)");
+    const restore = beforeBatch(3, () => run("UPDATE users SET role = 'member', role_id = 'bo' WHERE id = 'uo'"));
+    let r;
+    try { r = await answer(await bulk("owner", { action: "delete", ids: [fwd[0]!, "X"] })); } finally { restore(); await run("UPDATE users SET role = 'owner', role_id = NULL WHERE id = 'uo'"); await run("DELETE FROM roles WHERE id = 'bo'"); }
+    expect(byId(r.results)).toEqual({ [fwd[0]!]: "forbidden", X: "forbidden" });
+    expect(await count("links")).toBe(3);
+  });
+
+  it("a failing diagnosis read after a partly written batch still clears the written link's cached redirect", async () => {
+    await seed("p1", "uo", { slug: "p1" });
+    await seed("p2", "uo", { slug: "p2" });
+    const h = harness();
+    expect((await h.go("go.test", "/p1")).status).toBe(302);
+    expect(await env.CACHE.get("l2:dm:p1")).not.toBeNull();
+    const real = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => {
+      if (q.includes("WHERE NOT")) throw new Error("diagnosis down");
+      return real(q);
+    });
+    const restore = beforeBatch(3, () => run("UPDATE links SET updated_at = updated_at + 50 WHERE id = 'p2'"));
+    try { expect((await bulk("owner", { action: "redirect", ids: ["p1", "p2"], redirectCode: 301 })).status).toBe(500); } finally { restore(); vi.restoreAllMocks(); }
+    expect(await one("SELECT redirect_code FROM links WHERE id = 'p1'")).toEqual({ redirect_code: 301 });
+    expect(await env.CACHE.get("l2:dm:p1")).toBeNull();
   });
 
   it("a revision change between read and batch: conflict, the link and its forwarders stay, no locks", async () => {

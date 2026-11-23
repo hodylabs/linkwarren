@@ -10,7 +10,7 @@ import { normalizeHost } from "../host";
 import { canUseDomain } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
 import { checkSlug, slugKey } from "../validate";
-import { badWindow, bodyError, canEditLink, code, editRight, forwarderDeletes, type EditRight, passwordInput, purgeReturned, rules, times } from "./links";
+import { badWindow, bodyError, canEditLink, code, editFacts, forwarderDeletes, liveEdit, type EditFacts, passwordInput, purgeReturned, rules, times } from "./links";
 import { isV1, purge } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -68,16 +68,14 @@ const FREE = "NOT EXISTS (SELECT 1 FROM links o WHERE o.domain_id = ? AND o.slug
 
 /**
  * S8: every statement's re-check of links.bulk (and links.create for a copy, which creates links) and, per row, of the edit
- * right `g` (editRight, as editGuard re-checks it), so a role edit between the reads and the batch writes nothing it no
- * longer allows. Its EXISTS subqueries name no column of the row, so D1 runs each once per statement, not once per link.
+ * right from the row's facts `g` (editFacts, re-checked live as editGuard does), so a role edit or demotion between the reads
+ * and the batch writes nothing it no longer allows. The permission subqueries name no column of the row, so D1 runs each once
+ * per statement; only rows whose domain the actor owned at read time add a primary-key probe.
  */
+const G_C = "json_extract(j.value,'$.g.c')", G_D = "json_extract(j.value,'$.g.d')";
 const permGuard = (userId: string, copy: boolean): Guard => {
-  const b = actorCan(userId, "links.bulk"), cr = actorCan(userId, "links.create"), a = actorCan(userId, "links.editAny");
-  const g = "json_extract(j.value,'$.g')";
-  return {
-    sql: `(${b.sql}${copy ? ` AND ${cr.sql}` : ""} AND (${g} = 'none' OR (${g} = 'own' AND (${cr.sql} OR ${a.sql})) OR (${g} = 'any' AND ${a.sql})))`,
-    binds: [...b.binds, ...(copy ? cr.binds : []), ...cr.binds, ...a.binds, ...a.binds],
-  };
+  const b = actorCan(userId, "links.bulk"), cr = actorCan(userId, "links.create"), e = liveEdit(userId, G_C, G_D);
+  return { sql: `(${b.sql}${copy ? ` AND ${cr.sql}` : ""} AND ${e.sql})`, binds: [...b.binds, ...(copy ? cr.binds : []), ...e.binds] };
 };
 
 /** POST /api/links/bulk: every link decided with the single-edit rules, all accepted ones written in one D1 batch. */
@@ -129,7 +127,7 @@ export async function bulk(c: Context<E>) {
   }
 
   const out = new Map<string, BulkResult>();
-  const accepted: { link: LinkRow; domain: DomainRow; k: string; g: EditRight | null }[] = [];
+  const accepted: { link: LinkRow; domain: DomainRow; k: string; g: EditFacts }[] = [];
   const pending: string[] = [];
   for (const id of order) {
     const link = found.get(id), domain = link && domains.get(link.domainId);
@@ -148,7 +146,7 @@ export async function bulk(c: Context<E>) {
       if (!s.ok) { out.set(id, { id, ok: false, error: s.reason === "too_long" ? "slug_too_long" : s.reason }); continue; }
       k = slugKey(link.slug, target.caseSensitive);
     }
-    accepted.push({ link, domain, k, g: editRight(user, link, domain) });
+    accepted.push({ link, domain, k, g: editFacts(user, link, domain) });
   }
   // Move: per accepted link, a lock on its new key, who holds that key, and how many forwarders point at it (a forward move
   // repoints them). One statement driven from json_each, index probes only (slug_locks_lower, the links unique key, links_forward_to).
@@ -218,7 +216,6 @@ export async function bulk(c: Context<E>) {
     : [];
 
   const base = { ...actor(c), targetType: "link" };
-  // A null right (never accepted: canEditLink refused it) fails the guard too.
   const G = permGuard(user.id, copy);
   const rows = accepted.map(({ link, g }, i) => ({ t: link.id, r: link.updatedAt, g, h: hashes[i] ?? null }));
   const json = JSON.stringify(rows);
@@ -345,21 +342,28 @@ export async function bulk(c: Context<E>) {
   const returned = res[stmts.indexOf(main)]!.results.map((r) => (r as { id: string }).id);
   const applied = new Set(newIds.size ? returned.map((n) => newIds.get(n)!) : returned);
   const done = accepted.filter(({ link }) => applied.has(link.id));
-  // Something not written: tell a permission lost since the reads (forbidden) from a changed link (conflict). One read, only then.
-  let lostPerm = (_: EditRight | null) => false;
-  if (done.length < accepted.length) {
-    const q = (["links.bulk", "links.create", "links.editAny"] as const).map((p) => actorCan(user.id, p));
-    const r = await env.DB.prepare(`SELECT ${q.map((x) => x.sql).join(", ")}`).bind(...q.flatMap((x) => x.binds)).raw<number[]>();
-    const [hasBulk, hasCreate, hasAny] = r[0] ?? [0, 0, 0];
-    if ((!hasBulk || (copy && !hasCreate)) && !done.length) return c.json({ error: "forbidden" }, 403);
-    lostPerm = (g) => (g === "own" && !hasCreate && !hasAny) || (g === "any" && !hasAny);
-  }
   const keys: [string, string][] = b.action !== "move" ? done.map(({ link }) => [link.domainId, link.slugKey])
     : done.map(({ k }): [string, string] => [target!.id, k]).concat(
       b.oldAddress === "forward" ? done.map(({ link }): [string, string] => [link.domainId, link.slugKey]) : [],
       repointed ? res[stmts.indexOf(repointed)]!.results.map((r) => [(r as { domain_id: string }).domain_id, (r as { slug_key: string }).slug_key]) : [],
     );
+  // The committed writes' cache keys go first, so a failing diagnosis read below never leaves a stale redirect cached.
   await Promise.all([...keys.map(([d, k]) => purge(env, d, k)), ...(cascaded ? [purgeReturned(env, res[stmts.indexOf(cascaded)]!)] : [])]);
+  // Something not written: tell a permission lost since the reads (forbidden) from a changed link (conflict). One batch, only then.
+  let lostPerm = (_: string) => false;
+  if (done.length < accepted.length) {
+    const hb = actorCan(user.id, "links.bulk"), hc = actorCan(user.id, "links.create"), e = liveEdit(user.id, G_C, G_D);
+    const lost = JSON.stringify(accepted.filter(({ link }) => !applied.has(link.id)).map(({ link, g }) => ({ t: link.id, g })));
+    const [flags, no] = await env.DB.batch<Record<string, unknown>>([
+      env.DB.prepare(`SELECT ${hb.sql} b, ${hc.sql} c`).bind(...hb.binds, ...hc.binds),
+      env.DB.prepare(`SELECT json_extract(j.value,'$.t') t FROM json_each(?) j WHERE NOT ${e.sql}`).bind(lost, ...e.binds),
+    ]);
+    const f = flags!.results[0] ?? {};
+    const whole = !f.b || (copy && !f.c);
+    if (whole && !done.length) return c.json({ error: "forbidden" }, 403);
+    const refused = new Set(no!.results.map((r) => r.t as string));
+    lostPerm = (id) => whole || refused.has(id);
+  }
   // Keyed by the selected id: a copy answers with the new link (the source is unchanged).
   const fresh = new Map<string, LinkRow>();
   if (b.action !== "delete" && done.length) {
@@ -367,10 +371,11 @@ export async function bulk(c: Context<E>) {
     const rr = await env.DB.prepare("SELECT * FROM links WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(want)).all();
     for (const r of rr.results) { const l = rowToLink(r); fresh.set(newIds.get(l.id) ?? l.id, l); }
   }
-  for (const [id, parent] of withParent) out.set(id, applied.has(parent) ? { id, ok: true } : { id, ok: false, error: "conflict" });
-  for (const { link, g } of accepted) {
+  for (const { link } of accepted) {
     const f = fresh.get(link.id);
-    out.set(link.id, applied.has(link.id) ? { id: link.id, ok: true, ...(f ? { link: toApiLink(f) } : {}) } : { id: link.id, ok: false, error: lostPerm(g) ? "forbidden" : "conflict" });
+    out.set(link.id, applied.has(link.id) ? { id: link.id, ok: true, ...(f ? { link: toApiLink(f) } : {}) } : { id: link.id, ok: false, error: lostPerm(link.id) ? "forbidden" : "conflict" });
   }
+  // A selected forwarder shares its parent's outcome: it was deleted with it, or not, for the same reason.
+  for (const [id, parent] of withParent) out.set(id, applied.has(parent) ? { id, ok: true } : { ...(out.get(parent) as BulkResult), id });
   return c.json({ results: results(), pending });
 }
