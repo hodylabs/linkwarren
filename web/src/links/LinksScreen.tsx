@@ -384,6 +384,17 @@ export function LinksScreen() {
         )}
         {canCreate && <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />}
       </ScreenHeader>
+      {app.instance && !app.instance.mainDomainId && can(me, "domains.manage") && (
+        <div className="callout wait pad" role="status" aria-label="No main domain">
+          <p>
+            No main domain is set. Add a domain to make short links on, then pick it as the main domain in Settings so new links use it by default.
+          </p>
+          <div className="row-actions">
+            <button type="button" className="btn" onClick={() => app.open({ kind: "addDomain" })}>Add a domain</button>
+            {can(me, "settings") && <button type="button" className="btn ghost" onClick={() => navigate("/settings/instance")}>Settings</button>}
+          </div>
+        </div>
+      )}
       {picking && !open && (
         <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l)).length} onAction={onAction} onClear={clearPick} />
       )}

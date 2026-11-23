@@ -284,10 +284,16 @@ describe("New link sheet", () => {
   it("with no usable domain submit is disabled and nothing is sent", async () => {
     const { api, user } = boot({ routes: { "GET /api/domains": () => ({ body: [dd] }) } });
     await open(user);
-    expect(screen.getByText(/No domain is available to you/)).toBeTruthy();
+    expect(screen.getByText(/No domain yet\. Add one in Domains first/)).toBeTruthy();
     expect((screen.getByRole("button", { name: /Create link/ }) as HTMLButtonElement).disabled).toBe(true);
     await user.keyboard("{Control>}{Enter}{/Control}");
     expect(posts(api)).toEqual([]);
+  });
+
+  it("someone who cannot add domains, with no usable domain, is told to ask the owner", async () => {
+    const { user } = boot({ me: { ...member, ...customRole(["links.create"]) }, routes: { "GET /api/domains": () => ({ body: [dd] }) } });
+    await open(user);
+    expect(screen.getByText(/No domain is available to you yet\. Ask the owner/)).toBeTruthy();
   });
 
   it("p, r and q stay text in the destination", async () => {

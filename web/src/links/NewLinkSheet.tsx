@@ -5,7 +5,7 @@ import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Seg } from "../shell/ui";
-import { can, canUseDomain } from "../perms";
+import { can, canUseDomain, mayOpen } from "../perms";
 import { useApp } from "../state";
 import { fromLocalInput } from "../time";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
@@ -502,7 +502,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         )}
         {usable.length === 0 && (
           <p className="err" role="alert">
-            No domain is available to you yet. Ask the owner to give you access to one.
+            {mayOpen(app.me, { kind: "addDomain" }) ? "No domain yet. Add one in Domains first." : "No domain is available to you yet. Ask the owner to give you access to one."}
           </p>
         )}
       </div>

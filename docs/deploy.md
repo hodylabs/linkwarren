@@ -347,7 +347,7 @@ Order matters. The new Worker reads `forward_to` on every link query and uses `s
 
 This version adds migration `0009_links_created_by.sql`, one index (`links_created_by`) that removing a person uses to count and move their links. Apply it before or after deploying; without it removal still works but reads every link. Same commands as above.
 
-Owners of an instance deployed before this version see the setup wizard once, on their next visit. The name and the main domain are required (an existing main domain is offered as the choice); the other steps, including the import, can be skipped.
+Owners of an instance deployed before this version see the setup wizard once, on their next visit. Only the name is required. The main domain step offers an existing main domain as the choice and can be skipped like the other steps, including the import. Without a main domain, new links go on another domain the person can use, the New link sheet says to add a domain when there is none, and the Links page asks owners and domain managers to add one and pick it in Settings.
 
 Write costs: the index adds one D1 row written per link created and per change of a link's creator. Removing a person moves all their links to the person you choose in one batch, about 3 rows written per link, so removing someone who created tens of thousands of links can use a large share of the Free plan's 100,000 rows written per day (or fail when the day's budget is gone, leaving nothing changed). Remove such a person early in the UTC day.
 

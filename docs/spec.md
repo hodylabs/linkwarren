@@ -57,7 +57,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 **Dashboard**
 - Keyboard-first: **Ctrl+K** palette (`g` + letter go, `c` + letter create, other text searches), `N` new link, `J`/`K` rows, every form keyboard-complete.
 - Brand: logo `design/logo/linkwarren-mark.svg` (faceted orange rabbit), graphite `#15181D` + orange `#FD8D27`, Unbounded (titles, wordmark), IBM Plex Sans (UI), IBM Plex Mono (links and domains). Primary buttons graphite with an orange plus.
-- First-run setup: name, sign-in, Cloudflare token (permissions checked one by one), main domain, email, bring your links.
+- First-run setup: name, sign-in, Cloudflare token (permissions checked one by one), main domain, email, bring your links. Only the name is required; the main domain can be skipped and set later in Settings (until then the Links page asks for one).
 
 **Instance and release**
 - Each instance chooses its own dashboard host, which never appears in the repo. In host mode it is a dashboard-only host, never a short-link domain (example: `dash.example.com`); in path mode it is the main short domain and the dashboard lives under its path (example: `example.com/dashboard`).

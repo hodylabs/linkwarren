@@ -182,7 +182,8 @@ async function setupSteps(env: Env) {
 setup.get("/", async (c) => c.json(await setupSteps(c.env)));
 setup.post("/complete", async (c) => {
   const { steps } = await setupSteps(c.env);
-  const missing = (["name", "mainDomain"] as const).filter((k) => !steps[k]);
+  // The main domain may be skipped: links then go on any usable domain, and the dashboard asks for one.
+  const missing = (["name"] as const).filter((k) => !steps[k]);
   if (missing.length) return c.json({ error: "incomplete", missing }, 400);
   const now = Math.floor(Date.now() / 1000);
   // Still an active owner (R5), and not completed yet.

@@ -234,11 +234,11 @@ describe("setup wizard steps", () => {
     expect(writes(api)).toEqual([]);
   });
 
-  it("Finish without a main domain shows what is missing", async () => {
-    const { user } = boot({ steps: ALL, domains: [MAIN], routes: { "POST /api/setup/complete": () => ({ status: 400, body: { error: "incomplete", missing: ["mainDomain"] } }) } });
+  it("Finish without a name shows what is missing", async () => {
+    const { user } = boot({ steps: ALL, domains: [MAIN], routes: { "POST /api/setup/complete": () => ({ status: 400, body: { error: "incomplete", missing: ["name"] } }) } });
     await heading("Bring your links");
     await user.keyboard("{Control>}{Enter}{/Control}");
-    expect(await screen.findByText("Setup cannot finish yet: add a main domain first.")).toBeTruthy();
+    expect(await screen.findByText("Setup cannot finish yet: add a name first.")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 1, name: "Bring your links" })).toBeTruthy();
   });
 });
@@ -274,6 +274,36 @@ describe("setup wizard end to end", () => {
     expect(writes(api).map((c) => `${c.method} ${c.path}`)).toEqual([
       "PATCH /api/settings", "POST /api/settings/cloudflare/check", "POST /api/domains", "PATCH /api/settings", "POST /api/setup/complete",
     ]);
+  });
+});
+
+describe("setup without a main domain", () => {
+  it("Skip for now on Main domain, then Finish: the shell asks to add a domain and New link says to add one first", async () => {
+    const { api, user } = boot({ steps: { ...NONE, name: true, cloudflare: true } });
+    expect(await heading("Main domain")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+    expect(await heading("Email")).toBeTruthy();
+    expect(within(screen.getByRole("complementary", { name: "Setup steps" })).getByText("Main domain").closest("li")!.className).toBe("todo");
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+    await heading("Bring your links");
+    await user.keyboard(ctrlEnter);
+    expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
+    expect(location.pathname).toBe("/links");
+    expect(writes(api).map((c) => `${c.method} ${c.path}`)).toEqual(["POST /api/setup/complete"]);
+    const prompt = screen.getByRole("status", { name: "No main domain" });
+    expect(prompt.textContent).toMatch(/Add a domain/);
+    await user.click(within(prompt).getByRole("button", { name: "Add a domain" }));
+    expect(await screen.findByRole("dialog", { name: /Add a domain/ })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /New link/ }));
+    const sheet = await screen.findByRole("dialog", { name: "New link" });
+    expect(within(sheet).getByText(/No domain yet\. Add one in Domains first/)).toBeTruthy();
+  });
+
+  it("no prompt once a main domain is set", async () => {
+    boot({ configured: true, settings: { name: "N", mainDomainId: "d0" }, domains: [MAIN] });
+    expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "No main domain" })).toBeNull();
   });
 });
 

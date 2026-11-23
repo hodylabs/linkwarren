@@ -556,18 +556,15 @@ describe("instance and settings", () => {
     expect(await v.json()).toMatchObject({ redirectCode: 301, passQuery: false });
   });
 
-  it("setup steps flip, complete needs name and main domain, runs once", async () => {
+  it("setup steps flip, complete needs only the name (the main domain may be skipped), runs once", async () => {
     configure(false);
     const steps = async () => ((await (await call("owner", "GET", "/api/setup")).json()) as { configured: boolean; steps: Record<string, boolean> });
     expect(await steps()).toEqual({ configured: false, steps: { name: false, signIn: true, cloudflare: false, mainDomain: false, email: true } });
     configure();
+    const inc = await call("owner", "POST", "/api/setup/complete");
+    expect([inc.status, await inc.json()]).toEqual([400, { error: "incomplete", missing: ["name"] }]);
     await call("owner", "PATCH", "/api/settings", { name: "Acme" });
     expect((await steps()).steps).toMatchObject({ name: true, cloudflare: true, mainDomain: false });
-    const inc = await call("owner", "POST", "/api/setup/complete");
-    expect([inc.status, await inc.json()]).toEqual([400, { error: "incomplete", missing: ["mainDomain"] }]);
-    await mainDom("dm", "m.test");
-    await call("owner", "PATCH", "/api/settings", { mainDomainId: "dm" });
-    expect((await steps()).steps.mainDomain).toBe(true);
     const done = await call("owner", "POST", "/api/setup/complete");
     expect(done.status).toBe(200);
     const again = await call("owner", "POST", "/api/setup/complete");
