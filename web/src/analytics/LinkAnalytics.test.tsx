@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -9,6 +9,8 @@ import { OWNER_ROLE } from "../test/roles";
 import { Breakdowns } from "./Breakdowns";
 import { busiest, BusyTimes, level } from "./BusyTimes";
 import { toCsv } from "./csv";
+import { safeDecode } from "./AnalyticsScreen";
+import { navigate } from "../router";
 
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const report = (o: Partial<AnalyticsReport> = {}): AnalyticsReport => ({
@@ -101,6 +103,41 @@ describe("Per-link analytics page", () => {
     expect(within(screen.getByRole("toolbar", { name: "Filters" })).queryByRole("button", { name: /All domains/ })).toBeNull();
     expect(screen.getByText(/full detail for three months/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "All analytics" }).getAttribute("href")).toBe("/analytics");
+  });
+});
+
+describe("Per-link page edge cases", () => {
+  const routes = () => ({
+    "GET /api/me": () => ({ body: owner }),
+    "GET /api/domains": () => ({ body: [] }),
+    "GET /api/users": () => ({ body: { items: [] } }),
+    "GET /api/analytics": () => ({ body: report() }),
+    "GET /api/analytics/detail": () => ({ body: detail() }),
+  });
+  it("a malformed id shows link not found, asks nothing, and the way back works", async () => {
+    history.replaceState(null, "", "/analytics/link/%");
+    const api = fakeApi(routes());
+    render(<App />);
+    expect(await screen.findByText(/That link was not found/)).toBeTruthy();
+    expect(api.calls.filter((c) => c.path.startsWith("/api/analytics"))).toEqual([]);
+    expect(safeDecode("%")).toBeNull();
+    expect(safeDecode("a%20b")).toBe("a b");
+    await userEvent.setup().click(screen.getByRole("link", { name: "All analytics" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Analytics" })).toBeTruthy());
+  });
+  it("a picker open when the page turns into a link page is closed, so shortcuts and Escape are not held by a hidden picker", async () => {
+    history.replaceState(null, "", "/analytics");
+    fakeApi(routes());
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Clicks", { selector: ".tile2 small" });
+    await user.keyboard("d");
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    act(() => navigate("/analytics/link/lM"));
+    await screen.findByRole("heading", { name: "Link analytics" });
+    act(() => navigate("/analytics"));
+    await screen.findByRole("heading", { name: "Analytics" });
+    expect(screen.queryByRole("listbox")).toBeNull();
   });
 });
 

@@ -257,17 +257,23 @@ export async function aeDay(env: Env, day: string): Promise<{ tot: RollTot[]; di
 /** S10 per-click detail, appended after blob9 (older points have them empty): os, browser, language, place. */
 export type DetailDim = "os" | "browser" | "language" | "place";
 const DETAIL = [["os", "blob10"], ["browser", "blob11"], ["language", "blob12"], ["place", "blob13"]] as const;
-// shortcut: UTC hour buckets, so a half-hour zone (+05:30) files a click at 00:45Z under 05:00 local, not 06:00; use 15-minute buckets (more queries) if that matters.
 /** Hourly buckets per query: 80 days of hours (1920 rows) stays under ROW_CAP, so a 90-day window is two queries. */
 const HOUR_SPAN_MS = 80 * 86_400_000;
 
 /**
  * Detail for `from`..`to` from Analytics Engine only (D1 rollups keep totals and country, device, referrer, not these):
- * human clicks per detail value, and per UTC hour for the busiest-times grid. Per id chunk: 4 dim queries plus 1 or 2 hour
+ * human clicks per detail value, and per hour for the busiest-times grid. Per id chunk: 4 dim queries plus 1 or 2 hour
  * queries, so MAX_CHUNKS keeps a request at 36 at most.
+ * `shiftSec` (0..3540, whole minutes): the viewer zone's offset past the whole hour (1800 for +05:30). Each timestamp is moved
+ * by it before the hour is cut, so a bucket is exactly one local hour; a bucket's start minus the shift is that hour's start.
+ * Whole-hour zones pass 0 and keep the plain UTC hour query.
  */
-export async function aeDetail(env: Env, from: Date, to: Date, scope: Scope): Promise<{ dims: { dim: DetailDim; value: string; clicks: number }[]; hours: { bucket: string; clicks: number }[] }> {
+export async function aeDetail(
+  env: Env, from: Date, to: Date, scope: Scope, shiftSec = 0,
+): Promise<{ dims: { dim: DetailDim; value: string; clicks: number }[]; hours: { bucket: string; clicks: number }[] }> {
   if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0 || from >= to) return { dims: [], hours: [] };
+  if (!Number.isInteger(shiftSec) || shiftSec < 0 || shiftSec >= 3600) throw new AeError("bad_shift");
+  const hour = shiftSec ? "toStartOfHour(toDateTime(toUnixTimestamp(timestamp) + toUInt32($shift)))" : "toStartOfHour(timestamp)";
   const spans: [Date, Date][] = [];
   for (let s = from; s < to; s = new Date(s.getTime() + HOUR_SPAN_MS)) spans.push([s, new Date(Math.min(to.getTime(), s.getTime() + HOUR_SPAN_MS))]);
   const runChunk = (c: Chunk) => {
@@ -276,8 +282,8 @@ export async function aeDetail(env: Env, from: Date, to: Date, scope: Scope): Pr
     return Promise.all([
       ...DETAIL.map(([, col]) => aeQuery(env, `SELECT ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where} GROUP BY ${col}`, p)),
       ...spans.map(([a, b]) => {
-        const q = { ...p, from: iso(a), to: iso(b) };
-        return aeQuery(env, `SELECT toStartOfHour(timestamp) AS bucket, COUNT(*) AS n FROM ${ds(env)} ${where} GROUP BY toStartOfHour(timestamp)`, q);
+        const q: Params = { ...p, from: iso(a), to: iso(b), ...(shiftSec ? { shift: String(shiftSec) } : {}) };
+        return aeQuery(env, `SELECT ${hour} AS bucket, COUNT(*) AS n FROM ${ds(env)} ${where} GROUP BY ${hour}`, q);
       }),
     ]);
   };

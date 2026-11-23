@@ -93,8 +93,8 @@ type Outcome = { keep: boolean; nextTry: boolean; error: string | null };
 
 /**
  * - Sent, or 409 (this key already reached Resend: an earlier attempt whose answer was lost): keep the week.
- * - Any other 4xx except 429: a permanent refusal (bad or suppressed address): keep the week, no retry, error recorded.
- * - 429 or 5xx: Resend answered and did not send: release, and the next attempt uses a new key (`nextTry`), so a payload
+ * - Any other 4xx except 401, 403 and 429: a permanent refusal (bad or suppressed address): keep the week, no retry, error recorded.
+ * - 401, 403, 429 or 5xx: Resend answered and did not send: release, and the next attempt uses a new key (`nextTry`), so a payload
  *   rebuilt from newer clicks is never refused for reusing a key with a different body.
  * - Network, settings, or report data not loadable: maybe sent (network) or never tried: release with the same key, so an
  *   accepted send whose answer was lost is not delivered again inside Resend's 24-hour key window.
@@ -105,7 +105,8 @@ export function outcomeOf(res: SendResult | null): Outcome {
   if (res.reason !== "rejected") return { keep: false, nextTry: false, error: res.reason };
   const st = res.status ?? 0;
   if (st === 409) return { keep: true, nextTry: false, error: "duplicate" };
-  if (st >= 400 && st < 500 && st !== 429) return { keep: true, nextTry: false, error: `refused_${st}` };
+  // 401 and 403 are the instance's key or sender account, not the address: retried like a 5xx, still bounded by MAX_TRIES.
+  if (st >= 400 && st < 500 && st !== 429 && st !== 401 && st !== 403) return { keep: true, nextTry: false, error: `refused_${st}` };
   return { keep: false, nextTry: true, error: `rejected_${st}` };
 }
 
