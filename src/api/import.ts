@@ -8,7 +8,8 @@ import { rowToDomain, type DomainRow, type UserRow } from "../types";
 import { canManageDomain, usableDomainsSql } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
 import { checkDestination, checkSlugShape, slugKey } from "../validate";
-import { hostError } from "./domains";
+import { reservedSlugs } from "../dash";
+import { hostError, refusedDashboard } from "./domains";
 import { purgeHost, purgeMany } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
@@ -81,7 +82,7 @@ importApi.post("/", async (c) => {
   for (const h of hosts) {
     const row: DomainRow | undefined = existing.get(h);
     if (row) { doms.set(h, { id: row.id, host: h, isNew: false, cs: row.caseSensitive, bare: row.bareRedirect, nf: row.notfoundRedirect, fillBare: false, fillNf: false }); continue; }
-    const err = hostError(h, c.env.DASHBOARD_HOST);
+    const err = hostError(h, refusedDashboard(c.env));
     if (err) { badHost.set(h, err); continue; }
     doms.set(h, { id: crypto.randomUUID(), host: h, isNew: true, cs: hasTwins(h), bare: null, nf: null, fillBare: false, fillNf: false });
   }
@@ -141,6 +142,8 @@ importApi.post("/", async (c) => {
     const dom = doms.get(host);
     if (!dom) return conflict(i, badHost.get(host) ?? "invalid_host");
     if (!checkSlugShape(l.slug).ok) return conflict(i, "invalid_slug");
+    // R4: the dashboard's path segment on its host, any case; checked before the disabled split so locks are refused too.
+    if (reservedSlugs(c.env, host).includes(l.slug.toLowerCase())) return conflict(i, "reserved_path");
     if (!dom.cs && isTwin(host, l.slug)) return conflict(i, "case_twin");
     if (!l.enabled || l.protected) { disabled.push(i); return; }
     const href = dest(l.destination);

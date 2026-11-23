@@ -5,6 +5,7 @@ import { CfError, cfConfigFor, cnameTarget } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverDetail } from "../cf/attach";
 import type { Env } from "../env";
+import { dash } from "../dash";
 import { apexOf, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { FIRST_OWNER, actorCan, can, type Guard } from "../roles";
@@ -56,15 +57,21 @@ async function administer(c: Context<E>, id: string, fn: (lease: Lease, lock: Le
   return (await holds(c.env, g)) ? res ?? c.json(busy, 409) : c.json(forbidden, 403);
 }
 
-/** Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars. */
-export function hostError(host: string, dashboard: string, cnameTarget?: string): string | null {
-  if (host === normalizeHost(dashboard)) return "dashboard_host";
+/**
+ * Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars.
+ * `dashboard` null skips the dashboard_host refusal (path mode: the dashboard host is the main short domain).
+ */
+export function hostError(host: string, dashboard: string | null, cnameTarget?: string): string | null {
+  if (dashboard !== null && host === normalizeHost(dashboard)) return "dashboard_host";
   if (cnameTarget && host === normalizeHost(cnameTarget)) return "reserved_host";
   const labels = host.split(".");
   if (host.length > 253 || labels.length < 2 || !labels.every((l) => LABEL.test(l)) || /^\d+$/.test(labels[labels.length - 1]!)) return "invalid_host";
   return null;
 }
 
+
+/** The host a new short domain may not be: the dashboard host in host mode, none in path mode (S8c). */
+export const refusedDashboard = (env: Env): string | null => (dash(env)?.pathMode ? null : env.DASHBOARD_HOST);
 
 const getCf = async (env: Env, id: string): Promise<CfRow | null> => {
   const r = await env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(id).first();
@@ -148,7 +155,7 @@ domains.post("/", async (c) => {
   const { type, confirmTakeover } = body.data;
   if (!manager && type !== "private") return c.json(forbidden, 403);
   const host = normalizeHost(body.data.host.trim());
-  const bad = hostError(host, c.env.DASHBOARD_HOST, cnameTarget(c.env) ?? undefined);
+  const bad = hostError(host, refusedDashboard(c.env), cnameTarget(c.env) ?? undefined);
   if (bad) return c.json({ error: bad }, 400);
   // Early exits so a doomed create makes no Cloudflare calls; the INSERT below still enforces both under races.
   if (await c.env.DB.prepare("SELECT 1 FROM domains WHERE host = ?").bind(host).first()) return c.json({ error: "host_taken" }, 409);

@@ -2,7 +2,7 @@ import { type Ctx, getDomainByHost, getLink } from "./cache";
 import { classifyAgent, referrerHost, splitQrMarker, UA_MAX, utcDay, visitorHash } from "./clicks";
 import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
-import { notFoundPage, pendingPage } from "./pages";
+import { notFoundPage, PAGE_HEADERS, pendingPage } from "./pages";
 import { countryOf, pickDestination, routeDeviceOf, withQuery } from "./routing";
 import { handleProtected } from "./unlock";
 import type { DomainRow, LinkRow } from "./types";
@@ -13,7 +13,7 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   const domain = await getDomainByHost(env, normalizeHost(url.host), ctx);
   const head = req.method === "HEAD";
   const html = (body: string, status: number) =>
-    new Response(head ? null : body, { status, headers: { "content-type": "text/html; charset=utf-8", ...robots(domain) } });
+    new Response(head ? null : body, { status, headers: { ...PAGE_HEADERS, ...robots(domain) } });
 
   if (!domain || domain.status === "disabled") return html(notFoundPage, 404);
   if (domain.status === "pending") return html(pendingPage, 200);

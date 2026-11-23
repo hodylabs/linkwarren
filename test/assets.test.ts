@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { SECURITY_HEADERS } from "../src/assets";
+import { PAGE_HEADERS } from "../src/pages";
 
 const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -116,7 +117,8 @@ describe("short hosts never serve dashboard files", () => {
     const r = await get("short.test", p);
     expect(r.status).toBe(404);
     expect(r.headers.get("x-fake-assets")).toBeNull();
-    expect(r.headers.get("content-security-policy")).toBeNull();
+    // The short-link page's own script-blocking policy (R8), never the dashboard's.
+    expect(r.headers.get("content-security-policy")).toBe(PAGE_HEADERS["content-security-policy"]);
     expect(await r.text()).not.toContain("<title>lw</title>");
   });
 });
