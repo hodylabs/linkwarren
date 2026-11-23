@@ -7,7 +7,7 @@ import { navigate } from "../router";
 import { useDetailView } from "../shell/narrow";
 import { Confirm, Sheet } from "../shell/Sheet";
 import { Tag } from "../shell/ui";
-import { isOwner, mayAssign } from "../perms";
+import { can as has, isOwner, mayAssign } from "../perms";
 import { RolePicker, RolesLoadError, useRoles } from "./RolePicker";
 import { useApp } from "../state";
 import { shortDate } from "../time";
@@ -106,6 +106,8 @@ export function PersonSheet({ id }: { id: string }) {
   // Every action on the person (role, status, sign-out, invite, removal) and its shortcut follows it; the server refuses the rest.
   const reach = !!u && !self && (isOwner(me) || (u.role !== "owner" && mayAssign(me, { id: u.roleId, perms: u.perms })));
   const can = (s: typeof st) => reach && st === s;
+  // Activity shows their audit log entries on People, which needs the audit permission (S8 R2).
+  const audit = has(me, "audit");
   useHotkeys(
     {
       r: (e) => void (!e.shiftKey && can("invited") && act.resend()),
@@ -114,7 +116,7 @@ export function PersonSheet({ id }: { id: string }) {
       "shift+s": () => can("active") && setAsk("signout"),
       e: (e) => void (!e.shiftKey && can("disabled") && act.enable()),
       "shift+x": () => reach && askRemove(),
-      a: (e) => void (!e.shiftKey && activity()),
+      a: (e) => void (!e.shiftKey && audit && activity()),
     } satisfies Bindings<typeof PERSON_KEYS>,
     ask === null,
   );
@@ -183,7 +185,7 @@ export function PersonSheet({ id }: { id: string }) {
         {error && <p className="err" role="alert">{peopleError(error)}</p>}
         <div className="actions">
           {/* The first focus: never a control that changes data, so a stray Enter or arrow does nothing harmful. */}
-          {btn("Activity", "A", "A", activity, "btn", true)}
+          {audit && btn("Activity", "A", "A", activity, "btn", true)}
           {can("invited") && btn("Resend", "R", "R", () => void act.resend())}
           {can("invited") && btn("Revoke", "Shift R", "Shift+R", () => setAsk("revoke"))}
           {can("active") && btn("Turn off access", "Shift D", "Shift+D", () => setAsk("disable"))}

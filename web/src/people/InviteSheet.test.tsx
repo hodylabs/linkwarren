@@ -106,6 +106,43 @@ describe("Invite sheet", () => {
     expect(posts(api)[0]!.body).toEqual({ email: "jordan@example.com", roleId: "hl", domainIds: [] });
   });
 
+  it("400 bad_role (the picked role deleted meanwhile): reloads the roles, falls back to Member, keeps the email", async () => {
+    let n = 0;
+    const roles = [
+      { id: "owner", name: "Owner", perms: [], builtin: "owner", people: 1 },
+      { id: "member", name: "Member", perms: [...MEMBER_ROLE.perms], builtin: "member", people: 0 },
+      { id: "hl", name: "Helper", perms: ["people.manage"], builtin: null, people: 0 },
+    ];
+    const { api, user } = boot({
+      invite: (body) => ((body as { roleId: string }).roleId === "hl" ? { status: 400, body: { error: "bad_role" } } : { status: 201, body: { user: {}, emailed: true } }),
+      routes: { "GET /api/roles": () => ({ body: n++ ? roles.filter((r) => r.id !== "hl") : roles }) },
+    });
+    await ready();
+    await user.keyboard("n");
+    const pick = await within(await screen.findByRole("dialog", { name: "Invite a person" })).findByRole("listbox", { name: "Role" });
+    await user.keyboard("jordan@example.com");
+    await user.click(within(pick).getByRole("option", { name: "Helper" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect((await within(sheet()).findByRole("alert")).textContent).toBe("That role no longer exists. Reload and try again.");
+    await waitFor(() => expect(within(sheet()).queryByRole("option", { name: "Helper" })).toBeNull());
+    expect(within(sheet()).getByRole("option", { name: "Member" }).getAttribute("aria-selected")).toBe("true");
+    expect((within(sheet()).getByLabelText("Email") as HTMLInputElement).value).toBe("jordan@example.com");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(2));
+    expect(posts(api)[1]!.body).toEqual({ email: "jordan@example.com", roleId: "member", domainIds: [] });
+  });
+
+  it("the hint promises private domains only for a role that may add them", async () => {
+    const { user } = await openInvite();
+    const hint = /and can add a passkey and their own private domains\./;
+    expect(sheet().textContent).toMatch(hint);
+    await user.click(within(sheet()).getByRole("option", { name: "Helper" }));
+    expect(sheet().textContent).not.toMatch(hint);
+    expect(sheet().textContent).toContain("They sign in with their email, and can add a passkey.");
+    await user.click(within(sheet()).getByRole("option", { name: "Owner" }));
+    expect(sheet().textContent).toMatch(hint);
+  });
+
   it("success closes the sheet, reloads people and announces", async () => {
     const { api, user } = await openInvite();
     const before = api.calls.filter((c) => c.path === "/api/users").length;

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -142,10 +142,33 @@ describe("Person sheet reach (R4)", () => {
     expect(writes(api)).toHaveLength(0);
   });
 
+  // Dana on Helper (links.create only), a role the lead holds; the mocked Member role has permissions the lead lacks.
+  const onHelper = { "GET /api/users": () => ({ body: { items: USERS.map((x) => (x.id === "ud" ? { ...x, roleId: "hl", roleName: "Helper", perms: ["links.create"] } : x)) } }) } as FakeRoutes;
   it("a people manager on a person within reach keeps them", async () => {
     const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
-    const { dlg } = await openPerson("Dana", undefined, lead);
+    const { dlg } = await openPerson("Dana", onHelper, lead);
     for (const name of [/Turn off access/, /Sign out everywhere/, /Remove/]) expect(within(dlg).getByRole("button", { name })).toBeTruthy();
+  });
+
+  it("a people manager on a Member with permissions they lack: no management actions", async () => {
+    const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
+    const asMember = { "GET /api/users": () => ({ body: { items: USERS.map((x) => (x.id === "ud" ? { ...x, perms: [...MEMBER_ROLE.perms] } : x)) } }) } as FakeRoutes;
+    const { dlg } = await openPerson("Dana", asMember, lead);
+    for (const name of [/Turn off access/, /Sign out everywhere/, /Remove/]) expect(within(dlg).queryByRole("button", { name })).toBeNull();
+  });
+
+  it("Activity and its A key need the audit permission", async () => {
+    const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
+    const { dlg, user } = await openPerson("Dana", onHelper, lead);
+    expect(within(dlg).queryByRole("button", { name: /Activity/ })).toBeNull();
+    await user.keyboard("a");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    cleanup();
+    const auditor: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create", "audit"], "Lead") };
+    const t = await openPerson("Dana", onHelper, auditor);
+    expect(within(t.dlg).getByRole("button", { name: /Activity/ })).toBeTruthy();
+    await t.user.keyboard("a");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });
 

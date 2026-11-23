@@ -33,6 +33,8 @@ export function InviteSheet() {
   const { roles, error: rolesError, reload: reloadRoles } = useRoles();
   // Until one is picked: Member, or the first role a people manager below Member may give (R4). None at all: no invite.
   const role = chosen ?? roles?.find((r) => r.id !== "owner" && mayAssign(app.me, r))?.id ?? null;
+  const perms = roles?.find((r) => r.id === role)?.perms ?? [];
+  const ownDomains = role === "owner" || perms.includes("domains.own") || perms.includes("domains.manage");
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mail, setMail] = useState<Mail | null>(null);
@@ -64,7 +66,10 @@ export function InviteSheet() {
         setAddress(`https://${mail?.dashboardHost ?? location.host}/`);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.code : "internal"); // the typed values stay in the form
+      const code = err instanceof ApiError ? err.code : "internal";
+      setError(code); // the typed values stay in the form
+      // The picked role was deleted meanwhile: fresh roles, back to the default pick (the email and domains stay).
+      if (code === "bad_role") { setRole(null); void reloadRoles(); }
     } finally {
       busy.current = false;
       setPending(false);
@@ -142,7 +147,7 @@ export function InviteSheet() {
                 </div>
               </div>
             )}
-            <p className="hint">They get an email with a link to sign in. They sign in with their email, and can add a passkey and their own private domains.</p>
+            <p className="hint">They get an email with a link to sign in. They sign in with their email, and can add a passkey{ownDomains && " and their own private domains"}.</p>
             {error && (
               <p className="err" role="alert">{inviteError(error)}</p>
             )}
