@@ -1411,6 +1411,32 @@ describe("PR #8 review fixes", () => {
     expect(urlInput().value).toBe("https://example.com/c"); // the open editor keeps what was typed in it
   });
 
+  it("a Reload that failed does not make a later save drop what was typed while it saved", async () => {
+    const h = held();
+    let pages = 0, patches = 0;
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => (++pages === 1 ? { body: { items: [L1, L2, L3], next: null } } : { status: 500, body: { error: "internal" } }),
+      routes: {
+        "PATCH /api/links/l1": async ({ body }) =>
+          ++patches === 1 ? { status: 409, body: { error: "conflict" } } : (await h.gate, { body: { ...L1, ...(body as object), updatedAt: 101 } }),
+      },
+    });
+    await ready();
+    await openEdit(user);
+    await user.type(urlInput(), "x");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.click(await within(editSheet()).findByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(pages).toBe(2));
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/b" } });
+    fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/c" } });
+    h.release();
+    expect(await within(detail()).findByText("https://example.com/b")).toBeTruthy();
+    expect(urlInput().value).toBe("https://example.com/c");
+  });
+
   it("a stored window that shows as one minute does not block a URL-only edit", async () => {
     const bodies: unknown[] = [];
     const minute = 4102444800; // a whole minute

@@ -296,6 +296,7 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
 
   const save = async () => {
     if (!link || busy || cardWait) return;
+    discard.current = false; // a Reload that never brought a revision must not replace edits made during this save
     // Password switched on with nothing stored and nothing typed: refuse, never save the link as if it were protected.
     if (d.passwordOn && !isCard && !link.hasPassword && d.password === "") return setError({ field: "password", code: "password_short" });
     // Route errors first: a bad country in a device-only rule would otherwise leave nothing to save, silently.
