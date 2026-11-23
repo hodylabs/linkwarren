@@ -463,6 +463,22 @@ describe("New link sheet: contact card (S9)", () => {
     expect(body).not.toHaveProperty("redirectCode");
   });
 
+  it("the browser check marks the shown row, not the cleaned index, when a blank row comes first", async () => {
+    const { api, user } = boot();
+    await open(user);
+    await user.click(screen.getByRole("radio", { name: "Contact card" }));
+    setVal(slugBox(), "ada");
+    await screen.findByText(/Available/);
+    setVal(screen.getByLabelText("First name"), "Ada");
+    await user.click(screen.getByRole("button", { name: "Add email" }));
+    await user.click(screen.getByRole("button", { name: "Add email" }));
+    setVal(screen.getByLabelText("Email 2"), "bad");
+    await user.click(screen.getByRole("button", { name: /Create link/ }));
+    expect(screen.getByLabelText("Email 2").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
+    expect(posts(api)).toEqual([]);
+  });
+
   it("a bad_vcard answer marks the field it names", async () => {
     const { user } = boot({ routes: { "POST /api/links": () => ({ status: 400, body: { error: "bad_vcard", field: "photo" } }) } });
     await open(user);

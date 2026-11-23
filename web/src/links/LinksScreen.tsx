@@ -194,13 +194,14 @@ export function LinksScreen() {
   const canBulk = can(me, "links.bulk");
 
   useEffect(() => {
-    if (!wantQr || !selectedId) return;
+    // A card still loading has no detail panel yet: wait (a failed load keeps qr=1, so a reload tries again).
+    if (!wantQr || !selectedId || loadCard) return;
     detailRef.current?.focusQr();
     // Once only: later selections (J, K, clicks) focus their row, not this panel.
     const p = new URLSearchParams(location.search);
     p.delete("qr");
     navigate(`/links?${p}`, { replace: true });
-  }, [wantQr, selectedId]);
+  }, [wantQr, selectedId, loadCard]);
 
   const move = async (step: 1 | -1) => {
     if (items.length === 0) return;

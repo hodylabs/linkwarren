@@ -1212,4 +1212,46 @@ describe("contact card links (S9)", () => {
     expect(img.src).toBe("data:image/jpeg;base64,/9j/AAAA");
     expect(api.calls.filter((c) => c.method === "GET" && c.path === "/api/links/l1")).toHaveLength(1);
   });
+
+  it("?qr=1 on a card with a photo waits for the single read, then focuses the QR download and leaves the URL", async () => {
+    let release: (r: FakeRes) => void = () => undefined;
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: true } });
+    boot({
+      path: "/links?sel=l1&qr=1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "GET /api/links/l1": () => new Promise<FakeRes>((r) => (release = r)) },
+    });
+    await screen.findByText("Loading the contact card...");
+    expect(location.search).toContain("qr=1");
+    release({ body: { ...C1, vcard: { ...card, photo: "/9j/AAAA" } } });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ })));
+    await waitFor(() => expect(location.search).not.toContain("qr="));
+  });
+
+  it("?qr=1 stays in the URL when the card cannot be loaded", async () => {
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: true } });
+    boot({
+      path: "/links?sel=l1&qr=1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "GET /api/links/l1": () => ({ status: 500, body: { error: "internal" } }) },
+    });
+    await screen.findByText(/could not be loaded/);
+    expect(location.search).toContain("qr=1");
+  });
+
+  it("a server bad_vcard on emails.0 marks the second shown row when the first is blank", async () => {
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "PATCH /api/links/l1": () => ({ status: 400, body: { error: "bad_vcard", field: "emails.0" } }) },
+    });
+    await ready();
+    await user.click(within(detail()).getByRole("button", { name: "Add email" }));
+    await user.click(within(detail()).getByRole("button", { name: "Add email" }));
+    await user.type(within(detail()).getByLabelText("Email 2"), "ada@example.com");
+    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(within(detail()).getByLabelText("Email 2").getAttribute("aria-invalid")).toBe("true"));
+    expect(within(detail()).getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
+  });
 });
