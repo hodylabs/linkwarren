@@ -192,7 +192,10 @@ describe("failed sends never starve the others", () => {
   });
 
   it("outcomeOf: 409 and sends keep the week; network keeps the same key", () => {
-    expect(outcomeOf({ ok: false, reason: "rejected", status: 409 })).toMatchObject({ keep: true });
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 409, name: "invalid_idempotent_request" })).toMatchObject({ keep: true, error: "duplicate" });
+    // Still running at Resend (it may yet fail): released with the same key, not taken as sent.
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 409, name: "concurrent_idempotent_requests" })).toEqual({ keep: false, nextTry: false, error: "in_progress" });
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 409 })).toMatchObject({ keep: false, nextTry: false });
     expect(outcomeOf({ ok: false, reason: "rejected", status: 429 })).toEqual({ keep: false, nextTry: true, error: "rejected_429" });
     // 401 and 403 are the instance's key or sender account, not the address: retried, bounded by MAX_TRIES.
     expect(outcomeOf({ ok: false, reason: "rejected", status: 401 })).toEqual({ keep: false, nextTry: true, error: "rejected_401" });
@@ -200,6 +203,64 @@ describe("failed sends never starve the others", () => {
     expect(outcomeOf({ ok: false, reason: "rejected", status: 400 })).toEqual({ keep: true, nextTry: false, error: "refused_400" });
     expect(outcomeOf({ ok: false, reason: "network" })).toEqual({ keep: false, nextTry: false, error: "network" });
     expect(outcomeOf(null)).toMatchObject({ keep: false, nextTry: false });
+  });
+});
+
+describe("delivery state (PR review)", () => {
+  const state = async (id: string) => (await env.DB.prepare("SELECT last_week, tries, attempts, claimed_at, last_error FROM digest_prefs WHERE user_id = ?").bind(id).first<Record<string, unknown>>())!;
+  const keys = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((c) => ((c[1] as RequestInit).headers as Record<string, string>)["idempotency-key"]);
+
+  it("network failures count toward MAX_TRIES and keep the same key", async () => {
+    const { a } = await fixture();
+    await run("UPDATE digest_prefs SET enabled = 0 WHERE user_id != ?", a.user.id);
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => { throw new TypeError("network"); });
+    for (let h = 0; h < 10; h++) await sendDigests(env, MON_8_PARIS + h * 3600);
+    expect(spy).toHaveBeenCalledTimes(6);
+    expect(new Set(keys(spy))).toEqual(new Set([`digest-${a.user.id}-2026-11-23-0`]));
+    expect(await state(a.user.id)).toMatchObject({ last_week: "2026-11-23", attempts: 6, last_error: "gave_up", claimed_at: null });
+  });
+
+  it("a claim with no outcome written is resumed after an hour with the same key; a fresh one is left alone", async () => {
+    const { a } = await fixture();
+    await run("UPDATE digest_prefs SET enabled = 0 WHERE user_id != ?", a.user.id);
+    await run("UPDATE digest_prefs SET last_week = '2026-11-23', try_week = '2026-11-23', tries = 1, attempts = 2, claimed_at = ? WHERE user_id = ?", MON_8_PARIS - 60, a.user.id);
+    const fake = fakeResend();
+    expect(await sendDigests(env, MON_8_PARIS)).toBe(0); // claimed a minute ago: maybe still running
+    expect(await sendDigests(env, MON_8_PARIS + 3600)).toBe(1);
+    const spy = globalThis.fetch as unknown as { mock: { calls: unknown[][] } };
+    expect(keys(spy)).toEqual([`digest-${a.user.id}-2026-11-23-1`]);
+    expect(fake.sent).toHaveLength(1);
+    expect(await state(a.user.id)).toMatchObject({ last_week: "2026-11-23", attempts: 3, claimed_at: null });
+  });
+
+  it("people already done this week never fill the candidate limit ahead of someone due", async () => {
+    const { a } = await fixture();
+    await run("UPDATE digest_prefs SET enabled = 0 WHERE user_id != ?", a.user.id);
+    await run("UPDATE digest_prefs SET last_attempt_at = 5 WHERE user_id = ?", a.user.id);
+    // 501 people who opted in this week (never attempted, so they would sort first) and are not due.
+    await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 501)
+      INSERT INTO users (id,email,role,status,created_at) SELECT 'x' || i, 'x' || i || '@example.com', 'member', 'active', 1 FROM n`);
+    await run("INSERT INTO digest_prefs (user_id,enabled,tz,secret,last_week,updated_at) SELECT id, 1, 'UTC', 'k', '2026-11-23', 1 FROM users WHERE id LIKE 'x%'");
+    const fake = fakeResend();
+    expect(await sendDigests(env, MON_8_PARIS)).toBe(1);
+    expect(fake.sent.map((m) => m.to[0])).toEqual(["a@example.com"]);
+  });
+
+  it("with live reads off but clicks recorded, the week is sent only once the rollups cover it", async () => {
+    const { a } = await fixture();
+    await run("UPDATE digest_prefs SET enabled = 0 WHERE user_id != ?", a.user.id);
+    const prev = env.CLICKS;
+    Object.assign(env, { CLICKS: { writeDataPoint() {} } });
+    try {
+      const fake = fakeResend();
+      expect(await sendDigests(env, MON_8_PARIS)).toBe(0); // rolled through Saturday only
+      expect(await state(a.user.id)).toMatchObject({ last_week: "2026-11-16", last_error: "data_unavailable" });
+      await run("UPDATE analytics_state SET v = '2026-11-22' WHERE k = 'rolled_through'");
+      expect(await sendDigests(env, MON_8_PARIS + 3600)).toBe(1);
+      expect(fake.sent).toHaveLength(1);
+    } finally {
+      Object.assign(env, { CLICKS: prev });
+    }
   });
 });
 

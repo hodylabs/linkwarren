@@ -11,6 +11,10 @@ CREATE TABLE digest_prefs (
   last_attempt_at INTEGER,
   try_week TEXT,
   tries INTEGER NOT NULL DEFAULT 0,
+  -- attempts: every claim in try_week, network failures too (the MAX_TRIES cap); claimed_at: set while an attempt has no
+  -- outcome written, so a run that died after claiming is resumed (same key) instead of the week counting as sent.
+  attempts INTEGER NOT NULL DEFAULT 0,
+  claimed_at INTEGER,
   last_error TEXT,
   updated_at INTEGER NOT NULL
 );
