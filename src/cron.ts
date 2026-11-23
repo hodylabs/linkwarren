@@ -2,6 +2,7 @@ import { AeError, aeConfigured, aeDay } from "./ae";
 import { utcDay } from "./clicks";
 import type { Env } from "./env";
 import { DAY_KEYS_SQL } from "./limits";
+import { checkUpdate } from "./update";
 
 const DAY_MS = 86_400_000;
 export const MAX_DAYS = 3; // per hourly run: 3 x 5 AE queries and a few D1 calls; a 90-day backlog clears in about 30 hours
@@ -174,7 +175,7 @@ const chargeStmt = (env: Env, today: string) =>
 
 const errName = (e: unknown) => (e instanceof Error ? e.name : "unknown"); // name only: messages could carry data
 
-/** Hourly at :15. Every run rolls up, then prunes expired rows with what is left of the run budget; only the 00:15 UTC run purges the audit log. */
+/** Hourly at :15. Every run rolls up, then prunes expired rows with what is left of the run budget; only the 00:15 UTC run purges the audit log and checks for a new release. */
 export async function scheduled(c: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
   const now = Math.floor(c.scheduledTime / 1000);
   const spent = { writes: 0 };
@@ -199,4 +200,5 @@ export async function scheduled(c: ScheduledController, env: Env, _ctx: Executio
   } catch (e) {
     console.error("audit purge failed", errName(e));
   }
+  await checkUpdate(env, now); // catches and logs its own failures
 }

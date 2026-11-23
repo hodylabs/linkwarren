@@ -11,7 +11,7 @@ beforeEach(async () => {
   await run("INSERT OR REPLACE INTO users (id,email,role,status,created_at) VALUES ('uo','owner@example.com','owner','active',1)");
 });
 
-const DEFAULTS = { name: null, mainDomainId: null, logoVersion: null, linkRedirectCode: 302, linkPassQuery: true, setupCompletedAt: null };
+const DEFAULTS = { name: null, mainDomainId: null, logoVersion: null, linkRedirectCode: 302, linkPassQuery: true, setupCompletedAt: null, updatesCheck: true, updatesLatest: null };
 
 describe("getSettings", () => {
   it("defaults on an empty table", async () => {

@@ -10,8 +10,9 @@ import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 const base: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 afterEach(() => vi.unstubAllGlobals());
 
-function boot(me: Me, signOut: () => { status: number; body?: unknown } = () => ({ status: 204 })) {
+function boot(me: Me, signOut: () => { status: number; body?: unknown } = () => ({ status: 204 }), instance?: object) {
   const api = fakeApi({
+    ...(instance ? { "GET /api/instance": () => ({ body: instance }) } : {}),
     "GET /api/domains": () => ({ body: [] }),
     "GET /api/users": () => ({ body: { items: [] } }),
     "POST /api/account/sign-out": signOut,
@@ -54,6 +55,26 @@ describe("Rail footer", () => {
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
     expect(api.calls.filter((c) => c.path === "/api/account/sign-out")).toHaveLength(2);
+  });
+});
+
+describe("Rail update notice", () => {
+  const INST = { name: "", logoVersion: null, configured: true, dashboardHost: "links.example.com", mainDomainId: null, linkDefaults: { redirectCode: 302, passQuery: true } };
+  const URL_ = "https://github.com/hodylabs/linkwarren/releases/tag/v0.4.0";
+  it("shows a v0.4.0 available link to the release notes in a new tab, reachable by Tab", async () => {
+    const { user } = boot(base, undefined, { ...INST, update: { current: "0.3.0", latest: "0.4.0", url: URL_ } });
+    const a = await screen.findByRole("link", { name: "v0.4.0 available" });
+    expect(a.getAttribute("href")).toBe(URL_);
+    expect(a.getAttribute("target")).toBe("_blank");
+    expect(a.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(a.closest(".ver")?.textContent).toContain(`Dashboard v${__APP_VERSION__}`);
+    for (let i = 0; i < 30 && document.activeElement !== a; i++) await user.tab();
+    expect(document.activeElement).toBe(a);
+  });
+  it("nothing when update is null or missing", async () => {
+    boot(base, undefined, { ...INST, update: null });
+    await screen.findByText(`Dashboard v${__APP_VERSION__}`, { exact: false });
+    await waitFor(() => expect(screen.queryByRole("link", { name: /available/ })).toBeNull());
   });
 });
 

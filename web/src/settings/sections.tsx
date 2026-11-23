@@ -88,7 +88,7 @@ const SaveButton = ({ onClick, disabled }: { onClick: () => void; disabled: bool
 
 export function InstanceSection({ s, onSaved }: { s: SettingsBody; onSaved: (b: SettingsBody) => void }) {
   const { domains, instance, reloadInstance } = useApp();
-  const e = useEdit(s, ["name", "mainDomainId"] as const, (b) => {
+  const e = useEdit(s, ["name", "mainDomainId", "updatesCheck"] as const, (b) => {
     onSaved(b);
     void reloadInstance().catch(() => undefined);
   });
@@ -141,6 +141,13 @@ export function InstanceSection({ s, onSaved }: { s: SettingsBody; onSaved: (b: 
           {mains.map((d) => <option key={d.id} value={d.id}>{d.host}</option>)}
         </select>
       </Field>
+      <div className="toggle sfield">
+        <div>
+          <b>Check for updates</b>
+          <small>Once a day, asks GitHub for the latest linkwarren release and shows it in the sidebar. Nothing installs by itself</small>
+        </div>
+        <Switch checked={e.draft.updatesCheck} onChange={(v) => e.set({ updatesCheck: v })} label="Check for updates" />
+      </div>
       <SaveButton onClick={() => void e.save()} disabled={e.saving} />
       <Note msg={e.msg} />
     </section>

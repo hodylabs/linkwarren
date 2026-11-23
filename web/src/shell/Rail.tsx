@@ -149,7 +149,12 @@ export function Rail() {
           )}
         </div>
       </div>
-      <div className="ver">Dashboard v{__APP_VERSION__}</div>
+      <div className="ver">
+        Dashboard v{__APP_VERSION__}
+        {instance?.update && (
+          <a href={instance.update.url} target="_blank" rel="noopener noreferrer">v{instance.update.latest} available</a>
+        )}
+      </div>
     </>
   );
   return (
