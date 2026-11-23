@@ -1,6 +1,6 @@
 import { buildReport, loadRows, localParts, parseTz, resolveRange, resolveScope, type AnalyticsReport, type Tz } from "./analytics";
 import { dash } from "./dash";
-import { displayName, emailConfigured, escapeHtml, sendEmail } from "./email";
+import { displayName, emailConfigured, escapeHtml, sendEmail, type SendResult } from "./email";
 import type { Env } from "./env";
 import { ROLE_JOIN, USER_COLS } from "./roles";
 import { getSettings } from "./settings";
@@ -9,7 +9,7 @@ import { rowToUser } from "./types";
 /**
  * S10 weekly email summary. The hourly cron calls sendDigests: a person who opted in gets one email per local week, from
  * 07:00 on Monday in their zone, about the Monday to Sunday before (UTC days), scoped to exactly what they may see in
- * Analytics. `last_week` is claimed before the send and released if Resend refuses it, and Resend's Idempotency-Key covers
+ * Analytics. `last_week` is claimed before the send; outcomeOf decides whether a failed send keeps the week or releases it, and Resend's Idempotency-Key covers
  * a retry of the same week, so a re-run cron never sends twice.
  */
 
@@ -83,15 +83,43 @@ export function digestEmail(o: { instanceName: string | null; week: string; repo
   return { subject: `Your week in ${name}: ${fmt(t.clicks)} clicks`, text, html };
 }
 
-type Pref = { user_id: string; tz: string; secret: string; last_week: string | null; email: string };
+type Pref = { user_id: string; tz: string; secret: string; last_week: string | null; try_week: string | null; tries: number; email: string };
 
-/** One run's sends (at most DIGESTS_PER_RUN). Returns how many went out; a failure of one person never stops the others. */
+/** Delivery attempts per person and week before that week is given up (last_error `gave_up`). */
+export const MAX_TRIES = 6;
+
+/** What one attempt's outcome does to the claimed week. */
+type Outcome = { keep: boolean; nextTry: boolean; error: string | null };
+
+/**
+ * - Sent, or 409 (this key already reached Resend: an earlier attempt whose answer was lost): keep the week.
+ * - Any other 4xx except 429: a permanent refusal (bad or suppressed address): keep the week, no retry, error recorded.
+ * - 429 or 5xx: Resend answered and did not send: release, and the next attempt uses a new key (`nextTry`), so a payload
+ *   rebuilt from newer clicks is never refused for reusing a key with a different body.
+ * - Network, settings, or report data not loadable: maybe sent (network) or never tried: release with the same key, so an
+ *   accepted send whose answer was lost is not delivered again inside Resend's 24-hour key window.
+ */
+export function outcomeOf(res: SendResult | null): Outcome {
+  if (!res) return { keep: false, nextTry: false, error: "data_unavailable" };
+  if (res.ok) return { keep: true, nextTry: false, error: null };
+  if (res.reason !== "rejected") return { keep: false, nextTry: false, error: res.reason };
+  const st = res.status ?? 0;
+  if (st === 409) return { keep: true, nextTry: false, error: "duplicate" };
+  if (st >= 400 && st < 500 && st !== 429) return { keep: true, nextTry: false, error: `refused_${st}` };
+  return { keep: false, nextTry: true, error: `rejected_${st}` };
+}
+
+/**
+ * One run's sends (at most DIGESTS_PER_RUN attempts). Returns how many went out; one person's failure never stops the others.
+ * People are taken by `last_attempt_at` (never tried first), bumped on every attempt, so a failing address goes behind
+ * everyone else and cannot starve them.
+ */
 export async function sendDigests(env: Env, nowSec: number): Promise<number> {
   const d = dash(env);
   if (!d || !(await emailConfigured(env))) return 0;
   const now = nowSec * 1000;
   const prefs = (await env.DB.prepare(
-    "SELECT p.user_id, p.tz, p.secret, p.last_week, u.email FROM digest_prefs p JOIN users u ON u.id = p.user_id WHERE p.enabled = 1 AND u.status = 'active' ORDER BY p.last_week, p.user_id LIMIT 500",
+    "SELECT p.user_id, p.tz, p.secret, p.last_week, p.try_week, p.tries, u.email FROM digest_prefs p JOIN users u ON u.id = p.user_id WHERE p.enabled = 1 AND u.status = 'active' ORDER BY p.last_attempt_at IS NOT NULL, p.last_attempt_at, p.user_id LIMIT 500",
   ).all<Pref>()).results;
   let settings: Awaited<ReturnType<typeof getSettings>> | null = null;
   let sent = 0, tried = 0;
@@ -101,27 +129,33 @@ export async function sendDigests(env: Env, nowSec: number): Promise<number> {
     if (!tz) continue;
     const w = weekOf(now, tz);
     if (!w.due || (p.last_week !== null && p.last_week >= w.week)) continue;
-    // Claim first: two overlapping runs cannot both pass this guard for the same week.
-    const claim = await env.DB.prepare("UPDATE digest_prefs SET last_week = ?1 WHERE user_id = ?2 AND enabled = 1 AND (last_week IS NULL OR last_week < ?1)")
-      .bind(w.week, p.user_id).run();
-    if (!claim.meta.changes) continue;
+    const tries = p.try_week === w.week ? p.tries : 0;
+    const give = tries >= MAX_TRIES;
+    // Claim first: two overlapping runs cannot both pass this guard for the same week. A week out of tries is claimed for good.
+    const claim = await env.DB.prepare(
+      "UPDATE digest_prefs SET last_week = ?1, last_attempt_at = ?3, try_week = ?1, tries = ?4, last_error = CASE WHEN ?5 = 1 THEN 'gave_up' ELSE last_error END WHERE user_id = ?2 AND enabled = 1 AND (last_week IS NULL OR last_week < ?1)",
+    ).bind(w.week, p.user_id, nowSec, tries, give ? 1 : 0).run();
+    if (!claim.meta.changes || give) continue;
     tried++;
-    const release = () => env.DB.prepare("UPDATE digest_prefs SET last_week = ? WHERE user_id = ? AND last_week = ?").bind(p.last_week, p.user_id, w.week).run();
+    let res: SendResult | null = null;
     try {
       settings ??= await getSettings(env);
       const mail = await buildFor(env, p, w.week, nowSec, d.base, settings.name);
-      const res = mail && (await sendEmail(env, {
-        to: p.email, ...mail, name: settings.name, idempotencyKey: `digest-${p.user_id}-${w.week}`,
+      res = mail && (await sendEmail(env, {
+        to: p.email, ...mail, name: settings.name, idempotencyKey: `digest-${p.user_id}-${w.week}-${tries}`,
         headers: { "List-Unsubscribe": `<${mail.unsubUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
       }));
-      if (res && res.ok) sent++;
-      // The next hourly run tries again; the same Idempotency-Key keeps it to one email for 24 hours.
-      // shortcut: an accepted send whose answer is lost is retried; past Resend's 24-hour key window that could send twice. Store a send state if that shows.
-      else await release();
     } catch (e) {
       console.error("weekly email failed", e instanceof Error ? e.name : "unknown");
-      await release().catch(() => undefined);
     }
+    const o = outcomeOf(res);
+    if (o.error) console.warn("weekly email not sent", o.error); // a code only, never the address
+    if (res?.ok) sent++;
+    const done = o.keep
+      ? env.DB.prepare("UPDATE digest_prefs SET last_error = ?3 WHERE user_id = ?1 AND last_week = ?2").bind(p.user_id, w.week, o.error)
+      : env.DB.prepare("UPDATE digest_prefs SET last_week = ?4, last_error = ?3, tries = tries + ?5 WHERE user_id = ?1 AND last_week = ?2")
+        .bind(p.user_id, w.week, o.error, p.last_week, o.nextTry ? 1 : 0);
+    await done.run().catch(() => undefined);
   }
   return sent;
 }

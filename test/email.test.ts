@@ -72,7 +72,7 @@ describe("sendEmail", () => {
   it("returns rejected on 422 and logs the status only", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const f = vi.fn(async () => Response.json({ message: "bad re_test a@example.com" }, { status: 422 }));
-    expect(await sendEmail(cfg(), mail, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "rejected" });
+    expect(await sendEmail(cfg(), mail, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "rejected", status: 422 });
     expect(warn.mock.calls).toEqual([["resend_rejected", 422]]);
   });
   it("returns network when fetch throws", async () => {
