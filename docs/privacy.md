@@ -10,7 +10,7 @@ This page describes what a linkwarren instance records when someone opens a shor
 
 ## What is recorded per click
 
-Each redirect to a live link records one data point with:
+Each visit to a live link (a redirect, or a contact card download) records one data point with:
 
 - the domain and the link (its id and slug)
 - the country code, as Cloudflare reports it

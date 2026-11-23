@@ -37,7 +37,7 @@ Search the links the person can see, newest first, 50 at a time.
 | `status` | Optional. `active`, `scheduled` or `expired`. |
 | `cursor` | Optional. The `next` value of the previous answer. |
 
-Returns `{ items, next }`, with each item a link as in the [API](api.md#the-link-object).
+Returns `{ items, next }`, with each item a link as in the [API](api.md#the-link-object). A contact card (`kind: "vcard"`) shows its fields with `hasPhoto` in place of the photo.
 
 ### `get_link`
 
@@ -86,11 +86,11 @@ Create a short link.
 | `password` | Optional. Sets a password (8 to 128 characters). Never returned. |
 | `routes` | Optional. Up to 10 rules `{ countries, devices, url }`, first match wins (see [links.md](links.md#routing-r)). |
 
-Returns the new link.
+Returns the new link. `create_link` always makes a redirect: [contact cards](vcards.md) are created in the dashboard or over the API.
 
 ### `update_link`
 
-Change a link. Input: `id`, plus any of `url`, `redirectCode`, `startsAt`, `expiresAt`, `passQuery`, `password` (a string sets it, `null` removes it) and `routes` (replaces the whole list; `[]` clears it). Returns the changed link. Changing a link changes a live redirect that printed QR codes may use, so the tool tells the agent to confirm with the person first.
+Change a link. Input: `id`, plus any of `url`, `redirectCode`, `startsAt`, `expiresAt`, `passQuery`, `password` (a string sets it, `null` removes it) and `routes` (replaces the whole list; `[]` clears it). Returns the changed link. Changing a link changes a live redirect that printed QR codes may use, so the tool tells the agent to confirm with the person first. A contact card's fields cannot be changed here: on a card, a new `url` answers `vcard_url` and a password or routes answer `vcard_rule`.
 
 ### `bulk_links`
 
@@ -107,7 +107,7 @@ Change up to 50 links in one call, with the same rules as one at a time.
 | `redirectCode`, `passQuery` | Redirect only. |
 | `password` | Password only: a string sets it, `null` removes it. |
 
-`delete` also needs delete access. Returns `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }` with the per-link codes listed in the [API reference](api.md#post-linksbulk). A password is set on one link per call; the rest come back in `pending` for the agent to send again.
+`delete` also needs delete access. Returns `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, kind, hasPassword, forwardTo } }` or `{ id, ok: false, error }` with the per-link codes listed in the [API reference](api.md#post-linksbulk). A password is set on one link per call; the rest come back in `pending` for the agent to send again.
 
 ## Delete tool
 

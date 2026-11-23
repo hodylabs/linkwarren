@@ -10,6 +10,8 @@ A short link is a domain, a slug and a destination: `go.example.com/spring` send
 
 Create a link with New link (`N`) on the Links page, from the command palette (`Ctrl+K`), over the [API](api.md) or from an [AI agent](mcp.md). Edits apply everywhere within a few minutes: redirects are cached in KV for up to about 5 minutes.
 
+A link has one of two types, chosen when it is made: **Link**, a redirect (everything on this page), or **Contact card**, which downloads a contact to the visitor's phone instead (see [vcards.md](vcards.md)).
+
 ## Slugs
 
 - 1 to 64 characters: letters, digits, `.`, `_`, `~` and `-`. A slug cannot start with a dot.
@@ -67,7 +69,7 @@ Use `302` for links with routes: a browser that once got a `301` keeps going to 
 
 ### QR code (`Q`)
 
-Every link has a QR code (SVG or PNG) in its detail panel. It encodes the short link with `?lw=qr` added, so analytics can count scans apart from typed visits; the marker is removed before the redirect. The QR code always encodes the short link, never the destination, so changing the destination never needs a new print.
+Every link has a QR code (SVG or PNG) in its detail panel. It encodes the short link with `?lw=qr` added, so analytics can count scans apart from typed visits; the marker is removed before the redirect. The QR code always encodes the short link, never the destination, so changing the destination never needs a new print. QR codes for Wi-Fi, text and more are on the QR codes screen (see [qr-codes.md](qr-codes.md)).
 
 ## Who can change a link
 

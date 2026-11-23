@@ -145,6 +145,28 @@ A password-protected link always uses `302`.
 
 A link with that slug was deleted, so the slug is locked. Someone whose role has **Edit anyone's links** can release the lock in the New link sheet (see [links.md](links.md#slug-locks)).
 
+### A contact card is refused with `bad_vcard`, `vcard_rule` or `vcard_url`
+
+`bad_vcard` names the field that failed (for example `name` when there is no first name, last name or organization, or `photo` for a photo that is not a JPEG or PNG under 64 KB). A card takes no password or routing (`vcard_rule`) and no destination (`vcard_url`). See [vcards.md](vcards.md).
+
+## QR codes and the weekly email
+
+### A Wi-Fi QR code cannot be saved: `secrets_key_missing`
+
+Wi-Fi passwords are stored encrypted with the `SECRETS_KEY` secret. Set it (`openssl rand -base64 32`, then `npx wrangler secret put SECRETS_KEY -c wrangler.instance.jsonc`). Open networks need no password and save without it. If a saved code asks for its password again, `SECRETS_KEY` changed or was lost; enter the password again.
+
+### A QR code is refused with `low_contrast` or `inverted_colors`
+
+The code color must be darker than the background, with a contrast ratio of at least 4.5, or many scanners cannot read it.
+
+### `409 too_many_qr_codes`
+
+Each person can keep at most 500 saved QR codes. Delete some first.
+
+### The weekly email switch is off and disabled
+
+Email is not set up on the instance (`EMAIL_FROM` and a Resend key). It is also only offered in app mode. For a failed send, Workers Logs shows `weekly email not sent <code>`, and the D1 table `digest_prefs` keeps the last code in `last_error` (`gave_up` means 6 tries failed that week). See [analytics.md](analytics.md#weekly-email).
+
 ## Agents and API keys
 
 ### `/mcp` answers `404`

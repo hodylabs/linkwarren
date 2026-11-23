@@ -22,7 +22,7 @@ linkwarren is configured in your instance config, `wrangler.instance.jsonc` (cop
 | `ASSETS` | Workers static assets | Yes, for the dashboard | The built dashboard (`npm run build:web` writes `web/dist`). Keep `"run_worker_first": true`. Without it dashboard paths answer `503 {"error":"no_assets"}`. |
 | `CLICKS` | Analytics Engine dataset | No | One data point per redirect, for analytics. Without it nothing is recorded. Turn on Analytics Engine for the account first, or the deploy fails with code 10089. |
 
-The example config also sets `"triggers": { "crons": ["15 * * * *"] }`: the hourly job that rolls clicks into D1, purges old audit rows and expired limiter rows, and (at 00:15 UTC) runs the update check. Keep it. `"workers_dev": false` keeps the Worker off its `workers.dev` address, so it is reachable only through your routes.
+The example config also sets `"triggers": { "crons": ["15 * * * *"] }`: the hourly job that rolls clicks into D1, prunes expired limiter rows, sends due [weekly emails](analytics.md#weekly-email) (at most 2 a run), and at 00:15 UTC purges old audit rows and runs the update check. Keep it. `"workers_dev": false` keeps the Worker off its `workers.dev` address, so it is reachable only through your routes.
 
 ## Required
 
@@ -30,7 +30,7 @@ The example config also sets `"triggers": { "crons": ["15 * * * *"] }`: the hour
 | --- | --- | --- | --- |
 | `DASHBOARD_HOST` | var | none | The host that serves the dashboard, its API, `/mcp` and `/api/v1`, for example `dash.example.com`. In path mode it is your main short domain. Missing or blank: every request answers `500 {"error":"misconfigured"}`. |
 | `OWNER_EMAIL` | secret | none | The email that becomes the owner on its first sign-in. Only that address can create the first account, and only while there are no people yet. |
-| `EMAIL_FROM` | var | none | App mode: the sender of sign-in and invite emails, an address on a domain verified in Resend. Without it, `POST /auth/email` answers `503 email_not_configured`. |
+| `EMAIL_FROM` | var | none | App mode: the sender of sign-in, invite and weekly emails, an address on a domain verified in Resend. Without it, `POST /auth/email` answers `503 email_not_configured`. |
 | `RESEND_API_KEY` | secret | none | App mode: the Resend key that sends email. The first key of a fresh instance must be this Worker secret; later the owner can paste a replacement in Settings (needs `SECRETS_KEY`). A Worker secret, when set, always wins over a pasted one. |
 
 `EMAIL_FROM` and `RESEND_API_KEY` are required in app mode (the default) unless every person signs in with a passkey, which the first owner cannot do before the first email sign-in.
@@ -50,7 +50,7 @@ The example config also sets `"triggers": { "crons": ["15 * * * *"] }`: the hour
 
 | Name | Default | What it does |
 | --- | --- | --- |
-| `SECRETS_KEY` | unset | Base64 of exactly 32 random bytes (`openssl rand -base64 32`). Lets the owner paste `RESEND_API_KEY` and `CF_API_TOKEN` in Settings or the setup wizard; they are stored AES-GCM encrypted in D1. Without a valid key the paste field is hidden. Losing or changing it makes pasted values unreadable (see [deploy.md](deploy.md#secrets-pasted-in-the-dashboard-optional)). |
+| `SECRETS_KEY` | unset | Base64 of exactly 32 random bytes (`openssl rand -base64 32`). Lets the owner paste `RESEND_API_KEY` and `CF_API_TOKEN` in Settings or the setup wizard; they are stored AES-GCM encrypted in D1. The same key encrypts the Wi-Fi passwords of saved [QR codes](qr-codes.md); without it a Wi-Fi code with a password cannot be saved. Without a valid key the paste field is hidden. Losing or changing it makes pasted values and Wi-Fi passwords unreadable (see [deploy.md](deploy.md#secrets-pasted-in-the-dashboard-optional)). |
 | `CF_API_TOKEN` | unset | A Cloudflare API token that lets linkwarren attach domains (DNS records, Worker routes, Cloudflare for SaaS custom hostnames) and set per-domain controls. Its permissions are listed in [deploy.md](deploy.md#api-token). Can also be pasted by the owner (needs `SECRETS_KEY`). |
 | `AE_READ_TOKEN` | unset | An API token with only Account, Account Analytics, Read, for reading click data from Analytics Engine. Without it reports show daily totals from D1 only, and the hourly rollup is skipped. |
 | `VISITOR_SALT` | unset | 32 random bytes as hex (`openssl rand -hex 32`), for the daily visitor code that counts unique visitors. Without it, unique visitors are not counted. |

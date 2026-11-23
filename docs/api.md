@@ -69,6 +69,7 @@ Every endpoint that returns a link returns this shape:
   "passQuery": true,
   "routes": [{ "countries": [], "devices": ["ios"], "url": "https://apps.example.com/ios" }],
   "forwardTo": null,
+  "kind": "url",
   "createdBy": "<person id>",
   "updatedBy": "<person id>",
   "createdAt": 1764547200,
@@ -81,6 +82,7 @@ Every endpoint that returns a link returns this shape:
 - `routes` are tried in order; see [links.md](links.md#routing-r).
 - `forwardTo` is `null` for a normal link, and the id of the moved link for a forwarder (an old address left by a move).
 - The password is never returned, only `hasPassword`.
+- `kind` is `url` (a redirect) or `vcard` (a [contact card](vcards.md)). A card also has a `vcard` object, its `url` is the fixed placeholder `https://vcard.invalid/`, and it never has a password or routes. Reading one link (`GET /links/{id}`, `GET /links/by-slug`) returns the card with its `photo`; lists and bulk results return `hasPhoto` (true or false) instead, to keep pages small.
 
 ## Domains
 
@@ -166,7 +168,9 @@ Create a link. Needs a write key and **Create links** in the role.
 | --- | --- | --- |
 | `domainId` | yes | The domain id. |
 | `slug` | yes | 1 to 64 of letters, digits, `.`, `_`, `~`, `-`; not starting with a dot. |
-| `url` | yes | The destination: `http(s)`, `tel:` or `mailto:` (see [links.md](links.md#destinations)). |
+| `url` | yes, except for a card | The destination: `http(s)`, `tel:` or `mailto:` (see [links.md](links.md#destinations)). Leave it out for a contact card. |
+| `kind` | no | `url` (the default) or `vcard`. |
+| `vcard` | for a card | The card's fields (see [Contact cards](#contact-cards)). Only with `kind: "vcard"`. |
 | `redirectCode` | no | `301` or `302`. Default: the instance default (`302` unless changed in Settings); always `302` when a password is set. |
 | `passQuery` | no | Pass the visitor's query string through. Default: the instance default (on unless changed). |
 | `startsAt`, `expiresAt` | no | Unix seconds, or `null`. |
@@ -189,6 +193,8 @@ Answers `201` with the link. Errors:
 | 400 | `password_short`, `password_long` | The password is under 8 or over 128 characters. |
 | 400 | `password_301` | A protected link cannot use `301`. |
 | 400 | `bad_route` | A route is wrong; the answer also has `index` (which route) and `reason` (`route_country`, `route_empty`, or a destination code). |
+| 400 | `bad_vcard` | A card field is wrong; the answer also has `field` (see [Contact cards](#contact-cards)). |
+| 400 | `vcard_url`, `vcard_rule` | A card was sent a `url`, or a password or routes. |
 | 404 | `not_found` | No such domain. |
 | 403 | `forbidden` | The key cannot use that domain, or the role cannot create links. |
 | 409 | `taken` | The slug is already in use on that domain. |
@@ -209,7 +215,34 @@ curl -s -X PATCH -H "Authorization: Bearer $LW_KEY" -H "Content-Type: applicatio
   "$LW/links/<link id>"
 ```
 
-Answers `200` with the link. Errors: the same validation codes as `POST`, plus `404 not_found`, `403 forbidden`, `409 forwarder` (a forwarder is never edited, only deleted) and `409 conflict` (the link changed since it was read; read it again and retry).
+On a contact card, send `vcard` to replace the whole card (and `startsAt` or `expiresAt` as for any link).
+
+Answers `200` with the link. Errors: the same validation codes as `POST`, plus `404 not_found`, `403 forbidden`, `409 forwarder` (a forwarder is never edited, only deleted), `409 conflict` (the link changed since it was read; read it again and retry), `400 kind_change` (a `kind` other than the link's own) and `400 not_vcard` (`vcard` on a link that is not a card).
+
+### Contact cards
+
+A contact card link is created with `"kind": "vcard"` and a `vcard` object, and no `url`. Every field is optional, but the card needs a first name, a last name or an organization. A field left out is empty.
+
+| Field | Meaning |
+| --- | --- |
+| `firstName`, `lastName` | At most 100 characters each. |
+| `org`, `title` | Organization (at most 200) and job title (at most 100). |
+| `phones` | Up to 10, each `{ "type": "work", "number": "+1 555 0100" }`. `type` is `cell` (the default), `work`, `home` or `other`; the number takes digits, spaces and `+ - ( ) . /`, at most 40 characters. |
+| `emails` | Up to 10 plain email addresses. |
+| `websites` | Up to 10 `http(s)` addresses. |
+| `address` | `{ "street", "city", "region", "postalCode", "country" }`. |
+| `note` | At most 1000 characters; line breaks allowed. |
+| `photo` | Base64 of a JPEG or PNG, at most 64 KB decoded, or `null`. |
+
+One-line fields refuse line breaks and control characters. A card that fails a check answers `400 {"error":"bad_vcard","field":"<field>"}`, where `field` is for example `name`, `photo`, `phones.0`, `emails.1`, `websites.2`, `address.city` or `note`.
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
+  -d '{"domainId":"<domain id>","slug":"ada","kind":"vcard","vcard":{"firstName":"Ada","lastName":"Lovelace","org":"Example Ltd","phones":[{"type":"work","number":"+1 555 0100"}],"emails":["ada@example.com"]}}' \
+  "$LW/links"
+```
+
+`GET /links?q=` matches a card by its name or organization as well as its slug.
 
 ### `DELETE /links/{id}`
 
@@ -268,7 +301,7 @@ Request errors (nothing is changed):
 | 429 | `kv_budget` | The instance's daily budget for bulk edits (500 KV deletes per UTC day) is used up, or this request does not fit in what is left. Try after 00:00 UTC. |
 | 429 | `rate_limited` | A daily cap would be passed. |
 
-Per-link `error` codes: `not_found`, `forbidden`, `conflict` (the link changed in between), `bad_window`, `password_301`, `forwarder` (an old address can only be deleted), `same_domain`, `taken`, `locked`, `reserved`, `duplicate_slug` (two selected links would get the same slug on the target), `loop` (the destination or a route is on the target host), and the slug shape codes (`empty`, `slug_too_long`, `charset`, `leading_dot`).
+Per-link `error` codes: `not_found`, `forbidden`, `conflict` (the link changed in between), `bad_window`, `password_301`, `vcard_rule` (a password on a contact card), `forwarder` (an old address can only be deleted), `same_domain`, `taken`, `locked`, `reserved`, `duplicate_slug` (two selected links would get the same slug on the target), `loop` (the destination or a route is on the target host), and the slug shape codes (`empty`, `slug_too_long`, `charset`, `leading_dot`).
 
 ## Click counts
 

@@ -14,7 +14,7 @@ On the People screen, invite someone with their email, a role (Member by default
 
 The person is created as invited and gets an email from the instance with a link to `https://<dashboard host>/join`. They become active the first time they sign in. An invite can be sent again or withdrawn while the person has not signed in yet.
 
-Invite emails share the Resend budget with sign-in links. linkwarren sends at most 1 invite per address per minute, 20 per hour and 40 per UTC day, so at least 60 of Resend's free 100 daily emails stay for sign-in links. At a cap the person is still created, and the dashboard says the email was not sent; send it again later. In access mode, also add each invitee to your Cloudflare Access policy, or they cannot open the dashboard.
+Invite emails share the Resend budget with sign-in links. linkwarren sends at most 1 invite per address per minute, 20 per hour and 40 per UTC day, so invites never take more than 40 of Resend's free 100 daily emails; sign-in links and the weekly emails use the rest. At a cap the person is still created, and the dashboard says the email was not sent; send it again later. In access mode, also add each invitee to your Cloudflare Access policy, or they cannot open the dashboard.
 
 ## Roles
 
@@ -26,8 +26,8 @@ A role is a set of permissions. There are two built-in roles, and owners can add
 
 | Permission | What it allows |
 | --- | --- |
-| Create links | Make short links, and change or delete their own. |
-| Edit anyone's links | Change or delete links other people made, on domains they can use, and release slug locks. |
+| Create links | Make short links and saved QR codes, and change or delete their own. |
+| Edit anyone's links | Change or delete links other people made, on domains they can use, release slug locks, and manage everyone's saved QR codes. |
 | Change many links at once | Bulk edit: select several links and edit, move or delete them together. |
 | See analytics for every domain | Without it, analytics cover only the domains the person can use. |
 | Add their own domains | Add private domains for themselves, which an owner or a domain manager approves. |
