@@ -3,8 +3,8 @@ import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import { emailConfigured, inviteEmail, sendEmail } from "../email";
+import { dashUrl } from "../dash";
 import type { Env } from "../env";
-import { normalizeHost } from "../host";
 import { LIMITS, hitAll, limitKey } from "../limits";
 import type { Grant } from "../principal";
 import { getSettings } from "../settings";
@@ -43,7 +43,7 @@ const charge = async (env: Env, email: string) =>
     { key: limitKey.inviteDay, limit: LIMITS.inviteDay },
   ]);
 
-/** The invite mail; the only link is https://<DASHBOARD_HOST>/. Never throws. */
+/** The invite mail; the only link is <dashboard base>/join. Never throws. */
 async function deliver(env: Env, inviter: UserRow, u: Invitee): Promise<InviteResult> {
   let name: string | null;
   try {
@@ -52,7 +52,7 @@ async function deliver(env: Env, inviter: UserRow, u: Invitee): Promise<InviteRe
     console.warn("settings_read_failed");
     return { emailed: false, emailReason: "settings" };
   }
-  const m = inviteEmail({ instanceName: name ?? "linkwarren", inviter: inviter.name || inviter.email, dashboardHost: normalizeHost(env.DASHBOARD_HOST), roleName: u.roleName, isOwner: u.isOwner });
+  const m = inviteEmail({ instanceName: name ?? "linkwarren", inviter: inviter.name || inviter.email, dashboardUrl: dashUrl(env, ""), roleName: u.roleName, isOwner: u.isOwner });
   const r = await sendEmail(env, { to: u.email, name, ...m });
   return r.ok ? { emailed: true } : { emailed: false, emailReason: r.reason };
 }

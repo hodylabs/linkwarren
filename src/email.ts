@@ -69,10 +69,10 @@ export function signInEmail(o: { host: string; url: string; name?: string | null
   };
 }
 
-/** The invite: plain text plus simple HTML, every interpolation escaped, one link to the dashboard host's /join page over https. */
-export function inviteEmail(o: { instanceName: string; inviter: string; dashboardHost: string; roleName: string; isOwner: boolean }): { subject: string; text: string; html: string } {
+/** The invite: plain text plus simple HTML, every interpolation escaped, one link to the dashboard's /join page (`dashboardUrl` is `dash.base`, R12). */
+export function inviteEmail(o: { instanceName: string; inviter: string; dashboardUrl: string; roleName: string; isOwner: boolean }): { subject: string; text: string; html: string } {
   const name = oneLine(o.instanceName);
-  const url = `https://${o.dashboardHost}/join`; // no email, id or token: personal data stays out of URLs
+  const url = `${o.dashboardUrl}/join`; // no email, id or token: personal data stays out of URLs
   const lines = [`${oneLine(o.inviter)} invited you to ${name}, a link shortener.`];
   const roleLine = o.isOwner ? "You will be an owner: you can manage every person, domain and link." : `You will join with the role ${oneLine(o.roleName)}.`;
   const link = `Open ${url} and sign in with the address this was sent to.`;

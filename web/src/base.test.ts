@@ -94,4 +94,20 @@ describe("under a /dashboard base", () => {
     next.goNext("/../hello");
     expect(assign.mock.calls).toEqual([["/dashboard/domains?sel=d1"], ["/dashboard/"]]);
   });
+
+  it("a next that already carries the base is stripped once, never doubled (R9, same as the server's safeNext)", async () => {
+    const { next } = await load("/dashboard");
+    const assign = vi.spyOn(next.nav, "assign").mockImplementation(() => {});
+    for (const n of ["/dashboard/agents?sel=1", "/agents?sel=1", "/dashboard", "/dashboard?x=1", "/dashboard#a", "/dashboard//evil.example", "/dashboard/../hello", "/dashboardx"]) next.goNext(n);
+    expect(assign.mock.calls.map((c) => c[0])).toEqual([
+      "/dashboard/agents?sel=1", "/dashboard/agents?sel=1", "/dashboard/", "/dashboard/?x=1", "/dashboard/#a", "/dashboard/", "/dashboard/", "/dashboard/dashboardx",
+    ]);
+  });
+
+  it("host mode leaves a /dashboard next alone", async () => {
+    const { next } = await load(null);
+    const assign = vi.spyOn(next.nav, "assign").mockImplementation(() => {});
+    next.goNext("/dashboard/agents");
+    expect(assign.mock.calls).toEqual([["/dashboard/agents"]]);
+  });
 });

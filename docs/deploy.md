@@ -39,7 +39,9 @@ Optional vars (see [Dashboard at a path](#dashboard-at-a-path)):
 - Path mode needs `AUTH_MODE` `app` (or unset). `access` is refused as misconfigured: an Access application cannot cover the prefix while leaving the short links and the OAuth discovery documents open.
 - Only the prefix and its subpaths belong to the dashboard (`/dashboard`, `/dashboard/...`), matched exactly and case-sensitively: `/dashboardx`, `/Dashboard` and `/%64ashboard` are short-link paths. Paths starting with `/.well-known/oauth-` or `/.well-known/openid-configuration` are never short links (they answer JSON).
 - The health check is `https://<DASHBOARD_HOST><DASHBOARD_PATH>/healthz`; `/healthz` on the main domain is an ordinary short-link path.
-- Use path mode only on a domain whose subdomains you all control: the session cookie is limited to the prefix, but a sibling host under the same registrable domain could set a cookie with the same name.
+- The session cookie is `__Secure-lw_session` with `Path=<DASHBOARD_PATH>` (host mode: `__Host-lw_session`, `Path=/`), host-only, `Secure`, `HttpOnly`, `SameSite=Lax`, so browsers never send it with a short-link visit on the main domain. Each mode reads only its own cookie name: switching modes signs everyone out.
+- Use path mode only on a domain whose subdomains you all control: unlike `__Host-`, a `__Secure-` cookie does not stop a sibling host under the same registrable domain from setting a cookie with the same name and `Domain=` (cookie tossing), which could sign a visitor in as someone else or out.
+- Passkeys belong to the dashboard's host. Moving the dashboard to the main short domain means passkeys made on the old dashboard host stop working: people sign in with an email link and add a new passkey.
 
 `LEGACY_DASHBOARD_HOST` (optional, either mode) is the dashboard host you used before. Keep it routed to the Worker: `GET` and `HEAD` there answer `301` to the same path and query under the dashboard (`https://old.example.com/links?x=1` to `https://example.com/dashboard/links?x=1`), so bookmarks and recent sign-in links keep working. Every other method, and every `/.well-known/` path, answers `410 {"error":"moved","to":"<dashboard>/"}`: API scripts and agent connections must be pointed at the new address. The old host never serves short links or the dashboard. It must be a valid host name and differ from `DASHBOARD_HOST`, or every request answers `500 misconfigured`.
 
@@ -165,7 +167,7 @@ A pasted value is encrypted with AES-GCM (256-bit key from `SECRETS_KEY`, a fres
 
 ## Sign-in
 
-`AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. The value is trimmed and must then be exactly `app` or `access` (lowercase); any other value fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting.
+`AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. The value is trimmed and must then be exactly `app` or `access` (lowercase); any other value fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting. In path mode an invalid `AUTH_MODE` is a dashboard config error, so the whole instance (short links on every domain included) answers `500 {"error":"misconfigured"}` until it is fixed.
 
 ### App mode (default)
 

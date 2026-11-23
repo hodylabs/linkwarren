@@ -49,7 +49,11 @@ export async function wrapper(req: Request, env: Env, ctx: ExecutionContext): Pr
   if (d.pathMode) {
     if (!underPrefix(p, d.prefix)) {
       if (isDiscoveryPath(p)) return notFound(); // shortcut: discovery documents arrive with the OAuth prefix work (Task 4)
-      return handleRedirect(req, env, Math.floor(Date.now() / 1000), ctx);
+      // The app's onError does not cover this direct call: a D1 or KV error must still be JSON, not the platform's 1101 page.
+      return handleRedirect(req, env, Math.floor(Date.now() / 1000), ctx).catch((err: unknown) => {
+        console.error("unhandled error", err instanceof Error ? err.name : "unknown");
+        return Response.json({ error: "internal" }, { status: 500 });
+      });
     }
     p = p.slice(d.prefix.length) || "/"; // the gate below judges the inner path, as host mode does
   }

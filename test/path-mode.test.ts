@@ -183,3 +183,12 @@ describe("dashboard shell in path mode (R11)", () => {
     expect([r.status, await r.text(), r.headers.get("content-security-policy")]).toEqual([200, "", CSP]);
   });
 });
+
+describe("path mode short links when storage fails", () => {
+  it("a D1 error on the main domain answers the app's JSON 500, not the platform error page", async () => {
+    const broken = { prepare() { throw new Error("D1 down"); }, batch() { throw new Error("D1 down"); } } as unknown as D1Database;
+    const e = pathEnv({ DB: broken });
+    const r = await call("/no-such-slug-xyz", undefined, e);
+    expect([r.status, await r.json()]).toEqual([500, { error: "internal" }]);
+  });
+});

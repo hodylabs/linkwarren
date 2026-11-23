@@ -6,7 +6,7 @@ import {
   type PublicKeyCredentialRequestOptionsJSON, type RegistrationResponseJSON,
 } from "@simplewebauthn/server";
 import type { Env } from "./env";
-import { normalizeHost } from "./host";
+import { dash } from "./dash";
 import { ROLE_JOIN, USER_COLS } from "./roles";
 import { rowToUser, type UserRow } from "./types";
 
@@ -23,9 +23,11 @@ export class PasskeyError extends Error {
   }
 }
 
+/** R7: the dashboard's host and origin in both modes (an origin has no path, so the prefix never enters). */
 export const rp = (env: Env): { rpID: string; origin: string } => {
-  const rpID = normalizeHost(env.DASHBOARD_HOST);
-  return { rpID, origin: `https://${rpID}` };
+  const d = dash(env);
+  if (!d) throw new Error("rp: misconfigured");
+  return { rpID: d.host, origin: d.origin };
 };
 
 const nowS = () => Math.floor(Date.now() / 1000);

@@ -15,8 +15,18 @@ export function isSafeNext(s: unknown): s is string {
   }
 }
 
+/** `s` without one leading base segment ("/dashboard/x" -> "/x"): next values are inner paths (R9), so a base-prefixed one is never doubled. Mirrors unPrefix in src/session.ts. */
+export function unBase(s: unknown): unknown {
+  if (!BASE || typeof s !== "string" || !s.startsWith(BASE)) return s;
+  const rest = s.slice(BASE.length);
+  return rest === "" ? "/" : rest[0] === "/" ? rest : rest[0] === "?" || rest[0] === "#" ? "/" + rest : s;
+}
+
 /** Indirection so tests can observe navigation (jsdom's location.assign cannot be spied). */
 export const nav = { assign: (url: string): void => location.assign(url) };
 
 /** A full page load to inner path `s` under the base when it is safe, else to the dashboard root. */
-export const goNext = (s: unknown): void => nav.assign(withBase(isSafeNext(s) ? s : "/"));
+export const goNext = (s: unknown): void => {
+  const n = unBase(s);
+  nav.assign(withBase(isSafeNext(n) ? n : "/"));
+};
