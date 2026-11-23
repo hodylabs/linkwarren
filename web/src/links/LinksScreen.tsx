@@ -71,6 +71,12 @@ export function LinksScreen() {
   // Each link keeps the live state of the response that carried it, so one page never changes another page's cells.
   const [stats, setStats] = useState<Record<string, LinkStats & { live: StatsLive }>>({});
   const generation = useRef(0);
+  // The generation whose first page is on screen (state, so the selected-link read below reruns for every new list), and the
+  // id of a link that list shows first only because ?sel= named it past the loaded pages.
+  const [listGen, setListGen] = useState(0);
+  const extraId = useRef<string | null>(null);
+  const deleted = useRef(new Set<string>()); // deleted here: a read still out for one of them never brings it back
+  const selRef = useRef<string | null>(null);
   const loading = useRef(false); // a next-page request is in flight
   const deleting = useRef(false);
   const lastScope = useRef<unknown>(null);
@@ -118,21 +124,31 @@ export function LinksScreen() {
       setPicked(EMPTY_SEL);
       setItems([]);
       setLoaded(false); // no "No links here yet." flash while the new scope loads
+      extraId.current = null; // a new scope reads the selected link again if it needs to
     }
     lastScope.current = scope;
     setLoadError(null);
     fetchPage(null).then(
       (p) => {
         if (g !== generation.current) return;
-        setItems(p.items);
-        setPicked((s) => keepOnly(s, new Set(p.items.map((l) => l.id))));
+        // A same-scope reload keeps the row read by id while it is still selected and off the page, so its panel stays open;
+        // the read below then refreshes it (or drops it when the link is gone or no longer visible).
+        const keepId = extraId.current === selRef.current && !p.items.some((l) => l.id === extraId.current) ? extraId.current : null;
+        if (!keepId) extraId.current = null;
+        setItems((cur) => {
+          const kept = keepId ? cur.find((l) => l.id === keepId) : undefined;
+          return kept ? [kept, ...p.items] : p.items;
+        });
+        setPicked((s) => keepOnly(s, new Set([...p.items.map((l) => l.id), ...(keepId ? [keepId] : [])])));
         setNext(p.next);
         setLoaded(true);
+        setListGen(g);
         void loadStats(g, p.items.map((l) => l.id));
       },
       (e: unknown) => {
         if (g !== generation.current) return;
         setLoaded(true);
+        setListGen(g);
         setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
       },
     );
@@ -145,11 +161,14 @@ export function LinksScreen() {
     try {
       const p = await fetchPage(next);
       if (g !== generation.current) return [];
-      // A link read by id (?sel= past the first page) is already listed first: never twice.
-      setItems((cur) => [...cur, ...p.items.filter((x) => !cur.some((c) => c.id === x.id))]);
+      // A link read by id (?sel= past the first page) is already listed first: never twice. The rows really added are what
+      // the caller gets (J moves to the first of them; a page of nothing new moves nowhere).
+      const have = new Set(latest.current.items.map((l) => l.id));
+      const added = p.items.filter((x) => !have.has(x.id));
+      setItems((cur) => [...cur, ...added.filter((x) => !cur.some((c) => c.id === x.id))]);
       setNext(p.next);
-      void loadStats(g, p.items.map((l) => l.id));
-      return p.items;
+      void loadStats(g, added.map((l) => l.id));
+      return added;
     } catch (e) {
       if (g === generation.current) setLoadError(errorText(e instanceof ApiError ? e.code : "internal"));
       return [];
@@ -185,24 +204,37 @@ export function LinksScreen() {
   const at = items.findIndex((l) => l.id === sel);
   const selected = at >= 0 ? items[at]! : null;
   const selectedId = selected?.id ?? null;
-  // ?sel= naming a link past the loaded page (a palette pick among many matches): read it by id and put it first, once per id,
-  // so the jump always lands on its panel. One that is gone or not visible stays unselected.
+  // ?sel= naming a link past the loaded pages (a palette pick among many matches): read it by id and list it first, so the jump
+  // always lands on its panel. Once per id and list generation: a reload, a filter change or a domain switch reads it again
+  // (a kept row is refreshed). A link that is gone or no longer visible to this person is dropped and stays unselected.
+  selRef.current = sel;
   const fetchedSel = useRef<string | null>(null);
   useEffect(() => {
-    // Once per id and list generation: a reload, a filter change or a domain switch starts a new list, so it may read again.
-    const key = `${generation.current}:${sel}`;
-    if (!loaded || !sel || at >= 0 || fetchedSel.current === key) return;
+    if (!loaded || !sel) return;
+    const listed = items.some((l) => l.id === sel);
+    if (listed && extraId.current !== sel) return; // on a page: nothing to read
+    const key = `${listGen}:${sel}`;
+    if (fetchedSel.current === key) return;
     fetchedSel.current = key;
     const g = generation.current;
     api<Link>("GET", `/api/links/${encodeURIComponent(sel)}`).then(
       (l) => {
-        if (g !== generation.current) return;
-        setItems((cur) => (cur.some((x) => x.id === l.id) ? cur : [l, ...cur]));
+        // Only for the selection that asked: a selection moved (or the row deleted, which selects its neighbour) drops the answer.
+        if (g !== generation.current || selRef.current !== sel || deleted.current.has(l.id)) return;
+        extraId.current = l.id;
+        // A row loaded meanwhile at a newer revision (a later page, a save) wins over an older answer.
+        setItems((cur) => (cur.some((x) => x.id === l.id) ? cur.map((x) => (x.id === l.id && l.updatedAt >= x.updatedAt ? l : x)) : [l, ...cur]));
         void loadStats(g, [l.id]);
       },
-      () => undefined,
+      (e: unknown) => {
+        // Only a link that is gone (404) or no longer visible (403) is dropped; a dropped connection keeps what is shown.
+        const gone = e instanceof ApiError && (e.status === 404 || e.status === 403);
+        if (!gone || g !== generation.current || extraId.current !== sel) return;
+        extraId.current = null;
+        setItems((cur) => cur.filter((x) => x.id !== sel));
+      },
     );
-  }, [loaded, sel, at, loadStats]);
+  }, [loaded, sel, items, listGen, loadStats]);
   // A contact card with a photo comes from the list without it (hasPhoto): the detail waits for the single-link read.
   const loadCard = selected && needsFullCard(selected) ? selected.id : null;
   const [cardFailed, setCardFailed] = useState<string | null>(null);
@@ -276,6 +308,7 @@ export function LinksScreen() {
       deleting.current = false;
     }
     const neighbour = items[at + 1] ?? items[at - 1];
+    deleted.current.add(selected.id);
     setItems((cur) => cur.filter((l) => l.id !== selected.id));
     setPicked((s) => keepOnly(s, new Set(order.filter((id) => id !== selected.id))));
     setConfirming(false);
@@ -329,6 +362,7 @@ export function LinksScreen() {
   // After a run: changed rows patched (a copy leaves its source as it was), deleted rows removed, and the selection becomes the
   // failed links that are still loaded (R12), so Retry or another action works on exactly those.
   const afterRun = (op: BulkOp, r: BulkRun) => {
+    if (op.action === "delete") for (const id of r.ok.keys()) deleted.current.add(id);
     const copy = op.action === "move" && op.oldAddress === "copy";
     // The rows as they are now (a page may have loaded during the run), never the ones from when the sheet opened.
     const left = latest.current.items.flatMap((l) => {

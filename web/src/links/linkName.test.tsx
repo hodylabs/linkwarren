@@ -37,6 +37,7 @@ function boot(path: string, routes: FakeRoutes = {}) {
 }
 const rows = () => screen.getAllByRole("row").slice(1);
 const ready = () => waitFor(() => expect(rows().length).toBe(2));
+const ready1 = () => waitFor(() => expect(rows().length).toBe(1));
 const detail = () => screen.getByRole("complementary", { name: "Selected link" });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -142,6 +143,111 @@ describe("one search", () => {
     await waitFor(() => expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy());
     expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
     expect(api.calls.filter((c) => c.path === "/api/links/l1")).toHaveLength(1);
+  });
+
+  it("J after a link read by id moves to the rows a page really adds, and a page of nothing new moves nowhere", async () => {
+    const NEXT = mk("l3", "next");
+    let page = 0;
+    const { user } = boot("/links?sel=l1", {
+      "GET /api/links": (r) => {
+        if (!r.url.searchParams.get("cursor")) { page = 0; return { body: { items: [PLAIN], next: "c1" } }; }
+        page++;
+        return { body: page === 1 ? { items: [NAMED], next: "c2" } : { items: [NAMED, NEXT], next: null } };
+      },
+      "GET /api/links/l1": () => ({ body: NAMED }),
+    });
+    await waitFor(() => expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy());
+    rows()[0]!.focus();
+    await user.keyboard("j"); // to menu, the last loaded row
+    await waitFor(() => expect(location.search).toBe("?sel=l2"));
+    await user.keyboard("j"); // the next page holds only spring, already listed: stay on menu
+    await waitFor(() => expect(page).toBe(1));
+    expect(location.search).toBe("?sel=l2");
+    await user.keyboard("j"); // the page after adds next: J lands on it, not on spring
+    await waitFor(() => expect(location.search).toBe("?sel=l3"));
+    expect(rows().map((r) => r.querySelector(".slug")!.textContent)).toEqual(["spring", "menu", "next"]);
+  });
+
+  it("a reload keeps the row read by id while selected and refreshes it; a link gone by then is dropped and its panel closes", async () => {
+    let reads = 0;
+    const { user } = boot("/links?sel=l1", {
+      "GET /api/links": () => ({ body: { items: [PLAIN], next: "c1" } }),
+      "GET /api/links/l1": () => (++reads === 1 ? { body: NAMED } : reads === 2 ? { body: { ...NAMED, name: "Renamed elsewhere", updatedAt: 150 } } : { status: 404, body: { error: "not_found" } }),
+      "PATCH /api/links/l1": () => ({ status: 409, body: { error: "conflict" } }),
+    });
+    await waitFor(() => expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy());
+    const conflictReload = async () => {
+      await user.keyboard("e");
+      fireEvent.change(screen.getByLabelText(/^Goes to/), { target: { value: "https://example.com/x" } });
+      await user.keyboard("{Control>}{Enter}{/Control}");
+      await user.click(await screen.findByRole("button", { name: "Reload" }));
+      await user.keyboard("{Escape}");
+    };
+    await conflictReload();
+    await waitFor(() => expect(within(detail()).getByText("Renamed elsewhere", { selector: ".title" })).toBeTruthy());
+    expect(reads).toBe(2);
+    await conflictReload();
+    await waitFor(() => expect(reads).toBe(3));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Selected link" })).toBeNull());
+    expect(rows().map((r) => r.querySelector(".slug")!.textContent)).toEqual(["menu"]);
+  });
+
+  it("a read that answers after the selection moved is dropped; an older answer never replaces a newer row", async () => {
+    let release!: (r: { body: unknown }) => void;
+    const { user } = boot("/links?sel=l1", {
+      "GET /api/links": (r) => ({ body: r.url.searchParams.get("cursor") ? { items: [{ ...NAMED, name: "Newer", updatedAt: 150 }], next: null } : { items: [PLAIN], next: "c1" } }),
+      "GET /api/links/l1": () => new Promise((r) => (release = r)),
+    });
+    await ready1();
+    // The page brings the link at a newer revision while the read is still out: the late, older answer keeps it.
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(within(detail()).getByText("Newer", { selector: ".title" })).toBeTruthy());
+    release({ body: NAMED });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(within(detail()).getByText("Newer", { selector: ".title" })).toBeTruthy();
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("a bulk delete while the retained row's refresh is out keeps it deleted when the refresh answers", async () => {
+    let reads = 0;
+    let release!: (r: { body: unknown }) => void;
+    const { api, user } = boot("/links?sel=l1", {
+      "GET /api/links": () => ({ body: { items: [PLAIN], next: "c1" } }),
+      "GET /api/links/l1": () => (++reads === 1 ? { body: NAMED } : new Promise((r) => (release = r))),
+      "PATCH /api/links/l1": () => ({ status: 409, body: { error: "conflict" } }),
+      "POST /api/links/bulk": (r) => ({ body: { results: (r.body as { ids: string[] }).ids.map((id) => ({ id, ok: true })), pending: [] } }),
+    });
+    await waitFor(() => expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy());
+    // A same-scope reload (Reload after a conflict) keeps the row and refreshes it; that read is held.
+    await user.keyboard("e");
+    fireEvent.change(screen.getByLabelText(/^Goes to/), { target: { value: "https://example.com/x" } });
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.click(await screen.findByRole("button", { name: "Reload" }));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(reads).toBe(2));
+    rows()[0]!.focus();
+    await user.keyboard("x"); // pick spring
+    await user.keyboard("{Shift>}D{/Shift}");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^Delete/ }));
+    await waitFor(() => expect(api.calls.some((c) => c.path === "/api/links/bulk")).toBe(true));
+    await waitFor(() => expect(rows().map((r) => r.querySelector(".slug")!.textContent)).toEqual(["menu"]));
+    release({ body: NAMED });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rows().map((r) => r.querySelector(".slug")!.textContent)).toEqual(["menu"]);
+  });
+
+  it("a read still out when the selection moves never brings its row back", async () => {
+    let release!: (r: { body: unknown }) => void;
+    const { user } = boot("/links?sel=l1", {
+      "GET /api/links": () => ({ body: { items: [PLAIN], next: "c1" } }),
+      "GET /api/links/l1": () => new Promise((r) => (release = r)),
+    });
+    await ready1();
+    await user.click(rows()[0]!); // select menu while spring's read is out
+    await waitFor(() => expect(location.search).toBe("?sel=l2"));
+    release({ body: NAMED });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rows().map((r) => r.querySelector(".slug")!.textContent)).toEqual(["menu"]);
   });
 
   it("the link read by id is never listed twice when a later page brings it, and a new list (a filter change) reads it again", async () => {
