@@ -22,7 +22,7 @@ export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]
   { table: "domain_members", columns: ["domain_id", "user_id"] },
   {
     table: "links",
-    columns: ["id", "domain_id", "slug", "slug_key", "url", "redirect_code", "starts_at", "expires_at", "pass_query", "created_by", "updated_by", "created_at", "updated_at", "routes", "forward_to", "kind"],
+    columns: ["id", "domain_id", "slug", "slug_key", "url", "name", "redirect_code", "starts_at", "expires_at", "pass_query", "created_by", "updated_by", "created_at", "updated_at", "routes", "forward_to", "kind"],
     computed: { protected: "password_hash IS NOT NULL" },
   },
   // S9: the contact card of each vCard link (`data` its fields as JSON, `photo` base64).

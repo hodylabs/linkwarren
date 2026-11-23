@@ -10,6 +10,8 @@ export type ExportLink = {
    * address, note, photo). Checked by the server; `destination` is ignored for it.
    */
   vcard?: Record<string, unknown>;
+  /** S12: the optional link name (the server trims it and refuses one over 100 characters). */
+  name?: string | null;
 };
 /** confirmNoPasswords: the owner confirmed that a file without `protected` had no password links (see passwordsUnknown). */
 export type Export = { mainHost: string; domains: ExportDomain[]; links: ExportLink[]; confirmNoPasswords?: boolean };
@@ -49,6 +51,7 @@ export function parseExport(raw: unknown): Export {
     return { host: r.host === null || r.host === undefined ? null : normHost(str(r.host, `links[${i}].host`)),
       slug: str(r.slug, `links[${i}].slug`), destination: str(r.destination, `links[${i}].destination`), enabled: r.enabled as boolean,
       startDate: optStr(r.startDate, `links[${i}].startDate`), endDate: optStr(r.endDate, `links[${i}].endDate`), ...(typeof r.protected === "boolean" ? { protected: r.protected } : {}),
+      ...(r.name !== undefined && r.name !== null ? { name: str(r.name, `links[${i}].name`) } : {}),
       ...(r.vcard !== undefined ? { vcard: typeof r.vcard === "object" && r.vcard !== null && !Array.isArray(r.vcard) ? r.vcard as Record<string, unknown> : bad(`links[${i}].vcard must be an object`) } : {}) };
   });
   return { mainHost, domains, links };
@@ -76,7 +79,7 @@ export function filterHosts(e: Export, hosts: string[]): Export {
 export function chunkLinks(e: Export, size: number, maxChunk = 1000): ExportLink[][] {
   const seen = new Set<string>();
   const links = e.links.filter((l) => {
-    const k = JSON.stringify([linkHost(e, l), l.slug, l.destination, l.enabled, l.startDate, l.endDate, !!l.protected]);
+    const k = JSON.stringify([linkHost(e, l), l.slug, l.destination, l.enabled, l.startDate, l.endDate, !!l.protected, l.name ?? null]);
     return !seen.has(k) && !!seen.add(k);
   });
   const groups = new Map<string, Set<string>>();

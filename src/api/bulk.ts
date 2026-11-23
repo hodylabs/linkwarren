@@ -276,8 +276,8 @@ export async function bulk(c: Context<E>) {
     } else {
       const rows = accepted.map(({ link, k, g }) => { const n = crypto.randomUUID(); newIds.set(n, link.id); return { t: link.id, r: link.updatedAt, k, g, n }; });
       main = env.DB.prepare(
-        `INSERT INTO links (id, domain_id, slug, slug_key, url, redirect_code, starts_at, expires_at, pass_query, password_hash, routes, kind, forward_to, created_by, updated_by, created_at, updated_at)
-         SELECT json_extract(j.value,'$.n'), ?, s.slug, json_extract(j.value,'$.k'), s.url, s.redirect_code, s.starts_at, s.expires_at, s.pass_query, s.password_hash, s.routes, s.kind,
+        `INSERT INTO links (id, domain_id, slug, slug_key, url, name, redirect_code, starts_at, expires_at, pass_query, password_hash, routes, kind, forward_to, created_by, updated_by, created_at, updated_at)
+         SELECT json_extract(j.value,'$.n'), ?, s.slug, json_extract(j.value,'$.k'), s.url, s.name, s.redirect_code, s.starts_at, s.expires_at, s.pass_query, s.password_hash, s.routes, s.kind,
            NULL, ?, ?, ?, ? FROM json_each(?) j JOIN links s ON s.id = json_extract(j.value,'$.t')
          WHERE s.updated_at = json_extract(j.value,'$.r') AND ${UNLOCKED} AND ${FREE} AND ${ACTIVE} AND ${G.sql} RETURNING id`,
       ).bind(t, user.id, user.id, now, now, JSON.stringify(rows), t, t, t, ...G.binds);

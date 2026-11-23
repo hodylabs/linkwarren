@@ -21,6 +21,8 @@ export type RouteDevice = (typeof ROUTE_DEVICES)[number];
 export type Route = { countries: string[]; devices: RouteDevice[]; url: string };
 export type LinkRow = {
   id: string; domainId: string; slug: string; slugKey: string; url: string;
+  /** S12: optional label for people (search, the dashboard). Not on the redirect path: the KV entry leaves it out. */
+  name: string | null;
   redirectCode: 301 | 302; startsAt: number | null; expiresAt: number | null; passQuery: boolean;
   /** Worker-only (redirect path and KV); never sent to a client, see toApiLink. */
   passwordHash: string | null; routes: Route[];
@@ -73,6 +75,7 @@ export const rowToDomain = (r: R): DomainRow => ({
 });
 export const rowToLink = (r: R): LinkRow => ({
   id: r.id as string, domainId: r.domain_id as string, slug: r.slug as string, slugKey: r.slug_key as string,
+  name: (r.name as string | null | undefined) ?? null,
   url: r.url as string, redirectCode: r.redirect_code as 301 | 302,
   startsAt: r.starts_at as number | null, expiresAt: r.expires_at as number | null, passQuery: r.pass_query === 1,
   passwordHash: (r.password_hash as string | null) ?? null, routes: parseRoutes(r.routes),

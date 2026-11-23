@@ -7,7 +7,7 @@ import { parseSettings, settingsQ } from "../settings";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
 import { canManageDomain, usableDomainsSql } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
-import { checkDestination, checkSlugShape, slugKey } from "../validate";
+import { checkDestination, checkLinkName, checkSlugShape, slugKey } from "../validate";
 import { reservedSlugs } from "../dash";
 import { isLegacyHost, refusedDashboard } from "./domains";
 import { purgeHost, purgeMany } from "./shared";
@@ -32,6 +32,8 @@ const body = z.object({
     protected: z.boolean().optional(),
     // S9: a contact card (a vCard link); its destination is ignored.
     vcard: vcardSchema.optional(),
+    // S12: the optional link name (checked like the API: trimmed, 100 characters, no control characters).
+    name: z.string().max(1000).nullable().optional(),
   })),
   confirmNoPasswords: z.boolean().optional(),
 });
@@ -154,7 +156,7 @@ importApi.post("/", async (c) => {
   for (const r of liveRows!.results) live.get(r.domain_id)!.set(r.slug_key, r.url!);
   for (const r of lockRows!.results) locks.get(r.domain_id)!.add(r.slug_key.toLowerCase());
 
-  type Plan = { dom: Dom; slug: string; key: string; url: string; startsAt: number | null; expiresAt: number | null; vcard?: VCard };
+  type Plan = { dom: Dom; slug: string; key: string; url: string; name?: string | null; startsAt: number | null; expiresAt: number | null; vcard?: VCard };
   const out: Out[] = new Array(b.links.length);
   const plans: { link: Plan[]; lock: Plan[] } = { link: [], lock: [] };
   const conflict = (i: number, reason: string) => { out[i] = { kind: "conflict", reason }; };
@@ -170,6 +172,8 @@ importApi.post("/", async (c) => {
     if (reservedSlugs(c.env, host).includes(l.slug.toLowerCase())) return conflict(i, "reserved_path");
     if (!dom.cs && isTwin(host, l.slug)) return conflict(i, "case_twin");
     if (!l.enabled || l.protected) { disabled.push(i); return; }
+    const nm = checkLinkName(l.name ?? null);
+    if (!nm.ok) return conflict(i, "bad_name");
     const card = l.vcard ? cardOf(l.vcard) : null;
     if (card && "error" in card) return conflict(i, "invalid_vcard");
     const href = card ? VCARD_URL : dest(l.destination);
@@ -184,7 +188,7 @@ importApi.post("/", async (c) => {
     if (have !== undefined) { out[i] = have === same ? { kind: "skip" } : { kind: "conflict", reason: "exists" }; return; }
     if (locks.get(dom.id)!.has(key.toLowerCase())) return conflict(i, "locked");
     live.get(dom.id)!.set(key, same);
-    plans.link.push({ dom, slug: l.slug, key, url: href, startsAt, expiresAt, ...(card ? { vcard: card.vcard } : {}) });
+    plans.link.push({ dom, slug: l.slug, key, url: href, name: nm.name, startsAt, expiresAt, ...(card ? { vcard: card.vcard } : {}) });
     out[i] = { kind: "create", sql: "link" };
   });
   // Case variants count as the same key here (locks are case-insensitive): disabled `abc` beside live `Abc` is a conflict.
@@ -237,10 +241,10 @@ importApi.post("/", async (c) => {
   for (const p of plans.link) {
     const id = crypto.randomUUID();
     work.push({ kind: "link", host: p.dom.host, counted: true, plan: p,
-      sql: `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,kind,created_by,updated_by,created_at,updated_at)
-       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
+      sql: `INSERT OR IGNORE INTO links (id,domain_id,slug,slug_key,url,name,redirect_code,starts_at,expires_at,pass_query,kind,created_by,updated_by,created_at,updated_at)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))
        AND EXISTS (SELECT 1 FROM domains WHERE id = ? AND case_sensitive = ?) AND ${use(p.dom.id).sql}`,
-      binds: [id, p.dom.id, p.slug, p.key, p.url, p.vcard ? 302 : defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, p.vcard ? "vcard" : "url",
+      binds: [id, p.dom.id, p.slug, p.key, p.url, p.name ?? null, p.vcard ? 302 : defaults.linkRedirectCode, p.startsAt, p.expiresAt, defaults.linkPassQuery ? 1 : 0, p.vcard ? "vcard" : "url",
         user.id, user.id, now, now, p.dom.id, p.key, p.dom.id, p.dom.cs ? 1 : 0, ...use(p.dom.id).binds] });
     // The card right after its link, only if that insert ran (a fresh id); never counted on its own.
     if (p.vcard) work.push({ kind: "vcard", host: p.dom.host, counted: false,

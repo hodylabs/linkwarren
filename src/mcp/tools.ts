@@ -40,6 +40,7 @@ async function domainOf(api: Api, hostOrId: string): Promise<Domain> {
 const time = z.number().int().nonnegative().nullable().optional();
 const url = z.string().min(1).max(2048).describe("Destination: an http(s) URL, a tel: number (tel:+15551234567) or a mailto: address (optional subject and body only)");
 const slug = z.string().min(1).max(64);
+const name = z.string().max(100).nullable().optional().describe("Optional name people search by (at most 100 characters); empty or null removes it");
 const hostOrId = z.string().min(1).max(253).describe("Host (go.example.com) or domain id");
 const ROUTES =
   " Devices match when the visitor has any listed value: form factor (mobile, tablet, desktop), phone OS (ios, android)"
@@ -93,7 +94,7 @@ export const TOOLS: Record<string, ToolDef> = {
     }),
   },
   search_links: {
-    description: "Search the links you can see, newest first. `query` matches slug or destination; pass `next` back as `cursor` for more." + KIND + DATA,
+    description: "Search the links you can see, newest first. `query` matches the name, slug or destination; pass `next` back as `cursor` for more." + KIND + DATA,
     input: z.strictObject({
       query: z.string().min(1).max(48).optional(),
       domain: hostOrId.optional(),
@@ -107,7 +108,7 @@ export const TOOLS: Record<string, ToolDef> = {
     },
   },
   get_link: {
-    description: "One link by `id` or by `shortUrl` (go.example.com/spring, with or without https://). Pass exactly one." + KIND + DATA,
+    description: "One link by `id` or by `shortUrl` (go.example.com/spring, with or without https://). Pass exactly one. `name` is its optional label (null when unset)." + KIND + DATA,
     input: z.strictObject({ id: id.optional(), shortUrl: z.string().min(1).max(2048).optional() }),
     run: async (api, a) => {
       if ((a.id === undefined) === (a.shortUrl === undefined)) throw new ApiError("bad_input", 400);
@@ -121,16 +122,16 @@ export const TOOLS: Record<string, ToolDef> = {
     },
   },
   create_link: {
-    description: "Create a short link. Confirm with the person first. `domain` is a host or domain id. `routes` send visitors by country or device." + ROUTES,
-    input: z.strictObject({ domain: hostOrId, slug, url, ...rules }),
+    description: "Create a short link. Confirm with the person first. `domain` is a host or domain id. `name` is an optional label to find it by. `routes` send visitors by country or device." + ROUTES,
+    input: z.strictObject({ domain: hostOrId, slug, url, name, ...rules }),
     write: true,
     run: async (api, { domain, ...rest }) =>
       (await api("POST", "/links", { domainId: (await domainOf(api, domain)).id, ...rest })) as Record<string, unknown>,
   },
   update_link: {
     description: "Change a link. This changes a live redirect that printed QR codes may use: confirm with the person first."
-      + " A contact card (kind vcard) is edited in the dashboard: its url cannot change and it takes no password or routes." + ROUTES,
-    input: z.strictObject({ id, url: url.optional(), ...rules }),
+      + " `name` sets its optional label (null or empty removes it). A contact card (kind vcard) is edited in the dashboard: its url cannot change and it takes no password or routes." + ROUTES,
+    input: z.strictObject({ id, url: url.optional(), name, ...rules }),
     write: true,
     run: async (api, { id: linkId, ...rest }) => slim((await api("PATCH", `/links/${enc(linkId)}`, rest)) as Record<string, unknown>),
   },
@@ -219,9 +220,9 @@ export const TOOLS: Record<string, ToolDef> = {
       // Only what the agent needs per link: never the full row (smaller output, no rules or routes echoed back).
       const results = r.results.map((x) => {
         if (!x.ok || !x.link) return x;
-        const { id: linkId, domainId, slug: s, url: u, kind, hasPassword, forwardTo } = x.link;
+        const { id: linkId, domainId, slug: s, url: u, name: n2, kind, hasPassword, forwardTo } = x.link;
         const host = hosts.get(domainId);
-        return { id: x.id, ok: true, link: slim({ id: linkId, shortUrl: host ? `https://${host}/${s}` : null, url: u, kind: kind ?? "url", hasPassword, forwardTo: forwardTo ?? null }) };
+        return { id: x.id, ok: true, link: slim({ id: linkId, shortUrl: host ? `https://${host}/${s}` : null, url: u, name: n2 ?? null, kind: kind ?? "url", hasPassword, forwardTo: forwardTo ?? null }) };
       });
       return { results, pending: r.pending };
     },
