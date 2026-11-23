@@ -6,6 +6,9 @@ import type { Domain, Link, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
 import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
+import { resizePhoto } from "./photo";
+
+vi.mock("./photo", async (orig) => ({ ...(await orig<typeof import("./photo")>()), resizePhoto: vi.fn(async () => "/9j/AAAA") }));
 
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
@@ -1237,6 +1240,25 @@ describe("contact card links (S9)", () => {
     });
     await screen.findByText(/could not be loaded/);
     expect(location.search).toContain("qr=1");
+  });
+
+  it("Escape during a photo resize drops the late result and ends the Save wait", async () => {
+    let finish: (b64: string) => void = () => undefined;
+    vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
+    const { api, user } = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [L], next: null } }) });
+    await ready();
+    const save = () => within(detail()).getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
+    fireEvent.change(within(detail()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    await waitFor(() => expect(save().disabled).toBe(true));
+    within(detail()).getByLabelText("First name").focus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(save().disabled).toBe(false));
+    finish("/9j/LATE");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(within(detail()).queryByRole("img", { name: "Contact photo" })).toBeNull();
+    await user.click(save());
+    expect(api.calls.some((c) => c.method === "PATCH")).toBe(false); // nothing changed, so nothing is sent
   });
 
   it("a server bad_vcard on emails.0 marks the second shown row when the first is blank", async () => {
