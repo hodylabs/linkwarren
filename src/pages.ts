@@ -1,3 +1,10 @@
+/** R8: short-link pages share an origin with the dashboard in path mode, so they must never run script (both modes). */
+export const PAGE_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  "x-content-type-options": "nosniff",
+} as const;
+
 const CSS =
   `body{margin:0;min-height:100vh;display:grid;place-items:center;background:#15181D;color:#f4f4f5;font:16px system-ui,sans-serif}` +
   `main{padding:24px;text-align:center}h1{color:#FD8D27;margin:0 0 8px}p{margin:0;opacity:.8}`;

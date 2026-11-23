@@ -2,10 +2,13 @@ import { env, exports } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { SECURITY_HEADERS } from "../src/assets";
+import { PAGE_HEADERS } from "../src/pages";
 
 const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
-const HTML = "<!doctype html><title>lw</title>";
+// The fake shell (vitest.config.ts) after the host-mode rewrite: "./" becomes "/" and an empty base meta closes <head>.
+const HTML =
+  '<!doctype html><html><head><title>lw</title><link rel="icon" href="/linkwarren-mark.svg"><script type="module" src="/assets/app.js"></script><meta name="lw-base" content=""></head><body><a href="https://example.com/x">x</a></body></html>';
 const get = (host: string, path: string, init?: RequestInit) => exports.default.fetch(`https://${host}${path}`, init);
 
 beforeAll(setupAccess);
@@ -27,6 +30,13 @@ describe("dashboard host", () => {
     expect(r.headers.get("content-type")).toContain("text/html");
     expect(await r.text()).toBe(HTML);
     expectHeaders(r);
+    expect(r.headers.get("x-robots-tag")).toBe("noindex");
+  });
+  it("host mode keeps SECURITY_HEADERS exactly on a deep-link shell", async () => {
+    const r = await get("dash.test", "/links/abc");
+    expect(await r.text()).toBe(HTML);
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) expect(r.headers.get(k)).toBe(v);
+    expect(r.headers.get("x-robots-tag")).toBe("noindex");
   });
   it.each(["/links", "/domains/abc", "/people?sel=u1", "/join"])("falls back to the shell for %s", async (p) => {
     const r = await get("dash.test", p);
@@ -49,10 +59,11 @@ describe("dashboard host", () => {
   it.each(["/sign-in/x", "/sign-inx"])("keeps the default Referrer-Policy on %s", async (p) => {
     expect((await get("dash.test", p)).headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
   });
-  it("serves a real asset with the headers", async () => {
+  it("serves a real asset with the headers, unrewritten", async () => {
     const r = await get("dash.test", "/assets/app.js");
     expect(r.status).toBe(200);
     expect(r.headers.get("content-type")).toContain("javascript");
+    expect(await r.text()).toBe("export {}");
     expectHeaders(r);
   });
   it("a missing asset stays 404 and is not HTML", async () => {
@@ -106,7 +117,8 @@ describe("short hosts never serve dashboard files", () => {
     const r = await get("short.test", p);
     expect(r.status).toBe(404);
     expect(r.headers.get("x-fake-assets")).toBeNull();
-    expect(r.headers.get("content-security-policy")).toBeNull();
+    // The short-link page's own script-blocking policy (R8), never the dashboard's.
+    expect(r.headers.get("content-security-policy")).toBe(PAGE_HEADERS["content-security-policy"]);
     expect(await r.text()).not.toContain("<title>lw</title>");
   });
 });

@@ -2,6 +2,8 @@
 
 The dashboard is a React app in `web/`, built by Vite into `web/dist`, which the Worker serves on the dashboard host. In development, Vite serves the app and proxies `/api` to a local Worker.
 
+One build serves both dashboard modes. Vite builds with a relative base (`base: "./"`), and the Worker rewrites the app shell when it serves it: every `./` URL becomes rooted at the dashboard path (`/` in host mode, for example `/dashboard/` in path mode) and a `<meta name="lw-base">` tells the app its path (`web/src/base.ts`). In app code, build dashboard URLs with `withBase`, `navigate`, `NavLink` or `api()`, never as a bare `"/..."` string; `web/src/no-absolute-paths.test.ts` fails on one. Local development stays in host mode: the Vite dev server serves the app at `/` with no base meta, so leave `DASHBOARD_PATH` unset for the local Worker.
+
 ## Tests and checks
 
 ```sh

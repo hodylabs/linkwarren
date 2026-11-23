@@ -2,6 +2,7 @@ import { OAuthError, OAuthProvider, type TokenExchangeCallbackOptions } from "@c
 import type { Env } from "./env";
 import { normalizeHost } from "./host";
 import { app } from "./app";
+import { dash, innerRequest } from "./dash";
 import { mcpHandler } from "./mcp/server";
 
 /** Every path the OAuth provider answers; all of them are JSON 404 while agent connections are off (mcpState). */
@@ -78,21 +79,45 @@ export async function checkConnection(o: TokenExchangeCallbackOptions<Env>): Pro
   if (!ok) throw new OAuthError("invalid_grant", { description: "This connection was disconnected" });
 }
 
-let cached: { host: string; p: OAuthProvider<Env> } | undefined;
+let cached: { key: string; p: OAuthProvider<Env> } | undefined;
+// The library keeps its helpers on env.OAUTH_PROVIDER and makes them only when unset. Each set is tagged with the base it was
+// made for, and helpers of another base (left on an env, or copied with it) are dropped, never reused: they would issue grants
+// for the old resource, which the current provider refuses. Untagged ones are kept; production never changes base in an isolate.
+const helpersBase = new WeakMap<object, string>();
+const tag = (e: Env, key: string) => { if (e.OAUTH_PROVIDER && !helpersBase.has(e.OAUTH_PROVIDER)) helpersBase.set(e.OAUTH_PROVIDER, key); };
 
-/** One provider per dashboard host (the resource URL is derived from it). The library reads its KV as env.OAUTH_KV. */
+/**
+ * One provider per dashboard base (host + prefix). The resource is https://<host>/mcp in both modes, so a token is bound to
+ * one host and refused after a host change. R5: the authorize, token and register endpoints under the prefix, the MCP
+ * endpoint at the root /mcp, the issuer the origin (the token endpoint's origin), so the authorization-server metadata is
+ * the root RFC 8414 document. The library reads its KV as env.OAUTH_KV.
+ */
 export function provider(env: Env): OAuthProvider<Env> {
-  const host = normalizeHost(env.DASHBOARD_HOST);
-  if (cached?.host !== host)
+  const d = dash(env);
+  const host = d?.host ?? normalizeHost(env.DASHBOARD_HOST);
+  const P = d?.prefix ?? "";
+  const key = host + P;
+  const h = env.OAUTH_PROVIDER;
+  if (h && helpersBase.has(h) && helpersBase.get(h) !== key) env.OAUTH_PROVIDER = undefined;
+  if (cached?.key !== key)
     cached = {
-      host,
+      key,
       p: new OAuthProvider<Env>({
-        apiRoute: "/mcp",
-        apiHandler: mcpHandler,
-        defaultHandler: { fetch: (req, e, ctx) => app.fetch(req, e, ctx) },
-        authorizeEndpoint: "/authorize",
-        tokenEndpoint: "/token",
-        clientRegistrationEndpoint: "/register",
+        apiRoute: "/mcp", // always the root of the host: in path mode the wrapper sends the main domain's /mcp here
+        // The library has just set the helpers when it calls either handler.
+        apiHandler: { fetch: (req, e, ctx) => (tag(e, key), mcpHandler.fetch(req, e, ctx)) },
+        // Path mode: the app only ever sees inner (root) paths (R3); the wrapper sends nothing outside the prefix here.
+        defaultHandler: {
+          fetch: (req, e, ctx) => {
+            tag(e, key);
+            const cur = dash(e);
+            const inner = cur ? innerRequest(req, cur) : req;
+            return inner ? app.fetch(inner, e, ctx) : Response.json({ error: "not_found" }, { status: 404 });
+          },
+        },
+        authorizeEndpoint: `${P}/authorize`,
+        tokenEndpoint: `${P}/token`,
+        clientRegistrationEndpoint: `${P}/register`,
         clientRegistrationCallback: checkRegistration,
         tokenExchangeCallback: checkConnection,
         accessTokenTTL: 86400,

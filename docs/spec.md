@@ -60,7 +60,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - First-run setup: name, sign-in, Cloudflare token (permissions checked one by one), main domain, email, bring your links.
 
 **Instance and release**
-- Each instance chooses its own dashboard host; it is never a short-link domain and never appears in the repo. Example: dashboard `dash.example.com`.
+- Each instance chooses its own dashboard host, which never appears in the repo. In host mode it is a dashboard-only host, never a short-link domain (example: `dash.example.com`); in path mode it is the main short domain and the dashboard lives under its path (example: `example.com/dashboard`).
 - Email from the instance via Resend.
 - No auto-update (decided 2026-11-22): a daily check of GitHub's latest release shows "vX.Y.Z available" in the sidebar to owners and Settings holders; turned off in Settings, This instance.
 - License: **AGPL-3.0** (open source; decided 2026-11-20 over AGPL + Commons Clause, which would have made it source-available). Anyone may host and modify it; anyone who changes it, including to run it as a service, must publish their changes; closed products cannot embed it. Plus `TRADEMARK.md` (forks and hosted services may not use the name or logo) and a contributor agreement so the maintainers can grant commercial license exceptions.
@@ -69,6 +69,8 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 
 One Worker serves everything. The request **host** decides the path:
 - `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints, machine API under `/api/v1`. Signed in by the app or by Cloudflare Access (`AUTH_MODE`).
+- Path mode (`DASHBOARD_PATH`, for example `/dashboard`): `DASHBOARD_HOST` is the main short domain. The front door (`src/index.ts`, configured by `src/dash.ts`) decides with string compares only, before any D1 or KV work: the prefix and its subpaths are the dashboard (prefix stripped, so the app keeps its root routes), root OAuth discovery paths answer JSON, `/mcp` and `/api/v1` at the root stay the MCP server and the machine API, and everything else goes straight to the redirect handler.
+- `LEGACY_DASHBOARD_HOST` (optional) → `301` for `GET`/`HEAD` to the same path under the dashboard, `410` for everything else.
 - Any other host → the redirect handler, looking up `(domain for host, slug)`.
 
 Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals, and a small `settings` table; forwarders are rows in `links` with `forward_to` set, and the agents on/off switch is the `settings` row `mcp.enabled`). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.

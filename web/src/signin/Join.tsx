@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Me } from "../api";
 import { errorText } from "../copy";
 import { goNext } from "./next";
+import { withBase } from "../base";
 
 /** The invite page for a browser that is already signed in: say who, and let the person sign out or go on. Never the app or the wizard. */
 export function JoinSignedIn({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
@@ -25,7 +26,7 @@ export function JoinSignedIn({ me, onSignedOut }: { me: Me; onSignedOut: () => v
     <main className="signin">
       <div className="signin-card">
         <div className="signin-brand">
-          <img src="/linkwarren-mark.svg" alt="" />
+          <img src={withBase("/linkwarren-mark.svg")} alt="" />
           <span>linkwarren</span>
         </div>
         {error && <p className="signin-err" role="alert">{error}</p>}

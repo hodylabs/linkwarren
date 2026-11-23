@@ -30,6 +30,8 @@ linkwarren's analytics, its database and its own log lines never contain:
 - cookies
 - any identifier that lasts beyond a day
 
+The dashboard (in app sign-in mode) sets one cookie, the session: `__Host-lw_session` on the dashboard host, or `__Secure-lw_session` limited to the dashboard path (for example `/dashboard`) when the dashboard lives at a path on the main short domain. It holds only a random value; browsers never send it with a short-link visit, in either mode.
+
 Short links set no cookies and run no scripts: a visitor gets a plain redirect, or for a password-protected link a small password page (still no cookies and no scripts). A click on a protected link is recorded only after a right password.
 
 One exception to "no IP addresses" in the database: a visitor who submits a link password has their IP range (the /24 for IPv4, the /48 for IPv6, never the full address) stored as a rate-limit counter, only to limit password guessing. It is kept for the limiter window (15 minutes) plus the cleanup delay: an hourly cleanup deletes counters whose window started over an hour ago, so a range is normally gone within about two hours of the last attempt.

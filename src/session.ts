@@ -1,9 +1,17 @@
 import { auditStmt } from "./audit";
+import { dash } from "./dash";
 import type { Env } from "./env";
 import { ROLE_JOIN, USER_COLS } from "./roles";
 import { rowToUser, type SessionRef, type UserRow } from "./types";
 
+/** The host-mode cookie name; path mode uses `__Secure-lw_session` scoped to the prefix (R6). See `dash(env).cookie`. */
 export const SESSION_COOKIE = "__Host-lw_session";
+/** The cookie name and Path for this instance's mode; only callers past the misconfigured gate get here. */
+function cookieOf(env: Env): { name: string; path: string } {
+  const d = dash(env);
+  if (!d) throw new Error("session cookie: misconfigured");
+  return d.cookie;
+}
 /** Rolling idle lifetime (30 d), absolute cap and cookie Max-Age (90 d), and how often a live session is refreshed (10 min). */
 export const ROLLING = 2_592_000;
 export const ABSOLUTE = 7_776_000;
@@ -24,13 +32,16 @@ export async function sha256Hex(s: string): Promise<string> {
 /**
  * The session cookie value when it has the exact secret shape; anything else (or a missing cookie) is null.
  * A duplicated name takes the first one (browsers send the longest path first), and a malformed first one fails closed.
- * `__Host-` stops sibling hosts from setting this name in current browsers; refusing duplicates outright would only trade
- * that leftover login-CSRF risk (old browsers) for a cookie-tossing lockout, so the first one wins.
+ * Only the current mode's name counts, so switching modes ends every session (R13).
+ * `__Host-` stops sibling hosts from setting this name in current browsers (path mode's `__Secure-` does not: deploy.md
+ * says to use path mode only where you control every subdomain); refusing duplicates outright would only trade
+ * that leftover login-CSRF risk for a cookie-tossing lockout, so the first one wins.
  */
-export function readCookie(req: Request): string | null {
+export function readCookie(req: Request, env: Env): string | null {
+  const { name } = cookieOf(env);
   for (const part of (req.headers.get("cookie") ?? "").split(";")) {
     const i = part.indexOf("=");
-    if (i > 0 && part.slice(0, i).trim() === SESSION_COOKIE) {
+    if (i > 0 && part.slice(0, i).trim() === name) {
       const v = part.slice(i + 1).trim();
       return /^[A-Za-z0-9_-]{43}$/.test(v) ? v : null;
     }
@@ -50,7 +61,8 @@ export async function createSession(env: Env, req: Request, user: UserRow, metho
   const id = crypto.randomUUID();
   const now = nowS();
   const stmts: D1PreparedStatement[] = [];
-  const old = readCookie(req);
+  const ck = cookieOf(env);
+  const old = readCookie(req, env);
   // Same guard as the insert: a refused sign-in leaves the incoming session alone.
   if (old) stmts.push(env.DB.prepare("DELETE FROM sessions WHERE token_hash = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')").bind(await sha256Hex(old), user.id));
   stmts.push(
@@ -59,14 +71,14 @@ export async function createSession(env: Env, req: Request, user: UserRow, metho
     auditStmt(env, { actorId: user.id, action: "auth.sign_in", targetType: "session", targetId: id, detail: { method } },
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE id = ?)", binds: [id] }),
   );
-  // __Host- forces Secure, Path=/ and no Domain: host-only, so short-link hosts never receive it.
+  // No Domain: host-only. Host mode's __Host- forces Path=/; path mode's Path=<prefix> keeps it off short-link paths (R6).
   const at = stmts.length - 2; // the insert
-  return { setCookie: `${SESSION_COOKIE}=${secret}; Path=/; Max-Age=${ABSOLUTE}; Secure; HttpOnly; SameSite=Lax`, stmts, started: (res) => !!res[at]?.meta.changes };
+  return { setCookie: `${ck.name}=${secret}; Path=${ck.path}; Max-Age=${ABSOLUTE}; Secure; HttpOnly; SameSite=Lax`, stmts, started: (res) => !!res[at]?.meta.changes };
 }
 
 /** The signed-in person for the request's cookie, refused past `expires_at` (rolling) or the absolute cap; refreshes at most every TOUCH_EVERY. */
 export async function readSession(req: Request, env: Env): Promise<{ user: UserRow; session: SessionRef } | null> {
-  const secret = readCookie(req);
+  const secret = readCookie(req, env);
   if (!secret) return null;
   const now = nowS();
   const r = await env.DB.prepare(
@@ -82,7 +94,10 @@ export async function readSession(req: Request, env: Env): Promise<{ user: UserR
   return { user, session: { id: r.sid as string, createdAt: r.screated as number } };
 }
 
-export const clearCookie = (): string => `${SESSION_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`;
+export const clearCookie = (env: Env): string => {
+  const { name, path } = cookieOf(env);
+  return `${name}=; Path=${path}; Max-Age=0; Secure; HttpOnly; SameSite=Lax`;
+};
 
 /** Deletes one session by public id, or all of a person's sessions; `guard` adds an AND condition (e.g. a race check). */
 export function endSessionStmt(env: Env, where: { id: string } | { userId: string }, guard?: { sql: string; binds: unknown[] }): D1PreparedStatement {
@@ -127,17 +142,31 @@ export function ipPrefix(ip: string | null): string | null {
   return `${n.slice(0, 3).map((x) => x.toString(16)).join(":")}::/48`;
 }
 
+/** `raw` without one leading `prefix` segment ("/dashboard/x" -> "/x", "/dashboard?q" -> "/?q"); anything else unchanged. Mirrored in web/src/signin/next.ts. */
+export function unPrefix(raw: unknown, prefix: string): unknown {
+  if (!prefix || typeof raw !== "string" || !raw.startsWith(prefix)) return raw;
+  const rest = raw.slice(prefix.length);
+  return rest === "" ? "/" : rest[0] === "/" ? rest : rest[0] === "?" || rest[0] === "#" ? "/" + rest : raw;
+}
+
 /**
  * A same-origin relative return path, else "/": starts with "/" (not "//" or "/\"), no control characters, at most 2048 chars,
  * and resolves to `origin`. The raw value is returned (not the parsed path) because the parser can turn "/.//x" into "//x".
+ * R9: `next` is an inner path; with a prefix it must also stay under it once prefixed ("/../slug" would land on a short link).
+ * A value that already carries the prefix ("/dashboard/agents") is stripped once first, so it is never doubled.
  */
-export function safeNext(raw: unknown, origin: string): string {
+export function safeNext(raw: unknown, origin: string, prefix = "", strip = true): string {
+  // A value stored after an earlier safeNext is already an inner path: checked again, never stripped twice.
+  if (strip) raw = unPrefix(raw, prefix);
   if (typeof raw !== "string" || raw.length > 2048 || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/";
   if (/[\u0000-\u001f\u007f]/.test(raw)) return "/";
   try {
     const u = new URL(raw, origin);
     // A dot segment can still resolve to a "//x" pathname (same origin, but protocol-relative if anything re-resolves it).
-    return u.origin === new URL(origin).origin && !u.pathname.startsWith("//") ? raw : "/";
+    if (u.origin !== new URL(origin).origin || u.pathname.startsWith("//")) return "/";
+    if (!prefix) return raw;
+    const p = new URL(prefix + raw, origin).pathname;
+    return p === prefix || p.startsWith(prefix + "/") ? raw : "/";
   } catch {
     return "/";
   }

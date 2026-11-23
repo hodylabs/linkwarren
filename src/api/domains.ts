@@ -5,7 +5,8 @@ import { CfError, cfConfigFor, cnameTarget } from "../cf/api";
 import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidden, rateLimitRule, rlRef, secRef, securityRule, upsertHostRule } from "../cf/controls";
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverDetail } from "../cf/attach";
 import type { Env } from "../env";
-import { apexOf, normalizeHost } from "../host";
+import { dash } from "../dash";
+import { apexOf, hostError, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { FIRST_OWNER, actorCan, can, type Guard } from "../roles";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
@@ -21,7 +22,6 @@ const notFound = { error: "not_found" } as const;
 // Another approve, reject or controls change of this domain is running: the same answer as a lost status race.
 const busy = { error: "conflict" } as const;
 export const MAX_PENDING_PER_MEMBER = 3;
-const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const createBody = z.strictObject({ host: z.string().max(1024), type: z.enum(["main", "shared", "private"]), confirmTakeover: z.boolean().optional() });
 const patchBody = z.strictObject({
@@ -56,15 +56,11 @@ async function administer(c: Context<E>, id: string, fn: (lease: Lease, lock: Le
   return (await holds(c.env, g)) ? res ?? c.json(busy, 409) : c.json(forbidden, 403);
 }
 
-/** Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars. */
-export function hostError(host: string, dashboard: string, cnameTarget?: string): string | null {
-  if (host === normalizeHost(dashboard)) return "dashboard_host";
-  if (cnameTarget && host === normalizeHost(cnameTarget)) return "reserved_host";
-  const labels = host.split(".");
-  if (host.length > 253 || labels.length < 2 || !labels.every((l) => LABEL.test(l)) || /^\d+$/.test(labels[labels.length - 1]!)) return "invalid_host";
-  return null;
-}
+/** The host a new short domain may not be: the dashboard host in host mode, none in path mode (S8c). */
+export const refusedDashboard = (env: Env): string | null => (dash(env)?.pathMode ? null : env.DASHBOARD_HOST);
 
+/** The old dashboard host answers 301/410 only (S8c), so a short domain there could never resolve. */
+export const isLegacyHost = (env: Env, host: string): boolean => host === dash(env)?.legacy;
 
 const getCf = async (env: Env, id: string): Promise<CfRow | null> => {
   const r = await env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(id).first();
@@ -148,8 +144,11 @@ domains.post("/", async (c) => {
   const { type, confirmTakeover } = body.data;
   if (!manager && type !== "private") return c.json(forbidden, 403);
   const host = normalizeHost(body.data.host.trim());
-  const bad = hostError(host, c.env.DASHBOARD_HOST, cnameTarget(c.env) ?? undefined);
+  const bad = hostError(host, refusedDashboard(c.env), cnameTarget(c.env) ?? undefined);
   if (bad) return c.json({ error: bad }, 400);
+  if (isLegacyHost(c.env, host)) return c.json({ error: "legacy_dashboard_host" }, 400);
+  // Path mode (host mode refused it above): the dashboard host is the main short domain only, so no one can claim it first.
+  if (type !== "main" && host === normalizeHost(c.env.DASHBOARD_HOST)) return c.json({ error: "dashboard_main_only" }, 400);
   // Early exits so a doomed create makes no Cloudflare calls; the INSERT below still enforces both under races.
   if (await c.env.DB.prepare("SELECT 1 FROM domains WHERE host = ?").bind(host).first()) return c.json({ error: "host_taken" }, 409);
   if (!manager && (await c.env.DB.prepare("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'").bind(user.id).first<{ n: number }>())!.n >= MAX_PENDING_PER_MEMBER)

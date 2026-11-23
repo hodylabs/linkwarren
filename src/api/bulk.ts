@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { z } from "zod";
 import { auditManyStmt } from "../audit";
+import { reservedSlugs } from "../dash";
 import type { Env } from "../env";
 import { hitAll, LIMITS, limitKey, type Check } from "../limits";
 import { passwordRule } from "../password-rule";
@@ -144,7 +145,7 @@ export async function bulk(c: Context<E>) {
       if (link.domainId === target.id) { out.set(id, { id, ok: false, error: "same_domain" }); continue; }
       // A destination or route on the target host (saved while that domain was pending) would redirect to itself there.
       if ([link.url, ...link.routes.map((r) => r.url)].some((u) => hostOf(u) === target.host)) { out.set(id, { id, ok: false, error: "loop" }); continue; }
-      const s = checkSlug(link.slug, target.reservedExtra);
+      const s = checkSlug(link.slug, [...target.reservedExtra, ...reservedSlugs(c.env, target.host)]);
       if (!s.ok) { out.set(id, { id, ok: false, error: s.reason === "too_long" ? "slug_too_long" : s.reason }); continue; }
       k = slugKey(link.slug, target.caseSensitive);
     }

@@ -28,6 +28,13 @@
   "triggers": { "crons": ["15 * * * *"] },
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
+    // Optional path mode (see docs/deploy.md "Dashboard at a path"): DASHBOARD_HOST is then your main short domain and the
+    // dashboard lives at https://<DASHBOARD_HOST>/dashboard; every other path there is a short link, except the root /mcp and
+    // /api/v1 (the MCP server and the machine API). Needs AUTH_MODE "app".
+    // "DASHBOARD_PATH": "/dashboard",
+    // Optional: your old dashboard host. GET/HEAD there 301 to the same path under the dashboard; every other method, every
+    // /.well-known/ path, /api/v1 and /mcp answer 410 (the last two with the new root address). Keep it routed. It never serves short links.
+    // "LEGACY_DASHBOARD_HOST": "dash.example.com",
     // "app" (linkwarren's own sign-in, the default) or "access" (Cloudflare Access). See docs/deploy.md "Sign-in".
     "AUTH_MODE": "app",
     // App mode: sign-in email sender. The key is a secret: wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc

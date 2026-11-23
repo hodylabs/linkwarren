@@ -15,6 +15,7 @@ import { syncDomain, syncErrorCode } from "../cf/attach";
 import { checkToken, sampleZone } from "../cf/perms";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
+import { dashUrl } from "../dash";
 import { deleteSecretStmts, putSecretStmts, secretsReady, secretStatus, type SecretName } from "../secrets";
 import { rowToCf, rowToDomain, type UserRow } from "../types";
 import type { Grant } from "../principal";
@@ -51,7 +52,7 @@ export const instance = new Hono<E>();
 instance.get("/", async (c) => {
   const s = await getSettings(c.env);
   return c.json({
-    name: s.name, logoVersion: s.logoVersion, configured: s.setupCompletedAt !== null, dashboardHost: normalizeHost(c.env.DASHBOARD_HOST),
+    name: s.name, logoVersion: s.logoVersion, configured: s.setupCompletedAt !== null, dashboardHost: normalizeHost(c.env.DASHBOARD_HOST), dashboardUrl: dashUrl(c.env, ""),
     mainDomainId: s.mainDomainId, linkDefaults: { redirectCode: s.linkRedirectCode, passQuery: s.linkPassQuery },
     // From the same settings read: no extra query. Only those who can act on it (owners and `settings`) see it.
     update: can(c.var.user, "settings") ? updateInfo(s) : null,
@@ -81,7 +82,7 @@ async function settingsBody(env: Env) {
   const emailOk = !!env.EMAIL_FROM?.trim() && secrets.resend !== "missing";
   const mode = authMode(env);
   return {
-    name: s.name, mainDomainId: s.mainDomainId, dashboardHost: normalizeHost(env.DASHBOARD_HOST), authMode: mode,
+    name: s.name, mainDomainId: s.mainDomainId, dashboardHost: normalizeHost(env.DASHBOARD_HOST), dashboardUrl: dashUrl(env, ""), authMode: mode,
     ...(mode === "access" ? { teamDomain: env.ACCESS_TEAM_DOMAIN ?? "" } : {}),
     emailFrom: env.EMAIL_FROM?.trim() || null, emailConfigured: emailOk, secrets,
     linkRedirectCode: s.linkRedirectCode, linkPassQuery: s.linkPassQuery, updatesCheck: s.updatesCheck, retention: { auditDays: AUDIT_KEEP_DAYS, clickDetailDays: AE_DAYS },

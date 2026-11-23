@@ -10,6 +10,11 @@ export type Env = {
   /** "0" locks MCP and the OAuth endpoints off; unset or "1" lets the owner's D1 setting decide (no setting yet: on only with "1"). */
   MCP_ENABLED?: string;
   DASHBOARD_HOST: string;
+  /** Path mode (S8c): one lowercase segment such as "/dashboard"; the dashboard then lives at https://<DASHBOARD_HOST><DASHBOARD_PATH>
+   * and every other path on that host is a short link. Unset or blank is host mode. Needs AUTH_MODE app. */
+  DASHBOARD_PATH?: string;
+  /** Optional old dashboard host: GET/HEAD 301 to the same path under the dashboard, everything else 410. */
+  LEGACY_DASHBOARD_HOST?: string;
   /** "app" (default when unset or blank) or "access"; any other value fails closed with 500 misconfigured. */
   AUTH_MODE?: string;
   /** Access mode only; verifyAccess refuses blanks. */

@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
+import { renderApproval } from "../src/mcp/approval-page";
 import { logRefused, OAUTH_PATHS } from "../src/oauth";
 
 const DASH = "https://dash.test";
@@ -274,6 +275,12 @@ describe("oauth front door on the dashboard host", () => {
     } finally {
       e.DASHBOARD_HOST = saved;
     }
+  });
+
+  it("posts the consent form to the route it came from: /authorize in host mode, <prefix>/authorize in path mode", () => {
+    const v = { clientName: "C", redirectHost: "claude.ai", redirectIsLoopback: false, who: { email: "a@example.com", role: "owner" }, uid: "u", handle: "h" };
+    expect(renderApproval({ ...v, prefix: "" })).toContain('<form method="post" action="/authorize">');
+    expect(renderApproval({ ...v, prefix: "/dashboard" })).toContain('<form method="post" action="/dashboard/authorize">');
   });
 
   it("treats the dashboard host case-insensitively, with a port or a trailing dot", async () => {

@@ -18,7 +18,7 @@ const DOMAINS = [
   { id: "ds2", host: "qr.test", type: "shared", status: "active" },
   { id: "dp", host: "mine.test", type: "private", status: "active", ownerId: "uo" },
 ];
-const SETTINGS = { emailFrom: "links@example.com", emailConfigured: true, dashboardHost: "links.example.com" };
+const SETTINGS = { emailFrom: "links@example.com", emailConfigured: true, dashboardHost: "example.com", dashboardUrl: "https://example.com/dashboard" };
 
 function boot(opts: { me?: Me; invite?: (body: unknown) => FakeRes; settings?: unknown; routes?: FakeRoutes } = {}) {
   history.replaceState(null, "", "/people");
@@ -213,10 +213,22 @@ describe("Invite sheet", () => {
     await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
     await within(sheet()).findByText(/Invite saved/);
     expect(within(sheet()).getByText("Email is not set up yet. Set it up in Settings, or send them the dashboard address.")).toBeTruthy();
-    expect(sheet().textContent).toContain("Invite saved. No email was sent. Send them this address: https://links.example.com/");
+    expect(sheet().textContent).toContain("Invite saved. No email was sent. Send them this address: https://example.com/dashboard/");
     expect(within(sheet()).getByRole("button", { name: /Close/ })).toBeTruthy();
     await user.keyboard("c");
-    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("https://links.example.com/"));
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("https://example.com/dashboard/"));
+  });
+
+  it("not emailed in host mode: the address is the dashboard host's root", async () => {
+    const settings = { ...SETTINGS, dashboardHost: "links.example.com", dashboardUrl: "https://links.example.com" };
+    const { user } = boot({ settings, invite: () => ({ status: 201, body: { user: {}, emailed: false, emailReason: "not_configured" } }) });
+    await ready();
+    await user.keyboard("n");
+    await screen.findByRole("dialog", { name: "Invite a person" });
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    await within(sheet()).findByText(/Invite saved/);
+    expect(sheet().textContent).toContain("Send them this address: https://links.example.com/");
+    expect(sheet().textContent).not.toContain("/dashboard");
   });
 
   it("a saved invite that was not emailed says why", async () => {

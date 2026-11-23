@@ -7,6 +7,7 @@ import { canSee, isOwner } from "../perms";
 import { useApp } from "../state";
 import { PHONE, useMedia } from "./narrow";
 import { Sheet } from "./Sheet";
+import { withBase } from "../base";
 
 // Paths copied from the mockup's <symbol> set.
 const ICONS: Record<Screen, ReactNode> = {
@@ -105,7 +106,7 @@ export function Rail() {
       signingOut.current = false;
       return;
     }
-    location.assign("/");
+    location.assign(withBase("/"));
   };
   const navBody = (
     <>

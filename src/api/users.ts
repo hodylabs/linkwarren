@@ -105,7 +105,7 @@ users.delete("/:id/sessions", async (c) => {
     if (!w.a) return c.json(forbidden, 403);
     if (!w.w) return c.json(above, 403);
   }
-  if (id === me.id) c.header("Set-Cookie", clearCookie());
+  if (id === me.id) c.header("Set-Cookie", clearCookie(c.env));
   return c.body(null, 204);
 });
 

@@ -1,5 +1,6 @@
 import type { Perm } from "../../src/roles";
 import type { AuditItem as ServerAuditItem, ApiLink, CfView, DomainRow, KeyItem, UserListItem, UserRow } from "../../src/types";
+import { withBase } from "./base";
 
 export type { CfView, KeyItem };
 /** One item of GET /api/agents/connections (src/api/agents.ts); `userEmail` only in the owner's ?all=1 view of someone else's. */
@@ -88,7 +89,7 @@ export async function api<T>(method: Method, path: string, body?: unknown, signa
   }
   let res: Response;
   try {
-    res = await fetch(path, init);
+    res = await fetch(withBase(path), init);
   } catch (e) {
     if (signal?.aborted) throw e; // the caller cancelled: not a sign-in problem
     fail(0, "offline");

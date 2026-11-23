@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
+import { reservedSlugs } from "../dash";
 import type { Env } from "../env";
 import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
@@ -91,7 +92,7 @@ links.get("/check", async (c) => {
   if (!domain) return c.json({ error: "not_found" }, 404);
   if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
   const slug = c.req.query("slug") ?? "";
-  const s = checkSlug(slug, domain.reservedExtra);
+  const s = checkSlug(slug, [...domain.reservedExtra, ...reservedSlugs(c.env, domain.host)]);
   if (!s.ok) return c.json(s.reason === "reserved" ? { status: "reserved" } : { status: "invalid", reason: s.reason === "too_long" ? "slug_too_long" : s.reason });
   const key = slugKey(slug, domain.caseSensitive);
   if (await hasLock(c.env, domain.id, key)) return c.json({ status: "locked" });
@@ -193,7 +194,7 @@ links.post("/", async (c) => {
   const domain = dr!.results[0] ? rowToDomain(dr!.results[0] as Record<string, unknown>) : null;
   if (!domain) return c.json({ error: "not_found" }, 404);
   if (!canUseDomain(user, domain, mr!.results.length > 0, c.var.grant.domains)) return c.json(forbidden, 403);
-  const s = checkSlug(b.slug, domain.reservedExtra);
+  const s = checkSlug(b.slug, [...domain.reservedExtra, ...reservedSlugs(c.env, domain.host)]);
   if (!s.ok) return c.json({ error: s.reason === "too_long" ? "slug_too_long" : s.reason }, 400);
   const hosts = (hr!.results as { host: string }[]).map((r) => r.host);
   const dest = await destination(c.env, b.url, [], hosts);

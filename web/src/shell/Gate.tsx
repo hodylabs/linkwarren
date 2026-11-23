@@ -4,13 +4,14 @@ import { errorText } from "../copy";
 import { goNext } from "../signin/next";
 import { JoinSignedIn } from "../signin/Join";
 import { SignIn, takeToken } from "../signin/SignIn";
+import { stripBase, withBase } from "../base";
 
 type GateState = { me: Me } | { error: string } | { signIn: string; name?: string } | null;
 
-const onSignInPage = () => location.pathname === "/sign-in";
+const onSignInPage = () => stripBase(location.pathname) === "/sign-in";
 /** Where to go after signing in: ?next= on /sign-in, else the page the person asked for. */
-const onJoinPage = () => location.pathname === "/join";
-const nextHere = () => (onJoinPage() ? "/links" : onSignInPage() ? new URLSearchParams(location.search).get("next") ?? "/" : location.pathname + location.search);
+const onJoinPage = () => stripBase(location.pathname) === "/join";
+const nextHere = () => (onJoinPage() ? "/links" : onSignInPage() ? new URLSearchParams(location.search).get("next") ?? "/" : stripBase(location.pathname) + location.search);
 
 /**
  * Loads /api/me and renders the app only for a signed-in, invited, enabled user. In app mode a 401 renders the sign-in
@@ -46,7 +47,7 @@ export function Gate({ children }: { children: (me: Me) => ReactNode }) {
   if ("error" in state)
     return (
       <div className="gate" role="alert">
-        <img src="/linkwarren-mark.svg" alt="" />
+        <img src={withBase("/linkwarren-mark.svg")} alt="" />
         <p>{state.error}</p>
       </div>
     );

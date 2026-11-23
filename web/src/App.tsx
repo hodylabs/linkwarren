@@ -24,6 +24,7 @@ import { PersonSheet } from "./people/PersonSheet";
 import { PeopleScreen } from "./people/PeopleScreen";
 import { SettingsScreen } from "./settings/SettingsScreen";
 import { SetupWizard } from "./setup/SetupWizard";
+import { withBase } from "./base";
 
 function ScreenView({ screen }: { screen: Screen }) {
   const { me } = useApp();
@@ -104,7 +105,7 @@ function Root() {
   if (pending)
     return slow ? (
       <div className="gate" role="alert">
-        <img src="/linkwarren-mark.svg" alt="" />
+        <img src={withBase("/linkwarren-mark.svg")} alt="" />
         <p>Loading this linkwarren is taking longer than it should. Check your connection, then reload.</p>
         <button type="button" className="btn" onClick={() => location.reload()}>Reload</button>
       </div>
@@ -113,7 +114,7 @@ function Root() {
   if (isOwner(me) && instance === null)
     return (
       <div className="gate" role="alert">
-        <img src="/linkwarren-mark.svg" alt="" />
+        <img src={withBase("/linkwarren-mark.svg")} alt="" />
         <p>Could not load this instance.</p>
         <button type="button" className="btn" onClick={() => void reloadInstance().catch(() => undefined)}>Retry</button>
       </div>

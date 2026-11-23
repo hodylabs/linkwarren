@@ -10,6 +10,14 @@ In the dashboard list (`GET /api/domains`) a domain manager who is not an owner 
 
 Each permission is checked again in the same database step as the write, and before every Cloudflare change, so a role edited before the write lands changes nothing and answers `403 forbidden`. A Cloudflare change that already landed is always stored and audited: a controls change that loses the permission between its two steps answers `409 conflict` with the stored controls (see below), and a create whose permission is gone right after the domain was saved answers `201` and keeps the domain but connects nothing in Cloudflare (a domain manager attaches an account domain later with Finish connecting; an outside domain's next status check creates its custom hostname).
 
+## The dashboard host
+
+With the dashboard on its own host (`DASHBOARD_PATH` unset), that host can never be a short domain: adding it is `400 dashboard_host`, and so is a file import that names it. With the dashboard at a path (`DASHBOARD_PATH`, for example `/dashboard` on `example.com`), `DASHBOARD_HOST` is the main short domain, so add it as a main domain like any other. It can be added only as a main domain: adding it as a shared or private domain is `400 dashboard_main_only`, so no member can claim it before the owner adds it. The path's segment (`dashboard`), `mcp` and `api` (the MCP server and the machine API stay at the root of that domain) are then reserved on that one domain, whatever case you type and whatever the domain's case setting: `GET /api/links/check` answers `reserved`, creating the link answers `400 reserved`, a bulk move or copy onto that domain refuses that link with `reserved`, and an import lists it with the conflict `reserved_path`. Other domains are not affected. A link with one of those slugs stored before the switch is shadowed; check for one first.
+
+When Cloudflare is configured and the dashboard host is already the Worker's custom domain, adding it as a main domain answers `409 dns_record_exists` for the record Cloudflare manages for the custom domain. That is expected: resend with `"confirmTakeover": true`. linkwarren keeps that record (it never stores it, so removing the domain later never deletes it), marks the domain active at once and adds a route `<host>/*`. If Cloudflare refuses the route because the custom domain already holds the host, the domain is still active and short links still work; the domain shows the error as `lastError`.
+
+Short-link pages (not found, not active yet, the password form) never run script: they are sent with `Content-Security-Policy` that blocks scripts and `X-Content-Type-Options: nosniff`, in both setups.
+
 ## How a domain connects
 
 When Cloudflare is configured (see [deploy.md](deploy.md)), linkwarren looks the host up in your Cloudflare account before it writes anything and gives the domain one of three kinds:

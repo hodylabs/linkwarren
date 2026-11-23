@@ -4,6 +4,7 @@ import { resolveUser } from "../auth";
 import { sendEmail, signInEmail } from "../email";
 import { getSecret } from "../secrets";
 import { getSettings } from "../settings";
+import { dash, dashUrl } from "../dash";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
 import { DAY_KEYS_SQL, LIMITS, blocked, hit, limitKey } from "../limits";
@@ -16,7 +17,9 @@ export const signin = new Hono<E>();
 
 const TOKEN_TTL = 900;
 const MAX_BODY = 8192;
-const origin = (env: Env) => `https://${normalizeHost(env.DASHBOARD_HOST)}`;
+const origin = (env: Env) => `https://${normalizeHost(env.DASHBOARD_HOST)}`; // = dash(env).origin, past the misconfigured gate
+/** R9: a return path kept inside the dashboard (under the prefix in path mode). */
+const next = (env: Env, raw: unknown, strip = true) => safeNext(raw, origin(env), dash(env)?.prefix ?? "", strip);
 const nowS = () => Math.floor(Date.now() / 1000);
 
 // R3 guard: POST only (anything else is the JSON 404, never the SPA shell), the exact dashboard Origin is required
@@ -114,7 +117,7 @@ signin.post("/email", async (c) => {
 });
 
 /** Background: instance cap, then the token row (hash only), then the mail. R4: the token rides in the URL fragment. */
-async function mailLink(env: Env, email: string, next: string | undefined, now: number, key: string): Promise<void> {
+async function mailLink(env: Env, email: string, nextRaw: string | undefined, now: number, key: string): Promise<void> {
   try {
     if (!(await hit(env, limitKey.inst, LIMITS.instance))) {
       console.warn("email_cap");
@@ -122,9 +125,9 @@ async function mailLink(env: Env, email: string, next: string | undefined, now: 
     }
     const secret = newSecret();
     await env.DB.prepare("INSERT INTO login_tokens (token_hash, email, next, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(await sha256Hex(secret), email, safeNext(next, origin(env)), now, now + TOKEN_TTL).run();
+      .bind(await sha256Hex(secret), email, next(env, nextRaw), now, now + TOKEN_TTL).run();
     const name = (await getSettings(env)).name;
-    await sendEmail(env, { to: email, name, key, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: `${origin(env)}/sign-in#token=${secret}`, name }) });
+    await sendEmail(env, { to: email, name, key, ...signInEmail({ host: normalizeHost(env.DASHBOARD_HOST), url: dashUrl(env, `/sign-in#token=${secret}`), name }) });
   } catch {
     console.warn("sign_in_mail_failed"); // codes only: a D1 error text could carry bound values
   }
@@ -151,7 +154,7 @@ signin.post("/email/verify", async (c) => {
   const s = await createSession(env, c.req.raw, r.user, "email");
   if (!s.started(await env.DB.batch(s.stmts))) return c.json({ error: "disabled" }, 403); // disabled after the check above
   c.header("Set-Cookie", s.setCookie);
-  return c.json({ next: safeNext(t.next, origin(env)) });
+  return c.json({ next: next(env, t.next, false) }); // stored by mailLink after next(): already inner
 });
 
 signin.post("/passkey/options", async (c) => {
@@ -191,5 +194,5 @@ signin.post("/passkey/verify", async (c) => {
   const s = await createSession(env, c.req.raw, v.user, "passkey");
   if (!s.started(await env.DB.batch(s.stmts))) return c.json({ error: "disabled" }, 403); // disabled after the check above
   c.header("Set-Cookie", s.setCookie);
-  return c.json({ next: safeNext(b.next, origin(env)) });
+  return c.json({ next: next(env, b.next) });
 });

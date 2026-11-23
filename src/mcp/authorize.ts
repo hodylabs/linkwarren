@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { AuthorizationError, authorizationErrorRedirect, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { auditStmt } from "../audit";
 import { authenticate, authMode } from "../auth";
+import { dash } from "../dash";
 import type { Env } from "../env";
-import { normalizeHost } from "../host";
 import { hitAll, LIMITS, limitKey } from "../limits";
 import { actorCan, can } from "../roles";
 import { safeNext } from "../session";
@@ -105,8 +105,10 @@ authorize.get("/", async (c) => {
   if (!w.user) {
     if (w.status === 401 && authMode(c.env) === "app") {
       const u = new URL(c.req.url);
-      const next = safeNext(u.pathname + u.search, u.origin);
-      return html(null, 302, { location: `/sign-in?next=${encodeURIComponent(next)}` });
+      // `u` is the inner request (prefix stripped), so `next` is an inner path (R9); the sign-in page lives under the prefix.
+      const prefix = dash(c.env)?.prefix ?? "";
+      const next = safeNext(u.pathname + u.search, u.origin, prefix);
+      return html(null, 302, { location: `${prefix}/sign-in?next=${encodeURIComponent(next)}` });
     }
     return w.fail;
   }
@@ -141,13 +143,15 @@ authorize.get("/", async (c) => {
     who: { email: w.user.email, role: w.user.role },
     uid: w.user.id,
     handle,
+    prefix: dash(c.env)?.prefix ?? "",
   });
   // The approve/deny answer is a redirect to the client: form-action must allow its origin (registration allowlists it).
   return html(page, 200, { lib: headers, csp: CSP(`'self' ${new URL(d.redirectUri).origin}`) });
 });
 
 authorize.post("/", async (c) => {
-  if (c.req.header("origin") !== `https://${normalizeHost(c.env.DASHBOARD_HOST)}`) return msg(403, "Refused", "This form must be sent from linkwarren itself.");
+  const origin = dash(c.env)?.origin; // no path: the same origin in both modes (R8)
+  if (!origin || c.req.header("origin") !== origin) return msg(403, "Refused", "This form must be sent from linkwarren itself.");
   // The grant goes to whoever is signed in at POST time; never a user id from the form.
   const w = await who(c.req.raw, c.env);
   if (!w.user) return w.fail;

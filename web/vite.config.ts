@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   // Dev only: a real Cloudflare Access app token for the local Worker (docs/development.md). Never a VITE_ variable, so it is never bundled.
   const token = loadEnv(mode, process.cwd(), "CF_ACCESS_").CF_ACCESS_TOKEN ?? "";
   return {
+    // Relative URLs: one build serves host mode and path mode; the Worker roots them per mode in the shell (S8c R11).
+    base: "./",
     plugins: [react()],
     define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
     // No data: URIs: the CSP is font-src/img-src self, so an inlined font would be blocked.

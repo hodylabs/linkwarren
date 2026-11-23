@@ -129,14 +129,14 @@ account.delete("/sessions/:id", async (c) => {
   const id = c.req.param("id");
   const [, del] = await c.env.DB.batch(endOwn(c.env, c.var.user.id, id, "session.end"));
   if (!del!.meta.changes) return c.json(notFound, 404);
-  if (id === c.var.session?.id) c.header("Set-Cookie", clearCookie());
+  if (id === c.var.session?.id) c.header("Set-Cookie", clearCookie(c.env));
   return c.body(null, 204);
 });
 
 account.post("/sign-out", async (c) => {
   const id = c.var.session?.id;
   if (id) await c.env.DB.batch(endOwn(c.env, c.var.user.id, id, "auth.sign_out"));
-  c.header("Set-Cookie", clearCookie());
+  c.header("Set-Cookie", clearCookie(c.env));
   return c.body(null, 204);
 });
 
@@ -147,6 +147,6 @@ account.post("/sign-out-everywhere", async (c) => {
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE user_id = ?)", binds: [uid] }),
     endSessionStmt(c.env, { userId: uid }),
   ]);
-  c.header("Set-Cookie", clearCookie());
+  c.header("Set-Cookie", clearCookie(c.env));
   return c.body(null, 204);
 });

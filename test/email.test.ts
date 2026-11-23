@@ -95,7 +95,7 @@ describe("displayName", () => {
 });
 
 describe("inviteEmail", () => {
-  const o = { instanceName: "Acme", inviter: "Bo", dashboardHost: "links.example.com", roleName: "Member", isOwner: false };
+  const o = { instanceName: "Acme", inviter: "Bo", dashboardUrl: "https://links.example.com", roleName: "Member", isOwner: false };
   it("has the exact subject and text, the role line and no owner line for members", () => {
     const m = inviteEmail(o);
     expect(m.subject).toBe("You're invited to Acme");
@@ -122,6 +122,11 @@ describe("inviteEmail", () => {
     expect(m.html).not.toContain("<b>");
     expect(m.text).toContain("<b>x</b>");
     expect(inviteEmail({ ...o, instanceName: "A\r\nBcc: x" }).subject).not.toMatch(/[\r\n]/);
+  });
+  it("links <dashboardUrl>/join, under the prefix in path mode (R12)", () => {
+    const m = inviteEmail({ ...o, dashboardUrl: "https://short.test/dashboard" });
+    expect(m.text).toContain("Open https://short.test/dashboard/join and sign in");
+    expect(m.html).toContain('<a href="https://short.test/dashboard/join">');
   });
   it("never mentions the old sign-in products", () => {
     for (const isOwner of [true, false]) expect(inviteEmail({ ...o, isOwner }).text).not.toMatch(/Google|one-time code|Access/);
@@ -177,13 +182,13 @@ describe("review fixes", () => {
     } finally {
       await env.DB.prepare("DELETE FROM settings").run();
     }
-    const m = inviteEmail({ instanceName: "n".repeat(10_000), inviter: "i".repeat(10_000), dashboardHost: "h.example", roleName: "Member", isOwner: false });
+    const m = inviteEmail({ instanceName: "n".repeat(10_000), inviter: "i".repeat(10_000), dashboardUrl: "https://h.example", roleName: "Member", isOwner: false });
     expect(m.subject.length).toBeLessThanOrEqual(120);
     expect(m.text.length).toBeLessThan(400);
     expect(m.html.length).toBeLessThan(600);
   });
   it("invite names lose bidi and line separators", () => {
-    const m = inviteEmail({ instanceName: "A\u202eB\u2028C", inviter: "x\u2066y", dashboardHost: "h.example", roleName: "Member", isOwner: false });
+    const m = inviteEmail({ instanceName: "A\u202eB\u2028C", inviter: "x\u2066y", dashboardUrl: "https://h.example", roleName: "Member", isOwner: false });
     expect(m.subject + m.text).not.toMatch(/[\u2028\u2029\u202a-\u202e\u2066-\u2069]/);
   });
   it("a settings read failure is its own reason, not network", async () => {

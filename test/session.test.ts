@@ -143,13 +143,13 @@ describe("cookie helpers", () => {
   it("readCookie finds the session value among other cookies and refuses bad shapes", () => {
     const v = "A".repeat(43);
     const req = (c: string) => new Request("https://dash.test/", { headers: { cookie: c } });
-    expect(readCookie(req(`a=1; ${SESSION_COOKIE}=${v}; b=2`))).toBe(v);
-    expect(readCookie(req(`${SESSION_COOKIE}=${v}x`))).toBeNull();
-    expect(readCookie(new Request("https://dash.test/"))).toBeNull();
+    expect(readCookie(req(`a=1; ${SESSION_COOKIE}=${v}; b=2`), env)).toBe(v);
+    expect(readCookie(req(`${SESSION_COOKIE}=${v}x`), env)).toBeNull();
+    expect(readCookie(new Request("https://dash.test/"), env)).toBeNull();
   });
 
   it("clearCookie uses the same name with Max-Age=0", () => {
-    expect(clearCookie()).toBe(`${SESSION_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`);
+    expect(clearCookie(env)).toBe(`${SESSION_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`);
   });
 
   it("endSessionStmt deletes by id or by user, honouring a guard", async () => {

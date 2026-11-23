@@ -1,4 +1,5 @@
 import { api } from "../api";
+import { withBase } from "../base";
 
 /** in_use: the zone's fallback origin is someone else's, so setup refuses and outside domains are not ready. */
 export type FallbackOrigin = "active" | "pending" | "missing" | "in_use" | null;
@@ -40,7 +41,7 @@ export const patchDomainCf = (id: string, body: ControlsPatch) =>
 
 /** GET /api/instance (any signed-in user): what the rail, the document title and the link form need. */
 export type InstanceInfo = {
-  name: string | null; logoVersion: number | null; configured: boolean; dashboardHost: string; mainDomainId: string | null;
+  name: string | null; logoVersion: number | null; configured: boolean; dashboardHost: string; dashboardUrl: string; mainDomainId: string | null;
   linkDefaults: { redirectCode: 301 | 302; passQuery: boolean };
   /** Owners and `settings` holders only, and only when a newer release exists; the URL is checked server side. */
   update?: { current: string; latest: string; url: string } | null;
@@ -49,14 +50,14 @@ export type SecretSource = "secret" | "dashboard" | "missing";
 export type SecretStatus = { pasteAvailable: boolean; cf: SecretSource; resend: SecretSource };
 /** GET and PATCH /api/settings (owner). Never carries a secret value, only where each one comes from. */
 export type SettingsBody = {
-  name: string | null; mainDomainId: string | null; dashboardHost: string; authMode: "app" | "access"; teamDomain?: string;
+  name: string | null; mainDomainId: string | null; dashboardHost: string; dashboardUrl: string; authMode: "app" | "access"; teamDomain?: string;
   emailFrom: string | null; emailConfigured: boolean; secrets: SecretStatus; linkRedirectCode: 301 | 302; linkPassQuery: boolean; updatesCheck: boolean;
   retention: { auditDays: number; clickDetailDays: number };
 };
 export type SettingsPatch = Partial<Pick<SettingsBody, "name" | "mainDomainId" | "linkRedirectCode" | "linkPassQuery" | "updatesCheck">>;
 
 /** The logo image URL; the version busts the browser cache after a replace. */
-export const logoUrl = (v: number | null) => (v === null ? "/linkwarren-mark.svg" : `/api/instance/logo?v=${encodeURIComponent(v)}`);
+export const logoUrl = (v: number | null) => withBase(v === null ? "/linkwarren-mark.svg" : `/api/instance/logo?v=${encodeURIComponent(v)}`);
 
 export const getInstance = (signal?: AbortSignal) => api<InstanceInfo>("GET", "/api/instance", undefined, signal);
 export const getSettings = (signal?: AbortSignal) => api<SettingsBody>("GET", "/api/settings", undefined, signal);

@@ -20,9 +20,147 @@ Required secrets:
 
 Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it (or `RESEND_API_KEY`) to `vars`: a var with the same name replaces the secret on the next deploy.
 
+Optional vars (see [Dashboard at a path](#dashboard-at-a-path)):
+
+- `DASHBOARD_PATH`: unset or blank (the default) is **host mode**. A value such as `/dashboard` is **path mode**.
+- `LEGACY_DASHBOARD_HOST`: an old dashboard host that now only redirects to the dashboard.
+
 `ACCESS_JWKS_JSON` is **test-only**. It replaces the real Access signing keys with a local key set. Never set it in production; the app logs a warning if it is set.
 
 `workers_dev` is `false` in the example config so the Worker is reachable only through your routes.
+
+## Dashboard at a path
+
+**Host mode** (default, `DASHBOARD_PATH` unset): the dashboard owns `DASHBOARD_HOST` entirely, for example `https://dash.example.com`. Route that host to the Worker as well as every short domain.
+
+**Path mode** (`DASHBOARD_PATH` set, for example `/dashboard`): `DASHBOARD_HOST` is your main short domain, for example `example.com`, and the dashboard, its own session API, the OAuth endpoints and the health check live at `https://example.com/dashboard`. The MCP server (`https://example.com/mcp`) and the machine API for API keys (`https://example.com/api/v1/...`) stay at the root of the domain, as in host mode. Every other path on that host is a short link, exactly as on any other short domain. The rules:
+
+- `DASHBOARD_PATH` is one lowercase segment: a slash, then 1 to 32 of `a-z`, `0-9` and `-`, not starting or ending with `-`, no trailing slash. Anything else answers every request with `500 {"error":"misconfigured"}` and logs `dashboard config invalid: DASHBOARD_PATH` (the name, never the value).
+- Path mode needs `AUTH_MODE` `app` (or unset). `access` is refused as misconfigured: an Access application cannot cover the prefix while leaving the short links and the OAuth discovery documents open.
+- Only the prefix and its subpaths belong to the dashboard (`/dashboard`, `/dashboard/...`), matched exactly and case-sensitively: `/dashboardx`, `/Dashboard` and `/%64ashboard` are short-link paths. Paths starting with `/.well-known/oauth-` or `/.well-known/openid-configuration` are never short links (they answer JSON). Neither are `/mcp`, `/mcp/...`, `/api` and `/api/...`: `/mcp` is the MCP server, `/api/v1/...` the machine API (Bearer keys only, never the session cookie), and every other path there answers `404 {"error":"not_found"}` JSON. So `mcp` and `api` are reserved slugs on the main domain, with the dashboard's segment. Under the prefix, `/dashboard/mcp` and `/dashboard/api/v1/...` answer `404` JSON: each has one address only.
+- The health check is `https://<DASHBOARD_HOST><DASHBOARD_PATH>/healthz`; `/healthz` on the main domain is an ordinary short-link path.
+- The session cookie is `__Secure-lw_session` with `Path=<DASHBOARD_PATH>` (host mode: `__Host-lw_session`, `Path=/`), host-only, `Secure`, `HttpOnly`, `SameSite=Lax`, so browsers never send it with a short-link visit on the main domain. Each mode reads only its own cookie name: switching modes signs everyone out.
+- Use path mode only on a domain whose subdomains you all control: unlike `__Host-`, a `__Secure-` cookie does not stop a sibling host under the same registrable domain from setting a cookie with the same name and `Domain=` (cookie tossing), which could sign a visitor in as someone else or out.
+- Passkeys belong to the dashboard's host. Moving the dashboard to the main short domain means passkeys made on the old dashboard host stop working: people sign in with an email link and add a new passkey.
+
+`LEGACY_DASHBOARD_HOST` (optional, either mode) is the dashboard host you used before. Keep it routed to the Worker: `GET` and `HEAD` there answer `301` to the same path and query under the dashboard (`https://old.example.com/links?x=1` to `https://example.com/dashboard/links?x=1`), so bookmarks and recent sign-in links keep working. Every other method, and every `/.well-known/` path, answers `410 {"error":"moved","to":"<dashboard>/"}`, and any request to `/api/v1` or `/mcp` answers `410` with the new root address (`https://example.com/api/v1` or `https://example.com/mcp`): API scripts and agent connections must be pointed at the new address. The old host never serves short links or the dashboard. It must be a valid host name and differ from `DASHBOARD_HOST`, or every request answers `500 misconfigured`.
+
+## Switching to path mode
+
+This moves an instance that already has data from host mode (`dash.example.com`) to path mode (`example.com/dashboard`). Plan a short window and tell people first. These steps are for path mode only. To move a host-mode dashboard to another dashboard-only host, see "Moving a host-mode dashboard" below.
+
+Use these steps only when the old dashboard host is a dashboard-only host. Never set `LEGACY_DASHBOARD_HOST` to a host that serves short links (for example a path-mode instance's main domain): the legacy host stops serving short links, so every link on it would redirect to the dashboard instead of its destination. To move a path-mode dashboard to another main domain, keep the old domain as an ordinary short domain and leave `LEGACY_DASHBOARD_HOST` unset.
+
+**What changes for people:**
+
+- Everyone is signed out and signs in again with an email link (the session cookie has a new name and path).
+- Passkeys stop working (they belong to the old host). After the email sign-in, people add a new passkey.
+- AI agents must be connected again at `https://example.com/mcp`: old tokens are bound to the old address and are refused. (When the dashboard host does not change, the MCP address does not change either and connections keep working.)
+- Scripts must change their base URL to `https://example.com/api/v1` (only the host changes; it is never under `/dashboard`). API keys themselves keep working. A script that used `https://example.com/dashboard/api/v1` with an earlier build must drop the `/dashboard`.
+- Bookmarks, invite links and sign-in links that were already sent keep working: the old host answers `301` to the same path under the dashboard. Anything that is not a `GET` or `HEAD` (API calls, OAuth) answers `410` with the new address.
+
+### 1. Preconditions
+
+- `AUTH_MODE` is `app` (or unset). Path mode refuses `access`.
+- **Email sign-in works** (`EMAIL_FROM` and the Resend key, see [Email sign-in links](#email-sign-in-links-resend)). Send yourself a link first. After the switch every session is gone, so an owner who only has a passkey is locked out.
+- The main short domain already routes to the Worker and is already a main domain in the dashboard (not shared or private).
+
+### 2. Check what the switch touches
+
+Run each query and read what it prints (`<db>` and `<config>` are your database name and instance config):
+
+```sh
+npx wrangler d1 execute <db> --remote -c <config> --command "SELECT d.host, l.slug, l.id FROM links l JOIN domains d ON d.id = l.domain_id WHERE d.host = 'example.com' AND lower(l.slug) IN ('dashboard', 'mcp', 'api')"
+npx wrangler d1 execute <db> --remote -c <config> --command "SELECT COUNT(*) FROM passkeys"
+npx wrangler d1 execute <db> --remote -c <config> --command "SELECT COUNT(*) FROM agent_connections WHERE revoked_at IS NULL"
+npx wrangler d1 execute <db> --remote -c <config> --command "SELECT COUNT(*) FROM api_keys"
+```
+
+- Use your main domain for `host` and your `DASHBOARD_PATH` segment (without the slash, lowercase) for `slug`.
+- The first query **must print no rows**. A row is a short link whose slug is the dashboard's segment, `mcp` or `api`: after the switch the dashboard, the MCP server or the machine API answers there and the link is shadowed. Move it to another slug (or delete it) first, and tell whoever shares that link.
+- The three counts tell you how many passkeys, agent connections and API keys you are about to ask people to redo.
+
+### 3. Tell people
+
+Send this before the switch (change the hosts):
+
+> On DATE we are moving the dashboard from `dash.example.com` to `example.com/dashboard`. Short links do not change. After the move: sign in again with an email link, then add a passkey again in Sign-in and security; reconnect AI agents at `https://example.com/mcp` (remove the old connection first); change scripts to use `https://example.com/api/v1` (your API keys keep working). Old dashboard links still redirect.
+
+### 4. Change the config
+
+In your instance config (`wrangler.instance.jsonc`):
+
+- `DASHBOARD_HOST`: the main short domain (`example.com`).
+- `DASHBOARD_PATH`: `/dashboard`.
+- `LEGACY_DASHBOARD_HOST`: the old dashboard host (`dash.example.com`).
+- Keep the old host's custom domain or route: it must still reach the Worker to send the `301` and `410` answers. Keep the main domain's route too.
+
+### 5. Check the main domain
+
+After precondition 3 the main short domain is already a main domain, so there is nothing to add. Only a new instance that starts in path mode adds it after the deploy, and only as a main domain (a shared or private add is `400 dashboard_main_only`). When Cloudflare is configured and the host is already the Worker's custom domain, that answers `409 dns_record_exists`. This is expected: confirm the takeover (`"confirmTakeover": true` in the API). See [domains.md](domains.md#the-dashboard-host).
+
+### 6. Deploy
+
+```sh
+npm run build:web && npx wrangler deploy -c wrangler.instance.jsonc
+```
+
+If every request answers `500 {"error":"misconfigured"}`, a value is wrong: check `DASHBOARD_PATH` and `LEGACY_DASHBOARD_HOST` (the log line names the variable, never the value).
+
+### 7. Delete all sessions (required)
+
+Right after the deploy:
+
+```sh
+npx wrangler d1 execute <db> --remote -c <config> --command "DELETE FROM sessions"
+```
+
+Do not skip this. A session secret from host mode can be accepted under the path-mode cookie until it idles out (30 days). Deleting the rows signs everyone out at once, as promised above.
+
+### 8. Verify
+
+```sh
+# health check lives under the path
+curl -si https://example.com/dashboard/healthz            # 200
+# a short link on the main domain still redirects
+curl -si https://example.com/<an existing slug>           # 301 or 302 to its destination
+# the dashboard app shell
+curl -si https://example.com/dashboard/                   # 200, HTML
+# the old host redirects pages and refuses API calls
+curl -si https://dash.example.com/links                   # 301, Location: https://example.com/dashboard/links
+curl -si -X POST https://dash.example.com/api/v1/links    # 410, {"error":"moved","to":"https://example.com/api/v1"}
+# the machine API at the root of the main domain, never under the path
+curl -si https://example.com/api/v1/domains               # 401 {"error":"unauthenticated"} without a key, 200 with one
+curl -si https://example.com/dashboard/api/v1/domains     # 404, {"error":"not_found"}
+```
+
+If agents are on, also check discovery (the table is in [agents.md](agents.md#dashboard-at-a-path)):
+
+```sh
+curl -si -X POST https://example.com/mcp                  # 401, resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp"
+curl -si -X POST https://example.com/dashboard/mcp        # 404, {"error":"not_found"}
+curl -s https://example.com/.well-known/oauth-authorization-server   # JSON, issuer "https://example.com"
+```
+
+Then sign in with an email link in a browser and open `https://example.com/dashboard/`.
+
+Update uptime monitors and any other check to `https://example.com/dashboard/healthz`. `/healthz` on the main domain is now an ordinary short-link path.
+
+Path mode changes the paths that answer when agents are off. With `MCP_ENABLED` off or the dashboard switch off, `/mcp`, `/dashboard/authorize`, `/dashboard/token`, `/dashboard/register` and the OAuth discovery paths (`/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource`, with or without `/mcp`) answer `404 {"error":"not_found"}`; `/dashboard/mcp` is `404` either way, and `/authorize`, `/token` and `/register` at the root are short links either way. `/api/v1` is not affected by the switch. The routes you need are the main domain and the old dashboard host, each routed to the Worker.
+
+### 9. Clean up
+
+- In Sign-in and security, remove passkeys nobody can use any more once people have added new ones.
+- Disconnect the old agent connections on the Agents screen (each disconnect is one KV write).
+- Remove the old host's route when nobody visits it any more (until then it keeps answering `301` and `410`).
+
+### Back out
+
+Unset `DASHBOARD_PATH`, set `DASHBOARD_HOST` back to the old dashboard host, remove `LEGACY_DASHBOARD_HOST`, and deploy. Then run `DELETE FROM sessions` again for the same reason as step 7. Sessions, passkeys and agent connections made in path mode stop working the same way: people sign in by email link, add passkeys and reconnect agents at `https://dash.example.com/mcp`.
+
+## Moving a host-mode dashboard
+
+To move a host-mode dashboard from `dash.example.com` to another dashboard-only host (`admin.example.com`), keep `DASHBOARD_PATH` unset and do not use the path-mode steps above (they need a main short domain and set `DASHBOARD_PATH`). Give the new host a custom domain or route to the Worker, then in `wrangler.instance.jsonc` set `DASHBOARD_HOST` to the new host and `LEGACY_DASHBOARD_HOST` to the old one (keep it routed), and deploy. People sign in again on the new host (the cookie is host-only), and passkeys must be added again. Point API scripts and agent connections at the new host: the old host answers `410` for `/api/v1` and `/mcp`. With `AUTH_MODE=access`, first add the new host to the Cloudflare Access application (or create one for it) and update `ACCESS_AUD` if the application changes; until then sign-in on the new host fails.
 
 ## Local development
 
@@ -146,14 +284,14 @@ A pasted value is encrypted with AES-GCM (256-bit key from `SECRETS_KEY`, a fres
 
 ## Sign-in
 
-`AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. The value is trimmed and must then be exactly `app` or `access` (lowercase); any other value fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting.
+`AUTH_MODE` picks one of two sign-in modes. They never mix: app mode ignores Access tokens, and access mode ignores linkwarren session cookies. Unset or blank means `app`. The value is trimmed and must then be exactly `app` or `access` (lowercase); any other value fails closed: the dashboard API and `/auth/*` answer `500 {"error":"misconfigured"}`, while short links keep redirecting. In path mode an invalid `AUTH_MODE` is a dashboard config error, so the whole instance (short links on every domain included) answers `500 {"error":"misconfigured"}` until it is fixed.
 
 ### App mode (default)
 
 linkwarren signs people in itself, with an email link or a passkey. No Access application is needed.
 
 - Set the var `EMAIL_FROM` (e.g. `links@example.com`) and the secret `RESEND_API_KEY`. Without both, `POST /auth/email` answers `503 {"error":"email_not_configured"}`.
-- `/healthz` is public on the dashboard host; no bypass is needed.
+- `/healthz` is public on the dashboard host (in path mode `<DASHBOARD_PATH>/healthz`); no bypass is needed.
 - `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are not used.
 
 #### Email sign-in links (Resend)
@@ -256,7 +394,7 @@ Agents (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) conne
 
 1. Create a second KV namespace for the OAuth state: `npx wrangler kv namespace create linkwarren-oauth`. Put its id in `wrangler.instance.jsonc` under the binding **`OAUTH_KV`** (the name is fixed by the OAuth library; see `wrangler.instance.example.jsonc`). Keep the binding on every deploy, also with MCP off: requests to the dashboard host pass through the OAuth library.
 2. Apply the migrations, which include `0007_agents.sql` (tables `api_keys`, `agent_connections`, `tool_calls`): `npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
-3. Leave `MCP_ENABLED` unset and deploy, then sign in as the owner and turn agents on with the switch on the API & agents screen (see [MCP_ENABLED](#mcp_enabled)). Check it: `curl -si -X POST https://<dashboard host>/mcp` answers `401` with a `WWW-Authenticate` header that contains `resource_metadata="https://<dashboard host>/.well-known/oauth-protected-resource/mcp"`, and `curl -s https://<dashboard host>/.well-known/oauth-authorization-server` answers JSON.
+3. Leave `MCP_ENABLED` unset and deploy, then sign in as the owner and turn agents on with the switch on the API & agents screen (see [MCP_ENABLED](#mcp_enabled)). Check it: `curl -si -X POST https://<dashboard host>/mcp` answers `401` with a `WWW-Authenticate` header that contains `resource_metadata="https://<dashboard host>/.well-known/oauth-protected-resource/mcp"`, and `curl -s https://<dashboard host>/.well-known/oauth-authorization-server` answers JSON. With the dashboard at a path (`DASHBOARD_PATH`), the address is still the root, `https://<main short domain>/mcp` (never under the path), the `resource_metadata` URL is `https://<main short domain>/.well-known/oauth-protected-resource/mcp`, the authorization server metadata stays at the root `/.well-known/oauth-authorization-server` (issuer: the origin) with its endpoints under the prefix, and the switch closes `/mcp` and those endpoints; the full table is in [agents.md](agents.md#dashboard-at-a-path).
 
 ### MCP_ENABLED
 
