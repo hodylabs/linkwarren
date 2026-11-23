@@ -1,6 +1,7 @@
 // S8c Task 5: the main short domain shares its host with the dashboard (R4 reserved slug, R8 page headers, R15 attach).
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invalidateHost } from "../src/cache";
 import type { Env } from "../src/env";
 import { wrapper } from "../src/index";
 import { hashPassword } from "../src/password";
@@ -160,6 +161,15 @@ describe("short-link HTML pages (R8)", () => {
         expect(r.headers.get("x-content-type-options")).toBe("nosniff");
         await noScript(r);
       }
+    });
+    it(`${mode} mode: a domain's custom not-found URL is still a bare 302 (no page CSP, no body)`, async () => {
+      await domain("ds", "short.test");
+      await run("UPDATE domains SET notfound_redirect = 'https://dest.example.com/missing' WHERE id = 'ds'");
+      await invalidateHost(env, "short.test"); // the row is cached by host across tests
+      const r = await page(host, "/nope", e);
+      expect([r.status, r.headers.get("location"), r.headers.get("content-security-policy"), await r.text()])
+        .toEqual([302, "https://dest.example.com/missing", null, ""]);
+      await invalidateHost(env, "short.test"); // the next tests expect the built-in page
     });
     it(`${mode} mode: password ask and wrong-password pages run no script and carry nosniff`, async () => {
       await domain("ds", "short.test");
