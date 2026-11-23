@@ -252,6 +252,18 @@ describe("Person sheet", () => {
     await waitFor(() => expect(writes(api)).toEqual([expect.objectContaining({ method: "PATCH", path: "/api/users/ux", body: { status: "active" } })]));
   });
 
+  it("without audit and before the roles load, focus is not an action button and Enter does not turn a disabled person on", async () => {
+    const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
+    const { api, user, dlg } = await openPerson("Xan", { "GET /api/roles": () => ({ status: 500, body: { error: "internal" } }) }, lead);
+    expect(within(dlg).queryByRole("button", { name: /Activity/ })).toBeNull();
+    expect(within(dlg).getByRole("button", { name: /Turn on access/ })).toBeTruthy();
+    expect(document.activeElement?.tagName).not.toBe("BUTTON");
+    expect(dlg.contains(document.activeElement)).toBe(true);
+    await user.keyboard("{Enter}");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(writes(api)).toHaveLength(0);
+  });
+
   it("opens on a neutral focus: Enter, Enter on an owner's sheet sends no PATCH", async () => {
     const { api, user, dlg } = await openPerson("Bea");
     expect(document.activeElement).toBe(within(dlg).getByRole("button", { name: /Activity/ }));

@@ -108,6 +108,9 @@ export function PersonSheet({ id }: { id: string }) {
   const can = (s: typeof st) => reach && st === s;
   // Activity shows their audit log entries on People, which needs the audit permission (S8 R2).
   const audit = has(me, "audit");
+  // Without the Activity button the sheet would focus the first action (maybe "Turn on access"): focus the heading instead.
+  const head = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (!audit) head.current?.focus(); }, [audit, !!u]); // eslint-disable-line react-hooks/exhaustive-deps
   useHotkeys(
     {
       r: (e) => void (!e.shiftKey && can("invited") && act.resend()),
@@ -149,7 +152,7 @@ export function PersonSheet({ id }: { id: string }) {
   return (
     <Sheet label={label(u)} onClose={() => (busy.current ? undefined : app.close())}>
       <div className="sh-head">
-        <h2>{label(u)} <Tag tone={tone}>{status}</Tag></h2>
+        <h2 ref={head} tabIndex={-1}>{label(u)} <Tag tone={tone}>{status}</Tag></h2>
         <span className="x"><kbd>Esc</kbd> close</span>
       </div>
       <div className="sh-body">

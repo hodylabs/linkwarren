@@ -132,6 +132,35 @@ describe("Invite sheet", () => {
     expect(posts(api)[1]!.body).toEqual({ email: "jordan@example.com", roleId: "member", domainIds: [] });
   });
 
+  it("bad_role, then the roles reload fails: error and Retry show, sending is blocked; Retry picks a valid role and keeps the email", async () => {
+    let n = 0;
+    const roles = [
+      { id: "owner", name: "Owner", perms: [], builtin: "owner", people: 1 },
+      { id: "member", name: "Member", perms: [...MEMBER_ROLE.perms], builtin: "member", people: 0 },
+      { id: "hl", name: "Helper", perms: ["people.manage"], builtin: null, people: 0 },
+    ];
+    const { api, user } = boot({
+      invite: (body) => ((body as { roleId: string }).roleId === "hl" ? { status: 400, body: { error: "bad_role" } } : { status: 201, body: { user: {}, emailed: true } }),
+      routes: { "GET /api/roles": () => (++n === 2 ? { status: 500, body: { error: "internal" } } : { body: n === 1 ? roles : roles.filter((r) => r.id !== "hl") }) },
+    });
+    await ready();
+    await user.keyboard("n");
+    const pick = await within(await screen.findByRole("dialog", { name: "Invite a person" })).findByRole("listbox", { name: "Role" });
+    await user.keyboard("jordan@example.com");
+    await user.click(within(pick).getByRole("option", { name: "Helper" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    const retry = await within(sheet()).findByRole("button", { name: "Retry" });
+    expect(within(sheet()).queryByRole("listbox", { name: "Role" })).toBeNull();
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(posts(api)).toHaveLength(1);
+    await user.click(retry);
+    await waitFor(() => expect(within(sheet()).getByRole("option", { name: "Member" }).getAttribute("aria-selected")).toBe("true"));
+    expect((within(sheet()).getByLabelText("Email") as HTMLInputElement).value).toBe("jordan@example.com");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(2));
+    expect(posts(api)[1]!.body).toEqual({ email: "jordan@example.com", roleId: "member", domainIds: [] });
+  });
+
   it("the hint promises private domains only for a role that may add them", async () => {
     const { user } = await openInvite();
     const hint = /and can add a passkey and their own private domains\./;

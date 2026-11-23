@@ -68,8 +68,8 @@ export function InviteSheet() {
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "internal";
       setError(code); // the typed values stay in the form
-      // The picked role was deleted meanwhile: fresh roles, back to the default pick (the email and domains stay).
-      if (code === "bad_role") { setRole(null); void reloadRoles(); }
+      // The picked role was deleted meanwhile: drop the stale list (no send, no default from it) until a reload succeeds; the email and domains stay.
+      if (code === "bad_role") { setRole(null); void reloadRoles(true); }
     } finally {
       busy.current = false;
       setPending(false);

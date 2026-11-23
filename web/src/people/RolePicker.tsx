@@ -6,13 +6,14 @@ const rank = (r: RoleItem) => (r.id === "owner" ? 0 : r.id === "member" ? 1 : 2)
 /** Owner, Member, then custom roles by name: the server's order, kept even if an answer comes back in another. */
 export const sortRoles = (rs: RoleItem[]): RoleItem[] => [...rs].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 
-/** GET /api/roles once on mount; `reload` after a change. A stale answer is dropped. */
-export function useRoles(): { roles: RoleItem[] | null; error: string | null; reload: () => Promise<void> } {
+/** GET /api/roles once on mount; `reload` after a change (`clear`: drop the old list first, so a failed reload leaves none). A stale answer is dropped. */
+export function useRoles(): { roles: RoleItem[] | null; error: string | null; reload: (clear?: boolean) => Promise<void> } {
   const [roles, setRoles] = useState<RoleItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const gen = useRef(0);
-  const reload = useCallback(() => {
+  const reload = useCallback((clear = false) => {
     const g = ++gen.current;
+    if (clear) setRoles(null);
     return api<RoleItem[]>("GET", "/api/roles").then(
       (r) => void (g === gen.current && (setRoles(sortRoles(r)), setError(null))),
       (e: unknown) => void (g === gen.current && setError(e instanceof ApiError ? e.code : "internal")),
