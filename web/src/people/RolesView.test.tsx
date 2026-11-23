@@ -221,6 +221,26 @@ describe("Roles view errors and limits", () => {
     expect(screen.queryByRole("dialog", { name: /Delete the role/ })).toBeNull();
   });
 
+  it("a reload that drops the open role (deleted elsewhere) closes its sheet and the J and N keys work again", async () => {
+    let lists = 0;
+    const { user } = boot({ path: "/people/roles", routes: {
+      "GET /api/roles": () => (lists++ ? { body: ROLES.filter((r) => r.id !== "zd") } : { body: ROLES }),
+      "DELETE /api/roles/zd": () => ({ status: 409, body: { error: "changed" } }),
+    } });
+    await ready();
+    await user.keyboard("jjjj{Enter}");
+    await screen.findByRole("dialog", { name: "Zed" });
+    await user.tab();
+    await user.keyboard("{Shift>}X{/Shift}");
+    const c = await screen.findByRole("dialog", { name: "Delete the role Zed" });
+    await user.keyboard("{Enter}");
+    await user.click(await within(c).findByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(roleRows()).toHaveLength(3));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.keyboard("n");
+    expect(await screen.findByRole("dialog", { name: "New role" })).toBeTruthy();
+  });
+
   it("a failed delete for another reason (403) also shows inside the confirm", async () => {
     const { user } = boot({ path: "/people/roles", routes: { "DELETE /api/roles/zd": () => ({ status: 403, body: { error: "forbidden" } }) } });
     await ready();

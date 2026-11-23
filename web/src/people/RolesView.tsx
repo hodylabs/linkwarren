@@ -42,6 +42,9 @@ export function RolesView() {
   const custom = list.filter((r) => !r.builtin).length;
   const full = custom >= MAX_CUSTOM; // the server refuses a 21st (too_many_roles): say so before any typing
   const newRole = () => (full ? app.announce(errorText("too_many_roles")) : setOpen(""));
+  const role = open ? list.find((r) => r.id === open) : null;
+  // A reload can drop the open role (deleted elsewhere): the sheet is then gone, so the hotkeys come back.
+  const sheetOpen = open === "" || !!role;
 
   const move = (step: 1 | -1) => {
     const to = at < 0 ? list[step === 1 ? 0 : list.length - 1] : list[at + step];
@@ -56,10 +59,9 @@ export function RolesView() {
       n: (e) => void (!e.shiftKey && owner && newRole()),
       p: (e) => void (!e.shiftKey && navigate("/people")),
     } satisfies Bindings<typeof ROLES_KEYS>,
-    overlay === null && open === null,
+    overlay === null && !sheetOpen,
   );
 
-  const role = open ? list.find((r) => r.id === open) : null;
   return (
     <>
       <ScreenHeader
@@ -102,7 +104,7 @@ export function RolesView() {
           </table>
         </section>
       </div>
-      {open !== null && (open === "" || role) && (
+      {sheetOpen && (
         <RoleSheet
           key={open}
           role={role ?? null}
