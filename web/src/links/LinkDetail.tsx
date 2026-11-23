@@ -8,6 +8,8 @@ import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
 import { DestText } from "./DestText";
 import { QrPanel } from "./QrPanel";
+import { linkPage } from "../analytics/Breakdowns";
+import { NavLink } from "../router";
 import { readUtm } from "./compose";
 import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from "./linkView";
 import { RoutesEditor } from "./RoutesEditor";
@@ -217,6 +219,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               <div className="stat"><b>{stats.topCountry ?? "None"}</b><small>top country</small></div>
             </div>
             {live !== "ok" && <p className="hint">{LIVE_HINT[live]} These counts leave out yesterday and today.</p>}
+            <NavLink className="btn" to={linkPage(link.id)}>Open link analytics</NavLink>
           </div>
         )}
         <fieldset className="plain" disabled={!canEdit}>
