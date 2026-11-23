@@ -243,6 +243,16 @@ describe("delete a role in use", () => {
     expect(await audits("role.delete")).toEqual([]);
   });
 
+  it("race: the target renamed during DELETE {moveTo}: 409 changed, nobody moved (the audit never names a stale target)", async () => {
+    const p1 = await signedIn("p1@example.com", { roleId: "rx" });
+    const restore = beforeBatch(1, () => run("UPDATE roles SET name = 'Authors' WHERE id = 'ry'"));
+    try {
+      expect(await (await call(A.cookie, "DELETE", "/api/roles/rx", { moveTo: "ry" })).json()).toEqual({ error: "changed" });
+    } finally { restore(); }
+    expect(await one("SELECT role_id FROM users WHERE id = ?", p1.user.id)).toEqual({ role_id: "rx" });
+    expect(await audits("role.delete")).toEqual([]);
+  });
+
   it("race: a swap in the window (one person off, another on, same count): 409 changed, nobody moved", async () => {
     const p1 = await signedIn("p1@example.com", { roleId: "rx" });
     const q = await signedIn("q@example.com");

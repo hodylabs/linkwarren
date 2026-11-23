@@ -263,6 +263,20 @@ describe("hardening (Task 11)", () => {
     expect(await audits("user.invite")).toEqual([]);
   });
 
+  it("a role renamed between read and batch: the email names the role as committed, like the answer", async () => {
+    const fake = fakeResend();
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('hl','Helper','[\"links.create\"]',0,1,1)");
+    const restore = beforeBatch(1, () => run("UPDATE roles SET name = 'Aide' WHERE id = 'hl'"));
+    let r: Response;
+    try { r = await invite({ email: "new@example.com", roleId: "hl" }); } finally { restore(); }
+    try {
+      expect(r.status).toBe(201);
+      expect(((await r.json()) as { user: { roleName: string } }).user.roleName).toBe("Aide");
+      expect(fake.sent[0]!.text).toContain("Aide");
+      expect(fake.sent[0]!.text).not.toContain("Helper");
+    } finally { await run("DELETE FROM users WHERE email = 'new@example.com'"); await run("DELETE FROM roles WHERE id = 'hl'"); }
+  });
+
   it("a domain made private between read and batch: 400 bad_domain and nothing written", async () => {
     const restore = beforeBatch(1, () => run("UPDATE domains SET type = 'private' WHERE id = 'ds1'"));
     let r: Response;

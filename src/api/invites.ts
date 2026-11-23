@@ -109,7 +109,8 @@ invites.post("/invite", manager, async (c) => {
     ...rowToUser(done.at(-1)!.results[0] as Record<string, unknown>), linkCount: 0, agentCount: 0,
     domains: doms.map((d) => ({ id: d.id, host: d.host, via: "member" as const })),
   };
-  const u: Invitee = { id, email: b.email, isOwner: role === "owner", roleName: r.name };
+  // The role as committed (a rename in between): the email says what the answer says.
+  const u: Invitee = { id, email: b.email, isOwner: role === "owner", roleName: user.roleName };
   // The invite stands whatever happens to the mail.
   const res: InviteResult = !(await emailConfigured(c.env)) ? { emailed: false, emailReason: "not_configured" }
     : !(await charge(c.env, b.email)).ok ? { emailed: false, emailReason: "too_many" }

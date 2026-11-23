@@ -148,14 +148,15 @@ roles.delete("/:id", async (c) => {
   if (moveTo !== undefined && !pre.target) return c.json({ error: "bad_move_to" }, 400);
   if (moveTo === undefined && pre.n) return c.json({ error: "role_in_use", people: pre.n }, 409);
   const stmts: D1PreparedStatement[] = [];
-  // The move runs only while the role is as read (same row, same name) and holds exactly the people read (same ids, not
-  // just the same count), and the delete only when that move moved them all (changes() is the UPDATE's own count) and
-  // nobody is left: any change in the window writes nothing and answers 409 changed.
+  // The move runs only while the role and its target are as read (same rows, same names, so the audit names the target as
+  // committed) and the role holds exactly the people read (same ids, not just the same count), and the delete only when that
+  // move moved them all (changes() is the UPDATE's own count) and nobody is left: any change in the window writes nothing and
+  // answers 409 changed.
   const SRC = "EXISTS (SELECT 1 FROM roles WHERE id = ? AND builtin = 0 AND name = ? COLLATE BINARY)";
   if (moveTo !== undefined) {
     stmts.push(env.DB.prepare(`UPDATE users SET role_id = ? WHERE role_id = ? AND id IN (SELECT value FROM json_each(?)) AND (${HOLDERS}) = ?
-      AND ${SRC} AND ${ACTOR_OK} AND EXISTS (SELECT 1 FROM roles WHERE id = ? AND id NOT IN ('owner', ?))`)
-      .bind(moveTo === "member" ? null : moveTo, id, pre.ids, id, pre.ids, id, pre.name, me.id, moveTo, id));
+      AND ${SRC} AND ${ACTOR_OK} AND EXISTS (SELECT 1 FROM roles WHERE id = ? AND id NOT IN ('owner', ?) AND name = ? COLLATE BINARY)`)
+      .bind(moveTo === "member" ? null : moveTo, id, pre.ids, id, pre.ids, id, pre.name, me.id, moveTo, id, pre.target));
   }
   stmts.push(
     env.DB.prepare(`DELETE FROM roles WHERE id = ? AND builtin = 0 AND name = ? COLLATE BINARY AND ${ACTOR_OK}
