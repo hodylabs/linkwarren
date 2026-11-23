@@ -108,7 +108,7 @@ npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc
 Optional secrets, which you can add now or later:
 
 - `SECRETS_KEY` (`openssl rand -base64 32`): lets the owner paste the Resend key and a Cloudflare token in the dashboard, stored encrypted.
-- `VISITOR_SALT` (`openssl rand -hex 32`) and `AE_READ_TOKEN`: unique visitor counts and live click reports. Analytics also needs the `CF_ACCOUNT_ID` var from step 3; if you deleted it, add it back to `vars` and deploy again. See [deploy.md](deploy.md#analytics-optional).
+- `VISITOR_SALT` (`openssl rand -hex 32`) and `AE_READ_TOKEN`: unique visitor counts and live click reports. `AE_READ_TOKEN` also runs the hourly rollup that keeps daily click history after Analytics Engine's three months; without it only the last days read live are counted. Analytics also needs the `CF_ACCOUNT_ID` var from step 3; if you deleted it, add it back to `vars` and deploy again. See [deploy.md](deploy.md#analytics-optional).
 
 Each `secret put` takes effect at once; no new deploy is needed.
 
