@@ -43,7 +43,7 @@ git diff <old tag> <new tag> -- wrangler.instance.example.jsonc
 
 ### 3. Apply the D1 migrations
 
-Apply new migrations **before** deploying the Worker: the new Worker may read tables, columns or indexes they add. This is the order every migration note in [deploy.md](deploy.md) asks for.
+Apply new migrations **before** deploying the Worker: the new Worker may read tables, columns or indexes they add. This is the safe order; the migration notes in [deploy.md](deploy.md) say when a release needs it.
 
 ```sh
 npx wrangler d1 migrations list linkwarren --remote -c wrangler.instance.jsonc

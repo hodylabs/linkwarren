@@ -24,22 +24,14 @@ linkwarren is a self-hosted link shortener for people with more than one domain.
 
 ## Quick start
 
-You need a Cloudflare account with a domain on it, a [Resend](https://resend.com) account for sign-in emails, and Node.js 23.6 or newer. The full walk-through, with every value to fill in, is [docs/getting-started.md](docs/getting-started.md).
+You need a Cloudflare account with a domain on it, a [Resend](https://resend.com) account for sign-in emails, and Node.js 23.6 or newer. Between the commands below you create one D1 database and two KV namespaces, fill in `wrangler.instance.jsonc` (the ids, your hosts and `EMAIL_FROM`), turn on Analytics Engine (or remove its line), and set the `OWNER_EMAIL` and `RESEND_API_KEY` secrets. [docs/getting-started.md](docs/getting-started.md) walks through every step.
 
 ```sh
-git clone https://github.com/hodylabs/linkwarren && cd linkwarren
-git checkout v0.6.0   # the newest release tag
+git clone https://github.com/hodylabs/linkwarren && cd linkwarren && git checkout v0.6.0
 npm ci
-npx wrangler d1 create linkwarren
-npx wrangler kv namespace create linkwarren-cache
-npx wrangler kv namespace create linkwarren-oauth
 cp wrangler.instance.example.jsonc wrangler.instance.jsonc
-# Fill in the ids, DASHBOARD_HOST, EMAIL_FROM (an address on your Resend domain) and your routes.
-# Turn on Analytics Engine for the account first, or remove the analytics_engine_datasets line.
 npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc
 npm run build:web && npx wrangler deploy -c wrangler.instance.jsonc
-npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc
-npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc
 ```
 
 Then open your dashboard host, sign in with the owner email, and the setup wizard takes it from there.

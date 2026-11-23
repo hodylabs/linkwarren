@@ -81,6 +81,6 @@ People managers (and owners) can, from the People screen:
 - **Change a role.** It applies on the person's next request.
 - **Disable** a person. Their sessions end, their API keys stop working, and their AI agent connections are revoked at once. Enabling them again lets them sign in again; agents must reconnect.
 - **Sign them out** of every session.
-- **Remove** a person. Their links and domains are handed over in the same step. When an owner removes someone, they go to that owner unless another active person is chosen (an owner, when main or shared domains are handed over). When a people manager who is not an owner removes someone, they always go to an owner: the first active owner by default, or another active owner they choose.
+- **Remove** a person. Their links, saved QR codes and domains are handed over in the same step. When an owner removes someone, they go to that owner unless another active person is chosen (an owner, when main or shared domains are handed over). When a people manager who is not an owner removes someone, they always go to an owner: the first active owner by default, or another active owner they choose.
 
 Everyone can see and revoke their own API keys and agent connections. A people manager can also lower or disconnect the connections and keys of the people they manage. Every change is in the audit log, which keeps entries for 3 years.
