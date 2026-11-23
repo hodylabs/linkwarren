@@ -26,9 +26,9 @@ export const PERM_TEXT: Record<Perm, { label: string; hint: string }> = {
   "domains.manage": { label: "Add and manage domains", hint: "Add main and shared domains, approve, turn off or reject them, choose who can use them, and use the Cloudflare controls." },
   "people.manage": { label: "Invite and manage people", hint: "Invite people, change their role and access, and remove them, only up to their own permissions." },
   keys: { label: "Personal API keys", hint: "Create keys for scripts and other tools." },
-  agents: { label: "Connect AI agents", hint: "Separate from API keys." },
+  agents: { label: "Connect AI agents", hint: "Connect assistants such as Claude or ChatGPT to work with links for them. Separate from API keys." },
   settings: { label: "Instance settings", hint: "Name, logo, main domain, link defaults and email, the switch that turns AI agent connections on or off for the whole instance, and the Cloudflare connection settings. Saved secrets stay with owners." },
-  data: { label: "Export and import", hint: "Downloads every person, link and domain." },
+  data: { label: "Export and import", hint: "Download the whole instance (every person, link and domain) and import links from a file." },
   audit: { label: "Audit log", hint: "See every change made by people and agents." },
 };
 

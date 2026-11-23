@@ -695,7 +695,9 @@ main>.an{flex:1;min-height:0}
 .picker .rule[aria-disabled="true"]{cursor:default;color:var(--faint)}
 .picker:focus-visible .rule.open{box-shadow:inset 3px 0 0 var(--signal)}
 .perm input{width:16px;height:16px;margin:2px 0 0;flex:none;accent-color:var(--graphite)}
-.perm label{flex:1;min-width:0}
+/* Overrides the form-field `.f label` row: the name sits above its description, both left aligned. */
+.perm label{display:block;flex:1;min-width:0;margin:0;font-size:13.5px;color:var(--text);cursor:pointer}
+.perm label small{margin-top:2px;font-size:12.5px;line-height:1.4}
 @media (max-width: 760px){
   .seg a,.picker .rule{min-height:44px}
   .perm{min-height:44px}

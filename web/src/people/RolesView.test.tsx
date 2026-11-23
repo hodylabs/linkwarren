@@ -79,7 +79,7 @@ describe("Roles view", () => {
     const boxes = within(dlg).getAllByRole("checkbox") as HTMLInputElement[];
     expect(boxes).toHaveLength(12);
     expect(boxes.filter((b) => b.checked).map((b) => b.value)).toEqual(["links.create", "links.editAny"]);
-    expect(dlg.textContent).toContain("Downloads every person, link and domain.");
+    expect(dlg.textContent).toContain("Download the whole instance");
     expect(dlg.textContent).toContain("Separate from API keys.");
     expect(dlg.textContent).not.toContain("\u2014");
   });
