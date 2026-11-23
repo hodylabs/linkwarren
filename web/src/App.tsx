@@ -5,7 +5,7 @@ import { ComingSoon } from "./shell/ComingSoon";
 import { Gate } from "./shell/Gate";
 import { DomainSwitcher } from "./shell/DomainSwitcher";
 import { Palette } from "./shell/Palette";
-import { Rail } from "./shell/Rail";
+import { Rail, TopBar } from "./shell/Rail";
 import { canSee, isOwner, seesRoles } from "./perms";
 import { useOpenSheets } from "./shell/Sheet";
 import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
@@ -39,6 +39,15 @@ function ScreenView({ screen }: { screen: Screen }) {
   return <PeopleScreen />;
 }
 
+const MINI_KEY = "lw.rail";
+function readMini(): boolean {
+  try {
+    return localStorage.getItem(MINI_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function Shell() {
   const { signedOut, loadError, retryLoad, overlay, open, close, me } = useApp();
   const { screen } = useRoute();
@@ -57,8 +66,19 @@ function Shell() {
     navigate(`/${to}`);
     return true;
   }, free);
+  const [mini, setMini] = useState(readMini);
+  const toggleMini = () =>
+    setMini((m) => {
+      try {
+        localStorage.setItem(MINI_KEY, m ? "0" : "1");
+      } catch {
+        // storage blocked: the rail keeps this width for this page only
+      }
+      return !m;
+    });
   return (
-    <div className="app">
+    <div className={mini ? "app mini" : "app"}>
+      <TopBar mini={mini} onMini={toggleMini} />
       <Rail />
       <main>
         {signedOut && (

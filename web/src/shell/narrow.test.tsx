@@ -52,9 +52,10 @@ describe("phone nav drawer", () => {
     expect(menu.getAttribute("aria-expanded")).toBe("true");
     expect(drawer.querySelector(`#${menu.getAttribute("aria-controls")}`)).toBeTruthy();
     expect(document.activeElement).toBe(within(drawer).getByRole("link", { name: /Links/ }));
-    // Sign-out and the version stay reachable.
-    expect(within(drawer).getByRole("link", { name: "Sign out" })).toBeTruthy();
-    expect(within(drawer).getByText(/Dashboard v/)).toBeTruthy();
+    // The domain switcher and the version stay reachable; sign-out is in the top bar's account menu (S12).
+    expect(within(drawer).getByRole("button", { name: /Switch domain/ })).toBeTruthy();
+    expect(within(drawer).getByText(/Version/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Account menu" })).toBeTruthy();
     await user.tab({ shift: true }); // from the first item wraps to the last, the close button
     expect(document.activeElement).toBe(within(drawer).getByRole("button", { name: "Close menu" }));
     await user.tab();

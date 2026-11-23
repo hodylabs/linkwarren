@@ -35,6 +35,7 @@ describe("App shell", () => {
     expect(within(nav).getByText("Owner")).toBeTruthy();
     expect(within(nav).getByRole("link", { name: /People & audit log/ })).toBeTruthy();
     expect(within(nav).getByRole("link", { name: /Settings/ })).toBeTruthy();
+    screen.getByRole("button", { name: "Account menu" }).click(); // S12: sign-in and sign-out live in the avatar's menu
     expect(await screen.findByText("Signed in with Cloudflare Access")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Sign out" }).getAttribute("href")).toBe("/cdn-cgi/access/logout");
   });
@@ -111,7 +112,7 @@ describe("App shell", () => {
     home.click();
     expect(location.pathname).toBe("/links");
     expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
-    expect(screen.getByText(/^Dashboard v\d+\.\d+\.\d+/)).toBeTruthy();
+    expect(screen.getByText(/^\d+\.\d+\.\d+/, { selector: ".ver b" })).toBeTruthy();
   });
 
   it("an empty links list offers to create the first link", async () => {
@@ -188,6 +189,27 @@ describe("App shell", () => {
   it("shows the avatar initials and role", async () => {
     boot(member);
     expect(await screen.findByText("ME")).toBeTruthy();
-    expect(screen.getByText("Member")).toBeTruthy();
+    screen.getByRole("button", { name: "Account menu" }).click();
+    expect(await screen.findByText("Member")).toBeTruthy();
+  });
+
+  it("the theme switch in the account menu sets Light or Dark on <html> and remembers it; System follows the OS again", async () => {
+    boot(member);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Account menu" }));
+    const theme = screen.getByRole("radiogroup", { name: "Theme" });
+    expect(within(theme).getByRole("radio", { name: "System" }).getAttribute("aria-checked")).toBe("true");
+    await user.click(within(theme).getByRole("radio", { name: "Light" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("lw.theme")).toBe("light");
+    await user.keyboard("{ArrowRight}"); // the radio group moves with the arrow keys
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("lw.theme")).toBe("dark");
+    await user.click(within(theme).getByRole("radio", { name: "System" }));
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(localStorage.getItem("lw.theme")).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Account menu" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Account menu" }));
   });
 });
