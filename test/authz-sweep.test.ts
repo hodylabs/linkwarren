@@ -197,9 +197,24 @@ describe("permissions by role (S8)", () => {
       const r = await req("POST", "/api/links/bulk", { cookie: await sessionFor(u), "content-type": "application/json" }, copy);
       expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
     }
+    // The positive control must succeed, not merely avoid 403: a real link copied to a second main domain.
     const u = await onRole(PERMS);
-    const r = await req("POST", "/api/links/bulk", { cookie: await sessionFor(u), "content-type": "application/json" }, copy);
-    expect(r.status).not.toBe(403);
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('sweep-m2','main2.test','main','active',?,1)", u.id);
+    await run(`INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,pass_query,password_hash,routes,forward_to,created_by,updated_by,created_at,updated_at)
+      VALUES ('x',?,'cp','cp','https://x.com/a',302,1,NULL,'[]',NULL,?,?,1,10)`, MD, u.id, u.id);
+    const ok = JSON.stringify({ action: "move", ids: ["x"], domainId: "sweep-m2", oldAddress: "copy" });
+    const r = await req("POST", "/api/links/bulk", { cookie: await sessionFor(u), "content-type": "application/json" }, ok);
+    expect([r.status, ((await r.json()) as { results: { id: string; ok: boolean }[] }).results.map((x) => [x.id, x.ok])]).toEqual([200, [["x", true]]]);
+    expect(await env.DB.prepare("SELECT url FROM links WHERE domain_id = 'sweep-m2' AND slug_key = 'cp'").first()).toEqual({ url: "https://x.com/a" });
+    expect(await env.DB.prepare("SELECT domain_id FROM links WHERE id = 'x'").first()).toEqual({ domain_id: MD });
+  });
+
+  it("GET /api/settings/cloudflare: domains.manage without settings reads it; neither is refused", async () => {
+    const u = await onRole(["domains.manage"]);
+    expect((await req("GET", "/api/settings/cloudflare", { cookie: await sessionFor(u) })).status).toBe(200);
+    const v = await onRole(without("settings"));
+    const r = await req("GET", "/api/settings/cloudflare", { cookie: await sessionFor(v) });
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
   });
 });
 

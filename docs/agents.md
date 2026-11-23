@@ -180,7 +180,7 @@ Validation errors (for example `taken`, `locked`, `invalid_body`, `q_too_long`) 
 
 ## What is recorded
 
-Every tool call is logged (time, person, agent, tool, outcome; never the arguments or results) for 90 days, and every change is in the audit log with "via". The connection list shows each agent's last use and its calls in the last 7 days. Details are in [privacy.md](privacy.md#agents-and-api-keys).
+Every tool call is logged (time, person, agent, tool, outcome; never the arguments or results) for 90 days, except calls refused because the person's role no longer allows AI agents ([see above](#when-a-role-loses-ai-agents)), and every change is in the audit log with "via". The connection list shows each agent's last use and its calls in the last 7 days. Details are in [privacy.md](privacy.md#agents-and-api-keys).
 
 ## Differences from the MCP standard
 
