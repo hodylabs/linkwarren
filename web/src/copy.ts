@@ -133,6 +133,7 @@ const ERRORS: Record<string, string> = {
   qr_phone: "Enter a phone number with 3 to 20 digits and an optional +.",
   qr_too_long: "This is too much for one QR code. Shorten it.",
   qr_link: "Pick a short link you can use.",
+  qr_bad_text: "Some text has a broken character. Retype it.",
   wifi_password_unreadable: "Enter the Wi-Fi password again: the saved one cannot be read on this server.",
   bad_color: "Pick colors as #RRGGBB.",
   inverted_colors: "Use a darker color for the code than for the background. Many scanners cannot read light on dark.",

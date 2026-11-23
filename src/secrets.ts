@@ -85,7 +85,8 @@ async function decrypt(raw: Uint8Array, aad: string, stored: string): Promise<st
     const ivb = unb64u(iv);
     if (ivb.length !== IV_BYTES) return null;
     const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivb, additionalData: utf8(aad) }, await aesKey(raw, "decrypt"), unb64u(ct));
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(pt) || null;
+    // ignoreBOM: true keeps a leading U+FEFF that was part of the plaintext.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(pt) || null;
   } catch {
     return null;
   }

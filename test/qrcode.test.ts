@@ -57,6 +57,14 @@ describe("qrProblem", () => {
     expect(qrProblem("sms", { number: "+15551234567", message: "hi" })).toBeNull();
     expect(qrProblem("link", { linkId: "" })).toBe("qr_link");
   });
+  it("refuses a lone surrogate in any field or the password, never throwing; keeps valid pairs", () => {
+    expect(qrProblem("email", { to: "a@example.com", subject: "\uD800", body: "" })).toBe("qr_bad_text");
+    expect(qrProblem("email", { to: "a@example.com", subject: "", body: "x\uDC00" })).toBe("qr_bad_text");
+    expect(qrProblem("text", { text: "a\uD800b" })).toBe("qr_bad_text");
+    expect(qrProblem("wifi", { ssid: "ok", security: "WPA", hidden: false }, "\uDBFF")).toBe("qr_bad_text");
+    expect(qrProblem("email", { to: "a@example.com", subject: "Hi \u{1F600}", body: "" })).toBeNull();
+    expect(qrProblem("text", { text: "\u{1F600}" })).toBeNull();
+  });
   it("refuses a payload too big for any error correction level", () => {
     // 500 characters that URL-encode to 6 bytes each.
     expect(qrProblem("email", { to: "a@example.com", subject: "", body: "é".repeat(500) })).toBe("qr_too_long");

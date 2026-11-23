@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cfConfigFor } from "../src/cf/api";
-import { deleteSecretStmts, getSecret, putSecretStmts, secretStatus, secretsReady, SecretsError } from "../src/secrets";
+import { decryptValue, deleteSecretStmts, encryptValue, getSecret, putSecretStmts, secretStatus, secretsReady, SecretsError } from "../src/secrets";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { assertNoUnexpectedCloudflareCalls, installFakeCloudflare } from "./helpers/cf";
 
@@ -47,6 +47,10 @@ describe("secretsReady", () => {
 });
 
 describe("encrypted storage", () => {
+  it("encryptValue round-trips any plaintext, a leading U+FEFF included, and binds the AAD", async () => {
+    for (const p of ["pass1234", "\uFEFFpass1234", "\uFEFF", "x\uFEFFy"]) expect(await decryptValue(env, "qr.a", await encryptValue(env, "qr.a", p))).toBe(p);
+    expect(await decryptValue(env, "qr.b", await encryptValue(env, "qr.a", "pass1234"))).toBeNull();
+  });
   it("round trip: only ciphertext at rest, audit detail is exactly { name }", async () => {
     await put("CF_API_TOKEN", CF_TOKEN);
     const v = (await stored("CF_API_TOKEN"))!;

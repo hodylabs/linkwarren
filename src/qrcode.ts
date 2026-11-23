@@ -77,13 +77,17 @@ const isWebUrl = (s: string): boolean => {
 };
 // No URI delimiters (`# % ? &` and list separators): the address goes into mailto: as is, never percent-encoded.
 const EMAIL = /^[^\s@,;?&#%]+@[^\s@,;?&#%]+\.[^\s@,;?&#%]+$/;
-const PHONE = /^\+?\d{3,20}$/;
+// With the u flag a valid pair reads as one code point (not Cs), so only unpaired surrogates match.
+const LONE_SURROGATE = /\p{Cs}/u;
+const PHONE =/^\+?\d{3,20}$/;
 
 /**
  * The first problem with a code's content, as an error code, or null. `password` is the Wi-Fi password the code will carry
  * (the stored one when an edit leaves it out). The `link` kind is checked by the server against the links table.
  */
 export function qrProblem(kind: QrKind, data: QrData[QrKind], password = ""): string | null {
+  // A lone surrogate makes encodeURIComponent throw and TextEncoder silently swap it for U+FFFD: refuse it up front.
+  if ([password, ...Object.values(data)].some((v) => typeof v === "string" && LONE_SURROGATE.test(v))) return "qr_bad_text";
   switch (kind) {
     case "wifi": {
       const d = data as QrData["wifi"];
