@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { Domain, Me } from "./api";
 import { errorText } from "./copy";
@@ -211,5 +211,24 @@ describe("App shell", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Account menu" })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Account menu" }));
+  });
+
+  it("with storage blocked, a picked theme still shows as picked when the menu reopens", async () => {
+    boot(member);
+    const user = userEvent.setup();
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      await user.click(await screen.findByRole("button", { name: "Account menu" }));
+      await user.click(screen.getByRole("radio", { name: "Dark" }));
+      expect(document.documentElement.dataset.theme).toBe("dark");
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: "Account menu" }));
+      expect(screen.getByRole("radio", { name: "Dark" }).getAttribute("aria-checked")).toBe("true");
+    } finally {
+      set.mockRestore();
+      delete document.documentElement.dataset.theme;
+    }
   });
 });

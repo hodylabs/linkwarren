@@ -48,6 +48,7 @@ function CardSummary({ card }: { card: Partial<VCard> & Pick<VCard, "firstName" 
           {address && <li><Icon name="pin" />{address}</li>}
         </ul>
       )}
+      {card.note && <p className="muted vc-note">{card.note}</p>}
     </>
   );
 }

@@ -1382,3 +1382,123 @@ describe("contact card links (S9)", () => {
     expect(within(editSheet()).getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
   });
 });
+
+describe("PR #8 review fixes", () => {
+  const card = { firstName: "Ada", lastName: "Lovelace", org: "", title: "", phones: [], emails: [], websites: [],
+    address: { street: "", city: "", region: "", postalCode: "", country: "" }, note: "Met at the\nspring partner day", photo: null };
+  const held = () => {
+    let release!: () => void;
+    return { gate: new Promise<void>((r) => (release = r)), release: () => release() };
+  };
+
+  it("a save from a closed sheet that lands after the link is reopened keeps the reopened sheet's edits", async () => {
+    const h = held();
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      routes: { "PATCH /api/links/l1": async ({ body }) => (await h.gate, { body: { ...L1, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/b" } });
+    fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/c" } });
+    h.release();
+    expect(await within(detail()).findByText("https://example.com/b")).toBeTruthy(); // the summary takes the saved revision
+    expect(urlInput().value).toBe("https://example.com/c"); // the open editor keeps what was typed in it
+  });
+
+  it("a stored window that shows as one minute does not block a URL-only edit", async () => {
+    const bodies: unknown[] = [];
+    const minute = 4102444800; // a whole minute
+    const tight = mk("l1", "spring", { startsAt: minute + 10, expiresAt: minute + 40 });
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [tight], next: null } }),
+      routes: { "PATCH /api/links/l1": ({ body }) => (bodies.push(body), { body: { ...tight, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
+  });
+
+  it("a route error for rows that changed while saving shows for the form, not on the wrong row", async () => {
+    const h = held();
+    const two = mk("l1", "spring", { routes: [{ countries: ["CA"], devices: [], url: "https://example.com/ca" }, { countries: ["US"], devices: [], url: "https://example.com/us" }] });
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [two], next: null } }),
+      routes: { "PATCH /api/links/l1": async () => (await h.gate, { status: 400, body: { error: "bad_route", index: 1 } }) },
+    });
+    await ready();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
+    fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    fireEvent.click(within(editSheet()).getByRole("button", { name: "Remove rule 1" }));
+    h.release();
+    const msg = await within(editSheet()).findByText(errorText("bad_route"));
+    expect(msg.closest(".routes")).toBeNull();
+  });
+
+  it("Change password keeps the Password rule On until protection is turned off", async () => {
+    const { user } = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [mk("l1", "spring", { hasPassword: true })], next: null } }) });
+    await ready();
+    await openEdit(user);
+    const rule = () => within(editSheet()).getByRole("button", { name: /^Password/ });
+    expect(rule().textContent).toContain("On");
+    await user.click(within(editSheet()).getByRole("button", { name: "Change password" }));
+    expect(rule().textContent).toContain("On");
+    await user.click(rule());
+    expect(rule().textContent).toContain("Off");
+  });
+
+  it("the read-only card summary shows the card's note", async () => {
+    boot({ path: "/links?sel=l1", page: () => ({ body: { items: [mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card })], next: null } }) });
+    await ready();
+    expect(within(detail()).getByText(/Met at the\s+spring partner day/)).toBeTruthy();
+  });
+
+  it("?qr=1 waits for the row's domain when the links load first", async () => {
+    const h = held();
+    boot({ path: "/links?sel=l1&qr=1", routes: { "GET /api/domains": async () => (await h.gate, { body: [domain] }) } });
+    await ready();
+    expect(location.search).toContain("qr=1");
+    expect(screen.queryByRole("dialog", { name: "QR code" })).toBeNull();
+    h.release();
+    expect(await screen.findByRole("dialog", { name: "QR code" })).toBeTruthy();
+    await waitFor(() => expect(location.search).not.toContain("qr="));
+  });
+
+  it("a photo still resizing holds a J that was loading the next page", async () => {
+    let finish: (b64: string) => void = () => undefined;
+    vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
+    const C = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...card, note: "" } });
+    let n = 0;
+    const h = held();
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: async () => {
+        if (++n === 1) return { body: { items: [C], next: "100.l1" } };
+        await h.gate;
+        return { body: { items: [L2], next: null } };
+      },
+    });
+    await ready();
+    rows()[0]!.focus();
+    await user.keyboard("j");
+    await openEdit(user);
+    fireEvent.change(within(editSheet()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    h.release();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(location.search).toContain("sel=l1");
+    expect(editSheet()).toBeTruthy();
+    finish("/9j/DONE");
+    expect(await within(editSheet()).findByRole("img", { name: "Contact photo" })).toBeTruthy();
+  });
+});

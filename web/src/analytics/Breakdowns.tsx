@@ -56,9 +56,10 @@ export function referrerRows(r: AnalyticsReport): Row[] {
 }
 
 /** One list of bars: label, count, share and a thin bar (an SVG rect, so a width needs no style attribute under the CSP). */
-function Bars({ rows, mono, empty }: { rows: Row[]; mono?: boolean; empty: string }) {
+/** `of`: the denominator of the share (Top links passes the report total: it shows only the top six). */
+function Bars({ rows, mono, empty, of }: { rows: Row[]; mono?: boolean; empty: string; of?: number }) {
   const max = Math.max(0, ...rows.map((r) => r.value));
-  const total = rows.reduce((s, r) => s + r.value, 0);
+  const total = of || rows.reduce((s, r) => s + r.value, 0);
   if (max === 0) return <p className="empty">{empty}</p>;
   return (
     <ul className="bars">
@@ -148,7 +149,7 @@ export function Breakdowns({ report: r, detail, perLink = false, range = "", not
   const lower = [!perLink && (
     <section className="card toplinks-card" key="top">
       <div className="card-h"><h3>Top links</h3></div>
-      <div className="card-b"><Bars rows={top} mono empty={EMPTY} /></div>
+      <div className="card-b"><Bars rows={top} mono empty={EMPTY} of={r.totals.clicks} /></div>
     </section>
   ), busy].filter(Boolean);
   return (

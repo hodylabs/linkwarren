@@ -145,7 +145,8 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
   const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
   const vcId = editing ? "ld-vc" : "nl-vc";
   // An edit with changes holds the Links keys that would change the selection under it (S2 ruling), as the panel form did.
-  useUnsaved(editing && JSON.stringify(d) !== JSON.stringify(draftOf(link)));
+  // A photo still resizing counts too: moving the selection would unmount the sheet and drop the pick.
+  useUnsaved(editing && (photoBusy || JSON.stringify(d) !== JSON.stringify(draftOf(link))));
 
   const domain: Domain | undefined = editing ? domains.find((x) => x.id === link.domainId) : usable.find((x) => x.id === domainId);
   const host = domain?.host ?? "";
@@ -153,6 +154,8 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
   // Edit: a new revision (after a save or a reload) replaces the form; typing never triggers this. After this form's own save,
   // fields edited while it was pending keep what was typed. The first render already took the current revision.
   const revision = useRef(link ? `${link.id}:${link.updatedAt}` : "");
+  const base = useRef(link ? draftOf(link) : NEW_DRAFT); // the revision the form last took
+  const discard = useRef(false); // Reload: the next revision replaces the form
   useEffect(() => {
     if (!link) return;
     const rev = `${link.id}:${link.updatedAt}`;
@@ -160,7 +163,13 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
     revision.current = rev;
     const s = sent.current;
     sent.current = null;
-    setDraft(s?.id === link.id ? rebase(draftOf(link), s.draft, latest.current) : draftOf(link));
+    // Fields changed since the draft this form last took (or since its own save went out) keep what was typed, so a save from
+    // an earlier sheet of the same link never wipes this one's edits. Reload (after a conflict) takes the new revision whole.
+    const from = s?.id === link.id ? s.draft : base.current;
+    const next = discard.current ? draftOf(link) : rebase(draftOf(link), from, latest.current);
+    discard.current = false;
+    base.current = draftOf(link);
+    setDraft(next);
     setError(null);
     setRouteErrors({});
     setChangePw(false);
@@ -208,7 +217,9 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
       const dest = isCard ? null : checkDestination(d.url, usable.map((x) => x.host));
       if (dest && !dest.ok) return { field: "url", code: dest.reason === "too_long" ? "url_too_long" : dest.reason };
     }
-    if (startSec !== null && endSec !== null && endSec <= startSec) return { field: "schedule", code: "bad_window" };
+    // Edit: only a changed schedule is checked; a stored window shown to the minute can look empty and is the server's to judge.
+    const scheduleEdited = !link || d.starts !== base.current.starts || d.ends !== base.current.ends;
+    if (scheduleEdited && startSec !== null && endSec !== null && endSec <= startSec) return { field: "schedule", code: "bad_window" };
     if (d.passwordOn && !isCard) {
       // Edit: a link that already has a password keeps it when nothing is typed.
       if (!(editing && link.hasPassword && d.password === "")) {
@@ -239,7 +250,10 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
     const row = c === "bad_route" && typeof data?.index === "number" ? filled[data.index] : undefined;
     if (c === "bad_vcard") setCardField(typeof data?.field === "string" ? formField(d.vcard, data.field) : "vcard");
     // the server's index counts the rows sent (the non-blank ones), so map it back to the editor row
-    else if (row) setRouteErrors({ [d.routes.indexOf(row)]: errorText(typeof data?.reason === "string" ? data.reason : "bad_route") });
+    else if (row && JSON.stringify(latest.current.routes) === JSON.stringify(d.routes))
+      setRouteErrors({ [d.routes.indexOf(row)]: errorText(typeof data?.reason === "string" ? data.reason : "bad_route") });
+    // The rows changed while it saved: the index no longer names a row on screen, so say it for the form.
+    else if (row) setError({ field: "form", code: typeof data?.reason === "string" ? data.reason : "bad_route" });
     else setError({ field: fieldOf(c), code: c }); // typed values stay in the form
     if (c === "taken" || c === "locked" || c === "reserved") setCheck({ status: c }); // the availability line agrees with the error
   };
@@ -575,7 +589,7 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
           <Rule
             icon="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z"
             label="Password"
-            note={d.passwordOn && (d.password || keepPw) ? "On" : "Off"}
+            note={d.passwordOn && (d.password || (editing && link.hasPassword)) ? "On" : "Off"}
             keyName="P"
             open={d.passwordOn}
             onClick={togglePw}
@@ -695,7 +709,7 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
           <p className="err" role="alert">
             {errorText(err("form")!)}
             {err("form") === "conflict" && (
-              <button type="button" className="btn sm" onClick={() => app.bumpLinks()}>
+              <button type="button" className="btn sm" onClick={() => ((discard.current = true), app.bumpLinks())}>
                 Reload
               </button>
             )}

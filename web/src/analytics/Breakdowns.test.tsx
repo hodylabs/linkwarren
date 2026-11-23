@@ -86,6 +86,12 @@ describe("Breakdowns", () => {
     expect(screen.getAllByRole("tabpanel")).toHaveLength(1); // the others are hidden
   });
 
+  it("Top links shares are of all the report's clicks, not of the six shown", () => {
+    const links = Array.from({ length: 7 }, (_, i) => ({ linkId: `l${i}`, domainId: "d1", host: "go.example.com", slug: `s${i}`, clicks: 1 }));
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 7 }, links }} />);
+    expect([...card("Top links").querySelectorAll(".hb-n small")].map((e) => e.textContent)).toEqual(Array(6).fill("14%"));
+  });
+
   it("Sources splits clicks into link opens and QR scans", () => {
     render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 10, qr: 4, typed: 6 } }} />);
     tab("Sources");

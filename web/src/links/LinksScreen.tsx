@@ -223,13 +223,14 @@ export function LinksScreen() {
 
   useEffect(() => {
     // A card still loading has no detail panel yet: wait (a failed load keeps qr=1, so a reload tries again).
-    if (!wantQr || !selectedId || loadCard) return;
+    // The QR sheet also needs the row's domain, which can load after the links.
+    if (!wantQr || !selected || loadCard || !domainOf(selected.domainId)) return;
     showQr();
     // Once only: later selections (J, K, clicks) focus their row, not this panel.
     const p = new URLSearchParams(location.search);
     p.delete("qr");
     navigate(`/links?${p}`, { replace: true });
-  }, [wantQr, selectedId, loadCard]);
+  }, [wantQr, selectedId, loadCard, domains]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const move = async (step: 1 | -1) => {
     if (items.length === 0) return;
