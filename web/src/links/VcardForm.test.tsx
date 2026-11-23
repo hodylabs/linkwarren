@@ -4,7 +4,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { emptyVcard, type VCard } from "../../../src/vcard";
 import { fitSize } from "./photo";
-import { cleanVcard, VcardForm, vcardFieldText } from "./VcardForm";
+import { cleanVcard, formField, VcardForm, vcardFieldText } from "./VcardForm";
 
 vi.mock("./photo", async (orig) => ({ ...(await orig<typeof import("./photo")>()), resizePhoto: vi.fn(async () => "/9j/AAAA") }));
 
@@ -51,6 +51,15 @@ describe("VcardForm", () => {
     render(<Harness start={{ ...emptyVcard(), emails: ["x"] }} field="emails.0" />);
     expect(screen.getByRole("alert").textContent).toBe(vcardFieldText("emails.0"));
     expect(screen.getByLabelText("Email 1").getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("formField maps a cleaned row index back to the shown row", () => {
+    const v = { ...emptyVcard(), emails: ["", " ", "a@example.com", "bad"], phones: [{ type: "cell" as const, number: "" }, { type: "work" as const, number: "x" }] };
+    expect(formField(v, "emails.0")).toBe("emails.2");
+    expect(formField(v, "emails.1")).toBe("emails.3");
+    expect(formField(v, "phones.0")).toBe("phones.1");
+    expect(formField(v, "photo")).toBe("photo");
+    expect(formField(v, "websites.4")).toBe("websites.4");
   });
 
   it("cleanVcard drops blank rows; fitSize keeps the aspect and never enlarges", () => {

@@ -10,7 +10,7 @@ import { useApp } from "../state";
 import { fromLocalInput } from "../time";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
 import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
-import { cleanVcard, VcardForm } from "./VcardForm";
+import { cleanVcard, formField, VcardForm } from "./VcardForm";
 import { readUtm, suggestSlugs, withUtm, type Utm } from "./compose";
 import { shortUrl } from "./linkView";
 import { parseCountries, passwordProblem, routeSummary } from "./rules";
@@ -166,7 +166,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
     setRouteErrors(rb.ok ? {} : rb.errors);
     if (!rb.ok) setRoutesOpen(true);
     const cv = isCard ? checkVcard(cleanVcard(card)) : null;
-    setCardField(cv && !cv.ok ? cv.field : null);
+    setCardField(cv && !cv.ok ? formField(card, cv.field) : null);
     if (stop || !rb.ok || (cv && !cv.ok)) {
       setError(stop);
       return;
@@ -193,7 +193,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       const c = e instanceof ApiError ? e.code : "internal";
       const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
       const row = c === "bad_route" && typeof d?.index === "number" ? filled[d.index] : undefined;
-      if (c === "bad_vcard") setCardField(typeof (d as { field?: unknown } | undefined)?.field === "string" ? (d as { field: string }).field : "vcard");
+      if (c === "bad_vcard") setCardField(typeof (d as { field?: unknown } | undefined)?.field === "string" ? formField(card, (d as { field: string }).field) : "vcard");
       else if (row) {
         // the server's index counts the rows sent (the non-blank ones), so map it back to the editor row
         setRouteErrors({ [routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });

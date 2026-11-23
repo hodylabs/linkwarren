@@ -15,7 +15,7 @@ import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from
 import { RoutesEditor } from "./RoutesEditor";
 import { parseCountries, passwordProblem, routeSummary } from "./rules";
 import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
-import { cleanVcard, fullCard, VcardForm } from "./VcardForm";
+import { cleanVcard, formField, fullCard, VcardForm } from "./VcardForm";
 
 export type DetailHandle = { focusUrl(): void; copy(): void; focusQr(): void };
 
@@ -112,7 +112,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
       setRouteErrors(re);
       const body = diff(link, draft);
       const cv = body.vcard ? checkVcard(body.vcard as VCard) : null;
-      setCardField(cv && !cv.ok ? cv.field : null);
+      setCardField(cv && !cv.ok && draft.vcard ? formField(draft.vcard, cv.field) : null);
       if (cv && !cv.ok) return;
       if (Object.keys(re).length === 0 && Object.keys(body).length === 0) return;
       const pwSet = draft.passwordOn && (draft.password !== "" || link.hasPassword);
@@ -130,7 +130,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
         const row = code === "bad_route" && typeof d?.index === "number" ? draft.routes.filter((r) => !blank(r))[d.index] : undefined;
         const field = (d as { field?: unknown } | undefined)?.field;
-        if (code === "bad_vcard") setCardField(typeof field === "string" ? field : "vcard");
+        if (code === "bad_vcard") setCardField(typeof field === "string" && draft.vcard ? formField(draft.vcard, field) : "vcard");
         else if (row) setRouteErrors({ [draft.routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
         else setError({ code }); // typed values stay in the form
       } finally {

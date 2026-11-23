@@ -26,6 +26,21 @@ export const cleanVcard = (v: VCard): VCard => ({
   ...v, phones: v.phones.filter((p) => p.number.trim()), emails: v.emails.filter((e) => e.trim()), websites: v.websites.filter((w) => w.trim()),
 });
 
+/** A bad_vcard field named on the cleaned card (blank rows dropped) mapped back to the row the form shows: ["", "bad"] is emails.1, not emails.0. */
+export function formField(card: VCard, field: string): string {
+  const m = /^(phones|emails|websites)\.(\d+)$/.exec(field);
+  if (!m) return field;
+  const key = m[1] as "phones" | "emails" | "websites";
+  let n = Number(m[2]);
+  const rows: unknown[] = card[key];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const blank = typeof r === "string" ? !r.trim() : !(r as { number: string }).number.trim();
+    if (!blank && n-- === 0) return `${key}.${i}`;
+  }
+  return field;
+}
+
 /**
  * A link's card as the form edits it. Lists send `hasPhoto` instead of the photo: a list card without a photo is complete,
  * one with a photo needs the single-link read first (needsFullCard).
