@@ -14,7 +14,7 @@ const ERRORS: Record<string, string> = {
   url_too_long: "URLs can be at most 2048 characters.",
   loop: "This URL points back to a short link, which would loop.",
   bad_window: "The end must be after the start.",
-  bad_link_name: "A name can be at most 100 characters, on one line.",
+  bad_link_name: "A name can be at most 100 characters on one line, with no tabs or other control characters.",
   password_short: "Use at least 8 characters.",
   password_long: "Use at most 128 characters.",
   password_301: "Password-protected links cannot use 301. Switch to 302.",

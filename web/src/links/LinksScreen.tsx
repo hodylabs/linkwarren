@@ -3,7 +3,7 @@ import { api, ApiError, type BulkOp, type Link, type LinkStats, type Page } from
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { hasUnsaved, UNSAVED } from "../unsaved";
-import { navigate, useRoute } from "../router";
+import { navigate, useRoute, withoutQ } from "../router";
 import { Sheet, useOpenSheets } from "../shell/Sheet";
 import { Chip, Empty, Icon, PrimaryButton, ScreenHeader, SearchChip } from "../shell/ui";
 import { can } from "../perms";
@@ -184,6 +184,22 @@ export function LinksScreen() {
   const at = items.findIndex((l) => l.id === sel);
   const selected = at >= 0 ? items[at]! : null;
   const selectedId = selected?.id ?? null;
+  // ?sel= naming a link past the loaded page (a palette pick among many matches): read it by id and put it first, once per id,
+  // so the jump always lands on its panel. One that is gone or not visible stays unselected.
+  const fetchedSel = useRef<string | null>(null);
+  useEffect(() => {
+    if (!loaded || !sel || at >= 0 || fetchedSel.current === sel) return;
+    fetchedSel.current = sel;
+    const g = generation.current;
+    api<Link>("GET", `/api/links/${encodeURIComponent(sel)}`).then(
+      (l) => {
+        if (g !== generation.current) return;
+        setItems((cur) => (cur.some((x) => x.id === l.id) ? cur : [l, ...cur]));
+        void loadStats(g, [l.id]);
+      },
+      () => undefined,
+    );
+  }, [loaded, sel, at, loadStats]);
   // A contact card with a photo comes from the list without it (hasPhoto): the detail waits for the single-link read.
   const loadCard = selected && needsFullCard(selected) ? selected.id : null;
   const [cardFailed, setCardFailed] = useState<string | null>(null);
@@ -423,7 +439,7 @@ export function LinksScreen() {
             Mine
           </Chip>
         </div>
-        <SearchChip q={q} onClear={() => navigate("/links")} />
+        <SearchChip q={q} onClear={() => navigate(withoutQ("/links"), { replace: true })} />
       </ScreenHeader>
       {app.instance && !app.instance.mainDomainId && can(me, "domains.manage") && (
         <div className="callout wait pad" role="status" aria-label="No main domain">

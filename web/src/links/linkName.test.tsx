@@ -125,6 +125,25 @@ describe("link name in the dashboard", () => {
 });
 
 describe("one search", () => {
+  it("clearing the search on Links drops only q: the selected link stays open", async () => {
+    const { user } = boot("/links?q=spring&sel=l1");
+    await ready();
+    expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    await waitFor(() => expect(location.search).toBe("?sel=l1"));
+    expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy();
+  });
+
+  it("a palette pick past the loaded page still opens its panel: the link is read by id and listed first", async () => {
+    const { api } = boot("/links?q=spring&sel=l1", {
+      "GET /api/links": () => ({ body: { items: [PLAIN], next: "100.l2" } }),
+      "GET /api/links/l1": () => ({ body: NAMED }),
+    });
+    await waitFor(() => expect(within(detail()).getByText("Spring poster", { selector: ".title" })).toBeTruthy());
+    expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(api.calls.filter((c) => c.path === "/api/links/l1")).toHaveLength(1);
+  });
+
   it("clearing the search on Domains drops only q, so the selected domain stays", async () => {
     const { user } = boot("/domains?q=go&sel=d1");
     await screen.findByText("go", { selector: ".qchip b" });
