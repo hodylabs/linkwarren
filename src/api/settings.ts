@@ -153,12 +153,14 @@ settings.delete("/logo", async (c) => {
   // Nothing to remove: no KV delete, no audit.
   if ((await getSettings(c.env)).logoVersion === null) return c.json({ logoVersion: null });
   if (!(await hit(c.env, limitKey.logoDay, LIMITS.logoDay))) return c.json({ error: "too_many" }, 429);
+  // The audit first, on the version this batch's guarded DELETE then removes: only a request that removes it records it.
+  const may = mayEdit(c.var.user);
   const res = await c.env.DB.batch([
+    logoAudit(c.env, c.var.user.id, "logo.remove", {}, { sql: `EXISTS (SELECT 1 FROM settings WHERE key = ?) AND ${may.sql}`, binds: ["instance.logoVersion", ...may.binds] }),
     ...settingStmts(c.env, c.var.user.id, { logoVersion: null }),
-    logoAudit(c.env, c.var.user.id, "logo.remove", {}, { sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: ["instance.logoVersion"] }),
   ]);
   // Nothing deleted: removed concurrently (fine), or the permission is gone (the bytes stay).
-  if (!res[0]!.meta.changes && !(await holds(c.env, mayEdit(c.var.user)))) return c.json(forbidden, 403);
+  if (!res[0]!.meta.changes && !(await holds(c.env, may))) return c.json(forbidden, 403);
   // Only after the guarded change: a refused request never removes the served logo.
   await c.env.CACHE.delete(LOGO_KEY);
   return c.json({ logoVersion: null });

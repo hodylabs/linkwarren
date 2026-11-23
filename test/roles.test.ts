@@ -145,6 +145,9 @@ describe("roles module", () => {
     await run(`UPDATE roles SET perms = '["audit", null]' WHERE id = 'big'`); // tampered: a JSON null must not make every key look held
     expect(await holds(roleWithin("other", "c1"))).toBe(0);
     expect(await holds(roleWithin("small", "c1"))).toBe(1);
+    // A stored key outside PERMS is ignored on read (parsePerms), so it never puts a role out of reach (same answer as `within`).
+    await role("future", "Future", ["audit", "future.permission"]);
+    expect(await holds(roleWithin("future", "c1"))).toBe(1);
   });
 
   it("rowToUser fails closed without the role join", () => {

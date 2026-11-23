@@ -43,10 +43,14 @@ export const actorCan = (userId: string, p: Perm): Guard => ({
   binds: [userId, p],
 });
 
-/** The actor is active and an owner, or the role `role` (an SQL expression) exists, is not Owner and has no key the actor's role lacks. */
+/** PERMS as SQL string literals (a constant list, never input): stored keys outside it are ignored, as parsePerms does. */
+const KNOWN = PERMS.map((p) => `'${p}'`).join(", ");
+
+/** The actor is active and an owner, or the role `role` (an SQL expression) exists, is not Owner and has no known key the actor's role lacks. */
 const withinSql = (role: string) => `EXISTS (SELECT 1 FROM users a JOIN roles ar ON ar.id = COALESCE(a.role_id, a.role) JOIN roles t ON t.id = ${role}
     WHERE a.id = ? AND a.status = 'active' AND (a.role = 'owner' OR (t.id != 'owner' AND NOT EXISTS (
-      SELECT 1 FROM json_each(${arr("t.perms")}) rk WHERE NOT EXISTS (SELECT 1 FROM json_each(${arr("ar.perms")}) rh WHERE rh.value = rk.value)))))`;
+      SELECT 1 FROM json_each(${arr("t.perms")}) rk WHERE rk.value IN (${KNOWN})
+        AND NOT EXISTS (SELECT 1 FROM json_each(${arr("ar.perms")}) rh WHERE rh.value = rk.value)))))`;
 
 /** SQL twin of `within` for assigning `roleId`: the actor is active and an owner, or the role exists, is not Owner and has no key the actor's role lacks. */
 export const roleWithin = (roleId: string, actorId: string): Guard => ({ sql: withinSql("?"), binds: [roleId, actorId] });

@@ -64,7 +64,8 @@ export function settingStmts(env: Env, actorId: string, patch: Partial<InstanceS
     const value = patch[n] ?? null;
     const audit = (guard: { sql: string; binds: unknown[] }) =>
       auditStmt(env, { actorId, action: "settings.update", targetType: "settings", targetId: key, detail: { key, value } }, { sql: guard.sql + w, binds: [...guard.binds, ...wb] });
-    if (value === null) return [env.DB.prepare(`DELETE FROM settings WHERE key = ?${w}`).bind(key, ...wb), audit({ sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: [key] })];
+    // The audit runs first, on the row this DELETE is about to remove: a row someone else already removed is not audited twice.
+    if (value === null) return [audit({ sql: "EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: [key] }), env.DB.prepare(`DELETE FROM settings WHERE key = ?${w}`).bind(key, ...wb)];
     const json = JSON.stringify(value);
     return [
       env.DB.prepare(

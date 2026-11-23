@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MEMBER_DEFAULT, PERMS } from "../src/roles";
 import { dash } from "./helpers/access";
-import { beforeBatch } from "./helpers/race";
+import { afterBatch, beforeBatch } from "./helpers/race";
 import { signedIn, withCookie } from "./helpers/session";
 
 const mode = env as { AUTH_MODE?: string };
@@ -102,6 +102,29 @@ describe("create, rename, edit, delete", () => {
     expect((await call(A.cookie, "POST", "/api/roles", { name: "X", perms: [], extra: 1 })).status).toBe(400);
     expect((await call(A.cookie, "PATCH", "/api/roles/member", {})).status).toBe(400);
     expect((await call(A.cookie, "DELETE", "/api/roles/member", { moveTo: "owner", x: 1 })).status).toBe(400);
+  });
+});
+
+describe("answers describe the write that committed", () => {
+  it("race: a role deleted right after its create committed: the 201 still carries the created role", async () => {
+    let id = "";
+    const restore = afterBatch(1, async () => {
+      id = (await one<{ id: string }>("SELECT id FROM roles WHERE name = 'Fleeting'"))?.id ?? "";
+      await run("DELETE FROM roles WHERE id = ?", id);
+    });
+    let r: Response;
+    try { r = await create(A.cookie, "Fleeting", ["keys"]); } finally { restore(); }
+    expect(r.status).toBe(201);
+    expect(await r.json()).toEqual({ id, name: "Fleeting", perms: ["keys"], builtin: null, people: 0 });
+  });
+
+  it("race: a later edit right after a PATCH committed: the 200 carries this PATCH's values", async () => {
+    await role("r1", "First", ["keys"]);
+    const restore = afterBatch(1, () => run("UPDATE roles SET name = 'Later', perms = '[]' WHERE id = 'r1'"));
+    let r: Response;
+    try { r = await call(A.cookie, "PATCH", "/api/roles/r1", { name: "Second", perms: ["audit"] }); } finally { restore(); }
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ id: "r1", name: "Second", perms: ["audit"] });
   });
 });
 

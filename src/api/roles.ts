@@ -76,6 +76,8 @@ roles.post("/", async (c) => {
       WHERE ${ACTOR_OK} AND ${COUNT_OK} AND ${FREE}`).bind(id, name, json, now, now, me.id, me.id, name, id),
     auditStmt(env, { actorId: me.id, action: "role.create", targetType: "role", targetId: id, detail: { name, perms } },
       { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM roles WHERE id = ?)", binds: [id] }),
+    // Read in the same batch, so the answer is the row this batch wrote, not whatever a later request left.
+    env.DB.prepare(LIST).bind(id, id),
   ]);
   if (!res[0]!.meta.changes) {
     const w = await env.DB.prepare(`SELECT ${ACTOR_OK} a, ${COUNT_OK} c, ${FREE} f`).bind(me.id, name, id).first<{ a: number; c: number; f: number }>();
@@ -84,7 +86,7 @@ roles.post("/", async (c) => {
     if (!w.c) return c.json({ error: "too_many_roles" }, 409);
     return c.json({ error: "changed" }, 409);
   }
-  return c.json((await list(env, id))[0], 201);
+  return c.json(toItem(res[2]!.results[0] as RoleRow), 201);
 });
 
 roles.patch("/:id", async (c) => {
@@ -117,6 +119,7 @@ roles.patch("/:id", async (c) => {
     auditStmt(env, { actorId: me.id, action: "role.update", targetType: "role", targetId: id,
       detail: { name: newName, ...(renamed ? { from: cur.name } : {}), added, removed } },
     { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM roles WHERE id = ? AND updated_at = ? AND updated_by = ?)", binds: [id, now, me.id] }),
+    env.DB.prepare(LIST).bind(id, id),
   ]);
   if (!res[0]!.meta.changes) {
     const w = await env.DB.prepare(`SELECT ${ACTOR_OK} a, EXISTS (SELECT 1 FROM roles WHERE id = ?) e, ${FREE} f`).bind(me.id, id, newName, id).first<{ a: number; e: number; f: number }>();
@@ -125,7 +128,7 @@ roles.patch("/:id", async (c) => {
     if (!w.f) return c.json({ error: "name_taken" }, 409);
     return c.json({ error: "changed" }, 409);
   }
-  return c.json((await list(env, id))[0]);
+  return c.json(toItem(res[2]!.results[0] as RoleRow));
 });
 
 roles.delete("/:id", async (c) => {

@@ -179,10 +179,10 @@ describe("permissions by role (S8)", () => {
     await sweep(perms, login);
   });
 
-  it("PUT /api/agents/mcp: a non-owner role with settings is not refused", async () => {
+  it("PUT /api/agents/mcp: a non-owner role with settings changes the switch", async () => {
     const u = await onRole(["settings"]);
     const r = await req("PUT", "/api/agents/mcp", { cookie: await sessionFor(u), "content-type": "application/json" }, JSON.stringify({ on: true }));
-    expect(r.status).not.toBe(403);
+    expect([r.status, await r.json()]).toEqual([200, expect.objectContaining({ on: true })]);
   });
   it("PUT /api/agents/mcp: a role without settings is refused", async () => {
     const u = await onRole(without("settings"));

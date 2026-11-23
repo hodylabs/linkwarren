@@ -654,7 +654,7 @@ describe("settings by permission (S8 R5)", () => {
     expect((await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) })).status).toBe(200);
     expect((await call("s", "DELETE", "/api/settings/logo")).status).toBe(200);
     expect((await call("s", "PATCH", S, { controlsEnabled: true })).status).toBe(200);
-    expect(await by("us")).toEqual(["settings.update", "settings.update", "settings.update", "settings.update", "logo.update", "settings.update", "logo.remove", "settings.update"]);
+    expect(await by("us")).toEqual(["settings.update", "settings.update", "settings.update", "settings.update", "logo.update", "logo.remove", "settings.update", "settings.update"]);
   });
 
   it("a settings role reads the settings, the secret status and the Cloudflare page, never a secret value", async () => {
@@ -771,6 +771,20 @@ describe("settings by permission (S8 R5)", () => {
     expect(await served()).toEqual(before);
     expect(((await (await call("a", "GET", "/api/instance")).json()) as { logoVersion: number }).logoVersion).toBe(logoVersion);
     expect(await by("us")).toEqual(["settings.update", "logo.update"]);
+  });
+
+  it("a logo removed concurrently: the late DELETE records no second logo.remove, and none at all once settings is lost", async () => {
+    await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    const gone = () => run("DELETE FROM settings WHERE key = 'instance.logoVersion'");
+    let restore = beforeBatch(1, gone);
+    let r: Response;
+    try { r = await call("s", "DELETE", "/api/settings/logo"); } finally { restore(); }
+    expect(r.status).toBe(200);
+    await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    restore = beforeBatch(1, async () => { await gone(); await setPerms([]); });
+    try { r = await call("s", "DELETE", "/api/settings/logo"); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect((await by("us")).filter((a) => a === "logo.remove" || a === "settings.update").length).toBe(2); // the two PUTs' settings.update only
   });
 
   it("settings lost before the Cloudflare setup's first write: nothing reaches Cloudflare or D1, 403", async () => {

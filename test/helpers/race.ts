@@ -42,3 +42,17 @@ export function beforeQuery(match: string, fn: () => Promise<unknown>): () => vo
   });
   return () => { (env as { DB: D1Database }).DB = real; };
 }
+
+/** Runs `fn` once, right after the Worker's `nth` D1 batch committed. Returns a restore function; call it in a finally. */
+export function afterBatch(nth: number, fn: () => Promise<unknown>): () => void {
+  const real = env.DB;
+  let n = 0;
+  (env as { DB: D1Database }).DB = new Proxy(real, {
+    get(t, p) {
+      if (p === "batch") return async (s: D1PreparedStatement[]) => { const r = await t.batch(s); if (++n === nth) await fn(); return r; };
+      const v = Reflect.get(t, p);
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+  return () => { (env as { DB: D1Database }).DB = real; };
+}
