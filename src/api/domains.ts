@@ -157,6 +157,8 @@ domains.post("/", async (c) => {
   const host = normalizeHost(body.data.host.trim());
   const bad = hostError(host, refusedDashboard(c.env), cnameTarget(c.env) ?? undefined);
   if (bad) return c.json({ error: bad }, 400);
+  // Path mode (host mode refused it above): the dashboard host is the main short domain only, so no one can claim it first.
+  if (type !== "main" && host === normalizeHost(c.env.DASHBOARD_HOST)) return c.json({ error: "dashboard_main_only" }, 400);
   // Early exits so a doomed create makes no Cloudflare calls; the INSERT below still enforces both under races.
   if (await c.env.DB.prepare("SELECT 1 FROM domains WHERE host = ?").bind(host).first()) return c.json({ error: "host_taken" }, 409);
   if (!manager && (await c.env.DB.prepare("SELECT COUNT(*) n FROM domains WHERE owner_id = ? AND status = 'pending'").bind(user.id).first<{ n: number }>())!.n >= MAX_PENDING_PER_MEMBER)

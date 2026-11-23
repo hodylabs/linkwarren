@@ -50,6 +50,20 @@ describe("the dashboard host as a main domain", () => {
     const r = await api("POST", "/api/domains", { host: "dash.test", type: "main" }, hostEnv());
     expect([r.status, await r.json()]).toEqual([400, { error: "dashboard_host" }]);
   });
+  it("path mode: the dashboard host is main only, so a member cannot claim it before the owner", async () => {
+    const owner = cookie;
+    cookie = (await signedIn("member@example.com", { id: "m1", role: "member" })).value;
+    const m = await api("POST", "/api/domains", { host: "short.test", type: "private" });
+    expect([m.status, await m.json()]).toEqual([400, { error: "dashboard_main_only" }]);
+    expect((await api("POST", "/api/domains", { host: "short.test", type: "shared" })).status).toBe(403);
+    cookie = owner;
+    for (const type of ["private", "shared"]) {
+      const r = await api("POST", "/api/domains", { host: "Short.Test", type });
+      expect([type, r.status, await r.json()]).toEqual([type, 400, { error: "dashboard_main_only" }]);
+    }
+    expect(await one("SELECT COUNT(*) n FROM domains")).toEqual({ n: 0 });
+    expect((await api("POST", "/api/domains", { host: "short.test", type: "main" })).status).toBe(201);
+  });
 });
 
 describe("the prefix segment is reserved on the dashboard host (R4)", () => {
@@ -108,14 +122,26 @@ describe("the prefix segment is reserved on the dashboard host (R4)", () => {
     expect(await one("SELECT COUNT(*) n FROM links WHERE domain_id = 'ds'")).toEqual({ n: 0 });
     expect(await one("SELECT COUNT(*) n FROM slug_locks WHERE domain_id = 'ds'")).toEqual({ n: 0 });
   });
-  it("import into a fresh path-mode instance creates the main domain (no dashboard_host)", async () => {
+  const oneLink = (mainHost: string) => ({ mainHost, domains: [], confirmNoPasswords: true, links: [{ host: null, slug: "a", destination: "https://dest.example.com/a", enabled: true }] });
+  it("path mode import never creates the dashboard host (main only) nor uses a non-main row of it", async () => {
     await run("DELETE FROM domains WHERE id = 'ds'");
-    const r = await api("POST", "/api/import", { mainHost: "short.test", domains: [], confirmNoPasswords: true, links: [{ host: null, slug: "a", destination: "https://dest.example.com/a", enabled: true }] });
-    expect(await r.json()).toMatchObject({ created: 1, conflicts: [], domainsCreated: ["short.test"] });
+    const refused = { created: 0, conflicts: [{ host: "short.test", slug: "a", reason: "dashboard_main_only" }], domainsCreated: [] };
+    expect(await (await api("POST", "/api/import", oneLink("short.test"))).json()).toMatchObject(refused);
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dq','short.test','private','active','o1',1)");
+    expect(await (await api("POST", "/api/import", oneLink("short.test"))).json()).toMatchObject(refused);
+    expect(await one("SELECT COUNT(*) n FROM links")).toEqual({ n: 0 });
   });
   it("host mode import still refuses the dashboard host", async () => {
-    const r = await api("POST", "/api/import", { mainHost: "dash.test", domains: [], confirmNoPasswords: true, links: [{ host: null, slug: "a", destination: "https://dest.example.com/a", enabled: true }] }, hostEnv());
+    const r = await api("POST", "/api/import", oneLink("dash.test"), hostEnv());
     expect(await r.json()).toMatchObject({ created: 0, conflicts: [{ host: "dash.test", slug: "a", reason: "dashboard_host" }] });
+  });
+  it("host mode import naming an existing dashboard-host row reports dashboard_host, dry run too, and writes nothing", async () => {
+    await domain("dd", "dash.test"); // for example left over from path mode
+    for (const q of ["?dryRun=1", ""]) {
+      const r = await api("POST", `/api/import${q}`, oneLink("dash.test"), hostEnv());
+      expect([q, await r.json()]).toMatchObject([q, { created: 0, conflicts: [{ host: "dash.test", slug: "a", reason: "dashboard_host" }] }]);
+    }
+    expect(await one("SELECT COUNT(*) n FROM links")).toEqual({ n: 0 });
   });
 });
 

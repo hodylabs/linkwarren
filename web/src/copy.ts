@@ -23,6 +23,7 @@ const ERRORS: Record<string, string> = {
   host_taken: "This domain is already in linkwarren.",
   invalid_host: "Enter a domain like go.example.com.",
   dashboard_host: "This is the dashboard address. Use a different domain for short links.",
+  dashboard_main_only: "This is the dashboard address. It can only be added as the main domain.",
   reserved_host: "This is the address outside domains point their DNS record at. Use a different domain for short links.",
   pending_limit: "You already have 3 domains waiting for approval.",
   target_in_use: "The DNS target name already has a record that linkwarren did not make. Pick another name or remove that record in Cloudflare.",
@@ -124,6 +125,7 @@ export const errorText = (code: string): string => (Object.hasOwn(ERRORS, code) 
 // Import conflict reasons stay their code (the downloaded results keep it); only the ones that need words get them.
 const CONFLICTS: Record<string, string> = {
   reserved_path: "This address is the dashboard's path on this domain.",
+  dashboard_main_only: "This is the dashboard's domain. Add it as the main domain first.",
 };
 /** A readable import conflict reason. */
 export const conflictText = (reason: string): string => (Object.hasOwn(CONFLICTS, reason) ? CONFLICTS[reason]! : reason);

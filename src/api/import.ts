@@ -81,8 +81,11 @@ importApi.post("/", async (c) => {
   const isTwin = (h: string, slug: string) => (twins.get(h)?.get(slug.toLowerCase())?.size ?? 0) > 1;
   for (const h of hosts) {
     const row: DomainRow | undefined = existing.get(h);
+    // The dashboard host: never in host mode; in path mode only as an existing main domain (import creates private ones).
+    const dashErr = h !== dashboard ? null : refusedDashboard(c.env) !== null ? "dashboard_host" : row?.type === "main" ? null : "dashboard_main_only";
+    if (dashErr) { badHost.set(h, dashErr); continue; }
     if (row) { doms.set(h, { id: row.id, host: h, isNew: false, cs: row.caseSensitive, bare: row.bareRedirect, nf: row.notfoundRedirect, fillBare: false, fillNf: false }); continue; }
-    const err = hostError(h, refusedDashboard(c.env));
+    const err = hostError(h, null);
     if (err) { badHost.set(h, err); continue; }
     doms.set(h, { id: crypto.randomUUID(), host: h, isNew: true, cs: hasTwins(h), bare: null, nf: null, fillBare: false, fillNf: false });
   }
