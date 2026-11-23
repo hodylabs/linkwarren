@@ -59,6 +59,8 @@ const ROUTES: [M, string, Need, string?][] = [
   ["GET", "/api/agents/connections", null], ["PATCH", "/api/agents/connections/x", null], ["DELETE", "/api/agents/connections/x", null],
   ["GET", "/api/agents/connections/x/calls", null], ["GET", "/api/agents/mcp", null], ["PUT", "/api/agents/mcp", ["settings"]],
   ["POST", "/api/export/start", ["data"]], ["POST", "/api/export/page", ["data"]],
+  ["GET", "/api/qr-codes", ["links.create", "links.editAny"]], ["POST", "/api/qr-codes", ["links.create"]],
+  ["GET", "/api/qr-codes/x", null], ["PATCH", "/api/qr-codes/x", null], ["DELETE", "/api/qr-codes/x", null],
 ];
 /** Ruled rows the code does not match yet; each has its own it.fails below, so the suite turns red once the fix lands. */
 const PENDING = new Set<string>(); // rows whose ruled behaviour is not built yet (none)

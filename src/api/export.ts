@@ -10,7 +10,7 @@ export const exportApi = new Hono<E>();
 
 /**
  * The only tables and columns the export reads (R11). Never: sessions, login_tokens, passkeys, auth_challenges, auth_limits,
- * locks, analytics_state, links.password_hash, api_keys.hash, settings rows `secret.%` (encrypted secrets, src/secrets.ts).
+ * locks, analytics_state, links.password_hash, api_keys.hash, qr_codes.secret, settings rows `secret.%` (encrypted secrets, src/secrets.ts).
  * `computed`: name -> boolean SQL expression. `where`: a fixed filter. SQL is built only from this constant, never from input.
  */
 export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]; computed?: Record<string, string>; where?: string; analytics?: true; audit?: true }[] = [
@@ -24,6 +24,12 @@ export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]
     table: "links",
     columns: ["id", "domain_id", "slug", "slug_key", "url", "redirect_code", "starts_at", "expires_at", "pass_query", "created_by", "updated_by", "created_at", "updated_at", "routes", "forward_to"],
     computed: { protected: "password_hash IS NOT NULL" },
+  },
+  // S9: never the encrypted Wi-Fi password (`secret`), only whether one is stored.
+  {
+    table: "qr_codes",
+    columns: ["id", "name", "kind", "data", "style", "created_by", "updated_by", "created_at", "updated_at"],
+    computed: { hasPassword: "secret IS NOT NULL" },
   },
   { table: "slug_locks", columns: ["domain_id", "slug_key", "locked_at", "locked_by"] },
   // Only for people who may read the audit log (owners always): `data` alone never crosses the `audit` boundary.
