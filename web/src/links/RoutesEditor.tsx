@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Route, RouteDevice } from "../api";
-import { Switch } from "../shell/ui";
+import { Icon, Switch } from "../shell/ui";
 import { DEVICE_LABEL } from "./rules";
 
 export const MAX_ROUTES = 10;
@@ -96,8 +96,8 @@ export function RoutesEditor({ value, onChange, errors }: { value: Route[]; onCh
                   />
                 </div>
               </div>
-              <button type="button" className="btn" aria-label={`Remove rule ${n}`} onClick={() => remove(i)}>
-                Remove
+              <button type="button" className="btn ghost icon" aria-label={`Remove rule ${n}`} onClick={() => remove(i)}>
+                <Icon name="x" />
               </button>
             </div>
             {err && (
@@ -109,8 +109,8 @@ export function RoutesEditor({ value, onChange, errors }: { value: Route[]; onCh
         );
       })}
       {value.length < MAX_ROUTES && (
-        <button type="button" className="btn" ref={addRef} onClick={() => onChange([...value, { countries: [], devices: [], url: "" }])}>
-          Add rule
+        <button type="button" className="btn sm ghost" ref={addRef} onClick={() => onChange([...value, { countries: [], devices: [], url: "" }])}>
+          <Icon name="plus" />Add rule
         </button>
       )}
       <p className="utm-note">

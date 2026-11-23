@@ -1,404 +1,193 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
-import { api, ApiError, type Domain, type Link, type LinkStats, type Route } from "../api";
-import { errorText } from "../copy";
-import { rebase } from "../draft";
-import { useUnsaved } from "../unsaved";
-import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
-import { useApp } from "../state";
-import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
-import { DestText } from "./DestText";
-import { QrPanel } from "./QrPanel";
+import { forwardRef, useImperativeHandle } from "react";
+import type { Domain, Link, LinkStats } from "../api";
 import { linkPage } from "../analytics/Breakdowns";
 import { NavLink } from "../router";
+import { CloseButton, Icon, Tag } from "../shell/ui";
+import { useApp } from "../state";
+import { clock, shortDate } from "../time";
+import { fullName, type VCard } from "../../../src/vcard";
+import { DestText } from "./DestText";
 import { readUtm } from "./compose";
 import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from "./linkView";
-import { RoutesEditor } from "./RoutesEditor";
-import { parseCountries, passwordProblem, routeSummary } from "./rules";
-import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
-import { cleanVcard, formField, fullCard, VcardForm } from "./VcardForm";
+import { routeSummary } from "./rules";
+import { photoSrc } from "./photo";
 
-export type DetailHandle = { focusUrl(): void; copy(): void; focusQr(): void };
-
-type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[]; vcard: VCard | null };
-const draftOf = (l: Link): Draft => ({
-  url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery,
-  password: "", passwordOn: l.hasPassword, routes: l.routes, vcard: l.kind === "vcard" ? fullCard(l) : null,
-});
-const blank = (r: Route) => !r.countries.length && !r.devices.length && !r.url.trim();
-
-/** The routes to send: blank rows dropped, countries upper-cased. `errors` is keyed by editor row. */
-function routesOf(d: Draft): { routes: Route[]; errors: Record<number, string> } {
-  const errors: Record<number, string> = {};
-  const routes: Route[] = [];
-  d.routes.forEach((r, i) => {
-    if (blank(r)) return;
-    const c = parseCountries(r.countries.join(" "));
-    if (!c.ok) errors[i] = errorText("route_country");
-    routes.push({ ...r, countries: c.ok ? c.list : [] });
-  });
-  return { routes, errors };
-}
-
-/** Only the fields that differ from the loaded link. */
-function diff(l: Link, d: Draft): Record<string, unknown> {
-  const base = draftOf(l);
-  const out: Record<string, unknown> = {};
-  if (d.url !== base.url) out.url = d.url;
-  if (d.code !== base.code) out.redirectCode = d.code;
-  if (d.pass !== base.pass) out.passQuery = d.pass;
-  if (d.starts !== base.starts) out.startsAt = fromLocalInput(d.starts);
-  if (d.ends !== base.ends) out.expiresAt = fromLocalInput(d.ends);
-  if (d.passwordOn && d.password) out.password = d.password;
-  else if (!d.passwordOn && l.hasPassword) out.password = null;
-  const { routes } = routesOf(d);
-  if (JSON.stringify(routes) !== JSON.stringify(l.routes)) out.routes = routes;
-  // A card is sent whole when it differs (blank rows never count as a change).
-  if (d.vcard && JSON.stringify(cleanVcard(d.vcard)) !== JSON.stringify(base.vcard)) out.vcard = cleanVcard(d.vcard);
-  return out;
-}
+export type DetailHandle = { copy(): void };
 
 const LIVE_HINT = { off: "Live clicks are off on this instance.", unavailable: "Recent clicks could not be loaded." } as const;
+const PHONE_LABEL = { cell: "Mobile", work: "Work", home: "Home", other: "Other" } as const;
 
-export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStats | undefined; live: StatsLive; domain: Domain | undefined; canEdit: boolean; onSaved(l: Link): void; onDelete(): void; onClose(): void; onOpenTarget(): void }>(
-  function LinkDetail({ link, stats, live, domain, canEdit, onSaved, onDelete, onClose, onOpenTarget }, ref) {
-    const app = useApp();
-    const [draft, setDraft] = useState(() => draftOf(link));
-    const [error, setError] = useState<{ code: string } | null>(null);
-    const [busy, setBusy] = useState(false);
-    const [routeErrors, setRouteErrors] = useState<Record<number, string>>({});
-    const [changePw, setChangePw] = useState(false); // the new-password input of a link that already has one
-    const [cardField, setCardField] = useState<string | null>(null); // the bad_vcard field of a contact card
-    const [photoBusy, setPhotoBusy] = useState(false); // a picked photo is still being resized: Save waits
-    const [cardReset, setCardReset] = useState(0); // bumped by Escape to remount the card form
-    const urlRef = useRef<HTMLInputElement>(null);
-    const qrRef = useRef<HTMLButtonElement>(null);
-    const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
-    const host = domain?.host ?? "";
-    useUnsaved(canEdit && !link.forwardTo && Object.keys(diff(link, draft)).length > 0);
+/** When the link is live: a start and an end, either, or none. */
+function schedule(l: Link): string {
+  const s = l.startsAt !== null ? `Starts ${clock(l.startsAt)}` : "";
+  const e = l.expiresAt !== null ? `Ends ${clock(l.expiresAt)}` : "";
+  return [s, e].filter(Boolean).join(", ") || "Always on";
+}
 
-    // A new revision (after a save or a reload) replaces the form; typing never triggers this.
-    // After this form's own save, fields edited while it was pending keep what was typed.
-    // The revision the form last took; the first render already did (useState), so an edit made before this effect runs is kept.
-    const revision = useRef(`${link.id}:${link.updatedAt}`);
-    useEffect(() => {
-      const rev = `${link.id}:${link.updatedAt}`;
-      if (revision.current === rev) return;
-      revision.current = rev;
-      const s = sent.current;
-      sent.current = null;
-      setDraft((now) => (s?.id === link.id ? rebase(draftOf(link), s.draft, now) : draftOf(link)));
-      setError(null);
-      setRouteErrors({});
-      setChangePw(false);
-      setCardField(null);
-    }, [link.id, link.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+/** A contact card as read-only text: photo or initials, name, title, then phones, emails, websites and the address. */
+function CardSummary({ card }: { card: Partial<VCard> & Pick<VCard, "firstName" | "lastName" | "org" | "title" | "phones" | "emails" | "websites" | "address"> }) {
+  const name = fullName(card as VCard);
+  const sub = [card.title, card.org].filter(Boolean).join(", ");
+  const initials = (name || "?").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const a = card.address;
+  const address = [a.street, a.city, a.region, a.postalCode, a.country].filter(Boolean).join(", ");
+  return (
+    <>
+      <div className="contact">
+        {card.photo ? <img className="vc-img" src={photoSrc(card.photo)} alt="Contact photo" /> : <span className="photo" aria-hidden="true">{initials}</span>}
+        <div>
+          <b>{name}</b>
+          {sub && <div className="muted">{sub}</div>}
+        </div>
+      </div>
+      {(card.phones.length > 0 || card.emails.length > 0 || card.websites.length > 0 || address) && (
+        <ul className="rows" aria-label="Card details">
+          {card.phones.map((p, i) => <li key={`p${i}`}><Icon name="phone" />{p.number}<small>{PHONE_LABEL[p.type]}</small></li>)}
+          {card.emails.map((e, i) => <li key={`e${i}`}><Icon name="mail" />{e}</li>)}
+          {card.websites.map((w, i) => <li key={`w${i}`}><Icon name="globe" />{w}</li>)}
+          {address && <li><Icon name="pin" />{address}</li>}
+        </ul>
+      )}
+    </>
+  );
+}
 
-    const copy = () => {
-      if (!host) return app.announce("Cannot copy: this link's domain is unknown");
-      navigator.clipboard.writeText(shortUrl(host, link.slug)).then(
-        () => app.announce("Copied"),
-        () => app.announce("Could not copy"),
-      );
-    };
-    const isCard = link.kind === "vcard";
-    // E on a contact card goes to its first field.
-    const focusEdit = () => (isCard ? document.getElementById("ld-vc-firstName")?.focus() : urlRef.current?.focus());
-    useImperativeHandle(ref, () => ({ focusUrl: focusEdit, copy, focusQr: () => qrRef.current?.focus() }));
+/**
+ * The selected link's summary panel. It never edits: Edit (E) opens the same sheet as New link. Copy (C), QR code (Q) and
+ * Link analytics (A) sit under the slug; Delete at the bottom.
+ */
+export const LinkDetail = forwardRef<DetailHandle, {
+  link: Link; stats: LinkStats | undefined; live: StatsLive; domain: Domain | undefined; canEdit: boolean;
+  onEdit(): void; onQr(): void; onDelete(): void; onClose(): void; onOpenTarget(): void;
+}>(function LinkDetail({ link, stats, live, domain, canEdit, onEdit, onQr, onDelete, onClose, onOpenTarget }, ref) {
+  const app = useApp();
+  const host = domain?.host ?? "";
+  const copy = () => {
+    if (!host) return app.announce("Cannot copy: this link's domain is unknown");
+    navigator.clipboard.writeText(shortUrl(host, link.slug)).then(
+      () => app.announce("Copied"),
+      () => app.announce("Could not copy"),
+    );
+  };
+  useImperativeHandle(ref, () => ({ copy }));
+  const state = linkState(link, domain, Math.floor(Date.now() / 1000));
+  const isCard = link.kind === "vcard";
+  const who = (id: string) => creatorLabel(id, app.me, app.users);
+  const created = who(link.createdBy);
+  const utm = readUtm(link.url);
+  const tags = (["source", "medium", "campaign"] as const).filter((k) => utm[k]).map((k) => `utm_${k}=${utm[k]}`).join(" · ");
+  const opens = link.forwardTo ? (
+    <>Forwards to {forwardTarget(link)}</>
+  ) : isCard ? (
+    <>Downloads {link.vcard ? `${fullName(link.vcard as VCard)}'s` : "a"} contact card</>
+  ) : (
+    <>
+      <DestText url={link.url} />
+      {link.redirectCode === 301 && <span className="faint"> (301 fixed)</span>}
+    </>
+  );
 
-    const save = async () => {
-      if (!canEdit || busy || photoBusy) return;
-      // Password switched on with nothing stored and nothing typed: refuse, never save the link as if it were protected.
-      if (draft.passwordOn && !link.hasPassword && draft.password === "") return setError({ code: "password_short" });
-      // Route errors first: a bad country in a device-only rule leaves the diff empty and would otherwise be ignored silently.
-      const re = routesOf(draft).errors;
-      setRouteErrors(re);
-      const body = diff(link, draft);
-      const cv = body.vcard ? checkVcard(body.vcard as VCard) : null;
-      setCardField(cv && !cv.ok && draft.vcard ? formField(draft.vcard, cv.field) : null);
-      if (cv && !cv.ok) return;
-      if (Object.keys(re).length === 0 && Object.keys(body).length === 0) return;
-      const pwSet = draft.passwordOn && (draft.password !== "" || link.hasPassword);
-      const bad = (typeof body.password === "string" && passwordProblem(body.password)) || (pwSet && draft.code === 301 && "password_301");
-      if (bad || Object.keys(re).length) return setError(bad ? { code: bad } : null);
-      setBusy(true);
-      setError(null);
-      try {
-        const saved = await api<Link>("PATCH", `/api/links/${encodeURIComponent(link.id)}`, body);
-        sent.current = { id: link.id, draft };
-        onSaved(saved);
-        app.announce("Saved");
-      } catch (e) {
-        const code = e instanceof ApiError ? e.code : "internal";
-        const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
-        const row = code === "bad_route" && typeof d?.index === "number" ? draft.routes.filter((r) => !blank(r))[d.index] : undefined;
-        const field = (d as { field?: unknown } | undefined)?.field;
-        if (code === "bad_vcard") setCardField(typeof field === "string" && draft.vcard ? formField(draft.vcard, field) : "vcard");
-        else if (row) setRouteErrors({ [draft.routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
-        else setError({ code }); // typed values stay in the form
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
-        e.preventDefault();
-        void save();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        setDraft(draftOf(link));
-        setError(null);
-        setRouteErrors({});
-        setChangePw(false);
-        setCardField(null);
-        // Only during a resize (a remount moves focus): a fresh card form drops it and ends the Save wait (its unmount cleanup).
-        if (photoBusy) setCardReset((n) => n + 1);
-      }
-    };
-
-    const state = linkState(link, domain, Math.floor(Date.now() / 1000));
-    // A forwarder is never edited (R5): its target and Delete only.
-    if (link.forwardTo)
-      return (
-        <aside className="detail" aria-label="Selected link">
-          <div className="d-head">
-            <CloseButton label="Close link details" onClick={onClose} />
-            <div className="short">
-              <span className="host">{host}/</span>
-              <span className="slug">{link.slug}</span>
-            </div>
-            <div className="row">
-              <Tag tone={state.tone}>{state.label}</Tag>
-              <button type="button" className="btn ghost" onClick={copy} disabled={!host} aria-keyshortcuts="C">
-                Copy <kbd>C</kbd>
-              </button>
-            </div>
-          </div>
-          <div className="sect">
-            <p className="hint">This old address was kept when its link moved. Visitors are forwarded to {forwardTarget(link)}, where the click is counted.</p>
-            <button type="button" className="btn" onClick={onOpenTarget}>
-              Open the link it forwards to
+  return (
+    <aside className="detail" aria-label="Selected link">
+      <div className="d-head">
+        <CloseButton label="Close link details" onClick={onClose} />
+        <div className="short">
+          <span className="host">{host}/</span>
+          <span className="slug">{link.slug}</span>
+        </div>
+        <div className="row">
+          <Tag tone={state.tone}>{state.label}</Tag>
+          {isCard && <span className="fact"><Icon name="card" />Contact card</span>}
+        </div>
+        <div className="row">
+          <button type="button" className="btn sm" onClick={copy} disabled={!host} aria-keyshortcuts="C">
+            <Icon name="copy" />Copy<kbd>C</kbd>
+          </button>
+          {canEdit && !link.forwardTo && (
+            <button type="button" className="btn sm" onClick={onEdit} aria-keyshortcuts="E">
+              <Icon name="edit" />Edit<kbd>E</kbd>
             </button>
-          </div>
-          {canEdit && (
-            <div className="actions">
-              <button type="button" className="btn" onClick={onDelete} aria-keyshortcuts="Shift+D">
-                Delete <kbd>Shift D</kbd>
-              </button>
+          )}
+          {host && !link.forwardTo && (
+            <button type="button" className="btn sm" onClick={onQr} aria-keyshortcuts="Q">
+              <Icon name="qr" />QR code<kbd>Q</kbd>
+            </button>
+          )}
+          {!link.forwardTo && (
+            <NavLink className="btn sm" to={linkPage(link.id)} aria-keyshortcuts="A">
+              <Icon name="chart" />Link analytics<kbd>A</kbd>
+            </NavLink>
+          )}
+        </div>
+      </div>
+      <div className="sect">
+        <dl className="facts">
+          <dt>Opens</dt>
+          <dd>{opens}</dd>
+          {tags && (
+            <>
+              <dt>Campaign</dt>
+              <dd data-testid="campaign-tags">Campaign tags: {tags}</dd>
+            </>
+          )}
+          <dt>Created</dt>
+          <dd>{created === "You" ? "You" : created}, {shortDate(link.createdAt)}</dd>
+          <dt>Updated</dt>
+          <dd>{who(link.updatedBy)}, {clock(link.updatedAt)}</dd>
+        </dl>
+      </div>
+      {link.forwardTo ? (
+        <div className="sect">
+          <p className="hint">This old address was kept when its link moved. Visitors are forwarded to {forwardTarget(link)}, where the click is counted.</p>
+          <button type="button" className="btn sm" onClick={onOpenTarget}>
+            <Icon name="fwd" />Open the link it forwards to
+          </button>
+        </div>
+      ) : (
+        <>
+          {stats && (
+            <div className="sect">
+              <h3>Last 7 days</h3>
+              <div className="stats">
+                <div className="stat"><b>{stats.clicks.toLocaleString("en-US")}</b><small>clicks</small></div>
+                <div className="stat"><b>{stats.clicks > 0 ? Math.round((100 * stats.qr) / stats.clicks) : 0}%</b><small>from QR</small></div>
+                <div className="stat"><b>{stats.topCountry ?? "None"}</b><small>top country</small></div>
+              </div>
+              {live !== "ok" && <p className="hint">{LIVE_HINT[live]} These counts leave out yesterday and today.</p>}
             </div>
           )}
-        </aside>
-      );
-    const who = (id: string) => creatorLabel(id, app.me, app.users);
-    const created = who(link.createdBy);
-    const utm = readUtm(draft.url);
-    const tags = (["source", "medium", "campaign"] as const).filter((k) => utm[k]).map((k) => `utm_${k}=${utm[k]}`).join(" · ");
-    const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
-    // Password codes show next to the password field, the rest next to the URL.
-    const pwError = !!error && draft.passwordOn && error.code.startsWith("password_");
-
-    return (
-      <aside className="detail" aria-label="Selected link" onKeyDown={onKeyDown}>
-        <div className="d-head">
-          <CloseButton label="Close link details" onClick={onClose} />
-          <div className="short">
-            <span className="host">{host}/</span>
-            <span className="slug">{link.slug}</span>
-          </div>
-          <div className="row">
-            <Tag tone={state.tone}>{state.label}</Tag>
-            <button type="button" className="btn ghost" onClick={copy} disabled={!host} aria-keyshortcuts="C">
-              Copy <kbd>C</kbd>
-            </button>
-            {canEdit && (
-              <button type="button" className="btn ghost" onClick={focusEdit} aria-keyshortcuts="E">
-                Edit <kbd>E</kbd>
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="sect">
-          <div className="route">
-            <span>
-              {host}/<b>{link.slug}</b>
-            </span>
-            <span>&rarr;</span>
-            <span className="arr">{isCard ? 200 : link.redirectCode}</span>
-            <span>&rarr;</span>
-            <span>{isCard ? "downloads the contact card" : <DestText url={link.url} />}</span>
-          </div>
-        </div>
-        {stats && (
-          <div className="sect">
-            <h3>Last 7 days</h3>
-            <div className="stats">
-              <div className="stat"><b>{stats.clicks.toLocaleString("en-US")}</b><small>clicks</small></div>
-              <div className="stat"><b>{stats.clicks > 0 ? Math.round((100 * stats.qr) / stats.clicks) : 0}%</b><small>from QR</small></div>
-              <div className="stat"><b>{stats.topCountry ?? "None"}</b><small>top country</small></div>
-            </div>
-            {live !== "ok" && <p className="hint">{LIVE_HINT[live]} These counts leave out yesterday and today.</p>}
-            <NavLink className="btn" to={linkPage(link.id)}>Open link analytics</NavLink>
-          </div>
-        )}
-        <fieldset className="plain" disabled={!canEdit}>
-          {isCard && (
+          {isCard && link.vcard && (
             <div className="sect">
               <h3>Contact card</h3>
-              <VcardForm key={cardReset} id="ld-vc" value={draft.vcard ?? emptyVcard()} field={cardField} readOnly={!canEdit} onBusy={setPhotoBusy} onChange={(vcard) => {
-                  set({ vcard });
-                  setCardField(null);
-                }} />
-              {error && (
-                <p className="err" role="alert">
-                  {errorText(error.code)}
-                  {error.code === "conflict" && (
-                    <button type="button" className="btn" onClick={() => app.bumpLinks()}>
-                      Reload
-                    </button>
-                  )}
-                </p>
-              )}
+              <CardSummary card={link.vcard as VCard} />
             </div>
-          )}
-          {!isCard && (
-          <div className="sect">
-            <h3>Destination</h3>
-            <div className="field">
-              <label htmlFor="ld-url">URL</label>
-              <input id="ld-url" className="input" ref={urlRef} value={draft.url} readOnly={!canEdit} spellCheck={false} onChange={(e) => set({ url: e.target.value })} />
-            </div>
-            {canEdit && <p className="hint">An http or https address, a tel: number or a mailto: address.</p>}
-            {tags && (
-              <p className="hint" data-testid="campaign-tags">
-                Campaign tags: {tags}
-              </p>
-            )}
-            {error && !pwError && (
-              <p className="err" role="alert">
-                {errorText(error.code)}
-                {error.code === "conflict" && (
-                  <button type="button" className="btn" onClick={() => app.bumpLinks()}>
-                    Reload
-                  </button>
-                )}
-              </p>
-            )}
-            <div className="field">
-              <label id="ld-redirect">Redirect</label>
-              <Seg<301 | 302>
-                label="Redirect"
-                value={draft.code}
-                onChange={(code) => set({ code })}
-                options={[{ value: 302, label: "302 editable" }, { value: 301, label: "301 fixed" }]}
-              />
-            </div>
-          </div>
           )}
           <div className="sect">
             <h3>Rules</h3>
-            <div className="field">
-              <label htmlFor="ld-starts">Starts</label>
-              <input id="ld-starts" className="input" type="datetime-local" value={draft.starts} readOnly={!canEdit} onChange={(e) => set({ starts: e.target.value })} />
-            </div>
-            <div className="field">
-              <label htmlFor="ld-ends">Ends</label>
-              <input id="ld-ends" className="input" type="datetime-local" value={draft.ends} readOnly={!canEdit} onChange={(e) => set({ ends: e.target.value })} />
-            </div>
-            {/* A contact card has no password, routing or query pass-through: those rules are for redirects. */}
-            {!isCard && (<>
-            <div className="toggle">
-              <div>
-                Password<small>Visitors enter a password first</small>
-              </div>
-              <Switch
-                checked={draft.passwordOn}
-                onChange={(on) => {
-                  set({ passwordOn: on, password: "" });
-                  setChangePw(false);
-                  setError(null);
-                }}
-                label="Password"
-              />
-            </div>
-            {draft.passwordOn && (
-              <div className="pw">
-                <p className="utm-note">{link.hasPassword ? "Password set" : "No password"}</p>
-                {link.hasPassword && !changePw && draft.password === "" ? (
-                  <button type="button" className="btn" onClick={() => setChangePw(true)}>
-                    Change password
-                  </button>
-                ) : (
-                  <>
-                    <label htmlFor="ld-pw">New password</label>
-                    <input
-                      id="ld-pw" className="input" type="password" value={draft.password} autoComplete="new-password" spellCheck={false} autoCapitalize="off"
-                      aria-invalid={pwError || undefined} aria-describedby={pwError ? "ld-pw-err" : undefined}
-                      onChange={(e) => set({ password: e.target.value })}
-                    />
-                  </>
-                )}
-                <p className="utm-note">Applies everywhere within a few minutes.</p>
-                {draft.code === 301 && <p className="utm-note">{errorText("password_301")}</p>}
-                {pwError && (
-                  <p className="err" role="alert" id="ld-pw-err">
-                    {errorText(error!.code)}
-                  </p>
-                )}
-              </div>
-            )}
-            <div className="toggle">
-              <div>
-                Country and device routing<small>{routeSummary(draft.routes.filter((r) => !blank(r)))}</small>
-              </div>
-              <Switch
-                checked={draft.routes.length > 0}
-                onChange={(on) => {
-                  set({ routes: on ? [{ countries: [], devices: [], url: "" }] : [] });
-                  setRouteErrors({});
-                }}
-                label="Country and device routing"
-              />
-            </div>
-            {draft.routes.length > 0 && (
-              <RoutesEditor
-                value={draft.routes}
-                errors={routeErrors}
-                onChange={(routes) => {
-                  set({ routes });
-                  setRouteErrors({});
-                }}
-              />
-            )}
-            <div className="toggle">
-              <div>
-                Pass query string through<small>Extra parameters reach the destination</small>
-              </div>
-              <Switch checked={draft.pass} onChange={(pass) => set({ pass })} label="Pass query string through" />
-            </div>
-            </>)}
+            <dl className="facts">
+              <dt>Schedule</dt>
+              <dd>{schedule(link)}</dd>
+              {!isCard && (
+                <>
+                  <dt>Password</dt>
+                  <dd>{link.hasPassword ? "Set" : "None"}</dd>
+                  <dt>Routing</dt>
+                  <dd>{link.routes.length ? routeSummary(link.routes) : "None"}</dd>
+                  <dt>Query string</dt>
+                  <dd>{link.passQuery ? "Passed through" : "Dropped"}</dd>
+                </>
+              )}
+            </dl>
           </div>
-        </fieldset>
-        {host && <QrPanel ref={qrRef} host={host} slug={link.slug} />}
-        {canEdit && (
-          <div className="actions">
-            <button type="button" className="btn primary" onClick={() => void save()} disabled={busy || photoBusy} aria-keyshortcuts="Control+Enter">
-              Save <span className="k">Ctrl Enter</span>
-            </button>
-            <button type="button" className="btn" onClick={onDelete} aria-keyshortcuts="Shift+D">
-              Delete <kbd>Shift D</kbd>
-            </button>
-          </div>
-        )}
-        <div className="foot">
-          <span>
-            Created by {created === "You" ? "you" : created}, {shortDate(link.createdAt)}
-          </span>
-          <span>
-            Last change: {who(link.updatedBy)}, {clock(link.updatedAt)}
-          </span>
+        </>
+      )}
+      {canEdit && (
+        <div className="actions">
+          <button type="button" className="btn sm danger" onClick={onDelete} aria-keyshortcuts="Shift+D">
+            <Icon name="trash" />Delete link<kbd>Shift D</kbd>
+          </button>
         </div>
-      </aside>
-    );
-  },
-);
+      )}
+    </aside>
+  );
+});

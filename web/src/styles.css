@@ -308,7 +308,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .who .avatar:not(.plain){background:var(--accent);color:var(--on-accent);border-color:transparent}
 .avatar.plain{background:var(--raised);color:var(--muted)}
 /* the link list: the clicks column steps aside while the panel is open */
-.body:not(.solo) .col-clicks{display:none}
+@media (min-width:1081px){.body:not(.solo) .col-clicks{display:none}}
 
 /* many-link selection bar */
 .bulkbar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:10px 32px;background:var(--card);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
@@ -704,7 +704,6 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
   .body>.detail{animation:none;min-height:100%}
   .d-head .x-btn{display:none}
   .d-head .short,.d-head .title{padding-right:0}
-  .body:not(.solo) .col-clicks{display:table-cell}
   .tiles,.stats4{grid-template-columns:repeat(2,minmax(0,1fr))}
   .stats4>div:nth-child(3){border-left:0}
   .stats4>div:nth-child(n+3){border-top:1px solid var(--line-soft)}

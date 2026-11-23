@@ -145,11 +145,11 @@ describe("bulk move", () => {
 
 describe("forwarder rows", () => {
   const fwd = mk("f1", "old", { url: "https://b.test/old", forwardTo: "l9" });
-  it("show the tag, the arrow icon and a read-only detail with Delete only", async () => {
+  it("show their state, a Forwards fact and a read-only detail with Delete only", async () => {
     const { user } = boot({ items: [fwd, L[0]!] });
     await ready();
     expect(within(rows()[0]!).getByText("Forwards to b.test/old")).toBeTruthy();
-    expect(within(rows()[0]!).getByRole("img", { name: "Forwards to another link" })).toBeTruthy();
+    expect(within(rows()[0]!).getByText("Forwards", { selector: ".fact" })).toBeTruthy();
     expect(within(rows()[0]!).getAllByRole("cell").find((c) => c.dataset.label === "7 days")!.childElementCount).toBe(0);
     await user.click(rows()[0]!);
     const d = screen.getByRole("complementary", { name: "Selected link" });

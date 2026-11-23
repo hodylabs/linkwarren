@@ -5,7 +5,7 @@ import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { hasUnsaved, UNSAVED } from "../unsaved";
 import { navigate, useRoute } from "../router";
 import { Sheet, useOpenSheets } from "../shell/Sheet";
-import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
+import { Chip, Empty, Icon, PrimaryButton, ScreenHeader, SearchButton } from "../shell/ui";
 import { can } from "../perms";
 import { useApp } from "../state";
 import { BackBar, PHONE, useDetailView, useMedia } from "../shell/narrow";
@@ -13,6 +13,10 @@ import { BULK_KEYS, BulkBar, type BulkAction } from "./BulkBar";
 import { csvName, downloadCsv, shortUrls, toCsv } from "./bulk";
 import { BulkSheet, type BulkMode, type BulkRun } from "./BulkSheet";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
+import { NewLinkSheet } from "./NewLinkSheet";
+import { QrPanel } from "./QrPanel";
+import { linkPage } from "../analytics/Breakdowns";
+import { shortDate } from "../time";
 import { DestText } from "./DestText";
 import { needsFullCard } from "./VcardForm";
 import { Sparkline } from "./Sparkline";
@@ -25,6 +29,13 @@ const STATUSES = ["all", "active", "scheduled", "expired"] as const;
 const LONG_PRESS_MS = 500;
 const PRESS_SLOP_PX = 10; // more movement than this is a scroll, not a press
 
+/** A row's schedule chip: the next change, or the last one. */
+function when(l: Link, now: number): string {
+  if (l.startsAt !== null && l.startsAt > now) return `Starts ${shortDate(l.startsAt)}`;
+  if (l.expiresAt !== null) return `${l.expiresAt <= now ? "Ended" : "Ends"} ${shortDate(l.expiresAt)}`;
+  return `Started ${shortDate(l.startsAt!)}`;
+}
+
 /** Links screen hotkeys and their text on the shortcuts sheet. */
 export const LINKS_KEYS = {
   n: "New link",
@@ -32,7 +43,8 @@ export const LINKS_KEYS = {
   k: "Previous link",
   e: "Edit the selected link",
   c: "Copy the short link",
-  q: "Focus the QR code download",
+  q: "Show the QR code",
+  a: "Open the link's analytics",
   "shift+d": "Delete the selected link",
   x: "Select or unselect the link",
   "shift+j": "Extend the selection down",
@@ -193,10 +205,26 @@ export function LinksScreen() {
   const canCreate = can(me, "links.create");
   const canBulk = can(me, "links.bulk");
 
+  // S12: the panel is a summary. Edit (E) opens the link sheet and QR code (Q) a sheet with the downloads; both are for
+  // the selected link only and close if a reload drops it. A card still loading its photo is neither edited nor shown yet,
+  // or a save would send the card without its photo.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [qrFor, setQrFor] = useState<string | null>(null);
+  const startEdit = () => {
+    if (selected && loadCard !== selected.id && canEdit(selected) && !selected.forwardTo) setEditing(selected.id);
+  };
+  const showQr = () => {
+    if (selected && loadCard !== selected.id && !selected.forwardTo && domainOf(selected.domainId)) setQrFor(selected.id);
+  };
+  useEffect(() => {
+    if (editing && editing !== selectedId) setEditing(null);
+    if (qrFor && qrFor !== selectedId) setQrFor(null);
+  }, [editing, qrFor, selectedId]);
+
   useEffect(() => {
     // A card still loading has no detail panel yet: wait (a failed load keeps qr=1, so a reload tries again).
     if (!wantQr || !selectedId || loadCard) return;
-    detailRef.current?.focusQr();
+    showQr();
     // Once only: later selections (J, K, clicks) focus their row, not this panel.
     const p = new URLSearchParams(location.search);
     p.delete("qr");
@@ -345,8 +373,9 @@ export function LinksScreen() {
       j: () => (hasUnsaved() ? app.announce(UNSAVED) : void move(1)),
       k: () => (hasUnsaved() ? app.announce(UNSAVED) : void move(-1)),
       c: () => detailRef.current?.copy(),
-      q: () => detailRef.current?.focusQr(),
-      e: () => detailRef.current?.focusUrl(),
+      q: showQr,
+      e: startEdit,
+      a: () => selected && !selected.forwardTo && navigate(linkPage(selected.id)),
       "shift+d": () => {
         if (selected && canEdit(selected)) {
           setDeleteError(null);
@@ -381,7 +410,7 @@ export function LinksScreen() {
       <ScreenHeader
         title="Links"
         count={unfiltered ? plural(total, "link") : `${items.length} shown`}
-        text={`Short links ${host ? `on ${host}` : "on every domain you can see"}. Pick one to edit its destination, schedule and rules.`}
+        text={`Short links ${host ? `on ${host}` : "on every domain you can see"}. With their rules and recent clicks. Pick one for its summary, E to edit it.`}
       >
         <SearchButton q={q} placeholder="Search slugs and destinations" onOpen={() => app.open({ kind: "palette" })} />
         <div className="chips" role="group" aria-label="Filter links">
@@ -440,9 +469,7 @@ export function LinksScreen() {
                 <th>Short link</th>
                 <th>Goes to</th>
                 <th>Rules</th>
-                <th>Status</th>
-                <th className="num">7 days</th>
-                <th>Created by</th>
+                <th className="num col-clicks">Clicks, 7 days</th>
               </tr>
             </thead>
             <tbody>
@@ -476,48 +503,42 @@ export function LinksScreen() {
                         />
                       </td>
                     )}
+                    {/* S12: one cell for the link, its state and who made it; only a state that is not Active is written out. */}
                     <td className="short">
-                      <span className={`dot2 ${st.tone}`} aria-hidden="true" />
-                      <span className="mchip">
-                        <span className="host">{domainOf(l.domainId)?.host}/</span>
-                        <span className="slug">{l.slug}</span>
-                      </span>
+                      <div className="two">
+                        <span className={`dot2 ${st.tone}`} aria-hidden="true" />
+                        <div className="t">
+                          <span className="mchip">
+                            <span className="host">{domainOf(l.domainId)?.host}/</span>
+                            <span className="slug">{l.slug}</span>
+                          </span>
+                          <small>
+                            {st.tone === "ok" ? <span className="sr-only">{st.label}. </span> : <><span className={`st-${st.tone}`}>{st.label}</span>, </>}
+                            {creatorLabel(l.createdBy, me, users)}, {shortDate(l.createdAt)}
+                          </small>
+                        </div>
+                      </div>
                     </td>
-                    <td className="dest"><DestText url={l.url} link={l} /></td>
+                    <td className="dest">
+                      {l.forwardTo ? <span className="fact"><Icon name="fwd" />Forwards</span> : <DestText url={l.url} link={l} />}
+                    </td>
                     <td>
-                      {(l.forwardTo || l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
+                      {(l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
                         <span className="icons">
-                          {l.forwardTo && (
-                            <svg role="img" aria-label="Forwards to another link" viewBox="0 0 24 24">
-                              <path d="M4 12h14M13 6l6 6-6 6" />
-                            </svg>
-                          )}
-                          {(l.startsAt !== null || l.expiresAt !== null) && (
-                            <svg role="img" aria-label="Has a schedule" viewBox="0 0 24 24">
-                              <circle cx="12" cy="12" r="9" />
-                              <path d="M12 7v5l3 2" />
-                            </svg>
-                          )}
-                          {l.hasPassword && (
-                            <svg role="img" aria-label="Password" viewBox="0 0 24 24">
-                              <path d="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z" />
-                            </svg>
-                          )}
-                          {l.routes.length > 0 && (
-                            <svg role="img" aria-label="Country and device routing" viewBox="0 0 24 24">
-                              <path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12zM12 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z" />
-                            </svg>
-                          )}
+                          {(l.startsAt !== null || l.expiresAt !== null) && <span className="fact"><Icon name="clock" />{when(l, now)}</span>}
+                          {l.hasPassword && <span className="fact"><Icon name="lock" />Password</span>}
+                          {l.routes.length > 0 && <span className="fact"><Icon name="route" />{plural(l.routes.length, "route")}</span>}
                         </span>
                       )}
                     </td>
-                    <td>
-                      <Tag tone={st.tone}>{st.label}</Tag>
+                    <td className="num spk col-clicks" data-label="7 days">
+                      {stats[l.id] && !l.forwardTo && (
+                        <div className="sp">
+                          <Sparkline days={stats[l.id]!.days} clicks={stats[l.id]!.clicks} active={st.tone === "ok"} live={stats[l.id]!.live} />
+                          <span aria-hidden="true">{stats[l.id]!.clicks.toLocaleString("en-US")}</span>
+                        </div>
+                      )}
                     </td>
-                    <td className="num spk" data-label="7 days">
-                      {stats[l.id] && !l.forwardTo && <Sparkline days={stats[l.id]!.days} clicks={stats[l.id]!.clicks} active={st.tone === "ok"} live={stats[l.id]!.live} />}
-                    </td>
-                    <td data-label="By">{creatorLabel(l.createdBy, me, users)}</td>
                   </tr>
                 );
               })}
@@ -560,7 +581,8 @@ export function LinksScreen() {
             live={stats[selected.id]?.live ?? "ok"}
             domain={domainOf(selected.domainId)}
             canEdit={canEdit(selected)}
-            onSaved={(l) => setItems((cur) => cur.map((x) => (x.id === l.id ? l : x)))}
+            onEdit={startEdit}
+            onQr={showQr}
             onOpenTarget={() => {
               const to = selected.forwardTo;
               if (to && items.some((x) => x.id === to)) select(to, true);
@@ -575,6 +597,22 @@ export function LinksScreen() {
         )}
       </div>
       {bulk && <BulkSheet mode={bulk} links={pickedLinks} onRun={afterRun} onClose={() => setBulk(null)} />}
+      {editing && selected?.id === editing && loadCard !== selected.id && (
+        <NewLinkSheet link={selected} onSaved={(l) => setItems((cur) => cur.map((x) => (x.id === l.id ? l : x)))} onClose={() => setEditing(null)} />
+      )}
+      {qrFor && selected?.id === qrFor && domainOf(selected.domainId) && (
+        <Sheet label="QR code" onClose={() => setQrFor(null)}>
+          <div className="sh-head">
+            <h2>QR code</h2>
+            <span className="x">
+              <kbd>Esc</kbd> close
+            </span>
+          </div>
+          <div className="sh-body">
+            <QrPanel host={domainOf(selected.domainId)!.host} slug={selected.slug} />
+          </div>
+        </Sheet>
+      )}
       {confirming && selected && (
         <Sheet label="Delete link" onClose={() => setConfirming(false)}>
           <div className="sh-head">
@@ -592,7 +630,7 @@ export function LinksScreen() {
               </p>
             )}
             <div className="actions">
-              <button type="button" className="btn primary" autoFocus onClick={() => void confirmDelete()}>
+              <button type="button" className="btn danger solid" autoFocus onClick={() => void confirmDelete()}>
                 Delete <span className="k">Enter</span>
               </button>
               <button type="button" className="btn" onClick={() => setConfirming(false)}>

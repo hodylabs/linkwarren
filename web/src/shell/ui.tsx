@@ -28,6 +28,8 @@ const PATHS = {
   links: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
   empty: "M4 20V10M10 20v-6M16 20v-3M22 20H2M3 4l18 12",
   updown: "m8 9 4-4 4 4M8 15l4 4 4-4",
+  plus: "M12 5v14M5 12h14",
+  eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
 } as const;
 export type IconName = keyof typeof PATHS;
 
