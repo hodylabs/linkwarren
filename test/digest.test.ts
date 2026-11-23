@@ -264,6 +264,60 @@ describe("delivery state (PR review)", () => {
   });
 });
 
+describe("races between the read and the write (PR re-review)", () => {
+  /** env whose DB runs `before` once, just before the first prepared statement whose SQL matches `re` is built. */
+  const hooked = (re: RegExp, before: () => Promise<unknown>) => {
+    let done = false;
+    const real = env.DB;
+    // The side effect lands when the matched statement runs: before a write, right after a read.
+    const wrap = (st: D1PreparedStatement) => ({
+      run: async () => { await before(); return st.run(); },
+      first: async () => { const r = await st.first(); await before(); return r; },
+    });
+    const DB = {
+      batch: (s: D1PreparedStatement[]) => real.batch(s),
+      prepare: (sql: string) => {
+        if (done || !re.test(sql)) return real.prepare(sql);
+        done = true;
+        const st = real.prepare(sql);
+        return { ...wrap(st), bind: (...a: unknown[]) => wrap(st.bind(...a)) };
+      },
+    };
+    // A proxy over env, so every binding and var reads through (env may not be a plain object), with DB swapped.
+    return new Proxy(env, { get: (t, k) => (k === "DB" ? DB : Reflect.get(t, k)) }) as typeof env;
+  };
+
+  it("a claim whose row another run changed meanwhile writes nothing (compare-and-set)", async () => {
+    const { a } = await fixture();
+    await run("UPDATE digest_prefs SET enabled = 0 WHERE user_id != ?", a.user.id);
+    await run("UPDATE digest_prefs SET try_week = '2026-11-23', tries = 1, attempts = 2 WHERE user_id = ?", a.user.id);
+    const fake = fakeResend();
+    // Another run's release lands between this run's read and its claim: attempts 2 -> 3, tries 1 -> 2.
+    const e2 = hooked(/SET last_week = \?1, last_attempt_at/, () => run("UPDATE digest_prefs SET attempts = 3, tries = 2 WHERE user_id = ?", a.user.id));
+    expect(await sendDigests(e2, MON_8_PARIS)).toBe(0);
+    expect(fake.sent).toHaveLength(0);
+    expect(await env.DB.prepare("SELECT last_week, attempts, tries FROM digest_prefs WHERE user_id = ?").bind(a.user.id).first()).toEqual({ last_week: "2026-11-16", attempts: 3, tries: 2 });
+    expect(await sendDigests(env, MON_8_PARIS + 3600)).toBe(1); // the next run claims from the new state
+    expect((((globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![1] as RequestInit).headers as Record<string, string>)["idempotency-key"]).toBe(`digest-${a.user.id}-2026-11-23-2`);
+  });
+
+  it("coverage is checked on the mark loadRows read, not a later one", async () => {
+    const { a } = await fixture();
+    await run("UPDATE digest_prefs SET enabled = 0 WHERE user_id != ?", a.user.id);
+    const prev = env.CLICKS;
+    Object.assign(env, { CLICKS: { writeDataPoint() {} } });
+    try {
+      const fake = fakeResend();
+      // The rollup reaches Sunday right after loadRows read Saturday: the rows stop at Saturday, so nothing is sent.
+      const e2 = hooked(/k = 'rolled_through'/, () => run("UPDATE analytics_state SET v = '2026-11-22' WHERE k = 'rolled_through'"));
+      expect(await sendDigests(e2, MON_8_PARIS)).toBe(0);
+      expect(fake.sent).toHaveLength(0);
+    } finally {
+      Object.assign(env, { CLICKS: prev });
+    }
+  });
+});
+
 describe("/api/account/digest", () => {
   const call = (cookie: string, method: string, body?: unknown) =>
     dash("/api/account/digest", withCookie(cookie, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }));
