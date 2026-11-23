@@ -165,7 +165,8 @@ importApi.post("/", async (c) => {
     const card = l.vcard ? cardOf(l.vcard) : null;
     if (card && "error" in card) return conflict(i, "invalid_vcard");
     const href = card ? VCARD_URL : dest(l.destination);
-    if (!href) return conflict(i, "invalid_destination");
+    // The card placeholder is never a live destination (an exported card row with its url kept would redirect to it).
+    if (!href || (!card && new URL(href).hostname === new URL(VCARD_URL).hostname)) return conflict(i, "invalid_destination");
     const startsAt = parseDate(l.startDate), expiresAt = parseDate(l.endDate);
     if (startsAt === undefined || expiresAt === undefined || (startsAt !== null && expiresAt !== null && expiresAt <= startsAt)) return conflict(i, "bad_date");
     const key = slugKey(l.slug, dom.cs);

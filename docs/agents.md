@@ -147,7 +147,7 @@ curl -s -X DELETE -H "Authorization: Bearer $LW_KEY" "$LW/links/<link id>"
 curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<link id>"
 ```
 
-Reading one link (`GET /links/<id>` or `/links/by-slug`) returns the card with its `photo`. Lists and searches (`GET /links`) return each card with `hasPhoto` (true or false) instead of the photo, to keep pages small. A card that fails its checks answers `400 {"error":"bad_vcard","field":"<field>"}` (`name`, `photo`, `phones.0`, `emails.1`, `websites.2`, `address.city`, `note`, ...). A contact card refuses `url` (`vcard_url`), a password or routes (`vcard_rule`) and a type change (`kind_change`); a plain link refuses `vcard` (`not_vcard`).
+Reading one link (`GET /links/<id>` or `/links/by-slug`) returns the card with its `photo`. Lists and searches (`GET /links`, which match a card by its name or organization) and bulk results return each card with `hasPhoto` (true or false) instead of the photo, to keep pages small. A card that fails its checks answers `400 {"error":"bad_vcard","field":"<field>"}` (`name`, `photo`, `phones.0`, `emails.1`, `websites.2`, `address.city`, `note`, ...). A contact card refuses `url` (`vcard_url`), a password or routes (`vcard_rule`) and a type change (`kind_change`); a plain link refuses `vcard` (`not_vcard`).
 
 ### Bulk changes
 

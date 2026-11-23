@@ -221,7 +221,7 @@ export const TOOLS: Record<string, ToolDef> = {
         if (!x.ok || !x.link) return x;
         const { id: linkId, domainId, slug: s, url: u, kind, hasPassword, forwardTo } = x.link;
         const host = hosts.get(domainId);
-        return { id: x.id, ok: true, link: { id: linkId, shortUrl: host ? `https://${host}/${s}` : null, url: u, kind: kind ?? "url", hasPassword, forwardTo: forwardTo ?? null } };
+        return { id: x.id, ok: true, link: slim({ id: linkId, shortUrl: host ? `https://${host}/${s}` : null, url: u, kind: kind ?? "url", hasPassword, forwardTo: forwardTo ?? null }) };
       });
       return { results, pending: r.pending };
     },

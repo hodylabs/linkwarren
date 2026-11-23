@@ -124,13 +124,13 @@ describe("shortUrls and toCsv", () => {
     const csv = toCsv(links, host, (id) => (id === "uo" ? "You" : "Teammate"));
     expect(csv.startsWith("﻿")).toBe(true);
     const lines = csv.slice(1).split("\r\n");
-    expect(lines[0]).toBe("short_url,destination,domain,slug,status,redirect_code,pass_query,has_password,starts_at,expires_at,routes,forwards_to,created_by,created_at");
+    expect(lines[0]).toBe("short_url,destination,kind,domain,slug,status,redirect_code,pass_query,has_password,starts_at,expires_at,routes,forwards_to,created_by,created_at");
     expect(csv).not.toMatch(/password_hash|,password,/);
     expect(csv.slice(1).replace(/\r\n/g, "").includes("\n")).toBe(true); // the only bare LF is inside the quoted cell
     expect(lines[1]).toContain('"https://example.com/a,b ""c""\nd"'.split("\n")[0]);
     expect(lines[1]).toContain(",true,1970-01-01T00:00:00.000Z,1970-01-02T00:00:00.000Z,");
-    expect(csv).toContain("https://go.test/=cmd,'+1,go.test,'=cmd,");
-    expect(csv).toContain("https://go.test/-1,'@x,go.test,'-1,");
+    expect(csv).toContain("https://go.test/=cmd,'+1,url,go.test,'=cmd,");
+    expect(csv).toContain("https://go.test/-1,'@x,url,go.test,'-1,");
     expect(csv).toContain(",https://b.test/old,You,");
     expect(csv.endsWith("\r\n")).toBe(true);
   });
@@ -139,9 +139,15 @@ describe("shortUrls and toCsv", () => {
     const csv = toCsv([mk("a", "x", { url: " =1+1" }), mk("b", "y", { domainId: "gone" })], (id) => (id === "d1" ? "go.test" : ""), () => "You");
     const [, a, b] = csv.slice(1).split("\r\n");
     expect(a).toContain(",' =1+1,");
-    expect(a!.split(",")[11]).toBe(""); // forwards_to
-    expect(b!.startsWith(",https://example.com/y,,y,")).toBe(true);
+    expect(a!.split(",")[12]).toBe(""); // forwards_to
+    expect(b!.startsWith(",https://example.com/y,url,,y,")).toBe(true);
     expect(csv).not.toContain("https:///");
+  });
+
+  it("a contact card has kind vcard and an empty destination, never the placeholder", () => {
+    const csv = toCsv([mk("a", "ada", { kind: "vcard", url: "https://vcard.invalid/" })], host, () => "You");
+    expect(csv.slice(1).split("\r\n")[1]!.startsWith("https://go.test/ada,,vcard,go.test,ada,")).toBe(true);
+    expect(csv).not.toContain("vcard.invalid");
   });
 
   it("downloadCsv saves through an object URL it then revokes, under a dated name", async () => {

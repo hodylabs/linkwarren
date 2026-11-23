@@ -23,6 +23,14 @@ describe("CSV error lines", () => {
 });
 
 describe("linksFromCsv", () => {
+  it("refuses a contact card row (kind vcard, even with a destination) and keeps the url rows of a Links export", () => {
+    const csv = "short_url,destination,kind,domain,slug\nhttps://go.test/ada,,vcard,go.test,ada\nhttps://go.test/b,https://vcard.invalid/,VCARD,go.test,b\nhttps://go.test/s,https://x.test,url,go.test,s\n";
+    const { body, errors } = linksFromCsv(parseCsv(csv), "go.test");
+    expect(errors.map((e) => e.line)).toEqual([2, 3]);
+    expect(errors[0]!.reason).toMatch(/contact cards cannot be imported from CSV/);
+    expect(body.links.map((l) => l.slug)).toEqual(["s"]);
+  });
+
   it("maps columns, url alias, empty host to the main domain and enabled words", () => {
     const { body, errors } = linksFromCsv(parseCsv("slug,url,host,enabled,start_date\nab,https://x.test,,no,2024-01-02 03:04:05\ncd,https://y.test,other.test,,\n"), "go.test");
     expect(errors).toEqual([]);

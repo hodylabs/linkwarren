@@ -174,8 +174,11 @@ links.get("/", async (c) => {
     const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
     // D1 caps LIKE patterns at 50 bytes.
     if (new TextEncoder().encode(like).length > 50) return c.json({ error: "q_too_long" }, 400);
-    where.push("(slug LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')");
-    binds.push(like, like);
+    // A card's url is one placeholder for every card: it matches by its name and organization instead.
+    where.push(`(slug LIKE ? ESCAPE '\\' OR (kind = 'url' AND url LIKE ? ESCAPE '\\')
+      OR (kind = 'vcard' AND (coalesce(json_extract(vcards.data, '$.firstName'), '') || ' ' || coalesce(json_extract(vcards.data, '$.lastName'), '')
+        || ' ' || coalesce(json_extract(vcards.data, '$.org'), '')) LIKE ? ESCAPE '\\'))`);
+    binds.push(like, like, like);
   }
   const status = c.req.query("status");
   if (status !== undefined) {

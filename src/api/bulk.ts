@@ -6,7 +6,7 @@ import type { Env } from "../env";
 import { hitAll, LIMITS, limitKey, type Check } from "../limits";
 import { passwordRule } from "../password-rule";
 import { actor, type Grant } from "../principal";
-import { LINK_SELECT, rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
+import { LINK_SELECT, rowToDomain, rowToLink, toListLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
 import { normalizeHost } from "../host";
 import { canUseDomain } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
@@ -395,7 +395,7 @@ export async function bulk(c: Context<E>) {
   }
   for (const { link } of accepted) {
     const f = fresh.get(link.id);
-    out.set(link.id, applied.has(link.id) ? { id: link.id, ok: true, ...(f ? { link: toApiLink(f) } : {}) } : { id: link.id, ok: false, error: lostPerm(link.id) ? "forbidden" : "conflict" });
+    out.set(link.id, applied.has(link.id) ? { id: link.id, ok: true, ...(f ? { link: toListLink(f) } : {}) } : { id: link.id, ok: false, error: lostPerm(link.id) ? "forbidden" : "conflict" });
   }
   // A selected forwarder shares its parent's outcome: it was deleted with it, or not, for the same reason.
   for (const [id, parent] of withParent) out.set(id, applied.has(parent) ? { id, ok: true } : { ...(out.get(parent) as BulkResult), id });
