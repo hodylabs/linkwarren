@@ -23,9 +23,12 @@ import { account } from "./api/account";
 import { keys } from "./api/keys";
 import { agents } from "./api/agents";
 import { exportApi } from "./api/export";
+import { qrCodes } from "./api/qrcodes";
 import { nonJsonBody } from "./api/shared";
 import { isV1, v1 } from "./api/v1";
 import { authorize } from "./mcp/authorize";
+import { unsubscribe } from "./digest";
+import { PAGE_HEADERS, unsubscribePage } from "./pages";
 
 export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>();
 
@@ -103,8 +106,16 @@ app.route("/api/account", account);
 app.route("/api/keys", keys);
 app.route("/api/agents", agents);
 app.route("/api/export", exportApi);
+app.route("/api/qr-codes", qrCodes);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
+
+// S10 weekly email: no sign-in, the signed token is the credential. GET asks, POST (the button or one-click) turns it off.
+app.get("/unsubscribe", (c) => c.body(unsubscribePage("ask"), 200, PAGE_HEADERS));
+app.post("/unsubscribe", async (c) => {
+  const ok = await unsubscribe(c.env, c.req.query("u") ?? "", c.req.query("t") ?? "");
+  return c.body(unsubscribePage(ok ? "done" : "bad"), ok ? 200 : 400, PAGE_HEADERS);
+});
 
 // OAuth consent (MCP agents). Reached only through the wrapper, which 404s it while agent connections are off.
 app.route("/authorize", authorize);

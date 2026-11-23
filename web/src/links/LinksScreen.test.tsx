@@ -6,6 +6,9 @@ import type { Domain, Link, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
 import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
+import { resizePhoto } from "./photo";
+
+vi.mock("./photo", async (orig) => ({ ...(await orig<typeof import("./photo")>()), resizePhoto: vi.fn(async () => "/9j/AAAA") }));
 
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
@@ -15,7 +18,7 @@ const domain: Domain = {
 };
 const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
   id, domainId: "d1", slug, slugKey: slug, url: `https://example.com/${slug}`, redirectCode: 302, startsAt: null, expiresAt: null,
-  passQuery: true, hasPassword: false, routes: [], forwardTo: null, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
+  passQuery: true, hasPassword: false, routes: [], forwardTo: null, kind: "url", createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
 });
 const L1 = mk("l1", "spring"), L2 = mk("l2", "menu"), L3 = mk("l3", "app", { createdBy: "u9" });
 
@@ -1147,5 +1150,130 @@ describe("Links screen follows the role", () => {
     boot({ me: { ...member, ...customRole(["links.editAny"]) }, path: "/links?sel=l3" });
     await ready();
     expect(within(detail()).getByRole("button", { name: /^Delete/ })).toBeTruthy();
+  });
+});
+
+describe("contact card links (S9)", () => {
+  const card = { firstName: "Ada", lastName: "Lovelace", org: "", title: "", phones: [], emails: [], websites: [],
+    address: { street: "", city: "", region: "", postalCode: "", country: "" }, note: "", photo: null };
+  const C1 = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
+
+  it("the list marks it as a contact card with the name, not the placeholder url", async () => {
+    boot({ page: () => ({ body: { items: [C1, L2], next: null } }) });
+    await ready();
+    expect(rows()[0]!.textContent).toContain("Contact cardAda Lovelace");
+    expect(rows()[0]!.textContent).not.toContain("vcard.invalid");
+  });
+
+  it("the detail edits the card (no URL, password or routing) and saves only the card", async () => {
+    const calls: unknown[] = [];
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [C1], next: null } }),
+      routes: { "PATCH /api/links/l1": ({ body }) => (calls.push(body), { body: { ...C1, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    expect(within(detail()).queryByLabelText("URL")).toBeNull();
+    expect(within(detail()).queryByRole("switch", { name: "Password" })).toBeNull();
+    await user.keyboard("e");
+    expect(document.activeElement).toBe(within(detail()).getByLabelText("First name"));
+    const last = within(detail()).getByLabelText("Last name");
+    await user.clear(last);
+    await user.type(last, "Byron");
+    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ vcard: { ...card, lastName: "Byron" } });
+  });
+
+  // The list sends hasPhoto instead of the photo.
+  const { photo: _, ...listCard } = card;
+  it("a list card without a photo opens at once and saves without hasPhoto", async () => {
+    const calls: unknown[] = [];
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: false } });
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "PATCH /api/links/l1": ({ body }) => (calls.push(body), { body: { ...C1, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    expect(api.calls.some((c) => c.method === "GET" && c.path === "/api/links/l1")).toBe(false);
+    await user.type(within(detail()).getByLabelText("Organization"), "X");
+    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ vcard: { ...card, org: "X" } });
+  });
+
+  it("a list card with a photo loads the single read, then the form shows the photo", async () => {
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: true } });
+    const { api } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "GET /api/links/l1": () => ({ body: { ...C1, vcard: { ...card, photo: "/9j/AAAA" } } }) },
+    });
+    const img = (await screen.findByRole("img", { name: "Contact photo" })) as HTMLImageElement;
+    expect(detail().contains(img)).toBe(true);
+    expect(img.src).toBe("data:image/jpeg;base64,/9j/AAAA");
+    expect(api.calls.filter((c) => c.method === "GET" && c.path === "/api/links/l1")).toHaveLength(1);
+  });
+
+  it("?qr=1 on a card with a photo waits for the single read, then focuses the QR download and leaves the URL", async () => {
+    let release: (r: FakeRes) => void = () => undefined;
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: true } });
+    boot({
+      path: "/links?sel=l1&qr=1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "GET /api/links/l1": () => new Promise<FakeRes>((r) => (release = r)) },
+    });
+    await screen.findByText("Loading the contact card...");
+    expect(location.search).toContain("qr=1");
+    release({ body: { ...C1, vcard: { ...card, photo: "/9j/AAAA" } } });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ })));
+    await waitFor(() => expect(location.search).not.toContain("qr="));
+  });
+
+  it("?qr=1 stays in the URL when the card cannot be loaded", async () => {
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: true } });
+    boot({
+      path: "/links?sel=l1&qr=1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "GET /api/links/l1": () => ({ status: 500, body: { error: "internal" } }) },
+    });
+    await screen.findByText(/could not be loaded/);
+    expect(location.search).toContain("qr=1");
+  });
+
+  it("Escape during a photo resize drops the late result and ends the Save wait", async () => {
+    let finish: (b64: string) => void = () => undefined;
+    vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
+    const { api, user } = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [L], next: null } }) });
+    await ready();
+    const save = () => within(detail()).getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
+    fireEvent.change(within(detail()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    await waitFor(() => expect(save().disabled).toBe(true));
+    within(detail()).getByLabelText("First name").focus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(save().disabled).toBe(false));
+    finish("/9j/LATE");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(within(detail()).queryByRole("img", { name: "Contact photo" })).toBeNull();
+    await user.click(save());
+    expect(api.calls.some((c) => c.method === "PATCH")).toBe(false); // nothing changed, so nothing is sent
+  });
+
+  it("a server bad_vcard on emails.0 marks the second shown row when the first is blank", async () => {
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "PATCH /api/links/l1": () => ({ status: 400, body: { error: "bad_vcard", field: "emails.0" } }) },
+    });
+    await ready();
+    await user.click(within(detail()).getByRole("button", { name: "Add email" }));
+    await user.click(within(detail()).getByRole("button", { name: "Add email" }));
+    await user.type(within(detail()).getByLabelText("Email 2"), "ada@example.com");
+    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(within(detail()).getByLabelText("Email 2").getAttribute("aria-invalid")).toBe("true"));
+    expect(within(detail()).getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
   });
 });

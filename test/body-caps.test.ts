@@ -31,6 +31,9 @@ const cases: [string, string, unknown][] = [
   ["POST", "/api/import?dryRun=1", { mainHost: "go.test", domains: [], links: [{ host: null, slug: "x", destination: `https://x.test/${big}`, enabled: true }] }],
   ["POST", "/api/import?dryRun=1", { mainHost: "go.test", domains: [{ host: big }], links: [] }],
   ["PUT", "/api/settings/secrets/resend", { value: `re_${big}` }],
+  ["POST", "/api/qr-codes", { name: big, kind: "text", data: { text: "x" } }],
+  ["POST", "/api/qr-codes", { name: "x", kind: "text", data: { text: big } }],
+  ["POST", "/api/qr-codes", { name: "x", kind: "wifi", data: { ssid: "x", security: "WPA", hidden: false }, password: big }],
 ];
 
 describe("body string caps", () => {

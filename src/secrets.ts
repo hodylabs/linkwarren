@@ -1,5 +1,5 @@
 // Storage choice (R2): rows in the existing `settings` table under key `secret.<NAME>` (no migration, no secrets table).
-// Value format `v1.<iv b64url>.<ciphertext+tag b64url>`: AES-GCM 256, a fresh random 96-bit IV per write, AAD = the name (UTF-8),
+// Value format `v1.<iv b64url>.<ciphertext+tag b64url>`: AES-GCM 256, a fresh random 96-bit IV per write, AAD = the name (UTF-8; QR codes use `qr.<id>`),
 // key = the Worker secret SECRETS_KEY (base64 of exactly 32 bytes). Exports must skip `key LIKE 'secret.%'`; getSettings never reads them.
 // Plaintext, key and ciphertext never reach logs, errors, audit detail or API responses.
 import { auditStmt } from "./audit";
@@ -38,13 +38,27 @@ export const secretsReady = (env: Env): boolean => rawKey(env) !== null;
 
 const aesKey = (raw: Uint8Array, use: "encrypt" | "decrypt") => crypto.subtle.importKey("raw", raw, "AES-GCM", false, [use]);
 
-/** `guard` (optional): an SQL condition both statements also need, e.g. the actor is still an owner. */
-export async function putSecretStmts(env: Env, actorId: string, name: SecretName, plaintext: string, guard?: Guard): Promise<D1PreparedStatement[]> {
+/**
+ * AES-GCM 256 with SECRETS_KEY: a fresh random 96-bit IV per call, `aad` bound as additional data. Returns `v1.<iv>.<ct>`.
+ * Throws SecretsError("secrets_key_missing") when SECRETS_KEY is missing or not 32 bytes.
+ */
+export async function encryptValue(env: Env, aad: string, plaintext: string): Promise<string> {
   const raw = rawKey(env);
   if (!raw) throw new SecretsError("secrets_key_missing");
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: utf8(name) }, await aesKey(raw, "encrypt"), utf8(plaintext));
-  const value = `v1.${b64u(iv)}.${b64u(new Uint8Array(ct))}`;
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: utf8(aad) }, await aesKey(raw, "encrypt"), utf8(plaintext));
+  return `v1.${b64u(iv)}.${b64u(new Uint8Array(ct))}`;
+}
+
+/** The plaintext of an encryptValue result, or null for a missing key and any malformed, tampered, wrong-AAD or wrong-key value. */
+export async function decryptValue(env: Env, aad: string, stored: string): Promise<string | null> {
+  const raw = rawKey(env);
+  return raw ? decrypt(raw, aad, stored) : null;
+}
+
+/** `guard` (optional): an SQL condition both statements also need, e.g. the actor is still an owner. */
+export async function putSecretStmts(env: Env, actorId: string, name: SecretName, plaintext: string, guard?: Guard): Promise<D1PreparedStatement[]> {
+  const value = await encryptValue(env, name, plaintext);
   const key = rowKey(name);
   return [
     env.DB.prepare(
@@ -63,15 +77,16 @@ export function deleteSecretStmts(env: Env, actorId: string, name: SecretName, g
   ];
 }
 
-/** null for any malformed, tampered, wrong-name (AAD) or wrong-key value. */
-async function decrypt(raw: Uint8Array, name: SecretName, stored: string): Promise<string | null> {
+/** null for any malformed, tampered, wrong-AAD or wrong-key value. */
+async function decrypt(raw: Uint8Array, aad: string, stored: string): Promise<string | null> {
   const [v, iv, ct, ...rest] = stored.split(".");
   if (v !== "v1" || !iv || !ct || rest.length) return null;
   try {
     const ivb = unb64u(iv);
     if (ivb.length !== IV_BYTES) return null;
-    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivb, additionalData: utf8(name) }, await aesKey(raw, "decrypt"), unb64u(ct));
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(pt) || null;
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivb, additionalData: utf8(aad) }, await aesKey(raw, "decrypt"), unb64u(ct));
+    // ignoreBOM: true keeps a leading U+FEFF that was part of the plaintext.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(pt) || null;
   } catch {
     return null;
   }
@@ -83,8 +98,7 @@ export async function getSecret(env: Env, name: SecretName): Promise<{ value: st
   if (w) return { value: w, source: "secret" };
   const row = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(rowKey(name)).first<{ value: string }>();
   if (!row) return null;
-  const raw = rawKey(env);
-  const value = raw ? await decrypt(raw, name, row.value) : null;
+  const value = await decryptValue(env, name, row.value);
   if (value === null) {
     console.warn("secrets_unreadable", name);
     return null;

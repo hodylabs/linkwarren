@@ -14,6 +14,7 @@ import { csvName, downloadCsv, shortUrls, toCsv } from "./bulk";
 import { BulkSheet, type BulkMode, type BulkRun } from "./BulkSheet";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
 import { DestText } from "./DestText";
+import { needsFullCard } from "./VcardForm";
 import { Sparkline } from "./Sparkline";
 import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
 import { all, EMPTY_SEL, extend, keepOnly, range, toggle, type Sel } from "./selection";
@@ -171,6 +172,21 @@ export function LinksScreen() {
   const at = items.findIndex((l) => l.id === sel);
   const selected = at >= 0 ? items[at]! : null;
   const selectedId = selected?.id ?? null;
+  // A contact card with a photo comes from the list without it (hasPhoto): the detail waits for the single-link read.
+  const loadCard = selected && needsFullCard(selected) ? selected.id : null;
+  const [cardFailed, setCardFailed] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loadCard) return;
+    let live = true;
+    setCardFailed(null);
+    api<Link>("GET", `/api/links/${encodeURIComponent(loadCard)}`).then(
+      (l) => live && setItems((cur) => cur.map((x) => (x.id === l.id ? l : x))),
+      () => live && setCardFailed(loadCard),
+    );
+    return () => {
+      live = false;
+    };
+  }, [loadCard]);
   // R9: an owner, anyone's with links.editAny, their own with links.create, or any on a domain they own.
   const canEdit = (l: Link) =>
     can(me, "links.editAny") || (l.createdBy === me.id && can(me, "links.create")) || domainOf(l.domainId)?.ownerId === me.id;
@@ -178,13 +194,14 @@ export function LinksScreen() {
   const canBulk = can(me, "links.bulk");
 
   useEffect(() => {
-    if (!wantQr || !selectedId) return;
+    // A card still loading has no detail panel yet: wait (a failed load keeps qr=1, so a reload tries again).
+    if (!wantQr || !selectedId || loadCard) return;
     detailRef.current?.focusQr();
     // Once only: later selections (J, K, clicks) focus their row, not this panel.
     const p = new URLSearchParams(location.search);
     p.delete("qr");
     navigate(`/links?${p}`, { replace: true });
-  }, [wantQr, selectedId]);
+  }, [wantQr, selectedId, loadCard]);
 
   const move = async (step: 1 | -1) => {
     if (items.length === 0) return;
@@ -466,7 +483,7 @@ export function LinksScreen() {
                         <span className="slug">{l.slug}</span>
                       </span>
                     </td>
-                    <td className="dest"><DestText url={l.url} /></td>
+                    <td className="dest"><DestText url={l.url} link={l} /></td>
                     <td>
                       {(l.forwardTo || l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
                         <span className="icons">
@@ -527,7 +544,14 @@ export function LinksScreen() {
           )}
         </section>
         {open && <BackBar label="All links" onBack={back} />}
-        {selected && (
+        {selected && loadCard === selected.id && (
+          <aside className="detail" aria-label="Selected link">
+            <p className="hint" role="status">
+              {cardFailed === selected.id ? "The contact card could not be loaded. Reload the page to try again." : "Loading the contact card..."}
+            </p>
+          </aside>
+        )}
+        {selected && loadCard !== selected.id && (
           <LinkDetail
             key={selected.id}
             ref={detailRef}

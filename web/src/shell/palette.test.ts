@@ -103,10 +103,10 @@ describe("buildCommands: follows the role", () => {
   const ctx = { domains: [], open: () => {}, setCurrentDomain: () => {} };
   const keys = (me: Me) => buildCommands(ctx, me).filter((c) => !c.quiet).map((c) => c.keys);
   it("a Member gets exactly today's member commands", () => {
-    expect(keys(MEMBER)).toEqual(["gl", "gd", "ga", "af", "gi", "cl", "cd", "ck", "sd", "?"]);
+    expect(keys(MEMBER)).toEqual(["gl", "gq", "gd", "ga", "af", "gi", "cl", "cd", "ck", "sd", "?"]);
   });
   it("the owner gets every command", () => {
-    expect(keys(OWNER)).toEqual(["gl", "gd", "ga", "af", "gi", "gp", "gr", "gs", "cl", "cd", "ck", "cp", "sd", "?"]);
+    expect(keys(OWNER)).toEqual(["gl", "gq", "gd", "ga", "af", "gi", "gp", "gr", "gs", "cl", "cd", "ck", "cp", "sd", "?"]);
   });
   it("a role without create, domains or keys has none of their commands; settings and audit add G S and G P", () => {
     const me: Me = { ...MEMBER, ...customRole(["settings", "audit"]) };

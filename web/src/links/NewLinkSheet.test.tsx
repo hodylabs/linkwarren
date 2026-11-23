@@ -6,6 +6,9 @@ import type { Domain, Link, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
 import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
+import { resizePhoto } from "./photo";
+
+vi.mock("./photo", async (orig) => ({ ...(await orig<typeof import("./photo")>()), resizePhoto: vi.fn(async () => "/9j/AAAA") }));
 
 const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
@@ -17,7 +20,7 @@ const dx: Domain = { ...dm, id: "dx", host: "alt.test" };
 const dd: Domain = { ...dm, id: "dd", host: "off.test", status: "disabled" };
 const created: Link = {
   id: "new1", domainId: "dm", slug: "spring", slugKey: "spring", url: "https://x.com/a", redirectCode: 302, startsAt: null, expiresAt: null,
-  passQuery: true, hasPassword: false, routes: [], forwardTo: null, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100,
+  passQuery: true, hasPassword: false, routes: [], forwardTo: null, kind: "url", createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100,
 };
 
 type Opts = { me?: Me; routes?: FakeRoutes; check?: (slug: string, domain: string) => FakeRes | Promise<FakeRes> };
@@ -433,5 +436,81 @@ describe("New link sheet", () => {
     setVal(dest(), "https://example.com/campaigns/spring-2027");
     await user.click(await screen.findByRole("button", { name: "spring27" }));
     expect(slugBox().value).toBe("spring27");
+  });
+});
+
+describe("New link sheet: contact card (S9)", () => {
+  it("Contact card swaps the destination for the card form and drops the redirect rules; Create sends kind vcard", async () => {
+    const { api, user } = boot();
+    await open(user);
+    await user.click(screen.getByRole("radio", { name: "Contact card" }));
+    expect(screen.queryByLabelText(/^Goes to/)).toBeNull();
+    for (const name of [/^Password/, /^Country and device routing/, /^Campaign tags/]) expect(screen.queryByRole("button", { name })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Redirect" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Schedule and expiry/ })).toBeTruthy();
+    setVal(slugBox(), "ada");
+    await screen.findByText(/Available/);
+    // Nothing named yet: refused in the browser, no POST.
+    await user.click(screen.getByRole("button", { name: /Create link/ }));
+    expect(screen.getByRole("alert").textContent).toMatch(/first name, a last name or an organization/);
+    expect(posts(api)).toEqual([]);
+    setVal(screen.getByLabelText("First name"), "Ada");
+    await user.click(screen.getByRole("button", { name: "Add email" }));
+    setVal(screen.getByLabelText("Email 1"), "ada@example.com");
+    await user.click(screen.getByRole("button", { name: "Add phone" })); // a blank row is dropped, not sent
+    await user.click(screen.getByRole("button", { name: /Create link/ }));
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    const body = posts(api)[0] as Record<string, unknown>;
+    expect(body).toMatchObject({ domainId: "dm", slug: "ada", kind: "vcard", vcard: { firstName: "Ada", emails: ["ada@example.com"], phones: [] } });
+    expect(body).not.toHaveProperty("url");
+    expect(body).not.toHaveProperty("redirectCode");
+  });
+
+  it("the browser check marks the shown row, not the cleaned index, when a blank row comes first", async () => {
+    const { api, user } = boot();
+    await open(user);
+    await user.click(screen.getByRole("radio", { name: "Contact card" }));
+    setVal(slugBox(), "ada");
+    await screen.findByText(/Available/);
+    setVal(screen.getByLabelText("First name"), "Ada");
+    await user.click(screen.getByRole("button", { name: "Add email" }));
+    await user.click(screen.getByRole("button", { name: "Add email" }));
+    setVal(screen.getByLabelText("Email 2"), "bad");
+    await user.click(screen.getByRole("button", { name: /Create link/ }));
+    expect(screen.getByLabelText("Email 2").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
+    expect(posts(api)).toEqual([]);
+  });
+
+  it("Create waits for a photo that is still being resized, then sends it", async () => {
+    let finish: (b64: string) => void = () => undefined;
+    vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
+    const { api, user } = boot();
+    await open(user);
+    await user.click(screen.getByRole("radio", { name: "Contact card" }));
+    setVal(slugBox(), "ada");
+    await screen.findByText(/Available/);
+    setVal(screen.getByLabelText("First name"), "Ada");
+    fireEvent.change(screen.getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    const create = screen.getByRole("button", { name: /Create link/ }) as HTMLButtonElement;
+    await waitFor(() => expect(create.disabled).toBe(true));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(posts(api)).toEqual([]);
+    finish("/9j/NEWA");
+    await waitFor(() => expect(create.disabled).toBe(false));
+    await user.click(create);
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect((posts(api)[0] as { vcard: { photo: string } }).vcard.photo).toBe("/9j/NEWA");
+  });
+
+  it("a bad_vcard answer marks the field it names", async () => {
+    const { user } = boot({ routes: { "POST /api/links": () => ({ status: 400, body: { error: "bad_vcard", field: "photo" } }) } });
+    await open(user);
+    await user.click(screen.getByRole("radio", { name: "Contact card" }));
+    setVal(slugBox(), "ada");
+    await screen.findByText(/Available/);
+    setVal(screen.getByLabelText("First name"), "Ada");
+    await user.click(screen.getByRole("button", { name: /Create link/ }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/JPEG or PNG/);
   });
 });

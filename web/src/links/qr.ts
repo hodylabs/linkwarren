@@ -8,8 +8,8 @@ const LIGHT = "#FFFFFF";
 /** What the QR carries: the short link plus the marker the redirect strips and counts as a QR scan. */
 export const qrText = (host: string, slug: string): string => `${shortUrl(host, slug)}?${QR_PARAM}=${QR_VALUE}`;
 
-/** Error correction M; the quiet zone is added when drawing. */
-export const qrMatrix = (text: string): boolean[][] => encode(text, { ecc: "M", border: 0 }).data;
+/** Error correction M unless given; the quiet zone is added when drawing. Throws when the text does not fit a QR code. */
+export const qrMatrix = (text: string, ecc: "L" | "M" | "Q" | "H" = "M"): boolean[][] => encode(text, { ecc, border: 0 }).data;
 
 /** Dark modules as horizontal runs in one path, offset by the quiet zone. */
 export function qrPath(m: boolean[][], margin = 4): string {
@@ -26,24 +26,29 @@ export function qrPath(m: boolean[][], margin = 4): string {
   return d;
 }
 
-/** The path on a white background with a quiet zone of `margin` modules. */
-export function qrSvg(m: boolean[][], margin = 4): string {
+/** `c` when it is #RRGGBB, else the default: only checked colors ever reach SVG markup. */
+const hex = (c: string, dflt: string) => (/^#[0-9A-Fa-f]{6}$/.test(c) ? c : dflt);
+
+/** The path on a white background (or `bg`) with a quiet zone of `margin` modules. A color that is not #RRGGBB falls back to the default. */
+export function qrSvg(m: boolean[][], margin = 4, fg = DARK, bg = LIGHT): string {
+  fg = hex(fg, DARK);
+  bg = hex(bg, LIGHT);
   const size = m.length + 2 * margin;
   const d = qrPath(m, margin);
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="${LIGHT}"/><path fill="${DARK}" d="${d}"/></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="${bg}"/><path fill="${fg}" d="${d}"/></svg>`;
 }
 
 /** Drawn straight from the matrix (no image load), so the canvas is never tainted. */
-export function qrPng(m: boolean[][], scale = 16, margin = 4): Promise<Blob> {
+export function qrPng(m: boolean[][], scale = 16, margin = 4, fg = DARK, bg = LIGHT): Promise<Blob> {
   const size = (m.length + 2 * margin) * scale;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (!ctx) return Promise.reject(new Error("canvas unavailable"));
-  ctx.fillStyle = LIGHT;
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = DARK;
+  ctx.fillStyle = fg;
   m.forEach((row, y) => row.forEach((on, x) => on && ctx.fillRect((x + margin) * scale, (y + margin) * scale, scale, scale)));
   return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("png failed"))), "image/png"));
 }

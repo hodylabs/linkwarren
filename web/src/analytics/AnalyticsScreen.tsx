@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type AnalyticsReport } from "../api";
+import { api, ApiError, type AnalyticsReport, type DetailReport } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
-import { navigate, useRoute } from "../router";
+import { navigate, NavLink, useRoute } from "../router";
 import { switcherDomains } from "../shell/palette";
 import { useOpenSheets } from "../shell/Sheet";
 import { Kbd, ScreenHeader, Seg } from "../shell/ui";
 import { can } from "../perms";
 import { useApp } from "../state";
-import { Breakdowns } from "./Breakdowns";
+import { Breakdowns, linkPage } from "./Breakdowns";
+import { BusyTimes } from "./BusyTimes";
 import { ClicksChart } from "./ClicksChart";
 import { downloadCsv } from "./csv";
 import { DomainPicker } from "./DomainPicker";
 import { filtersQuery, rangeProblem, readFilters, utcToday, type Filters, type Range } from "./filters";
 import { tiles } from "./view";
+import { viewerZone } from "../time";
 
 /** Analytics screen hotkeys (outside text fields) and their text on the shortcuts sheet. */
 export const ANALYTICS_KEYS = {
@@ -42,18 +44,40 @@ const HOURLY_EMPTY = {
   unavailable: "Hourly clicks could not be loaded. Try again shortly, or pick 7 days or longer for daily totals.",
 } as const;
 const DEBOUNCE_MS = 250;
+const DETAIL_NOTE = {
+  off: "Operating systems, browsers, languages, places and busiest times need live clicks, which are off on this instance.",
+  unavailable: "Operating systems, browsers, languages, places and busiest times could not be loaded. Try again shortly.",
+} as const;
+
+/** A path segment decoded, or null when it is empty or not valid percent-encoding. */
+export function safeDecode(s: string): string | null {
+  try {
+    return decodeURIComponent(s) || null;
+  } catch {
+    return null;
+  }
+}
 
 export function AnalyticsScreen() {
   const { me, domains: listed, overlay } = useApp();
   // R10: a domain manager also lists domains they cannot use (canUse false); their analytics need analytics.all.
   const domains = can(me, "analytics.all") ? listed : listed.filter((d) => d.canUse !== false);
   const sheets = useOpenSheets();
-  const { query } = useRoute();
+  const { query, sub, id } = useRoute();
+  // S10: /analytics/link/<id> is one link's page: the same range, chart, cards and CSV, without the domain and link filters.
+  const isLink = sub === "link";
+  const linkId = isLink ? safeDecode(id) : null;
+  // A malformed or missing id (/analytics/link/%) is a "link not found" state, never a throw during render.
+  const badLink = isLink && !linkId;
+  const here = isLink && linkId ? linkPage(linkId) : "/analytics";
   const today = utcToday();
-  const f = readFilters(query, today);
-  const key = filtersQuery(f);
+  const read = readFilters(query, today);
+  const f = isLink ? { ...read, domains: [], q: "" } : read;
+  const fq = filtersQuery(f);
+  const key = linkId ? [fq, `link=${encodeURIComponent(linkId)}`].filter(Boolean).join("&") : fq;
+  const zone = viewerZone();
   const problem = f.range === "custom" ? rangeProblem(f.from, f.to, today) : null;
-  const invalid = problem !== null;
+  const invalid = problem !== null || badLink;
 
   const [qInput, setQInput] = useState(f.q);
   const [picker, setPicker] = useState(false);
@@ -61,6 +85,7 @@ export function AnalyticsScreen() {
   // The report with the filters it answers, so a report never stands in for other filters.
   const [loaded, setLoaded] = useState<{ key: string; report: AnalyticsReport } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{ key: string; detail: DetailReport | null } | null>(null);
   const seq = useRef(0);
   // R10: every domain any report named this session, so a narrower report never drops one from the picker or its host.
   const seen = useRef(new Map<string, string>());
@@ -72,7 +97,7 @@ export function AnalyticsScreen() {
 
   const go = (next: Partial<Filters>) => {
     const s = filtersQuery({ ...f, ...next });
-    navigate(`/analytics${s ? `?${s}` : ""}`, { replace: true });
+    navigate(`${here}${s ? `?${s}` : ""}`, { replace: true });
   };
   // Timers and native listeners call the latest `go`, so they never write back filters from an older render.
   const goRef = useRef(go);
@@ -88,11 +113,20 @@ export function AnalyticsScreen() {
   }, [f.q]);
   useEffect(() => cancelSearch, []);
 
+  // A link page has no picker: one left open (Back onto a link page) would be hidden yet still hold the shortcuts and Escape.
+  // A search still waiting for its debounce is dropped too, or it would land on the link page's URL.
+  useEffect(() => {
+    if (!isLink) return;
+    setPicker(false);
+    cancelSearch();
+    setQInput("");
+  }, [isLink]);
+
   // `?pick=1` (palette "af") opens the picker once, then leaves the URL.
   const pick = query.has("pick");
   useEffect(() => {
     if (!pick) return;
-    setPicker(true);
+    if (!isLink) setPicker(true);
     go({});
   }, [pick]);
 
@@ -115,6 +149,20 @@ export function AnalyticsScreen() {
     return () => ac.abort();
   }, [key, invalid]);
 
+  // Detail is its own request (Analytics Engine only); a failure shows a note, never hides the report.
+  useEffect(() => {
+    if (invalid) return;
+    const ac = new AbortController();
+    const dk = `${key}${key ? "&" : ""}tz=${encodeURIComponent(zone)}`;
+    api<DetailReport>("GET", `/api/analytics/detail?${dk}`, undefined, ac.signal).then(
+      (d) => setDetail({ key: dk, detail: d }),
+      () => {
+        if (!ac.signal.aborted) setDetail({ key: dk, detail: null });
+      },
+    );
+    return () => ac.abort();
+  }, [key, invalid, zone]);
+
   // A mousedown outside the chip and its dropdown closes the dropdown.
   useEffect(() => {
     if (!picker) return;
@@ -132,7 +180,7 @@ export function AnalyticsScreen() {
 
   useHotkeys(
     {
-      d: () => setPicker(true),
+      d: () => !isLink && setPicker(true),
       l: () => searchRef.current?.focus(),
       v: () => setTable((t) => !t),
       r: () => document.querySelector<HTMLElement>('.an [role=radiogroup] [aria-checked="true"]')?.focus(),
@@ -202,11 +250,16 @@ export function AnalyticsScreen() {
   const report = !invalid && !error ? loaded?.report ?? null : null;
   const stale = report !== null && loaded?.key !== key;
   const canExport = report !== null && !stale;
+  // Detail only beside the report of the same filters: a faster detail answer never mixes with an older report.
+  const det = detail?.key === `${key}${key ? "&" : ""}tz=${encodeURIComponent(zone)}` && !stale ? detail.detail : undefined;
+  const shown = det && det.live === "ok" ? det : null;
+  const title = report?.link ? `${report.link.host}/${report.link.slug}` : null;
 
   return (
     <>
-      <ScreenHeader title="Analytics" text={crumb}>
-        <label className="search">
+      <ScreenHeader title={isLink ? "Link analytics" : "Analytics"} text={isLink ? title ?? "" : crumb}>
+        {isLink && <NavLink className="btn" to="/analytics">All analytics</NavLink>}
+        {!isLink && <label className="search">
           <input
             ref={searchRef}
             aria-label="Search links"
@@ -225,9 +278,9 @@ export function AnalyticsScreen() {
             }}
           />
           <Kbd>L</Kbd>
-        </label>
+        </label>}
         {/* Enabled only while the report on screen answers the current filters: the CSV is built from it (R10). */}
-        <button type="button" className="btn act" ref={exportRef} disabled={!canExport} aria-keyshortcuts="X" onClick={() => canExport && downloadCsv(report)}>
+        <button type="button" className="btn act" ref={exportRef} disabled={!canExport} aria-keyshortcuts="X" onClick={() => canExport && downloadCsv(report, shown)}>
           Export CSV<span className="k2">X</span>
         </button>
       </ScreenHeader>
@@ -244,7 +297,7 @@ export function AnalyticsScreen() {
               </label>
             </div>
           )}
-          <div
+          {!isLink && <div
             className="ddwrap"
             ref={wrapRef}
             onBlur={(e) => {
@@ -264,10 +317,11 @@ export function AnalyticsScreen() {
               <Kbd>D</Kbd>
             </button>
             {picker && <DomainPicker domains={pickable} selected={f.domains} onToggle={toggle} onAll={() => go({ domains: [] })} onClose={closePicker} />}
-          </div>
+          </div>}
           <span className="count">Bots and link previews are left out</span>
         </div>
-        {invalid && <p className="err" role="alert">{problem === "order" ? "From must be on or before To" : errorText("bad_range")}</p>}
+        {badLink && <p className="err" role="alert">That link was not found. Open it again from Links or go back to all analytics.</p>}
+        {invalid && !badLink && <p className="err" role="alert">{problem === "order" ? "From must be on or before To" : errorText("bad_range")}</p>}
         {error && !invalid && <p className="err" role="alert">{error}</p>}
         <div className="active">
           {anyFilter && (
@@ -296,7 +350,7 @@ export function AnalyticsScreen() {
                 onClick={() => {
                   cancelSearch();
                   setQInput("");
-                  navigate("/analytics", { replace: true });
+                  navigate(here, { replace: true });
                 }}
               >
                 Clear all
@@ -324,7 +378,14 @@ export function AnalyticsScreen() {
               onToggle={() => setTable((t) => !t)}
               empty={report.unit === "hour" && report.live !== "ok" ? HOURLY_EMPTY[report.live] : undefined}
             />
-            <Breakdowns report={report} />
+            <Breakdowns report={report} detail={det === undefined ? undefined : det} perLink={isLink} range={filtersQuery({ ...f, domains: [], q: "" })} />
+            {shown && <BusyTimes hours={shown.hours} zone={zone} />}
+            {det !== undefined && det?.live !== "ok" && <p className="note" role="status">{DETAIL_NOTE[det?.live ?? "unavailable"]}</p>}
+            <p className="muted">
+              {shown?.from ? `Operating systems, browsers, languages, places and busiest times cover ${shown.from} to ${shown.to}. ` : ""}
+              {shown && !shown.from ? "This range is older than 90 days, so it has no operating system, browser, language, place or busiest-times detail. " : ""}
+              Each click keeps its full detail for three months (Analytics Engine retention). Older days keep daily totals, countries, devices and referrers only. Only clicks since this version record the operating system, browser, language and place.
+            </p>
           </div>
         )}
       </div>

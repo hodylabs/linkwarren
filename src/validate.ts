@@ -38,7 +38,7 @@ export type DestinationError = "not_url" | "scheme" | "userinfo" | "too_long" | 
 // tel: an optional +, digits and visual separators only (RFC 3966 without parameters), at most 32 after the scheme.
 const TEL = /^tel:(?=[^]{1,32}$)\+?[0-9().-]*[0-9][0-9().-]*$/i;
 // mailto: comma-separated plain addresses (no characters that need escaping), then an optional subject/body query.
-const ADDR = "[A-Za-z0-9!$'*+_.-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+";
+export const ADDR = "[A-Za-z0-9!$'*+_.-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+";
 const MAILTO = new RegExp(`^mailto:${ADDR}(?:,${ADDR})*(?:\\?([^#]*))?$`, "i");
 const FIELD = /^(subject|body)=((?:[A-Za-z0-9._~!$'()*+,;:@/-]|%[0-9A-Fa-f]{2})*)$/i;
 

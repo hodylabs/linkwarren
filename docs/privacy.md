@@ -13,6 +13,11 @@ Each redirect to a live link records one data point with:
 - whether the visit came from a QR code or was typed or clicked
 - whether the visitor looks like a person, a bot, or a chat-app link preview
 - a visitor code that changes every UTC day
+- the operating system family (iOS, Android, Windows, macOS, Linux, ChromeOS or Other) and the browser family (Chrome, Safari, Firefox, Edge, Opera, Samsung Internet or Other), worked out from the user agent at the moment of the click; the user agent itself is not kept
+- the visitor's preferred language: the first tag of the browser's Accept-Language header, lowercased and cut to two parts (for example `en-us`)
+- the city as Cloudflare reports it (or the region when Cloudflare gives no city), with the country code, for example `Toronto, CA`; nothing finer than the city, never coordinates or a postal code
+
+Points recorded before these four were added have them empty. They are kept only in Analytics Engine (90 days), never in the daily totals. On their own and together they are coarse buckets that many people share, not something that identifies a person, but a small instance with few visitors from one city should treat its reports as personal data and share them with care.
 
 A forwarder (the old address of a moved link, see [deploy.md](deploy.md#behaviour-to-know)) records no click. The visit is recorded once, by the link it forwards to, under that link's current domain. Points recorded before a move keep the domain of the moment.
 
@@ -66,16 +71,18 @@ The people who use the dashboard are stored in the instance's D1 database:
 - **Removing a person** deletes their row, sessions, passkeys, keys and agent connections. Their email address stays in the audit log, in the details of entries such as an invite, a role change, a revoked invite and the removal itself, for the 3-year audit retention.
 - **The full export** (Settings, Backups and export, see [backup.md](backup.md)) contains every person's email address, name and role, the whole audit log, agent names and API key names, never secrets, password hashes or sessions. Treat the file like the database.
 
+- **Weekly email** (opt-in, off by default): whether the person turned it on, their time zone, the last week sent and a random per-person secret that signs the unsubscribe link (a new one each time it is turned on). Removing the person deletes it. The secret is never in the export.
+
 The instance name is shown to signed-out visitors on the sign-in page and on the `/join` page an invite opens, so anyone who opens the dashboard address can see it.
 
 ## How long data is kept
 
-- Raw click points live 90 days in Cloudflare Workers Analytics Engine, then the platform removes them.
+- Raw click points live 90 days in Cloudflare Workers Analytics Engine (its documented retention is three months), then the platform removes them. The operating system, browser, language, place and busiest-times views read only these points, so they cover the last 90 days at most.
 - Daily totals stay in the instance's D1 database until the instance is deleted.
 - The audit log of dashboard changes (including changes by agents and keys) is kept for 3 years.
 - MCP tool calls are kept 90 days.
 
-Everything linkwarren stores stays in the Cloudflare account that runs the instance. It sends two things elsewhere: the daily update check (see "Update check" below, off with one switch) and email: sign-in links, invites and test mails go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself). See "People and email" below.
+Everything linkwarren stores stays in the Cloudflare account that runs the instance. It sends two things elsewhere: the daily update check (see "Update check" below, off with one switch) and email: sign-in links, invites, test mails and the weekly summary go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself; for the weekly summary: click totals and the addresses of the person's top 5 links). See "People and email" below.
 
 ## Update check
 

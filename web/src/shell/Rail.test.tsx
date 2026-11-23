@@ -83,12 +83,12 @@ describe("Rail follows the role", () => {
   const items = () => [...nav().querySelectorAll("a, .nav-sep")].map((e) => e.textContent);
   it("a Member gets today's rail and the role name", () => {
     boot({ ...base, id: "um", role: "member", ...MEMBER_ROLE });
-    expect(items()).toEqual(["LinksG L", "DomainsG D", "AnalyticsG A", "API & agentsG I"]);
+    expect(items()).toEqual(["LinksG L", "QR codesG Q", "DomainsG D", "AnalyticsG A", "API & agentsG I"]);
     expect(screen.getByText("Member")).toBeTruthy();
   });
   it("the owner keeps the Owner group", () => {
     boot(base);
-    expect(items()).toEqual(["LinksG L", "DomainsG D", "AnalyticsG A", "Owner", "People & audit logG P", "API & agentsG I", "SettingsG S"]);
+    expect(items()).toEqual(["LinksG L", "QR codesG Q", "DomainsG D", "AnalyticsG A", "Owner", "People & audit logG P", "API & agentsG I", "SettingsG S"]);
   });
   it("a custom role shows its name and only the screens it may open", () => {
     boot({ ...base, id: "uh", ...customRole(["settings"], "Site admin") });

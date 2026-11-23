@@ -18,6 +18,7 @@ import { NewKeySheet } from "./agents/NewKeySheet";
 import { AddDomainSheet } from "./domains/AddDomainSheet";
 import { DomainsScreen } from "./domains/DomainsScreen";
 import { LinksScreen } from "./links/LinksScreen";
+import { QrCodesScreen } from "./qrcodes/QrCodesScreen";
 import { NewLinkSheet } from "./links/NewLinkSheet";
 import { InviteSheet } from "./people/InviteSheet";
 import { PersonSheet } from "./people/PersonSheet";
@@ -30,6 +31,7 @@ function ScreenView({ screen }: { screen: Screen }) {
   const { me } = useApp();
   if (!canSee(me, screen)) return <ComingSoon title="Not in your role" text="Your role in this linkwarren does not include this page." />;
   if (screen === "links") return <LinksScreen />;
+  if (screen === "qr") return <QrCodesScreen />;
   if (screen === "domains") return <DomainsScreen />;
   if (screen === "settings") return <SettingsScreen />;
   if (screen === "analytics") return <AnalyticsScreen />;

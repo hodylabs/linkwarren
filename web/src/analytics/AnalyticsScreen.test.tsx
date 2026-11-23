@@ -30,7 +30,7 @@ function boot(path = "/analytics", answer: (req: FakeReq) => FakeRes | Promise<F
   });
   const user = userEvent.setup();
   render(<App />);
-  const reports = () => api.calls.filter((c) => c.path.startsWith("/api/analytics")).map((c) => c.path);
+  const reports = () => api.calls.filter((c) => c.path.startsWith("/api/analytics") && !c.path.startsWith("/api/analytics/detail")).map((c) => c.path);
   return { api, user, reports };
 }
 const clicksTile = () => screen.getByText("Clicks", { selector: ".tile2 small" }).parentElement!.querySelector("b")!.textContent;

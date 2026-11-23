@@ -64,6 +64,7 @@ main{min-width:0;display:flex;flex-direction:column;height:100vh;overflow:hidden
 .search:hover{border-color:#D3D5CF}
 /* app: one control shape everywhere: 6px radius, 34px buttons (38px in the toolbar) */
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:6px;min-height:34px;padding:0 12px;display:inline-flex;align-items:center;gap:8px;font-weight:500}
+a.btn{color:inherit;text-decoration:none}
 .btn:hover{border-color:#D3D5CF;background:#FBFBF9}
 .btn.primary{background:var(--graphite);border-color:var(--graphite);color:#fff;font-weight:500;padding:0 14px}
 .btn.primary:hover{background:#2A2F37}
@@ -337,6 +338,18 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .rt-g .rt-l{margin:0;flex-basis:100%}
 .rt-sw{display:inline-flex;gap:5px;align-items:center;font-size:12px;color:var(--muted)}
 .routes .utm-note{margin:0}
+/* S9 contact card form (new link sheet and link detail) */
+.vc{display:flex;flex-direction:column;gap:2px}
+.vc h4{font-size:12px;font-weight:600;margin:10px 0 4px;color:var(--muted)}
+.vc-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px}
+.vc-list{display:flex;flex-direction:column;align-items:flex-start;gap:0}
+.vc-list>div{width:100%}
+.vc-row{display:flex;gap:6px;align-items:center;margin-bottom:6px;width:100%}
+.vc-row .input{flex:1;min-width:0}
+.vc-row select.input{flex:0 0 auto;font-family:var(--sans)}
+.vc-photo{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.vc-img{width:64px;height:64px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:var(--bg);display:inline-block}
+.vc textarea.input{white-space:pre-wrap;resize:vertical;min-height:64px;width:100%}
 .sh-body .route{margin:0}
 .redir{display:flex;align-items:center;gap:10px;justify-content:space-between}
 .sh-foot .btn .k2{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-left:4px}
@@ -480,7 +493,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .sub-h{padding-left:0;padding-right:0}
   .mcp{flex-wrap:wrap}
   .input,.ctl{min-height:44px}
-  .utm,.sched{grid-template-columns:minmax(0,1fr)}
+  .utm,.sched,.vc-two{grid-template-columns:minmax(0,1fr)}
   .sh-foot{flex-wrap:wrap}
 
   /* overlays: sheets rise from the bottom at full width; the palette and switcher hang from the top so the keyboard never covers the box */
@@ -622,6 +635,21 @@ main>.an{flex:1;min-height:0}
 .tip.on{display:block}
 .chart .bar.on rect:not([fill=transparent]),.chart .bar.on path{opacity:.82}
 .hb-t svg{display:block;width:100%;height:100%}
+/* S10: top links open their own page; busiest times are a real table with every count as text, shade repeats it */
+a.hb-l{color:inherit;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:2px}
+a.hb-l:hover{text-decoration-color:currentColor}
+.an-link{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.an-link .mono{overflow-wrap:anywhere}
+.busy{grid-column:1/-1}
+.busy p{margin:0 0 8px}
+.busy-wrap{overflow-x:auto}
+.busy-t{border-collapse:separate;border-spacing:2px;font-size:11px;font-variant-numeric:tabular-nums}
+.busy-t th,.busy-t td{padding:0;border:0;width:26px;height:22px;text-align:center;white-space:nowrap}
+.busy-t th{color:var(--muted);font-weight:500}.busy-t tbody th{text-align:left;padding-right:6px;width:auto}
+.busy-t td{border-radius:3px;color:var(--muted)}
+.busy-t td.lv0{background:var(--line-soft);color:var(--faint)}
+.busy-t td.lv1{background:#FBE3CC;color:#5A2E07}.busy-t td.lv2{background:#F6C08A;color:#3D1F04}
+.busy-t td.lv3{background:#EE9545;color:#1B1E23}.busy-t td.lv4{background:#E07418;color:#1B1E23}
 @media (max-width:1080px){.tiles{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:760px){
   .an{padding:12px 16px 24px}
@@ -641,11 +669,25 @@ main>.an{flex:1;min-height:0}
   .chart{overflow:visible}.chart text{font-size:11px}
   .tip{white-space:normal;width:max-content;max-width:220px}
   .hb{grid-template-columns:minmax(0,2fr) 1fr auto}
+  a.hb-l{min-height:44px;display:flex;align-items:center}
+  .an-link .btn{min-height:44px}
 }
 .qr{display:flex;gap:12px;align-items:center}
 .qr>svg{flex:none;width:96px;height:96px;border:1px solid var(--line);border-radius:8px;background:#fff}
 .qr p{margin:0 0 8px;color:var(--muted)}
 .qr .row{display:flex;flex-wrap:wrap;gap:8px}
+
+/* QR codes screen (S9) */
+.ctl textarea{flex:1;border:0;outline:0;font-family:var(--mono);font-size:13px;padding:8px 10px;background:transparent;color:var(--text);min-width:0;resize:vertical}
+.qr-thumb{display:block;width:40px;height:40px;border:1px solid var(--line);border-radius:4px}
+.qr-open{font-weight:500;padding:0 6px;margin-left:-6px}
+.qr-edit .qr>svg{width:168px;height:168px}
+.qr-edit .qr{min-height:60px}
+/* The preview row is sized before the SVG gets its CSS size, so it collapsed to 60px and the code spilled over its neighbours. */
+.qr-edit .qr:has(>svg){min-height:170px}
+.qr-style{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
+.qr-style input[type=color]{display:block;width:56px;height:34px;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:2px;cursor:pointer}
+@media (max-width:760px){.qr-style input[type=color]{width:64px;height:44px}.ctl textarea{font-size:16px}}
 
 /* first-run setup wizard (setup.html) */
 .setup{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:100vh}

@@ -45,7 +45,7 @@ async function mcpRefused(accessToken: string) {
 let A: Awaited<ReturnType<typeof signedIn>>;
 beforeEach(async () => {
   for (const k of (await env.OAUTH_KV.list()).keys) await env.OAUTH_KV.delete(k.name);
-  await env.DB.batch(["tool_calls", "auth_limits", "login_tokens", "links", "slug_locks", "audit_log", "domain_members", "api_keys", "agent_connections", "passkeys", "sessions", "domains", "users"]
+  await env.DB.batch(["tool_calls", "qr_codes", "auth_limits", "login_tokens", "links", "slug_locks", "audit_log", "domain_members", "api_keys", "agent_connections", "passkeys", "sessions", "domains", "users"]
     .map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   A = await signedIn("owner@example.com", { role: "owner" });
 });
@@ -226,6 +226,14 @@ describe("DELETE /api/users/:id (Review Focus 2)", () => {
     expect((await remove(A.cookie, P.user.id, T.user.id)).status).toBe(200);
     expect(await one("SELECT created_by FROM links WHERE id = 'l1'")).toEqual({ created_by: T.user.id });
     expect(await one("SELECT owner_id FROM domains WHERE id = 'dp'")).toEqual({ owner_id: T.user.id });
+  });
+
+  it("transferTo also hands over the removed person's QR codes", async () => {
+    const P = await signedIn("p@example.com");
+    const T = await signedIn("t@example.com");
+    await env.DB.prepare("INSERT INTO qr_codes (id,name,kind,data,style,created_by,updated_by,created_at,updated_at) VALUES ('q1','Office','text','{\"text\":\"hi\"}','{}',?,?,1,1)").bind(P.user.id, P.user.id).run();
+    expect((await remove(A.cookie, P.user.id, T.user.id)).status).toBe(200);
+    expect(await one("SELECT created_by FROM qr_codes WHERE id = 'q1'")).toEqual({ created_by: T.user.id });
   });
 
   it("bad transfer targets: the person, unknown, disabled; a member when a shared domain moves", async () => {

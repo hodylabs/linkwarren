@@ -1,7 +1,8 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { aeConfigured, aeLinkDays } from "../ae";
-import { buildReport, everyDomain, loadRows, resolveRange, resolveScope, type RangeQuery } from "../analytics";
+import { buildReport, everyDomain, linkScope, loadDetail, loadRows, parseTz, resolveRange, resolveScope, type AnalyticsReport, type Range, type RangeQuery } from "../analytics";
+import type { Scope } from "../ae";
 import { utcDay } from "../clicks";
 import { rolledThrough } from "../cron";
 import type { Env } from "../env";
@@ -24,23 +25,52 @@ const query = z.strictObject({
   to: z.string().max(10).optional(),
   domains: idList(100, 0).optional(),
   q: z.string().optional(),
+  /** S10: one link's report; refuses domains and q alongside. */
+  link: z.string().regex(ID).optional(),
+  /** S10 detail only: the viewer's zone (parseTz). */
+  tz: z.string().max(64).optional(),
 });
 
-analytics.get("/", async (c) => {
+type Prepared = { range: Range; scope: Scope; truncated: boolean; link?: AnalyticsReport["link"]; nowSec: number };
+
+/** Shared by the report and the detail: the query checked, the range resolved and the scope cut to what the caller may see. */
+async function prepare(c: Context<E>): Promise<Prepared | Response> {
   const p = query.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
   if (!p.success) return c.json({ error: "bad_query" }, 400);
-  const { range: r, from, to, domains, q = "" } = p.data;
+  const { range: r, from, to, domains, q = "", link } = p.data;
   if (q.length > 48) return c.json({ error: "q_too_long" }, 400);
+  if (link && (q || domains?.length)) return c.json({ error: "bad_query" }, 400);
   const nowSec = Math.floor(Date.now() / 1000);
   const range = resolveRange({ range: r as RangeQuery["range"], from, to }, nowSec);
   if ("error" in range) return c.json({ error: "bad_range" }, 400);
+  if (link) {
+    const l = await linkScope(c.env, c.var.user, link, c.var.grant.domains);
+    if ("error" in l) return c.json({ error: "not_found" }, 404);
+    return { range, scope: l.scope, truncated: false, link: l.link, nowSec };
+  }
   const s = await resolveScope(c.env, c.var.user, domains?.length ? domains : null, q, c.var.grant.domains);
   if ("error" in s) return c.json({ error: "forbidden" }, 403);
-  const rows = await loadRows(c.env, range, s.scope, nowSec);
+  return { range, scope: s.scope, truncated: s.truncated, nowSec };
+}
+
+analytics.get("/", async (c) => {
+  const p = await prepare(c);
+  if (p instanceof Response) return p;
+  const rows = await loadRows(c.env, p.range, p.scope, p.nowSec);
   const hosts = new Map(
     ((await c.env.DB.prepare("SELECT id, host FROM domains").all<{ id: string; host: string }>()).results).map((d) => [d.id, d.host]),
   );
-  return c.json(buildReport(range, rows, hosts, { truncated: s.truncated, visitors: !!c.env.VISITOR_SALT?.trim() }));
+  const report = buildReport(p.range, rows, hosts, { truncated: p.truncated, visitors: !!c.env.VISITOR_SALT?.trim() });
+  return c.json(p.link ? { ...report, link: p.link } : report);
+});
+
+/** S10: OS, browser, language, place and busiest hours, from Analytics Engine only (the last 90 days at most). */
+analytics.get("/detail", async (c) => {
+  const tz = parseTz(new URL(c.req.url).searchParams.get("tz") ?? undefined);
+  if (!tz) return c.json({ error: "bad_tz" }, 400);
+  const p = await prepare(c);
+  if (p instanceof Response) return p;
+  return c.json(await loadDetail(c.env, p.range, p.scope, tz, p.nowSec));
 });
 
 const linksQuery = z.strictObject({ ids: idList(50, 1) });

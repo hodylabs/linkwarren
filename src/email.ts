@@ -21,8 +21,15 @@ const oneLine = (s: string, n = 80): string => cut(s.replace(UNSAFE, " ").replac
 
 /** name: the instance name for the sender; when undefined sendEmail reads it from the settings.
  * key: the Resend key the caller already resolved (one lookup per request); when undefined sendEmail looks it up. */
-export type Mail = { to: string; subject: string; text: string; html: string; name?: string | null; key?: string };
-export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings" };
+export type Mail = {
+  to: string; subject: string; text: string; html: string; name?: string | null; key?: string;
+  /** Resend keeps an Idempotency-Key for 24 hours: a retried send with the same key is not delivered twice. */
+  idempotencyKey?: string;
+  /** Extra mail headers (List-Unsubscribe); values are built by us, never from input. */
+  headers?: Record<string, string>;
+};
+/** `status` and (on a 409) `name`: Resend's HTTP status and error name on a rejection, for callers that decide on a retry (never shown to people). */
+export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings"; status?: number; name?: string };
 
 /** One POST to Resend. Never throws; logs the status code only (Resend's error body can echo the request, link included). */
 export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Promise<SendResult> {
@@ -41,14 +48,15 @@ export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Pro
   try {
     const r = await f("https://api.resend.com/emails", {
       method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: `"${name}" <${from}>`, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", ...(m.idempotencyKey ? { "idempotency-key": m.idempotencyKey } : {}) },
+      body: JSON.stringify({ from: `"${name}" <${from}>`, to: [m.to], subject: m.subject, text: m.text, html: m.html, ...(m.headers ? { headers: m.headers } : {}) }),
       signal: AbortSignal.timeout(10_000),
     });
-    await r.body?.cancel();
+    // A 409 carries Resend's error name (idempotency conflicts); only that short name is kept, never the body or message.
+    const errName: unknown = r.status === 409 ? await r.json().then((b) => (b as { name?: unknown })?.name, () => undefined) : await r.body?.cancel();
     if (!r.ok) {
       console.warn("resend_rejected", r.status);
-      return { ok: false, reason: "rejected" };
+      return { ok: false, reason: "rejected", status: r.status, ...(typeof errName === "string" && /^[a-z_]{1,64}$/.test(errName) ? { name: errName } : {}) };
     }
     return { ok: true };
   } catch {

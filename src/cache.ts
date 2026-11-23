@@ -1,12 +1,13 @@
 import type { Env } from "./env";
 export type Ctx = { waitUntil(p: Promise<unknown>): void };
-import { type DomainRow, type LinkRow, rowToDomain, rowToLink } from "./types";
+import { type DomainRow, LINK_SELECT, type LinkRow, rowToDomain, rowToLink } from "./types";
 
 const POSITIVE_TTL = 300;
 const NEGATIVE_TTL = 60; // KV minimum is 60
 
 const hostKey = (host: string) => `h:${host}`;
 // l2: the cached row gained passwordHash and routes (S5); old l: entries are never read and expire on their TTL.
+// S9 added kind and vcard: an l2 entry without them is a url link (no vCard link existed before), so the key is unchanged.
 const linkKey = (domainId: string, key: string) => `l2:${domainId}:${key}`;
 
 // KV holds JSON; a stored `null` is a cached miss.
@@ -33,7 +34,7 @@ export const getDomainByHost = (env: Env, host: string, ctx?: Ctx): Promise<Doma
 
 export const getLink = (env: Env, domainId: string, key: string, ctx?: Ctx): Promise<LinkRow | null> =>
   cached(env, linkKey(domainId, key), async () => {
-    const r = await env.DB.prepare("SELECT * FROM links WHERE domain_id = ? AND slug_key = ?").bind(domainId, key).first();
+    const r = await env.DB.prepare(`${LINK_SELECT} WHERE domain_id = ? AND slug_key = ?`).bind(domainId, key).first();
     return r ? rowToLink(r) : null;
   }, ctx);
 

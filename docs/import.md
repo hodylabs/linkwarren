@@ -24,11 +24,13 @@ The setup wizard (step "Bring your links") and `POST /api/import` take the same 
 
 ## CSV
 
-The first row names the columns: `slug` and `destination` (or `url`) are required; `host`, `enabled` (`true`, `false`, `1`, `0`, `yes`, `no`), `start_date` and `end_date` are optional. An empty host is this instance's main domain. A CSV has no `protected` column, so it always needs the confirmation above.
+The first row names the columns: `slug` and `destination` (or `url`) are required; `host`, `enabled` (`true`, `false`, `1`, `0`, `yes`, `no`), `start_date` and `end_date` are optional. An empty host is this instance's main domain. A CSV has no `protected` column, so it always needs the confirmation above. A row whose `kind` column is `vcard` (a contact card in a Links CSV export, which leaves its destination empty) is refused with a line error: bring contact cards back through a JSON import with their `vcard` fields. A destination on the contact card placeholder host (`vcard.invalid`) is a conflict (`invalid_destination`).
 
 ## API
 
 `POST /api/import` (owners and the `data` permission) takes at most 1000 links per request; add `?dryRun=1` to run every check and get the same report without writing anything. Keep slugs that differ only by case in the same request: a new domain is created case sensitive when its request holds such twins. `importRequests` in `src/importFormat.ts` splits a large file that way, the same split the wizard uses.
+
+A link may carry a `vcard` object (the contact card fields of `POST /api/v1/links`, see `docs/agents.md`): it is imported as a contact card link, its `destination` is ignored, and a card that fails the checks is a conflict with the reason `invalid_vcard`. This is how the `links` and `vcards` tables of a full export come back in: give each row of kind `vcard` the fields of its `vcards.data` plus `photo`.
 
 A link `destination` may be `http(s)`, `tel:` or `mailto:`, with the same strict checks as a link created in the dashboard; one that fails them is a conflict. A domain `customIndexUrl` or `customNotFoundUrl` must be `http(s)`: anything else is ignored and reported.
 

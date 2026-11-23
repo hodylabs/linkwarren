@@ -9,8 +9,9 @@ import { parseSettings, settingsQ } from "../settings";
 import { canUseDomain, usableDomains } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
 import { actor, type Grant } from "../principal";
-import { ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
+import { LINK_SELECT, ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, toListLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
+import { checkVcard, emptyVcard, PHONE_TYPES, PHOTO_B64_MAX, VCARD_MAX, VCARD_URL, vcardData, type VCard } from "../vcard";
 import { bulk } from "./bulk";
 import { allHosts, destination, domainQ, getDomain, hostsQ, isMember, memberQ, purge } from "./shared";
 
@@ -38,14 +39,43 @@ export const rules = {
   // Replaces the whole list; [] clears it.
   routes: z.array(routeInput).max(10).optional(),
 };
+const text = (n: number) => z.string().max(n).default("");
+/** S9 card fields: shape and every cap (the photo's before it is decoded); checkVcard (src/vcard.ts) does the rest. A field left out is empty. */
+export const vcardSchema = z.strictObject({
+  firstName: text(VCARD_MAX.firstName), lastName: text(VCARD_MAX.lastName), org: text(VCARD_MAX.org), title: text(VCARD_MAX.title),
+  phones: z.array(z.strictObject({ type: z.enum(PHONE_TYPES).default("cell"), number: z.string().max(VCARD_MAX.phone) })).max(VCARD_MAX.rows).default([]),
+  emails: z.array(z.string().max(VCARD_MAX.email)).max(VCARD_MAX.rows).default([]),
+  websites: z.array(z.string().max(VCARD_MAX.website)).max(VCARD_MAX.rows).default([]),
+  address: z.strictObject({
+    street: text(VCARD_MAX.street), city: text(VCARD_MAX.city), region: text(VCARD_MAX.region),
+    postalCode: text(VCARD_MAX.postalCode), country: text(VCARD_MAX.country),
+  }).default(() => emptyVcard().address),
+  note: text(VCARD_MAX.note),
+  photo: z.string().max(PHOTO_B64_MAX).nullable().default(null),
+});
+const kind = { kind: z.enum(["url", "vcard"]).optional(), vcard: vcardSchema.optional() };
 const createBody = z.strictObject({
-  // Caps well above the real limits (2048-char URLs, short slugs), so those keep their own error codes.
-  domainId: z.string().min(1).max(64), slug: z.string().max(1024), url: z.string().max(8192),
-  redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
+  // Caps well above the real limits (2048-char URLs, short slugs), so those keep their own error codes. url: required unless kind is vcard.
+  domainId: z.string().min(1).max(64), slug: z.string().max(1024), url: z.string().max(8192).optional(),
+  redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules, ...kind,
 });
 const patchBody = z.strictObject({
-  url: z.string().max(8192).optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules,
+  url: z.string().max(8192).optional(), redirectCode: code.optional(), passQuery: z.boolean().optional(), ...times, ...rules, ...kind,
 });
+
+/** A refused body: bad_vcard with the field when every problem is in the card, else bodyError's code. */
+export function badBody(e: z.ZodError): { error: string; field?: string } {
+  const p = e.issues[0]?.path ?? [];
+  if (!e.issues.every((i) => i.path[0] === "vcard")) return { error: bodyError(e) };
+  // phones.0.number -> phones.0, the same names checkVcard uses.
+  return { error: "bad_vcard", field: p.slice(1).filter((x) => x !== "number" && x !== "type").join(".") || "vcard" };
+}
+
+/** The card checked, or the API error. */
+export const cardOf = (v: z.output<typeof vcardSchema>): { vcard: VCard } | { error: "bad_vcard"; field: string } => {
+  const r = checkVcard(v);
+  return r.ok ? { vcard: r.vcard } : { error: "bad_vcard", field: r.field };
+};
 
 /** Countries two ASCII letters (raw, then upper-cased; never XX or T1, they never match), deduped; each url checked like the main destination. */
 export async function validateRoutes(env: Env, input: RouteInput[], known?: string[]): Promise<{ routes: Route[] } | { error: "bad_route"; index: number; reason: string }> {
@@ -108,13 +138,13 @@ links.get("/by-slug", async (c) => {
   if (!canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
   const slug = c.req.query("slug") ?? "";
   if (!slug) return c.json({ error: "not_found" }, 404);
-  const row = await c.env.DB.prepare("SELECT * FROM links WHERE domain_id = ? AND slug_key = ?").bind(domain.id, slugKey(slug, domain.caseSensitive)).first();
+  const row = await c.env.DB.prepare(`${LINK_SELECT} WHERE domain_id = ? AND slug_key = ?`).bind(domain.id, slugKey(slug, domain.caseSensitive)).first();
   return row ? c.json(toApiLink(rowToLink(row))) : c.json({ error: "not_found" }, 404);
 });
 
 links.get("/:id", async (c) => {
   const user = c.var.user;
-  const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(c.req.param("id")).first();
+  const row = await c.env.DB.prepare(`${LINK_SELECT} WHERE id = ?`).bind(c.req.param("id")).first();
   if (!row) return c.json({ error: "not_found" }, 404);
   const link = rowToLink(row);
   const domain = await getDomain(c.env, link.domainId);
@@ -144,8 +174,11 @@ links.get("/", async (c) => {
     const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
     // D1 caps LIKE patterns at 50 bytes.
     if (new TextEncoder().encode(like).length > 50) return c.json({ error: "q_too_long" }, 400);
-    where.push("(slug LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')");
-    binds.push(like, like);
+    // A card's url is one placeholder for every card: it matches by its name and organization instead.
+    where.push(`(slug LIKE ? ESCAPE '\\' OR (kind = 'url' AND url LIKE ? ESCAPE '\\')
+      OR (kind = 'vcard' AND (coalesce(json_extract(vcards.data, '$.firstName'), '') || ' ' || coalesce(json_extract(vcards.data, '$.lastName'), '')
+        || ' ' || coalesce(json_extract(vcards.data, '$.org'), '')) LIKE ? ESCAPE '\\'))`);
+    binds.push(like, like, like);
   }
   const status = c.req.query("status");
   if (status !== undefined) {
@@ -172,10 +205,10 @@ links.get("/", async (c) => {
     binds.push(at, at, id);
   }
   const rows = (await c.env.DB.prepare(
-    `SELECT * FROM links ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`,
+    `${LINK_SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`,
   ).bind(...binds).all()).results.map(rowToLink);
   const items = rows.slice(0, PAGE);
-  return c.json({ items: items.map(toApiLink), next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
+  return c.json({ items: items.map(toListLink), next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
 });
 
 // No POST /:id exists, so nothing shadows this.
@@ -185,8 +218,11 @@ links.post("/", async (c) => {
   const user = c.var.user;
   if (!can(user, "links.create")) return c.json(forbidden, 403);
   const body = createBody.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
+  if (!body.success) return c.json(badBody(body.error), 400);
   const b = body.data;
+  // A vCard link needs its card and has no destination; any other link needs its url.
+  const isCard = b.kind === "vcard";
+  if (isCard !== (b.vcard !== undefined) || (!isCard && b.url === undefined)) return c.json({ error: "invalid_body" }, 400);
   // Every pre-read in one batch, judged below in the old order. Slugs are ASCII, so lower(slug) = lower(slugKey(slug, *)).
   const [dr, mr, hr, lr, sr] = await c.env.DB.batch([
     domainQ(c.env, b.domainId), memberQ(c.env, b.domainId, user.id), hostsQ(c.env), lockQ(c.env, b.domainId, b.slug), settingsQ(c.env),
@@ -197,13 +233,18 @@ links.post("/", async (c) => {
   const s = checkSlug(b.slug, [...domain.reservedExtra, ...reservedSlugs(c.env, domain.host)]);
   if (!s.ok) return c.json({ error: s.reason === "too_long" ? "slug_too_long" : s.reason }, 400);
   const hosts = (hr!.results as { host: string }[]).map((r) => r.host);
-  const dest = await destination(c.env, b.url, [], hosts);
+  if (isCard && b.url !== undefined) return c.json({ error: "vcard_url" }, 400);
+  // S9: a contact card has no password or routing (refused); its redirect code and query rule are ignored (it never redirects).
+  if (isCard && (b.password != null || b.routes?.length)) return c.json({ error: "vcard_rule" }, 400);
+  const card = isCard ? cardOf(b.vcard!) : null;
+  if (card && "error" in card) return c.json(card, 400);
+  const dest = card ? { href: VCARD_URL } : await destination(c.env, b.url!, [], hosts);
   if ("error" in dest) return c.json({ error: dest.error }, 400);
   const startsAt = b.startsAt ?? null, expiresAt = b.expiresAt ?? null;
   if (badWindow(startsAt, expiresAt)) return c.json({ error: "bad_window" }, 400);
   // Instance defaults (read in the batch above) fill only what the request left out; a password link never defaults to 301.
   const d = parseSettings(sr!.results as { key: string; value: string }[]);
-  const redirectCode = b.redirectCode ?? (b.password != null ? 302 : d.linkRedirectCode);
+  const redirectCode = card ? 302 : b.redirectCode ?? (b.password != null ? 302 : d.linkRedirectCode);
   if (b.password != null && redirectCode === 301) return c.json({ error: "password_301" }, 400);
   const rt = await validateRoutes(c.env, b.routes ?? [], hosts);
   if ("error" in rt) return c.json(rt, 400);
@@ -217,7 +258,7 @@ links.post("/", async (c) => {
   const link: LinkRow = {
     id: crypto.randomUUID(), domainId: domain.id, slug: b.slug, slugKey: key, url: dest.href,
     redirectCode, startsAt, expiresAt, passQuery: b.passQuery ?? d.linkPassQuery,
-    passwordHash, routes: rt.routes, forwardTo: null,
+    passwordHash, routes: rt.routes, forwardTo: null, kind: card ? "vcard" : "url", ...(card ? { vcard: card.vcard } : {}),
     createdBy: user.id, updatedBy: user.id, createdAt: now, updatedAt: now,
   };
   const may = actorCan(user.id, "links.create");
@@ -225,12 +266,16 @@ links.post("/", async (c) => {
     // The lock check and the permission are repeated inside the insert so a delete or a role edit racing this request cannot be bypassed.
     const res = await c.env.DB.batch([
       c.env.DB.prepare(
-        `INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,password_hash,routes,created_by,updated_by,created_at,updated_at)
-         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)) AND ${may.sql}`,
+        `INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,password_hash,routes,kind,created_by,updated_by,created_at,updated_at)
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)) AND ${may.sql}`,
       ).bind(link.id, domain.id, link.slug, key, link.url, link.redirectCode, startsAt, expiresAt, link.passQuery ? 1 : 0,
-        passwordHash, JSON.stringify(link.routes), user.id, user.id, now, now, domain.id, key, ...may.binds),
+        passwordHash, JSON.stringify(link.routes), link.kind, user.id, user.id, now, now, domain.id, key, ...may.binds),
+      // The card only with its link (a fresh id, so it exists only if the insert above ran).
+      ...(card ? [c.env.DB.prepare("INSERT INTO vcards (link_id, data, photo) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM links WHERE id = ?)")
+        .bind(link.id, vcardData(card.vcard), card.vcard.photo, link.id)] : []),
+      // Never the card's contents in the audit log: only that it is one.
       auditStmt(c.env, { ...actor(c), action: "link.create", targetType: "link", targetId: link.id,
-        detail: { host: domain.host, slug: link.slug, url: link.url, ...(passwordHash ? { protection: "set" } : {}), ...(link.routes.length ? { routes: link.routes.length } : {}) } },
+        detail: { host: domain.host, slug: link.slug, url: link.url, ...(card ? { kind: "vcard" } : {}), ...(passwordHash ? { protection: "set" } : {}), ...(link.routes.length ? { routes: link.routes.length } : {}) } },
       { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] }),
     ]);
     if (res[0]!.meta.changes === 0) return await stillCan(c.env, may) ? c.json({ error: "locked" }, 409) : c.json(forbidden, 403);
@@ -294,7 +339,7 @@ async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, i
   const user = c.var.user;
   // The link, its domain and the membership in one batch (the last two found through the link).
   const [lr, dr, mr, hr] = await c.env.DB.batch([
-    c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(id),
+    c.env.DB.prepare(`${LINK_SELECT} WHERE id = ?`).bind(id),
     c.env.DB.prepare("SELECT d.* FROM links l JOIN domains d ON d.id = l.domain_id WHERE l.id = ?").bind(id),
     c.env.DB.prepare("SELECT 1 FROM links l JOIN domain_members m ON m.domain_id = l.domain_id WHERE l.id = ? AND m.user_id = ?").bind(id, user.id),
     ...(withHosts ? [hostsQ(c.env)] : []),
@@ -312,7 +357,7 @@ async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, i
 links.patch("/:id", async (c) => {
   const user = c.var.user;
   const body = patchBody.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
+  if (!body.success) return c.json(badBody(body.error), 400);
   const b = body.data;
   const found = await editable(c, c.req.param("id"), b.url !== undefined || !!b.routes?.length);
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
@@ -320,6 +365,14 @@ links.patch("/:id", async (c) => {
   const g = editGuard(user, link, domain);
   // A forwarder is never edited: it can only be deleted.
   if (link.forwardTo) return c.json({ error: "forwarder" }, 409);
+  // S9: the kind is fixed at creation. A card's url never changes and it takes no password or routing; only a card takes `vcard`.
+  const isCard = link.kind === "vcard";
+  if (b.kind !== undefined && b.kind !== link.kind) return c.json({ error: "kind_change" }, 400);
+  if (isCard && b.url !== undefined) return c.json({ error: "vcard_url" }, 400);
+  if (isCard && (b.password != null || b.routes?.length)) return c.json({ error: "vcard_rule" }, 400);
+  if (!isCard && b.vcard !== undefined) return c.json({ error: "not_vcard" }, 400);
+  const card = b.vcard === undefined ? null : cardOf(b.vcard);
+  if (card && "error" in card) return c.json(card, 400);
   let url = link.url;
   if (b.url !== undefined) {
     const dest = await destination(c.env, b.url, [], hosts);
@@ -341,7 +394,7 @@ links.patch("/:id", async (c) => {
   if ("error" in pw) return c.json({ error: pw.error }, 400);
   const next: LinkRow = {
     ...link, url, redirectCode: b.redirectCode ?? link.redirectCode, passQuery: b.passQuery ?? link.passQuery,
-    passwordHash: pw.hash === undefined ? link.passwordHash : pw.hash, routes,
+    passwordHash: pw.hash === undefined ? link.passwordHash : pw.hash, routes, ...(card ? { vcard: card.vcard } : {}),
     startsAt: b.startsAt === undefined ? link.startsAt : b.startsAt,
     expiresAt: b.expiresAt === undefined ? link.expiresAt : b.expiresAt,
     // updated_at is the revision: always move it forward, even within the same second.
@@ -359,14 +412,18 @@ links.patch("/:id", async (c) => {
   const protection = pw.hash ? "set" : pw.hash === null && link.passwordHash !== null ? "cleared" : undefined;
   cols.push(["updated_by", user.id], ["updated_at", next.updatedAt]);
   // Audit first, only while the row is still the revision read, so a lost race writes neither.
+  const same = { sql: `EXISTS (SELECT 1 FROM links WHERE id = ? AND updated_at = ?) AND ${g.sql}`, binds: [link.id, link.updatedAt, ...g.binds] };
   const res = await c.env.DB.batch([
     auditStmt(c.env, { ...actor(c), action: "link.update", targetType: "link", targetId: link.id,
-      detail: { host: domain.host, slug: link.slug, url: next.url, ...(protection ? { protection } : {}), ...(b.routes !== undefined ? { routes: next.routes.length } : {}) } },
-    { sql: `EXISTS (SELECT 1 FROM links WHERE id = ? AND updated_at = ?) AND ${g.sql}`, binds: [link.id, link.updatedAt, ...g.binds] }),
+      detail: { host: domain.host, slug: link.slug, url: next.url, ...(isCard ? { kind: "vcard" } : {}), ...(protection ? { protection } : {}), ...(b.routes !== undefined ? { routes: next.routes.length } : {}) } },
+    same),
+    // The card under the same guard as the audit, before the row's revision moves (an upsert: a missing card row is rewritten).
+    ...(card ? [c.env.DB.prepare(`INSERT INTO vcards (link_id, data, photo) SELECT ?,?,? WHERE ${same.sql}
+      ON CONFLICT(link_id) DO UPDATE SET data = excluded.data, photo = excluded.photo`).bind(link.id, vcardData(card.vcard), card.vcard.photo, ...same.binds)] : []),
     c.env.DB.prepare(`UPDATE links SET ${cols.map(([k]) => `${k}=?`).join(", ")} WHERE id=? AND updated_at=? AND ${g.sql}`)
       .bind(...cols.map(([, v]) => v), link.id, link.updatedAt, ...g.binds),
   ]);
-  if (res[1]!.meta.changes === 0) return lost(c, link.id, g);
+  if (res[res.length - 1]!.meta.changes === 0) return lost(c, link.id, g);
   await purge(c.env, link.domainId, link.slugKey);
   return c.json(toApiLink(next));
 });

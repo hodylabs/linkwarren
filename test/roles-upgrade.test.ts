@@ -18,7 +18,8 @@ const OWNER = "owner@example.com", MEMBER = "a@example.com";
 /** Ids, secrets and key prefixes are random per run; everything else must match exactly. */
 const norm = (s: string) => s
   .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
-  .replace(/lw_[A-Za-z0-9_-]+/g, "lw_<x>");
+  .replace(/lw_[A-Za-z0-9_-]+/g, "lw_<x>")
+  .replace(/"kind":"url",/g, ""); // links.kind is new in 0012 by design
 const answer = async (r: Response) => ({ status: r.status, body: norm(await r.text()) });
 
 async function requests() {

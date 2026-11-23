@@ -23,6 +23,7 @@ const ICONS: Record<Screen, ReactNode> = {
       <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
     </>
   ),
+  qr: <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h3v3M21 14v7h-4M14 21v-3" />,
   analytics: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
   people: (
     <>
@@ -47,13 +48,14 @@ const ICONS: Record<Screen, ReactNode> = {
 
 export const SCREEN_TITLES: Record<Screen, string> = {
   links: "Links",
+  qr: "QR codes",
   domains: "Domains",
   analytics: "Analytics",
   people: "People & audit log",
   agents: "API & agents",
   settings: "Settings",
 };
-const KEYS: Record<Screen, string> = { links: "G L", domains: "G D", analytics: "G A", people: "G P", agents: "G I", settings: "G S" };
+const KEYS: Record<Screen, string> = { links: "G L", qr: "G Q", domains: "G D", analytics: "G A", people: "G P", agents: "G I", settings: "G S" };
 const TYPE_LABEL = { main: "Main", shared: "Shared", private: "Private" } as const;
 
 /** Two letters for the avatar: initials of the name, else the start of the email. */
@@ -112,6 +114,7 @@ export function Rail() {
     <>
       <nav className="nav" aria-label="Screens">
         <Item screen="links" current={screen} />
+        {canSee(me, "qr") && <Item screen="qr" current={screen} />}
         <Item screen="domains" current={screen} />
         <Item screen="analytics" current={screen} />
         {/* R9: everyone manages their own keys and agents; with People or Settings it sits in their group, as the owner's does. */}
