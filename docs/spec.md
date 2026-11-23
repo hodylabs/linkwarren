@@ -69,7 +69,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 
 One Worker serves everything. The request **host** decides the path:
 - `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints, machine API under `/api/v1`. Signed in by the app or by Cloudflare Access (`AUTH_MODE`).
-- Path mode (`DASHBOARD_PATH`, for example `/dashboard`): `DASHBOARD_HOST` is the main short domain. The front door (`src/index.ts`, configured by `src/dash.ts`) decides with string compares only, before any D1 or KV work: the prefix and its subpaths are the dashboard (prefix stripped, so the app keeps its root routes), root OAuth discovery paths answer JSON, everything else goes straight to the redirect handler.
+- Path mode (`DASHBOARD_PATH`, for example `/dashboard`): `DASHBOARD_HOST` is the main short domain. The front door (`src/index.ts`, configured by `src/dash.ts`) decides with string compares only, before any D1 or KV work: the prefix and its subpaths are the dashboard (prefix stripped, so the app keeps its root routes), root OAuth discovery paths answer JSON, `/mcp` and `/api/v1` at the root stay the MCP server and the machine API, and everything else goes straight to the redirect handler.
 - `LEGACY_DASHBOARD_HOST` (optional) → `301` for `GET`/`HEAD` to the same path under the dashboard, `410` for everything else.
 - Any other host → the redirect handler, looking up `(domain for host, slug)`.
 

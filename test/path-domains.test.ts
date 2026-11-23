@@ -67,6 +67,28 @@ describe("the dashboard host as a main domain", () => {
   });
 });
 
+describe("the legacy dashboard host never becomes a short domain", () => {
+  const legacy = (e: Env = pathEnv({ LEGACY_DASHBOARD_HOST: "old.test" })) => e;
+  it("create refuses it in path and host mode, for every type", async () => {
+    for (const e of [legacy(), hostEnv({ LEGACY_DASHBOARD_HOST: "old.test" })]) {
+      for (const type of ["main", "private", "shared"]) {
+        const r = await api("POST", "/api/domains", { host: "Old.Test", type }, e);
+        expect([type, r.status, await r.json()]).toEqual([type, 400, { error: "legacy_dashboard_host" }]);
+      }
+    }
+    expect(await one("SELECT COUNT(*) n FROM domains")).toEqual({ n: 0 });
+  });
+  it("import reports it as a conflict and writes nothing, in path and host mode", async () => {
+    const body = { mainHost: "other.test", domains: [], confirmNoPasswords: true, links: [{ host: "old.test", slug: "a", destination: "https://dest.example.com/a", enabled: true }] };
+    for (const e of [legacy(), hostEnv({ LEGACY_DASHBOARD_HOST: "old.test" })]) {
+      const j = await (await api("POST", "/api/import", body, e)).json<{ created: number; conflicts: unknown[] }>();
+      expect(j.conflicts).toEqual([{ host: "old.test", slug: "a", reason: "legacy_dashboard_host" }]);
+      expect(j.created).toBe(0);
+    }
+    expect(await one("SELECT COUNT(*) n FROM domains WHERE host = 'old.test'")).toEqual({ n: 0 });
+  });
+});
+
 describe("the prefix segment is reserved on the dashboard host (R4)", () => {
   beforeEach(async () => {
     await domain("ds", "short.test", 1); // case-sensitive: the reserved check still ignores case

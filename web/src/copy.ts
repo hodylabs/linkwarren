@@ -23,6 +23,7 @@ const ERRORS: Record<string, string> = {
   host_taken: "This domain is already in linkwarren.",
   invalid_host: "Enter a domain like go.example.com.",
   dashboard_host: "This is the dashboard address. Use a different domain for short links.",
+  legacy_dashboard_host: "This is the old dashboard address. It only forwards to the new one, so it cannot hold short links. Use a different domain.",
   dashboard_main_only: "This is the dashboard address. It can only be added as the main domain.",
   reserved_host: "This is the address outside domains point their DNS record at. Use a different domain for short links.",
   pending_limit: "You already have 3 domains waiting for approval.",
@@ -124,7 +125,8 @@ export const errorText = (code: string): string => (Object.hasOwn(ERRORS, code) 
 
 // Import conflict reasons stay their code (the downloaded results keep it); only the ones that need words get them.
 const CONFLICTS: Record<string, string> = {
-  reserved_path: "This address is the dashboard's path on this domain.",
+  reserved_path: "This address is reserved on this domain for the dashboard, the MCP server or the API.",
+  legacy_dashboard_host: "This is the old dashboard address, which cannot hold short links.",
   dashboard_main_only: "This is the dashboard's domain. Add it as the main domain first.",
 };
 /** A readable import conflict reason. */

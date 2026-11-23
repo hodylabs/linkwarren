@@ -9,7 +9,7 @@ import { canManageDomain, usableDomainsSql } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
 import { checkDestination, checkSlugShape, slugKey } from "../validate";
 import { reservedSlugs } from "../dash";
-import { refusedDashboard } from "./domains";
+import { isLegacyHost, refusedDashboard } from "./domains";
 import { purgeHost, purgeMany } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
@@ -81,6 +81,7 @@ importApi.post("/", async (c) => {
   const isTwin = (h: string, slug: string) => (twins.get(h)?.get(slug.toLowerCase())?.size ?? 0) > 1;
   for (const h of hosts) {
     const row: DomainRow | undefined = existing.get(h);
+    if (isLegacyHost(c.env, h)) { badHost.set(h, "legacy_dashboard_host"); continue; }
     // The dashboard host: never in host mode; in path mode only as an existing main domain (import creates private ones).
     const dashErr = h !== dashboard ? null : refusedDashboard(c.env) !== null ? "dashboard_host" : row?.type === "main" ? null : "dashboard_main_only";
     if (dashErr) { badHost.set(h, dashErr); continue; }

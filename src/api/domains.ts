@@ -59,6 +59,9 @@ async function administer(c: Context<E>, id: string, fn: (lease: Lease, lock: Le
 /** The host a new short domain may not be: the dashboard host in host mode, none in path mode (S8c). */
 export const refusedDashboard = (env: Env): string | null => (dash(env)?.pathMode ? null : env.DASHBOARD_HOST);
 
+/** The old dashboard host answers 301/410 only (S8c), so a short domain there could never resolve. */
+export const isLegacyHost = (env: Env, host: string): boolean => host === dash(env)?.legacy;
+
 const getCf = async (env: Env, id: string): Promise<CfRow | null> => {
   const r = await env.DB.prepare("SELECT * FROM domain_cf WHERE domain_id = ?").bind(id).first();
   return r ? rowToCf(r) : null;
@@ -143,6 +146,7 @@ domains.post("/", async (c) => {
   const host = normalizeHost(body.data.host.trim());
   const bad = hostError(host, refusedDashboard(c.env), cnameTarget(c.env) ?? undefined);
   if (bad) return c.json({ error: bad }, 400);
+  if (isLegacyHost(c.env, host)) return c.json({ error: "legacy_dashboard_host" }, 400);
   // Path mode (host mode refused it above): the dashboard host is the main short domain only, so no one can claim it first.
   if (type !== "main" && host === normalizeHost(c.env.DASHBOARD_HOST)) return c.json({ error: "dashboard_main_only" }, 400);
   // Early exits so a doomed create makes no Cloudflare calls; the INSERT below still enforces both under races.

@@ -308,12 +308,12 @@ describe("import results", () => {
     expect(text).toContain("go.test,'=bad,conflict,exists");
   });
 
-  it("a reserved_path conflict reads as the dashboard's path", async () => {
+  it("a reserved_path conflict reads as a reserved address", async () => {
     const conflicts = [{ host: "go.test", slug: "dashboard", reason: "reserved_path" }];
     const { user } = boot({ ...MAIN_ONLY, routes: { "POST /api/import": () => ({ body: { ...REPORT, conflicts } }) } });
     await heading("Bring your links");
     await user.upload(screen.getByLabelText("Links file"), CSV());
-    expect(await screen.findByText("go.test/dashboard: This address is the dashboard's path on this domain.")).toBeTruthy();
+    expect(await screen.findByText("go.test/dashboard: This address is reserved on this domain for the dashboard, the MCP server or the API.")).toBeTruthy();
   });
 
   it("a stopped import offers Retry, which resumes; the file input is cleared for choosing again", async () => {

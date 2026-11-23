@@ -47,7 +47,7 @@ Optional vars (see [Dashboard at a path](#dashboard-at-a-path)):
 
 ## Switching to path mode
 
-This moves an instance that already has data from host mode (`dash.example.com`) to path mode (`example.com/dashboard`). Plan a short window and tell people first. The same steps, with the hosts changed, apply when you move a host-mode dashboard to another dashboard host.
+This moves an instance that already has data from host mode (`dash.example.com`) to path mode (`example.com/dashboard`). Plan a short window and tell people first. These steps are for path mode only. To move a host-mode dashboard to another dashboard-only host, see "Moving a host-mode dashboard" below.
 
 Use these steps only when the old dashboard host is a dashboard-only host. Never set `LEGACY_DASHBOARD_HOST` to a host that serves short links (for example a path-mode instance's main domain): the legacy host stops serving short links, so every link on it would redirect to the dashboard instead of its destination. To move a path-mode dashboard to another main domain, keep the old domain as an ordinary short domain and leave `LEGACY_DASHBOARD_HOST` unset.
 
@@ -157,6 +157,10 @@ Path mode changes the paths that answer when agents are off. With `MCP_ENABLED` 
 ### Back out
 
 Unset `DASHBOARD_PATH`, set `DASHBOARD_HOST` back to the old dashboard host, remove `LEGACY_DASHBOARD_HOST`, and deploy. Then run `DELETE FROM sessions` again for the same reason as step 7. Sessions, passkeys and agent connections made in path mode stop working the same way: people sign in by email link, add passkeys and reconnect agents at `https://dash.example.com/mcp`.
+
+## Moving a host-mode dashboard
+
+To move a host-mode dashboard from `dash.example.com` to another dashboard-only host (`admin.example.com`), keep `DASHBOARD_PATH` unset and do not use the path-mode steps above (they need a main short domain and set `DASHBOARD_PATH`). Give the new host a custom domain or route to the Worker, then in `wrangler.instance.jsonc` set `DASHBOARD_HOST` to the new host and `LEGACY_DASHBOARD_HOST` to the old one (keep it routed), and deploy. People sign in again on the new host (the cookie is host-only), and passkeys must be added again. Point API scripts and agent connections at the new host: the old host answers `410` for `/api/v1` and `/mcp`.
 
 ## Local development
 
