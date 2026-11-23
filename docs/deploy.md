@@ -47,7 +47,9 @@ Optional vars (see [Dashboard at a path](#dashboard-at-a-path)):
 
 ## Switching to path mode
 
-This moves an instance that already has data from host mode (`dash.example.com`) to path mode (`example.com/dashboard`). Plan a short window and tell people first. The same steps, with the hosts changed, apply when you move the dashboard to another host.
+This moves an instance that already has data from host mode (`dash.example.com`) to path mode (`example.com/dashboard`). Plan a short window and tell people first. The same steps, with the hosts changed, apply when you move a host-mode dashboard to another dashboard host.
+
+Use these steps only when the old dashboard host is a dashboard-only host. Never set `LEGACY_DASHBOARD_HOST` to a host that serves short links (for example a path-mode instance's main domain): the legacy host stops serving short links, so every link on it would redirect to the dashboard instead of its destination. To move a path-mode dashboard to another main domain, keep the old domain as an ordinary short domain and leave `LEGACY_DASHBOARD_HOST` unset.
 
 **What changes for people:**
 
