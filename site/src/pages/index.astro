@@ -250,14 +250,16 @@ footer a{color:var(--text)}
     <section id="deploy" aria-labelledby="dh">
       <div class="split">
         <div>
-          <h2 id="dh">Deploy with one wrangler command</h2>
+          <h2 id="dh">Deploy with wrangler</h2>
           <p class="sub" style="margin-bottom:12px">All you need is a Cloudflare account and a domain on it. No server to patch.</p>
           <ol class="steps">
             <li><b>Clone the repo</b><span><code>git clone {repo}</code></span></li>
-            <li><b>Create the database and stores</b><span>One D1 database and two KV namespaces, with <code>wrangler</code>.</span></li>
-            <li><b>Write the instance config</b><span>Copy <code>wrangler.instance.example.jsonc</code> to <code>wrangler.instance.jsonc</code> and fill in their ids.</span></li>
-            <li><b>Deploy the Worker</b><span><code>npm run build:web</code> and <code>npx wrangler deploy -c wrangler.instance.jsonc</code>, with a Resend key for sign-in emails.</span></li>
-            <li><b>Finish the setup wizard</b><span>Create the owner account, add a domain, and import your old links if you have them.</span></li>
+            <li><b>Create the database and stores</b><span>One D1 database and two KV namespaces, with <code>wrangler</code>. Turn on Analytics Engine (free) for click analytics.</span></li>
+            <li><b>Write the instance config</b><span>Copy <code>wrangler.instance.example.jsonc</code> to <code>wrangler.instance.jsonc</code>: your ids, your hosts and routes, and your <code>EMAIL_FROM</code> sender. No Analytics Engine? Remove its binding.</span></li>
+            <li><b>Create the tables</b><span><code>npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc</code></span></li>
+            <li><b>Set the two secrets</b><span><code>OWNER_EMAIL</code> (before the first sign-in) and <code>RESEND_API_KEY</code>, with <code>npx wrangler secret put</code>.</span></li>
+            <li><b>Deploy the Worker</b><span><code>npm run build:web</code> and <code>npx wrangler deploy -c wrangler.instance.jsonc</code></span></li>
+            <li><b>Finish the setup wizard</b><span>Sign in as the owner, add a domain, and import your old links if you have them.</span></li>
           </ol>
           <p style="margin-top:22px"><a href="/docs/getting-started/">Full deploy guide</a></p>
         </div>
