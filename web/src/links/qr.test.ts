@@ -34,6 +34,17 @@ describe("qr", () => {
     expect(doc.querySelector("rect")?.getAttribute("fill")).toBe("#FFFFFF");
     expect(doc.querySelector("path")?.getAttribute("fill")).toBe("#15181D");
   });
+  it("takes colors and an error correction level", () => {
+    const text = "https://example.com/menu";
+    expect(qrMatrix(text, "H").length).toBeGreaterThan(qrMatrix(text, "L").length);
+    const doc = new DOMParser().parseFromString(qrSvg(qrMatrix(text), 4, "#1D4ED8", "#FFF7E6"), "image/svg+xml");
+    expect(doc.querySelector("rect")?.getAttribute("fill")).toBe("#FFF7E6");
+    expect(doc.querySelector("path")?.getAttribute("fill")).toBe("#1D4ED8");
+    const bad = qrSvg(qrMatrix(text), 4, '#000"/><script>x</script><x a="', "red");
+    expect(bad).not.toContain("script");
+    expect(bad).toContain('fill="#15181D"');
+    expect(bad).toContain('fill="#FFFFFF"');
+  });
 });
 
 describe("download", () => {

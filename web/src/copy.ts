@@ -117,6 +117,23 @@ const ERRORS: Record<string, string> = {
   builtin: "Owner and Member are built in and cannot be deleted.",
   bad_move_to: "Pick another role for their people.",
   bad_role: "That role no longer exists. Reload and try again.",
+  qr_name: "Give the code a name of 1 to 80 characters.",
+  wifi_ssid: "Enter the network name.",
+  wifi_ssid_long: "Network names can be at most 32 bytes.",
+  wifi_password_long: "Wi-Fi passwords can be at most 64 characters.",
+  qr_url: "Enter a full http or https address, for example https://example.com/menu.",
+  qr_text_empty: "Enter some text.",
+  qr_text_long: "Text can be at most 300 characters, so the code stays easy to scan.",
+  qr_email: "Enter one email address, like info@example.com.",
+  qr_phone: "Enter a phone number with 3 to 20 digits and an optional +.",
+  qr_too_long: "This is too much for one QR code. Shorten it.",
+  qr_link: "Pick a short link you can use.",
+  wifi_password_unreadable: "Enter the Wi-Fi password again: the saved one cannot be read on this server.",
+  bad_color: "Pick colors as #RRGGBB.",
+  inverted_colors: "Use a darker color for the code than for the background. Many scanners cannot read light on dark.",
+  low_contrast: "These colors are too close. Pick a darker code or a lighter background.",
+  too_many_qr_codes: "You can have at most 1000 QR codes. Delete one first.",
+  secrets_key_missing: "Saving a Wi-Fi password needs the SECRETS_KEY Worker secret. Ask the owner to set it, or make an open network code.",
 };
 
 /** "1 link", "2 links"; pass `many` for irregular plurals. */

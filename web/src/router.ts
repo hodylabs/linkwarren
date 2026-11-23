@@ -1,8 +1,8 @@
 import { createElement, useEffect, useMemo, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from "react";
 import { stripBase, withBase } from "./base";
 
-export type Screen = "links" | "domains" | "people" | "analytics" | "agents" | "settings";
-const SCREENS: readonly Screen[] = ["links", "domains", "people", "analytics", "agents", "settings"];
+export type Screen = "links" | "qr" | "domains" | "people" | "analytics" | "agents" | "settings";
+const SCREENS: readonly Screen[] = ["links", "qr", "domains", "people", "analytics", "agents", "settings"];
 
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((fn) => fn());

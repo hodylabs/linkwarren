@@ -647,6 +647,16 @@ main>.an{flex:1;min-height:0}
 .qr p{margin:0 0 8px;color:var(--muted)}
 .qr .row{display:flex;flex-wrap:wrap;gap:8px}
 
+/* QR codes screen (S9) */
+.ctl textarea{flex:1;border:0;outline:0;font-family:var(--mono);font-size:13px;padding:8px 10px;background:transparent;color:var(--text);min-width:0;resize:vertical}
+.qr-thumb{display:block;width:40px;height:40px;border:1px solid var(--line);border-radius:4px}
+.qr-open{font-weight:500;padding:0 6px;margin-left:-6px}
+.qr-edit .qr>svg{width:168px;height:168px}
+.qr-edit .qr{min-height:60px}
+.qr-style{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
+.qr-style input[type=color]{display:block;width:56px;height:34px;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:2px;cursor:pointer}
+@media (max-width:760px){.qr-style input[type=color]{width:64px;height:44px}}
+
 /* first-run setup wizard (setup.html) */
 .setup{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:100vh}
 .steps{background:var(--rail);color:var(--rail-text);padding:24px 18px;display:flex;flex-direction:column;gap:22px}

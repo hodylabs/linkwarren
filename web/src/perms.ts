@@ -41,6 +41,8 @@ export const mayAssign = (me: Who, r: { id: string; perms: readonly Perm[] }): b
 export function canSee(me: Who, s: Screen): boolean {
   if (s === "people") return can(me, "people.manage") || can(me, "audit");
   if (s === "settings") return can(me, "settings");
+  // Same rule as the server (src/api/qrcodes.ts): link creators make their own codes; links.editAny manages everyone's.
+  if (s === "qr") return can(me, "links.create") || can(me, "links.editAny");
   return true;
 }
 
