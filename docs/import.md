@@ -24,7 +24,7 @@ The setup wizard (step "Bring your links") and `POST /api/import` take the same 
 
 ## CSV
 
-The first row names the columns: `slug` and `destination` (or `url`) are required; `host`, `enabled` (`true`, `false`, `1`, `0`, `yes`, `no`), `start_date` and `end_date` are optional. An empty host is this instance's main domain. A CSV has no `protected` column, so it always needs the confirmation above.
+The first row names the columns: `slug` and `destination` (or `url`) are required; `host`, `enabled` (`true`, `false`, `1`, `0`, `yes`, `no`), `start_date` and `end_date` are optional. An empty host is this instance's main domain. A CSV has no `protected` column, so it always needs the confirmation above. A row whose `kind` column is `vcard` (a contact card in a Links CSV export, which leaves its destination empty) is refused with a line error: bring contact cards back through a JSON import with their `vcard` fields. A destination on the contact card placeholder host (`vcard.invalid`) is a conflict (`invalid_destination`).
 
 ## API
 

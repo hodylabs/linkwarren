@@ -127,7 +127,9 @@ describe("bulk", () => {
     const l = await mkCard("owner");
     const c = await call("owner", "POST", "/api/links/bulk", { action: "move", ids: [l.id], domainId: "d2", oldAddress: "copy" });
     const copy = ((await c.json()) as { results: { link: L }[] }).results[0]!.link;
-    expect(copy).toMatchObject({ kind: "vcard", vcard: { firstName: "Ada", photo: JPEG } });
+    // Bulk results are list-shaped: hasPhoto, never the photo.
+    expect(copy).toMatchObject({ kind: "vcard", vcard: { firstName: "Ada", hasPhoto: true } });
+    expect(copy.vcard).not.toHaveProperty("photo");
     expect((await one<{ n: number }>("SELECT COUNT(*) n FROM vcards"))!.n).toBe(2);
     const r = await exports.default.fetch("https://two.test/ada", { redirect: "manual" });
     expect([r.status, r.headers.get("content-disposition")]).toEqual([200, 'attachment; filename="ada.vcf"']);
@@ -165,6 +167,22 @@ describe("/api/v1, import and MCP", () => {
     expect(found.vcard).toMatchObject({ hasPhoto: true });
     expect(found.vcard).not.toHaveProperty("photo");
     expect((await v1("PATCH", `/links/${id}`, { url: "https://x.com" })).status).toBe(400);
+  });
+
+  it("search matches a card by its name or organization, never by the placeholder url", async () => {
+    const l = await mkCard("a");
+    await call("a", "POST", "/api/links", { domainId: "dm", slug: "plain", url: "https://example.com/vcard" });
+    const found = async (q: string) => ((await (await call("a", "GET", `/api/links?q=${q}`)).json()) as { items: L[] }).items.map((x) => x.id);
+    expect(await found("lovelace")).toEqual([l.id]);
+    expect(await found("invalid")).toEqual([]);
+    expect((await found("vcard")).length).toBe(1); // only the url link whose destination has it
+    expect(await found("vcard")).not.toContain(l.id);
+  });
+
+  it("import refuses the card placeholder as a live destination", async () => {
+    const links = [{ host: null, slug: "ada", destination: VCARD_URL, enabled: true, startDate: null, endDate: null, protected: false }];
+    const r = await call("owner", "POST", "/api/import", { mainHost: "go.test", domains: [], links });
+    expect(await r.json()).toMatchObject({ created: 0, conflicts: [{ slug: "ada", reason: "invalid_destination" }] });
   });
 
   it("import creates a card link from a vcard row; a bad card is a conflict", async () => {
