@@ -4,10 +4,10 @@
   --page:#181A1D; --chrome:#16181B; --card:#1E2023; --band:#222428; --raised:#25282C; --inset:#1C1E21;
   --line:#2B2F33; --line-soft:#24272B; --line-hi:#3A3F45;
   --btn:#2B2F36; --btn-hover:#32363D; --btn-line:#363B40; --chip:#26292E;
-  --text:#F4F6F7; --text-2:#CBD2D6; --muted:#A3ADB5; --faint:#8A96A0;
+  --text:#F4F6F7; --text-2:#CBD2D6; --muted:#A3ADB5; --faint:#909BA5;
   --accent:#FD8D27; --accent-hover:#FF9C41; --accent-press:#E56A1E; --on-accent:#16181B;
   --accent-soft:#FAB677; --accent-text:#FDA45A; --accent-wash:rgba(253,141,39,.12); --ring:#FD8D27;
-  --ok:#4FC28A; --ok-wash:rgba(79,194,138,.13); --wait:#E6AE4B; --wait-wash:rgba(230,174,75,.13); --bad:#F2746D; --bad-wash:rgba(242,116,109,.13);
+  --ok:#4FC28A; --ok-wash:rgba(79,194,138,.13); --wait:#E6AE4B; --wait-wash:rgba(230,174,75,.13); --bad:#F2746D; --bad-wash:rgba(242,116,109,.13); --on-bad:#16181B;
   --sel:rgba(253,141,39,.07); --scrim:rgba(10,11,13,.62);
   --shadow:0 24px 60px rgba(0,0,0,.45),0 2px 8px rgba(0,0,0,.25);
   --r-ctl:8px; --r-card:12px; --r-sheet:14px;
@@ -21,9 +21,9 @@
     --page:#FCFCFC; --chrome:#F7F7F8; --card:#FFFFFF; --band:#F5F5F6; --raised:#F0F0F2; --inset:#FFFFFF;
     --line:#E2E2E2; --line-soft:#EDEDED; --line-hi:#D3D3D6;
     --btn:#F5F5F6; --btn-hover:#ECECEE; --btn-line:#DCDCDF; --chip:#F2F2F3;
-    --text:#1A1A1A; --text-2:#3A3D42; --muted:#5C636B; --faint:#6E757D;
+    --text:#1A1A1A; --text-2:#3A3D42; --muted:#5C636B; --faint:#62686F;
     --accent-soft:#FBC48F; --accent-text:#B4480F; --accent-wash:rgba(253,141,39,.13); --ring:#C8501A;
-    --ok:#1E8A55; --ok-wash:#E6F4EC; --wait:#94600A; --wait-wash:#FBF1DD; --bad:#C23A34; --bad-wash:#FBE9E8;
+    --ok:#17784A; --ok-wash:#E6F4EC; --wait:#94600A; --wait-wash:#FBF1DD; --bad:#C23A34; --bad-wash:#FBE9E8; --on-bad:#FFFFFF;
     --sel:rgba(253,141,39,.08); --scrim:rgba(30,32,36,.32);
     --shadow:0 24px 60px rgba(20,22,28,.16),0 2px 8px rgba(20,22,28,.06);
     color-scheme:light;
@@ -33,9 +33,9 @@
   --page:#FCFCFC; --chrome:#F7F7F8; --card:#FFFFFF; --band:#F5F5F6; --raised:#F0F0F2; --inset:#FFFFFF;
   --line:#E2E2E2; --line-soft:#EDEDED; --line-hi:#D3D3D6;
   --btn:#F5F5F6; --btn-hover:#ECECEE; --btn-line:#DCDCDF; --chip:#F2F2F3;
-  --text:#1A1A1A; --text-2:#3A3D42; --muted:#5C636B; --faint:#6E757D;
+  --text:#1A1A1A; --text-2:#3A3D42; --muted:#5C636B; --faint:#62686F;
   --accent-soft:#FBC48F; --accent-text:#B4480F; --accent-wash:rgba(253,141,39,.13); --ring:#C8501A;
-  --ok:#1E8A55; --ok-wash:#E6F4EC; --wait:#94600A; --wait-wash:#FBF1DD; --bad:#C23A34; --bad-wash:#FBE9E8;
+  --ok:#17784A; --ok-wash:#E6F4EC; --wait:#94600A; --wait-wash:#FBF1DD; --bad:#C23A34; --bad-wash:#FBE9E8; --on-bad:#FFFFFF;
   --sel:rgba(253,141,39,.08); --scrim:rgba(30,32,36,.32);
   --shadow:0 24px 60px rgba(20,22,28,.16),0 2px 8px rgba(20,22,28,.06);
   color-scheme:light;
@@ -78,7 +78,10 @@ a.btn.ghost{color:var(--text-2)}
 .btn.danger:hover,.btn.bad:hover{background:var(--bad-wash);border-color:color-mix(in srgb,var(--bad) 40%,var(--btn-line))}
 .btn.danger.ghost,.btn.bad.ghost{border-color:transparent;background:transparent}
 .btn.danger.ghost:hover,.btn.bad.ghost:hover{background:var(--bad-wash)}
-.btn.danger.solid{background:var(--bad);border-color:var(--bad);color:#16181B;font-weight:600}
+.btn.danger.solid{background:var(--bad);border-color:var(--bad);color:var(--on-bad);font-weight:600}
+.btn.danger.solid kbd,.btn.danger.solid .k,.btn.danger.solid .k2{color:inherit;opacity:.8;border-color:currentColor}
+.btn.danger.solid:hover{background:color-mix(in srgb,var(--bad) 88%,#fff)}
+.gap-top{margin-top:12px}
 .btn.icon{width:36px;padding:0}
 .btn.sm{height:30px;min-height:30px;padding:0 10px;font-size:13px;gap:6px}
 .btn.sm svg{width:15px;height:15px}
@@ -553,7 +556,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .steps li.now{background:var(--raised);color:var(--text)}
 .steps li.todo{color:var(--faint)}
 .steps .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;border:1px solid var(--line-hi);flex:none}
-.steps li.done .n{background:var(--ok);border-color:var(--ok);color:#16181B}
+.steps li.done .n{background:var(--ok);border-color:var(--ok);color:var(--card)}
 .steps li.now .n{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .steps small{display:block;color:var(--faint);font-size:12.5px;overflow-wrap:anywhere}
 .steps p{color:var(--faint);font-size:12.5px;margin:auto 0 0}
@@ -685,7 +688,8 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 
 /* QR codes screen (S9) */
 .qr-thumb{display:block;width:32px;height:32px;border:1px solid var(--line);border-radius:6px;background:#fff}
-.qr-open{font-weight:500}
+.qr-open{font-weight:500;justify-content:flex-start;padding:0 8px;margin-left:-8px}
+.qr-acts .grow{flex:1}
 .qr-edit .qr>svg{width:180px;height:180px}
 .qr-edit .qr{min-height:60px}
 .qr-edit .qr:has(>svg){min-height:182px}

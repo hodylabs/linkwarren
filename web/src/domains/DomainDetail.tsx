@@ -347,7 +347,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
               </button>
             )}
             {admin && domain.status !== "disabled" && (
-              <button type="button" className="btn" onClick={() => setConfirm("disable")} aria-keyshortcuts="Shift+D">
+              <button type="button" className="btn danger" onClick={() => setConfirm("disable")} aria-keyshortcuts="Shift+D">
                 Disable <kbd>Shift D</kbd>
               </button>
             )}

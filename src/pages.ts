@@ -5,9 +5,13 @@ export const PAGE_HEADERS = {
   "x-content-type-options": "nosniff",
 } as const;
 
+// S12: the dashboard's tokens, dark by default and light when the OS asks. System fonts only: default-src 'none' loads no font.
 const CSS =
-  `body{margin:0;min-height:100vh;display:grid;place-items:center;background:#15181D;color:#f4f4f5;font:16px system-ui,sans-serif}` +
-  `main{padding:24px;text-align:center}h1{color:#FD8D27;margin:0 0 8px}p{margin:0;opacity:.8}`;
+  `:root{color-scheme:dark light;--bg:#181A1D;--card:#1E2023;--line:#2B2F33;--inset:#1C1E21;--text:#F4F6F7;--muted:#A3ADB5;--accent:#FD8D27;--ring:#FD8D27;--bad:#F2746D}` +
+  `@media (prefers-color-scheme:light){:root{--bg:#FCFCFC;--card:#FFFFFF;--line:#E2E2E2;--inset:#FFFFFF;--text:#1A1A1A;--muted:#5C636B;--ring:#C8501A;--bad:#C23A34}}` +
+  `*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}` +
+  `main{width:100%;max-width:400px;padding:28px 26px;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:12px}` +
+  `h1{margin:0 0 8px;font-size:20px;font-weight:600}p{margin:0;color:var(--muted)}`;
 const doc = (title: string, css: string, main: string) =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>` +
   `<style>${css}</style></head><body><main>${main}</main></body></html>`;
@@ -19,10 +23,11 @@ export const pendingPage = page("Not active yet", "This domain is not active yet
 // Phones: 16 px input text (no iOS zoom), 44 px tap targets.
 const FORM_CSS =
   CSS +
-  `form{display:grid;gap:8px;margin:16px auto 0;max-width:320px;text-align:left}label{font-weight:600}` +
-  `input,button{box-sizing:border-box;width:100%;min-height:44px;font-size:16px;border-radius:6px;padding:8px 12px}` +
-  `input{border:1px solid #52525b;background:#0b0d10;color:#f4f4f5}input:focus,button:focus{outline:2px solid #FD8D27;outline-offset:2px}` +
-  `button{border:0;background:#FD8D27;color:#15181D;font-weight:600;cursor:pointer}.err{color:#fca5a5;opacity:1}`;
+  `form{display:grid;gap:8px;margin:18px 0 0;text-align:left}label{font-weight:500;font-size:14px}` +
+  `input,button{box-sizing:border-box;width:100%;min-height:44px;font-size:16px;font-family:inherit;border-radius:8px;padding:8px 12px}` +
+  `input{border:1px solid var(--line);background:var(--inset);color:var(--text)}input:focus{outline:0;border-color:var(--ring);box-shadow:0 0 0 3px rgba(253,141,39,.2)}` +
+  `button{border:1px solid var(--accent);background:var(--accent);color:#16181B;font-weight:600;cursor:pointer;margin-top:4px}` +
+  `button:hover{background:#FF9C41}button:focus-visible{outline:2px solid var(--ring);outline-offset:2px}.err{color:var(--bad);margin-top:12px}`;
 const MESSAGES = {
   ask: "",
   wrong: "That password is not right. Try again.",

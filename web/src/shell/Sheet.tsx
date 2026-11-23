@@ -98,9 +98,9 @@ export function Sheet({ label, onClose, children, cls = "sheet", scrimCls }: { l
     </div>
   );
 }
-
-/** A yes or no question over the current sheet: Enter (the focused primary button) confirms, Esc cancels. `children` go above the buttons. */
-export function Confirm({ title, text, ok, onOk, onCancel, children }: { title: string; text: string; ok: string; onOk(): void; onCancel(): void; children?: ReactNode }) {
+/** A yes or no question over the current sheet: Enter (the focused button) confirms, Esc cancels. `children` go above the buttons.
+ * `tone`: the confirm step of a destructive action is solid red (the default); "primary" for one that is not. */
+export function Confirm({ title, text, ok, onOk, onCancel, children, tone = "danger" }: { title: string; text: string; ok: string; onOk(): void; onCancel(): void; children?: ReactNode; tone?: "danger" | "primary" }) {
   return (
     <Sheet label={title} onClose={onCancel}>
       <div className="sh-head">
@@ -111,7 +111,7 @@ export function Confirm({ title, text, ok, onOk, onCancel, children }: { title: 
         <p>{text}</p>
         <div className="actions">
           {/* Key autorepeat never confirms, as in the domain detail. */}
-          <button type="button" className="btn primary" autoFocus onClick={onOk} onKeyDown={(e) => e.repeat && e.preventDefault()}>
+          <button type="button" className={tone === "danger" ? "btn danger solid" : "btn primary"} autoFocus onClick={onOk} onKeyDown={(e) => e.repeat && e.preventDefault()}>
             {ok} <span className="k">Enter</span>
           </button>
           <button type="button" className="btn" onClick={onCancel}>

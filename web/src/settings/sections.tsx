@@ -128,7 +128,7 @@ export function InstanceSection({ s, onSaved }: { s: SettingsBody; onSaved: (b: 
           <img src={logoUrl(instance?.logoVersion ?? null)} alt="" />
           <input ref={file} type="file" accept={LOGO_ACCEPT} hidden aria-label="Logo file" onChange={(ev) => void upload(ev.target.files?.[0])} />
           <button type="button" className="btn" disabled={logoBusy} onClick={() => file.current?.click()}>Replace</button>
-          {instance?.logoVersion != null && <button type="button" className="btn ghost" disabled={logoBusy} onClick={() => void logo(deleteLogo)}>Remove</button>}
+          {instance?.logoVersion != null && <button type="button" className="btn ghost danger" disabled={logoBusy} onClick={() => void logo(deleteLogo)}>Remove</button>}
         </div>
         <Note msg={logoMsg} />
       </Field>
