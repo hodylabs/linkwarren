@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Domain, Link, Me, UserItem } from "../api";
 import { fromLocalInput, shortDate, toLocalInput } from "../time";
-import { creatorLabel, linkState, linksQuery, shortUrl, sparkPoints } from "./linkView";
+import { creatorLabel, destKind, linkState, linksQuery, shortUrl, sparkPoints } from "./linkView";
 import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
 const NOW = 1_800_000_000;
@@ -67,5 +67,13 @@ describe("sparkPoints", () => {
     expect(sparkPoints([1, 2, 3], 5)).toBe("0,12.7 18,7.3 36,2");
     // live off: 5 known days of 7 end at x 48, leaving the last two slots for the dashed segment
     expect(sparkPoints([0, 1, 2, 3, 4], 7)).toBe("0,18 12,14 24,10 36,6 48,2");
+  });
+});
+
+describe("destKind", () => {
+  it("names phone and email destinations, nothing for web ones", () => {
+    expect(destKind("tel:+15551234")).toBe("Phone");
+    expect(destKind("mailto:a@example.com")).toBe("Email");
+    expect(destKind("https://example.com/tel:1")).toBeNull();
   });
 });

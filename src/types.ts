@@ -67,11 +67,11 @@ export const rowToLink = (r: R): LinkRow => ({
 function parseRoutes(v: unknown): Route[] {
   try {
     const a: unknown = JSON.parse(v as string);
-    // Shape filter: a malformed stored element, or a url that is not http(s), is dropped so route picking and withQuery never throw on it.
+    // Shape filter: a malformed stored element, or a url that is not http(s), tel: or mailto:, is dropped so route picking and withQuery never throw on it.
     const ok = (r: unknown): r is Route => {
       const x = r as Partial<Route> | null;
       return Array.isArray(x?.countries) && Array.isArray(x?.devices) && typeof x?.url === "string"
-        && URL.canParse(x.url) && /^https?:$/.test(new URL(x.url).protocol);
+        && URL.canParse(x.url) && /^(https?|tel|mailto):$/.test(new URL(x.url).protocol);
     };
     return Array.isArray(a) ? a.filter(ok) : [];
   } catch {

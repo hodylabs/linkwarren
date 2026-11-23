@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readUtm, suggestSlugs, withUtm } from "./compose";
 
 describe("suggestSlugs", () => {
+  it("suggests nothing for tel: and mailto:", () => {
+    expect(suggestSlugs("tel:+15551234")).toEqual([]);
+    expect(suggestSlugs("mailto:sales@example.com")).toEqual([]);
+  });
   it("builds base, joined and year-short candidates", () => {
     expect(suggestSlugs("https://example.com/campaigns/spring-2027")).toEqual(["spring-2027", "spring27", "sp27"]);
   });

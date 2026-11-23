@@ -33,7 +33,7 @@ const STEPS: readonly { key: StepKey | "links"; label: string }[] = [
   { key: "links", label: "Bring your links" },
 ];
 const MAX_FILE = 10 * 1024 * 1024;
-const MISSING: Record<string, string> = { name: "a name", mainDomain: "a main domain" };
+const MISSING: Record<string, string> = { name: "a name" };
 const SHOWN_ROWS = 20;
 
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
@@ -42,7 +42,7 @@ function stepError(e: unknown): string {
   if (e instanceof ApiError && e.code === "incomplete") {
     const missing = (e.data as { missing?: unknown } | undefined)?.missing;
     const names = Array.isArray(missing) ? missing.map((m) => MISSING[String(m)]).filter(Boolean) : [];
-    return `Setup cannot finish yet: add ${names.length ? names.join(" and ") : "a name and a main domain"} first.`;
+    return `Setup cannot finish yet: add ${names.length ? names.join(" and ") : "a name"} first.`;
   }
   return settingsError(code(e));
 }
@@ -388,6 +388,7 @@ export function SetupWizard() {
     );
   } else if (step === 3) {
     lead = "Short links live on the main domain unless you pick another one. You can add more domains later.";
+    if (!dns) skip = "Skip for now";
     content = dns ? (
       <>
         <p className="slug">{dns.host}</p>

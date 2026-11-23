@@ -158,6 +158,16 @@ describe("rules", () => {
     expect((await all<Record<string, unknown>>("SELECT * FROM domains WHERE host='ok.test'"))[0]).toMatchObject({ bare_redirect: null, notfound_redirect: "https://e.org/nf" });
     expect(await count("domains")).toBe(1);
   });
+  it("links may be tel: or mailto:; domain redirects stay web-only; a bad tel is a conflict", async () => {
+    const r = await rep(await owner(body([
+      { host: "ok.test", slug: "call", destination: "tel:+15551234" }, { host: "ok.test", slug: "mail", destination: "mailto:a@example.com" },
+      { host: "ok.test", slug: "bad", destination: "tel:+1;ext=2" },
+    ], [D("ok.test", "tel:+15551234", "mailto:a@example.com")])));
+    expect(r.created).toBe(2);
+    expect(r.conflicts.map((c) => c.slug)).toEqual(["bad"]);
+    expect(r.ignored).toEqual([{ host: "ok.test", field: "customIndexUrl" }, { host: "ok.test", field: "customNotFoundUrl" }]);
+    expect((await all<{ url: string }>("SELECT url FROM links ORDER BY slug")).map((l) => l.url)).toEqual(["tel:+15551234", "mailto:a@example.com"]);
+  });
   it("existing domain is reused: type/status kept, only null redirects filled", async () => {
     await run("INSERT INTO domains (id,host,type,status,owner_id,bare_redirect,created_at) VALUES ('d1','e.test','shared','pending','uo','https://keep.org/',1)");
     await owner(body([], [D("e.test", "https://e.org/new", "https://e.org/nf")]));

@@ -13,6 +13,7 @@ import { BULK_KEYS, BulkBar, type BulkAction } from "./BulkBar";
 import { csvName, downloadCsv, shortUrls, toCsv } from "./bulk";
 import { BulkSheet, type BulkMode, type BulkRun } from "./BulkSheet";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
+import { DestText } from "./DestText";
 import { Sparkline } from "./Sparkline";
 import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
 import { all, EMPTY_SEL, extend, keepOnly, range, toggle, type Sel } from "./selection";
@@ -383,6 +384,17 @@ export function LinksScreen() {
         )}
         {canCreate && <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />}
       </ScreenHeader>
+      {app.instance && !app.instance.mainDomainId && can(me, "domains.manage") && (
+        <div className="callout wait pad" role="status" aria-label="No main domain">
+          <p>
+            No main domain is set. Add a domain to make short links on, then pick it as the main domain in Settings so new links use it by default.
+          </p>
+          <div className="row-actions">
+            <button type="button" className="btn" onClick={() => app.open({ kind: "addDomain" })}>Add a domain</button>
+            {can(me, "settings") && <button type="button" className="btn ghost" onClick={() => navigate("/settings/instance")}>Settings</button>}
+          </div>
+        </div>
+      )}
       {picking && !open && (
         <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l)).length} onAction={onAction} onClear={clearPick} />
       )}
@@ -454,7 +466,7 @@ export function LinksScreen() {
                         <span className="slug">{l.slug}</span>
                       </span>
                     </td>
-                    <td className="dest">{l.url}</td>
+                    <td className="dest"><DestText url={l.url} /></td>
                     <td>
                       {(l.forwardTo || l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
                         <span className="icons">

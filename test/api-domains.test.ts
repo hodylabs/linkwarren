@@ -111,6 +111,10 @@ describe("settings", () => {
     const c = await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: null });
     expect(await c.json()).toMatchObject({ bareRedirect: null });
   });
+  it("bare and not-found redirects stay web-only: tel and mailto are a scheme error", async () => {
+    await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "tel:+15551234" }), 400, { error: "scheme" });
+    await status(await call("owner", "PATCH", "/api/domains/dm", { notfoundRedirect: "mailto:a@example.com" }), 400, { error: "scheme" });
+  });
   it("reservedExtra: slugs validated, max 100", async () => {
     await status(await call("owner", "PATCH", "/api/domains/dm", { reservedExtra: ["bad slug"] }), 400);
     await status(await call("owner", "PATCH", "/api/domains/dm", { reservedExtra: Array.from({ length: 101 }, (_, i) => `s${i}`) }), 400);

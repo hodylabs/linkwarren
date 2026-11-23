@@ -114,6 +114,7 @@ tbody tr[aria-selected="true"] .mchip{background:var(--panel)}
 .who .two small{color:var(--muted);font-size:12px}
 .short .slug{font-weight:600;color:var(--text)}
 .dest{color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.dkind{display:inline-block;font-size:11px;font-weight:600;color:var(--text);border:1px solid var(--line-soft);border-radius:4px;padding:0 5px;margin-right:6px;line-height:16px}
 .num{font-variant-numeric:tabular-nums;text-align:right}
 .spark{width:72px;height:20px;display:block}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}

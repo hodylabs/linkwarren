@@ -5,7 +5,7 @@ import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Seg } from "../shell/ui";
-import { can, canUseDomain } from "../perms";
+import { can, canUseDomain, mayOpen } from "../perms";
 import { useApp } from "../state";
 import { fromLocalInput } from "../time";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
@@ -17,7 +17,7 @@ import { RoutesEditor } from "./RoutesEditor";
 type Check = { status: "available" | "taken" | "locked" | "reserved" } | { status: "invalid"; reason: string };
 type Field = "url" | "slug" | "schedule" | "password" | "form";
 const SLUG_CODES = new Set(["taken", "locked", "reserved", "empty", "slug_too_long", "charset", "leading_dot", "too_long"]);
-const URL_CODES = new Set(["not_url", "scheme", "userinfo", "url_too_long", "loop", "too_long"]);
+const URL_CODES = new Set(["not_url", "scheme", "userinfo", "url_too_long", "loop", "too_long", "bad_tel", "bad_mailto"]);
 const fieldOf = (code: string): Field => (code === "bad_window" ? "schedule" : code.startsWith("password_") ? "password" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
 const DEBOUNCE_MS = 250;
 
@@ -298,7 +298,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       <div className="sh-body">
         <div className="f">
           <label htmlFor="nl-dest">
-            Goes to <span>paste a URL</span>
+            Goes to <span>a URL, tel: or mailto:</span>
           </label>
           <div className={err("url") ? "ctl bad" : "ctl"}>
             <input id="nl-dest" autoFocus value={url} spellCheck={false} autoComplete="off" aria-invalid={err("url") ? true : undefined} onChange={(e) => setUrl(e.target.value)} />
@@ -502,7 +502,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         )}
         {usable.length === 0 && (
           <p className="err" role="alert">
-            No domain is available to you yet. Ask the owner to give you access to one.
+            {mayOpen(app.me, { kind: "addDomain" }) ? "No domain yet. Add one in Domains first." : "No domain is available to you yet. Ask the owner to give you access to one."}
           </p>
         )}
       </div>

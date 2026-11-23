@@ -63,6 +63,45 @@ describe("checkDestination", () => {
   });
 });
 
+describe("checkDestination: tel and mailto", () => {
+  const ok = (s: string) => { const r = checkDestination(s, []); return r.ok ? r.url.href : r.reason; };
+  it.each([
+    ["tel:+15551234567", "tel:+15551234567"],
+    ["tel:+1-555-123.4567", "tel:+1-555-123.4567"],
+    ["tel:(555)1234567", "tel:(555)1234567"],
+    ["TEL:5551234", "tel:5551234"],
+    ["mailto:a@example.com", "mailto:a@example.com"],
+    ["mailto:a@example.com,b.c+d@sub.example.org", "mailto:a@example.com,b.c+d@sub.example.org"],
+    ["mailto:a@example.com?subject=Hello%20there&body=Hi%21", "mailto:a@example.com?subject=Hello%20there&body=Hi%21"],
+    ["MAILTO:a@example.com?Subject=x", "mailto:a@example.com?Subject=x"],
+  ])("accepts %s", (s, href) => expect(ok(s)).toBe(href));
+  it.each([
+    "tel:", "tel:+", "tel:abc", "tel:+1 555", "tel:+1;ext=2", "tel:+1%0a2", "tel:+1\n", " tel:+15551234", "tel:+15551234 ",
+    "tel:" + "1".repeat(33), "tel://5551234", "tel:+1#2", "tel:+1?x=1",
+  ])("rejects tel %j", (s) => expect(ok(s)).toBe("bad_tel"));
+  it("tel: 32 after the scheme is the limit", () => expect(ok("tel:" + "1".repeat(32))).toBe("tel:" + "1".repeat(32)));
+  it.each([
+    "mailto:", "mailto:nobody", "mailto:a@b", "mailto:a@example.com?cc=x@example.com", "mailto:a@example.com?bcc=x@example.com",
+    "mailto:a@example.com?subject=a%0D%0Abcc:x@example.com", "mailto:a@example.com?body=a%0Ab", "mailto:a@example.com?subject=%00",
+    "mailto:a@example.com?subject=a b", "mailto:a@example.com?subject=a\nb", "mailto:a@example.com?subject=%zz",
+    "mailto:a@example.com?subject=1&subject=2", "mailto:a@example.com?subject", "mailto:a@example.com?subject=a=b",
+    "mailto:a@example.com?subject=x#frag", "mailto:a@example.com,", "mailto:a b@example.com", "mailto:a@example.com%0Abcc:x@y.com",
+    "mailto:<a@example.com>", "mailto:a@example.com;b@example.com", "mailto:a@example.com?subject=%E2%80", " mailto:a@example.com",
+  ])("rejects mailto %j", (s) => expect(ok(s)).toBe("bad_mailto"));
+  it("mailto over 2048 is too long", () =>
+    expect(ok("mailto:a@example.com?body=" + "a".repeat(2030))).toBe("too_long"));
+  it("web-only callers refuse tel and mailto as a scheme", () => {
+    expect(checkDestination("tel:+15551234", [], { webOnly: true })).toEqual({ ok: false, reason: "scheme" });
+    expect(checkDestination("mailto:a@example.com", [], { webOnly: true })).toEqual({ ok: false, reason: "scheme" });
+    expect(checkDestination("https://example.com/", [], { webOnly: true }).ok).toBe(true);
+  });
+  it("the loop check does not apply to mailto", () => {
+    const r = checkDestination("mailto:a@go.example.com", ["go.example.com"]);
+    expect(r.ok && r.url.href).toBe("mailto:a@go.example.com");
+  });
+  it.each(["file:///etc/passwd", "sms:+1555", "vbscript:x", "blob:https://x.com/1"])("still refuses %s", (s) => expect(ok(s)).toBe("scheme"));
+});
+
 describe("slugKey", () => {
   it("folds case unless case-sensitive", () => {
     expect(slugKey("Spring", false)).toBe("spring");

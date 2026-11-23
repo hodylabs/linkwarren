@@ -6,7 +6,9 @@ const yy = (y: string) => y.slice(2);
 export function suggestSlugs(url: string): string[] {
   let path: string;
   try {
-    path = new URL(url).pathname;
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return [];
+    path = u.pathname;
   } catch {
     return [];
   }

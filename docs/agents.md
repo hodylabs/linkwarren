@@ -61,6 +61,8 @@ Agents follow the person's current role. When an owner turns off **Connect AI ag
 `bulk_links` takes `action`, `ids` (1 to 50), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
 ### Routing
 
+A link destination (`url`, and each route `url`) is an `http(s)` URL, a `tel:` number (`tel:+1-555-123-4567`: an optional `+`, digits and `-` `.` `(` `)`, no parameters) or a `mailto:` address (one or more addresses separated by commas, optional `subject` and `body` only, no line breaks). A refused one answers `scheme`, `bad_tel` or `bad_mailto`. A domain's bare and not-found redirects take `http(s)` only.
+
 `create_link` and `update_link` (and `POST`/`PATCH /links`) take `routes`: up to 10 rules, each `{ countries, devices, url }`, tried top to bottom; the first match wins and everyone else goes to the main `url`. A rule needs at least one country or device. `devices` lists any of:
 
 | Group | Values |

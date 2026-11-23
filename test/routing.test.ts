@@ -101,6 +101,10 @@ describe("pickDestination", () => {
 });
 
 describe("withQuery", () => {
+  it("never appends the visitor query to tel or mailto (no header injection)", () => {
+    expect(withQuery("tel:+15551234", true, "?a=1")).toBe("tel:+15551234");
+    expect(withQuery("mailto:a@example.com?subject=x", true, "?bcc=evil@example.com")).toBe("mailto:a@example.com?subject=x");
+  });
   it("off returns dest untouched", () => expect(withQuery("https://x.example/p?z=1", false, "?a=1")).toBe("https://x.example/p?z=1"));
   it("empty search returns dest", () => expect(withQuery("https://x.example/p", true, "")).toBe("https://x.example/p"));
   it("dest without a query", () => expect(withQuery("https://x.example/p", true, "?a=1")).toBe("https://x.example/p?a=1"));
