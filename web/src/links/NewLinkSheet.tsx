@@ -248,7 +248,11 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
     const c = e instanceof ApiError ? e.code : "internal";
     const data = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown; field?: unknown } | undefined) : undefined;
     const row = c === "bad_route" && typeof data?.index === "number" ? filled[data.index] : undefined;
-    if (c === "bad_vcard") setCardField(typeof data?.field === "string" ? formField(d.vcard, data.field) : "vcard");
+    const rowField = c === "bad_vcard" && typeof data?.field === "string" && /^(phones|emails|websites)\.\d+$/.test(data.field);
+    const cardRows = (v: typeof d.vcard) => JSON.stringify([v.phones, v.emails, v.websites]);
+    if (c === "bad_vcard" && rowField && cardRows(latest.current.vcard) !== cardRows(d.vcard))
+      setError({ field: "form", code: "bad_vcard" }); // the card rows changed while it saved: the index no longer names a row on screen
+    else if (c === "bad_vcard") setCardField(typeof data?.field === "string" ? formField(d.vcard, data.field) : "vcard");
     // the server's index counts the rows sent (the non-blank ones), so map it back to the editor row
     else if (row && JSON.stringify(latest.current.routes) === JSON.stringify(d.routes))
       setRouteErrors({ [d.routes.indexOf(row)]: errorText(typeof data?.reason === "string" ? data.reason : "bad_route") });

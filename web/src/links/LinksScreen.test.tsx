@@ -1472,6 +1472,25 @@ describe("PR #8 review fixes", () => {
     expect(msg.closest(".routes")).toBeNull();
   });
 
+  it("a card row error for rows that changed while saving shows for the form, not on the wrong row", async () => {
+    const h = held();
+    const two = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...card, emails: ["a@example.com", "b@example.com"] } });
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [two], next: null } }),
+      routes: { "PATCH /api/links/l1": async () => (await h.gate, { status: 400, body: { error: "bad_vcard", field: "emails.1" } }) },
+    });
+    await ready();
+    await openEdit(user);
+    await user.type(within(editSheet()).getByLabelText("Organization"), "Example Co");
+    await user.click(within(editSheet()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    await user.click(within(editSheet()).getByRole("button", { name: "Remove email 1" }));
+    h.release();
+    expect(await within(editSheet()).findByText(errorText("bad_vcard"))).toBeTruthy();
+    expect(within(editSheet()).getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
+  });
+
   it("Change password keeps the Password rule On until protection is turned off", async () => {
     const { user } = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [mk("l1", "spring", { hasPassword: true })], next: null } }) });
     await ready();
