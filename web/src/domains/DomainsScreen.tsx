@@ -94,6 +94,7 @@ export function DomainsScreen() {
         title="Domains"
         count={plural(domains.length, "domain")}
         text="The hosts your short links live on. Main is for everyone, shared is for its members, private is yours alone."
+        action={canAdd && <PrimaryButton label="Add domain" shortcut="N" onClick={() => app.open({ kind: "addDomain" })} />}
       >
         <SearchButton q={q} placeholder="Search domains" onOpen={() => app.open({ kind: "palette" })} />
         <div className="chips" role="group" aria-label="Filter domains">
@@ -104,7 +105,6 @@ export function DomainsScreen() {
           ))}
         </div>
         {admin && waiting > 0 && <span className="note">{waiting} waiting for you</span>}
-        {canAdd && <PrimaryButton label="Add domain" shortcut="N" onClick={() => app.open({ kind: "addDomain" })} />}
       </ScreenHeader>
       <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className="list" aria-label="Domains">

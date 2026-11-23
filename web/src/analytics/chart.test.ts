@@ -9,7 +9,7 @@ describe("chartGeometry", () => {
     const g = chartGeometry([{ label: "a", qr: 284, typed: 1000 }, { label: "b", qr: 1, typed: 1 }]);
     expect(g.top).toBe(2000);
     expect(g.grid.map((x) => x.label)).toEqual(["0", "500", "1,000", "1,500", "2,000"]);
-    expect(g.grid[0]!.y).toBe(234); // the baseline: H - pb
+    expect(g.grid[0]!.y).toBe(164); // the baseline: H - pb
     expect(g.grid[4]!.y).toBe(10); // pt
   });
 

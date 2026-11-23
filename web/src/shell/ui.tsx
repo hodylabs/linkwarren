@@ -101,12 +101,13 @@ export function Seg<V extends string | number>({ options, value, onChange, label
 }
 
 /** Page header: title with its count, one muted line, then the toolbar (search, filters, page action). */
-export function ScreenHeader({ title, count, text, children }: { title: string; count?: ReactNode; text?: ReactNode; children?: ReactNode }) {
+export function ScreenHeader({ title, count, text, action, children }: { title: string; count?: ReactNode; text?: ReactNode; action?: ReactNode; children?: ReactNode }) {
   return (
     <header className="top">
       <div className="t-row">
         <h1>{title}</h1>
         {count && <span className="t-count">{count}</span>}
+        {action && <div className="t-act">{action}</div>}
       </div>
       {text && <p className="desc">{text}</p>}
       {children && <div className="toolbar">{children}</div>}

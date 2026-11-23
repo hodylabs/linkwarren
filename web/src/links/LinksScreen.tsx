@@ -411,7 +411,8 @@ export function LinksScreen() {
       <ScreenHeader
         title="Links"
         count={unfiltered ? plural(total, "link") : `${items.length} shown`}
-        text={`Short links ${host ? `on ${host}` : "on every domain you can see"}. With their rules and recent clicks. Pick one for its summary, E to edit it.`}
+        text={`Short links ${host ? `on ${host}` : "on every domain you can see"}.`}
+        action={canCreate && <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />}
       >
         <SearchButton q={q} placeholder="Search slugs and destinations" onOpen={() => app.open({ kind: "palette" })} />
         <div className="chips" role="group" aria-label="Filter links">
@@ -429,7 +430,6 @@ export function LinksScreen() {
             Clear search
           </button>
         )}
-        {canCreate && <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />}
       </ScreenHeader>
       {app.instance && !app.instance.mainDomainId && can(me, "domains.manage") && (
         <div className="callout wait pad" role="status" aria-label="No main domain">

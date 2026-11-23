@@ -4,7 +4,7 @@ import { fmt } from "./view";
 /** Chart box in viewBox units: width, height and the left, bottom and top padding. */
 export type Box = { W: number; H: number; pl: number; pb: number; pt: number };
 /** The mockup box. */
-export const DESK: Box = { W: 1100, H: 260, pl: 44, pb: 26, pt: 10 };
+export const DESK: Box = { W: 1100, H: 190, pl: 44, pb: 26, pt: 10 };
 /** Phones: about the drawn width, so viewBox units are close to CSS pixels and 11 px axis text stays 11 px. */
 export const PHONE_BOX: Box = { W: 360, H: 220, pl: 34, pb: 22, pt: 8 };
 
