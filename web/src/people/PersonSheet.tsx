@@ -102,7 +102,10 @@ export function PersonSheet({ id }: { id: string }) {
   };
 
   const st = u?.status;
-  const can = (s: typeof st) => !self && st === s;
+  // R4: an owner reaches anyone; a people manager only someone whose current role is within their own permissions, never an owner.
+  // Every action on the person (role, status, sign-out, invite, removal) and its shortcut follows it; the server refuses the rest.
+  const reach = !!u && !self && (isOwner(me) || (u.role !== "owner" && mayAssign(me, { id: u.roleId, perms: u.perms })));
+  const can = (s: typeof st) => reach && st === s;
   useHotkeys(
     {
       r: (e) => void (!e.shiftKey && can("invited") && act.resend()),
@@ -110,7 +113,7 @@ export function PersonSheet({ id }: { id: string }) {
       "shift+d": () => can("active") && setAsk("disable"),
       "shift+s": () => can("active") && setAsk("signout"),
       e: (e) => void (!e.shiftKey && can("disabled") && act.enable()),
-      "shift+x": () => !self && askRemove(),
+      "shift+x": () => reach && askRemove(),
       a: (e) => void (!e.shiftKey && activity()),
     } satisfies Bindings<typeof PERSON_KEYS>,
     ask === null,
@@ -124,8 +127,6 @@ export function PersonSheet({ id }: { id: string }) {
   const targets = transferTargets(users ?? [], me, id, needsOwner);
   const target = targets.find((x) => x.id === to) ?? null;
   const choice = !target || target.id === me.id ? "you" : label(target);
-  // R4: an owner reaches anyone; a people manager only someone whose current role is within their own permissions, never an owner.
-  const reach = !self && (isOwner(me) || (u.role !== "owner" && mayAssign(me, { id: u.roleId, perms: u.perms })));
   const picked = roles?.find((r) => r.id === pick);
   const roleAsk = pick === "owner"
     ? { title: `Make ${email} an owner`, text: `Make ${email} an owner? They can change every setting and person.`, ok: "Make owner", msg: `Made ${email} an owner` }
@@ -188,7 +189,7 @@ export function PersonSheet({ id }: { id: string }) {
           {can("active") && btn("Turn off access", "Shift D", "Shift+D", () => setAsk("disable"))}
           {can("active") && btn("Sign out everywhere", "Shift S", "Shift+S", () => setAsk("signout"))}
           {can("disabled") && btn("Turn on access", "E", "E", () => void act.enable())}
-          {!self && btn("Remove", "Shift X", "Shift+X", askRemove, "btn bad")}
+          {reach && btn("Remove", "Shift X", "Shift+X", askRemove, "btn bad")}
         </div>
       </div>
       {ask === "revoke" && (

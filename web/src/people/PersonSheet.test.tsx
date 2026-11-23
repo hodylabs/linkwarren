@@ -132,6 +132,23 @@ describe("Person sheet role", () => {
   });
 });
 
+describe("Person sheet reach (R4)", () => {
+  it("a people manager on an owner: no status, sign-out or removal actions, and their keys open nothing", async () => {
+    const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
+    const { api, dlg, user } = await openPerson("Bea", undefined, lead);
+    for (const name of [/Turn off access/, /Sign out everywhere/, /Remove/]) expect(within(dlg).queryByRole("button", { name })).toBeNull();
+    for (const k of ["{Shift>}D{/Shift}", "{Shift>}S{/Shift}", "{Shift>}X{/Shift}"]) await user.keyboard(k);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(writes(api)).toHaveLength(0);
+  });
+
+  it("a people manager on a person within reach keeps them", async () => {
+    const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
+    const { dlg } = await openPerson("Dana", undefined, lead);
+    for (const name of [/Turn off access/, /Sign out everywhere/, /Remove/]) expect(within(dlg).getByRole("button", { name })).toBeTruthy();
+  });
+});
+
 describe("Person sheet", () => {
   it("Enter on a row opens it with role, status and read-only domains", async () => {
     const { dlg } = await openPerson("Dana");
