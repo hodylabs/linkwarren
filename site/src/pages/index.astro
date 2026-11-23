@@ -253,7 +253,7 @@ footer a{color:var(--text)}
           <h2 id="dh">Deploy with wrangler</h2>
           <p class="sub" style="margin-bottom:12px">All you need is a Cloudflare account and a domain on it. No server to patch.</p>
           <ol class="steps">
-            <li><b>Clone the repo</b><span><code>git clone {repo}</code></span></li>
+            <li><b>Clone and install</b><span><code>git clone {repo}</code>, then <code>npm ci</code> in the folder.</span></li>
             <li><b>Create the database and stores</b><span>One D1 database and two KV namespaces, with <code>wrangler</code>. Turn on Analytics Engine (free) for click analytics.</span></li>
             <li><b>Write the instance config</b><span>Copy <code>wrangler.instance.example.jsonc</code> to <code>wrangler.instance.jsonc</code>: your ids, your hosts and routes, and your <code>EMAIL_FROM</code> sender. No Analytics Engine? Remove its binding.</span></li>
             <li><b>Create the tables</b><span><code>npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc</code></span></li>
