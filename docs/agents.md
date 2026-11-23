@@ -1,3 +1,9 @@
+---
+title: Agents and API keys
+description: Connect AI agents over MCP with OAuth, and use personal API keys for scripts.
+slug: docs/agents
+---
+
 # Agents and API
 
 linkwarren has two ways in for software: **agents** (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) connect to the built-in MCP server with OAuth, and **scripts** use a personal API key on `/api/v1`. Both act as you: they can never see or change more than you can in the dashboard, and every change they make is in the audit log as "you via <agent or key>".

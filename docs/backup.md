@@ -1,3 +1,9 @@
+---
+title: Backups and export
+description: D1 Time Travel for restores, and the full JSON export for a copy you keep.
+slug: docs/backup
+---
+
 # Backups and export
 
 linkwarren keeps everything in one D1 database (plus the logo in KV). There are two ways to keep a copy: D1 Time Travel for restores, and the full JSON export for a portable copy you hold yourself.

@@ -1,3 +1,9 @@
+---
+title: Importing links
+description: Bring links in from a JSON or CSV file, in the setup wizard or with the import API.
+slug: docs/import
+---
+
 # Importing links
 
 The setup wizard (step "Bring your links") and `POST /api/import` take the same body, so a file you can import in the wizard can also be sent by a script. The import never overwrites: a slug that already exists with a different destination is reported as a conflict and left alone, and running it twice changes nothing. The format and its checks live in `src/importFormat.ts`.

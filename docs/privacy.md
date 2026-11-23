@@ -1,10 +1,16 @@
+---
+title: Privacy
+description: What linkwarren records per click, what it never stores, and what leaves your Cloudflare account.
+slug: docs/privacy
+---
+
 # Privacy
 
 This page describes what a linkwarren instance records when someone opens a short link. It applies to every instance that turns on click analytics (see [deploy.md](deploy.md), "Analytics"). Without analytics configured, nothing is recorded per click.
 
 ## What is recorded per click
 
-Each redirect to a live link records one data point with:
+Each visit to a live link (a redirect, or a contact card download) records one data point with:
 
 - the domain and the link (its id and slug)
 - the country code, as Cloudflare reports it

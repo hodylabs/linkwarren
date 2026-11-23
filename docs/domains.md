@@ -1,3 +1,9 @@
+---
+title: Domains
+description: Domain types, how a domain connects through Cloudflare, status checks, approval and Cloudflare controls.
+slug: docs/domains
+---
+
 # Domains
 
 A domain is a hostname that serves short links, for example `go.example.com`. Who can do what with domains follows the person's role:
