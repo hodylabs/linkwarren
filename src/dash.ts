@@ -1,7 +1,6 @@
-import { hostError } from "./api/domains";
 import { authMode } from "./auth";
 import type { Env } from "./env";
-import { normalizeHost } from "./host";
+import { hostError, normalizeHost } from "./host";
 
 /** Where the dashboard lives (S8c). Host mode: prefix "" and base = origin. Path mode: base = origin + prefix. */
 export type Dash = {

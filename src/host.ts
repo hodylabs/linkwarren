@@ -4,6 +4,19 @@ export function normalizeHost(raw: string): string {
   return h.replace(/\.$/, "").toLowerCase();
 }
 
+const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+/**
+ * Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars.
+ * `dashboard` null skips the dashboard_host refusal (path mode: the dashboard host is the main short domain).
+ */
+export function hostError(host: string, dashboard: string | null, cnameTarget?: string): string | null {
+  if (dashboard !== null && host === normalizeHost(dashboard)) return "dashboard_host";
+  if (cnameTarget && host === normalizeHost(cnameTarget)) return "reserved_host";
+  const labels = host.split(".");
+  if (host.length > 253 || labels.length < 2 || !labels.every((l) => LABEL.test(l)) || /^\d+$/.test(labels[labels.length - 1]!)) return "invalid_host";
+  return null;
+}
+
 // Second-level labels that make a two-letter ccTLD pair (co.uk, com.au) one registrable suffix.
 // shortcut: a fixed list, display only (instructions.name/apex, dashboard copy); use the Public Suffix List if users need more.
 const CC_SLD = new Set(["co", "com", "net", "org", "gov", "ac", "edu", "or", "ne"]);

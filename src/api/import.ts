@@ -2,14 +2,14 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
-import { normalizeHost } from "../host";
+import { hostError, normalizeHost } from "../host";
 import { parseSettings, settingsQ } from "../settings";
 import { rowToDomain, type DomainRow, type UserRow } from "../types";
 import { canManageDomain, usableDomainsSql } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
 import { checkDestination, checkSlugShape, slugKey } from "../validate";
 import { reservedSlugs } from "../dash";
-import { hostError, refusedDashboard } from "./domains";
+import { refusedDashboard } from "./domains";
 import { purgeHost, purgeMany } from "./shared";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };

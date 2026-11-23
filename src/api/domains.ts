@@ -6,7 +6,7 @@ import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidde
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverDetail } from "../cf/attach";
 import type { Env } from "../env";
 import { dash } from "../dash";
-import { apexOf, normalizeHost } from "../host";
+import { apexOf, hostError, normalizeHost } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { FIRST_OWNER, actorCan, can, type Guard } from "../roles";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
@@ -22,7 +22,6 @@ const notFound = { error: "not_found" } as const;
 // Another approve, reject or controls change of this domain is running: the same answer as a lost status race.
 const busy = { error: "conflict" } as const;
 export const MAX_PENDING_PER_MEMBER = 3;
-const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const createBody = z.strictObject({ host: z.string().max(1024), type: z.enum(["main", "shared", "private"]), confirmTakeover: z.boolean().optional() });
 const patchBody = z.strictObject({
@@ -56,19 +55,6 @@ async function administer(c: Context<E>, id: string, fn: (lease: Lease, lock: Le
   if (!bare) return res!;
   return (await holds(c.env, g)) ? res ?? c.json(busy, 409) : c.json(forbidden, 403);
 }
-
-/**
- * Hostname check on the normalized host: dotted DNS labels, non-numeric TLD (rejects IPv4), at most 253 chars.
- * `dashboard` null skips the dashboard_host refusal (path mode: the dashboard host is the main short domain).
- */
-export function hostError(host: string, dashboard: string | null, cnameTarget?: string): string | null {
-  if (dashboard !== null && host === normalizeHost(dashboard)) return "dashboard_host";
-  if (cnameTarget && host === normalizeHost(cnameTarget)) return "reserved_host";
-  const labels = host.split(".");
-  if (host.length > 253 || labels.length < 2 || !labels.every((l) => LABEL.test(l)) || /^\d+$/.test(labels[labels.length - 1]!)) return "invalid_host";
-  return null;
-}
-
 
 /** The host a new short domain may not be: the dashboard host in host mode, none in path mode (S8c). */
 export const refusedDashboard = (env: Env): string | null => (dash(env)?.pathMode ? null : env.DASHBOARD_HOST);
