@@ -37,7 +37,7 @@ Shape:
 
 ### What it holds
 
-`roles` (custom and built-in roles with their permissions), `users` (with `role_id`, the custom role of a member, or empty), `domains`, `domain_cf`, `domain_members`, `links` (with `routes` and `forward_to`), `qr_codes` (name, kind, content, colors and `hasPassword`, never the Wi-Fi password), `slug_locks`, `audit_log` (only with the `audit` permission), `settings`, `clicks_daily` and `clicks_daily_dim` (only with "Include analytics"), `api_keys` (name, prefix, permissions, domains and dates only), `agent_connections`, `tool_calls`.
+`roles` (custom and built-in roles with their permissions), `users` (with `role_id`, the custom role of a member, or empty), `domains`, `domain_cf`, `domain_members`, `links` (with `routes`, `forward_to` and `kind`), `vcards` (the contact card of each `vcard` link: `data`, its fields as JSON, and `photo`, base64), `qr_codes` (name, kind, content, colors and `hasPassword`, never the Wi-Fi password), `slug_locks`, `audit_log` (only with the `audit` permission), `settings`, `clicks_daily` and `clicks_daily_dim` (only with "Include analytics"), `api_keys` (name, prefix, permissions, domains and dates only), `agent_connections`, `tool_calls`.
 
 ### What it leaves out
 

@@ -6,7 +6,7 @@ import type { Env } from "../env";
 import { hitAll, LIMITS, limitKey, type Check } from "../limits";
 import { passwordRule } from "../password-rule";
 import { actor, type Grant } from "../principal";
-import { rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
+import { LINK_SELECT, rowToDomain, rowToLink, toApiLink, type ApiLink, type DomainRow, type LinkRow, type UserRow } from "../types";
 import { normalizeHost } from "../host";
 import { canUseDomain } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
@@ -48,6 +48,8 @@ function refusal(b: Body, link: LinkRow, now: number): string | null {
     return badWindow(s, x) ? "bad_window" : null;
   }
   if (b.action === "redirect") return link.passwordHash !== null && (b.redirectCode ?? link.redirectCode) === 301 ? "password_301" : null;
+  // S9: a contact card takes no password (clearing one is harmless); redirect and query settings are stored but never used by a card.
+  if (b.action === "password" && b.password !== null && link.kind === "vcard") return "vcard_rule";
   if (b.action === "password") return b.password !== null && link.redirectCode === 301 ? "password_301" : null;
   return null;
 }
@@ -274,13 +276,18 @@ export async function bulk(c: Context<E>) {
     } else {
       const rows = accepted.map(({ link, k, g }) => { const n = crypto.randomUUID(); newIds.set(n, link.id); return { t: link.id, r: link.updatedAt, k, g, n }; });
       main = env.DB.prepare(
-        `INSERT INTO links (id, domain_id, slug, slug_key, url, redirect_code, starts_at, expires_at, pass_query, password_hash, routes, forward_to, created_by, updated_by, created_at, updated_at)
-         SELECT json_extract(j.value,'$.n'), ?, s.slug, json_extract(j.value,'$.k'), s.url, s.redirect_code, s.starts_at, s.expires_at, s.pass_query, s.password_hash, s.routes,
+        `INSERT INTO links (id, domain_id, slug, slug_key, url, redirect_code, starts_at, expires_at, pass_query, password_hash, routes, kind, forward_to, created_by, updated_by, created_at, updated_at)
+         SELECT json_extract(j.value,'$.n'), ?, s.slug, json_extract(j.value,'$.k'), s.url, s.redirect_code, s.starts_at, s.expires_at, s.pass_query, s.password_hash, s.routes, s.kind,
            NULL, ?, ?, ?, ? FROM json_each(?) j JOIN links s ON s.id = json_extract(j.value,'$.t')
          WHERE s.updated_at = json_extract(j.value,'$.r') AND ${UNLOCKED} AND ${FREE} AND ${ACTIVE} AND ${G.sql} RETURNING id`,
       ).bind(t, user.id, user.id, now, now, JSON.stringify(rows), t, t, t, ...G.binds);
       stmts = [
         main,
+        // S9: each copy that was written gets its own copy of the source's card (a forward move keeps the link id, so its card stays).
+        env.DB.prepare(
+          `INSERT INTO vcards (link_id, data, photo) SELECT json_extract(j.value,'$.n'), v.data, v.photo
+           FROM json_each(?) j JOIN vcards v ON v.link_id = json_extract(j.value,'$.t') WHERE EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.n'))`,
+        ).bind(JSON.stringify(rows)),
         // Same detail as a single create, plus the source; the copied hash is never in it (protection only).
         auditManyStmt(env, { ...base, action: "link.create" }, accepted.map(({ link, g }, i) => ({
           targetId: rows[i]!.n, g,
@@ -380,7 +387,7 @@ export async function bulk(c: Context<E>) {
   if (b.action !== "delete" && done.length) {
     const want = newIds.size ? returned : done.map(({ link }) => link.id);
     try {
-      const rr = await env.DB.prepare("SELECT * FROM links WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(want)).all();
+      const rr = await env.DB.prepare(`${LINK_SELECT} WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(want)).all();
       for (const r of rr.results) { const l = rowToLink(r); fresh.set(newIds.get(l.id) ?? l.id, l); }
     } catch (e) {
       console.warn("linkwarren: bulk result read failed", String(e));

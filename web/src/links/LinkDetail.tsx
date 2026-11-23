@@ -14,13 +14,15 @@ import { readUtm } from "./compose";
 import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from "./linkView";
 import { RoutesEditor } from "./RoutesEditor";
 import { parseCountries, passwordProblem, routeSummary } from "./rules";
+import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
+import { cleanVcard, VcardForm } from "./VcardForm";
 
 export type DetailHandle = { focusUrl(): void; copy(): void; focusQr(): void };
 
-type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[] };
+type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[]; vcard: VCard | null };
 const draftOf = (l: Link): Draft => ({
   url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery,
-  password: "", passwordOn: l.hasPassword, routes: l.routes,
+  password: "", passwordOn: l.hasPassword, routes: l.routes, vcard: l.kind === "vcard" ? (l.vcard ?? emptyVcard()) : null,
 });
 const blank = (r: Route) => !r.countries.length && !r.devices.length && !r.url.trim();
 
@@ -50,6 +52,8 @@ function diff(l: Link, d: Draft): Record<string, unknown> {
   else if (!d.passwordOn && l.hasPassword) out.password = null;
   const { routes } = routesOf(d);
   if (JSON.stringify(routes) !== JSON.stringify(l.routes)) out.routes = routes;
+  // A card is sent whole when it differs (blank rows never count as a change).
+  if (d.vcard && JSON.stringify(cleanVcard(d.vcard)) !== JSON.stringify(l.vcard ?? null)) out.vcard = cleanVcard(d.vcard);
   return out;
 }
 
@@ -63,6 +67,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     const [busy, setBusy] = useState(false);
     const [routeErrors, setRouteErrors] = useState<Record<number, string>>({});
     const [changePw, setChangePw] = useState(false); // the new-password input of a link that already has one
+    const [cardField, setCardField] = useState<string | null>(null); // the bad_vcard field of a contact card
     const urlRef = useRef<HTMLInputElement>(null);
     const qrRef = useRef<HTMLButtonElement>(null);
     const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
@@ -83,6 +88,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
       setError(null);
       setRouteErrors({});
       setChangePw(false);
+      setCardField(null);
     }, [link.id, link.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const copy = () => {
@@ -92,7 +98,10 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         () => app.announce("Could not copy"),
       );
     };
-    useImperativeHandle(ref, () => ({ focusUrl: () => urlRef.current?.focus(), copy, focusQr: () => qrRef.current?.focus() }));
+    const isCard = link.kind === "vcard";
+    // E on a contact card goes to its first field.
+    const focusEdit = () => (isCard ? document.getElementById("ld-vc-firstName")?.focus() : urlRef.current?.focus());
+    useImperativeHandle(ref, () => ({ focusUrl: focusEdit, copy, focusQr: () => qrRef.current?.focus() }));
 
     const save = async () => {
       if (!canEdit || busy) return;
@@ -102,6 +111,9 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
       const re = routesOf(draft).errors;
       setRouteErrors(re);
       const body = diff(link, draft);
+      const cv = body.vcard ? checkVcard(body.vcard as VCard) : null;
+      setCardField(cv && !cv.ok ? cv.field : null);
+      if (cv && !cv.ok) return;
       if (Object.keys(re).length === 0 && Object.keys(body).length === 0) return;
       const pwSet = draft.passwordOn && (draft.password !== "" || link.hasPassword);
       const bad = (typeof body.password === "string" && passwordProblem(body.password)) || (pwSet && draft.code === 301 && "password_301");
@@ -117,7 +129,9 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         const code = e instanceof ApiError ? e.code : "internal";
         const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
         const row = code === "bad_route" && typeof d?.index === "number" ? draft.routes.filter((r) => !blank(r))[d.index] : undefined;
-        if (row) setRouteErrors({ [draft.routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
+        const field = (d as { field?: unknown } | undefined)?.field;
+        if (code === "bad_vcard") setCardField(typeof field === "string" ? field : "vcard");
+        else if (row) setRouteErrors({ [draft.routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
         else setError({ code }); // typed values stay in the form
       } finally {
         setBusy(false);
@@ -135,6 +149,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         setError(null);
         setRouteErrors({});
         setChangePw(false);
+        setCardField(null);
       }
     };
 
@@ -193,7 +208,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               Copy <kbd>C</kbd>
             </button>
             {canEdit && (
-              <button type="button" className="btn ghost" onClick={() => urlRef.current?.focus()} aria-keyshortcuts="E">
+              <button type="button" className="btn ghost" onClick={focusEdit} aria-keyshortcuts="E">
                 Edit <kbd>E</kbd>
               </button>
             )}
@@ -205,9 +220,9 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               {host}/<b>{link.slug}</b>
             </span>
             <span>&rarr;</span>
-            <span className="arr">{link.redirectCode}</span>
+            <span className="arr">{isCard ? 200 : link.redirectCode}</span>
             <span>&rarr;</span>
-            <span><DestText url={link.url} /></span>
+            <span>{isCard ? "downloads the contact card" : <DestText url={link.url} />}</span>
           </div>
         </div>
         {stats && (
@@ -223,6 +238,26 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
           </div>
         )}
         <fieldset className="plain" disabled={!canEdit}>
+          {isCard && (
+            <div className="sect">
+              <h3>Contact card</h3>
+              <VcardForm id="ld-vc" value={draft.vcard ?? emptyVcard()} field={cardField} readOnly={!canEdit} onChange={(vcard) => {
+                  set({ vcard });
+                  setCardField(null);
+                }} />
+              {error && (
+                <p className="err" role="alert">
+                  {errorText(error.code)}
+                  {error.code === "conflict" && (
+                    <button type="button" className="btn" onClick={() => app.bumpLinks()}>
+                      Reload
+                    </button>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
+          {!isCard && (
           <div className="sect">
             <h3>Destination</h3>
             <div className="field">
@@ -255,6 +290,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               />
             </div>
           </div>
+          )}
           <div className="sect">
             <h3>Rules</h3>
             <div className="field">
@@ -265,6 +301,8 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               <label htmlFor="ld-ends">Ends</label>
               <input id="ld-ends" className="input" type="datetime-local" value={draft.ends} readOnly={!canEdit} onChange={(e) => set({ ends: e.target.value })} />
             </div>
+            {/* A contact card has no password, routing or query pass-through: those rules are for redirects. */}
+            {!isCard && (<>
             <div className="toggle">
               <div>
                 Password<small>Visitors enter a password first</small>
@@ -334,6 +372,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               </div>
               <Switch checked={draft.pass} onChange={(pass) => set({ pass })} label="Pass query string through" />
             </div>
+            </>)}
           </div>
         </fieldset>
         {host && <QrPanel ref={qrRef} host={host} slug={link.slug} />}

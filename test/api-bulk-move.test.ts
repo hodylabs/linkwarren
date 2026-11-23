@@ -434,7 +434,7 @@ describe("delete removes forwarders (QR codes never land on a new link)", () => 
     await seed("p1", "uo", { slug: "p1" });
     const real = env.DB.prepare.bind(env.DB);
     vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => {
-      if (q.startsWith("SELECT * FROM links WHERE id IN")) throw new Error("read down");
+      if (/^SELECT links\.\*.* WHERE id IN/.test(q)) throw new Error("read down");
       return real(q);
     });
     let r;

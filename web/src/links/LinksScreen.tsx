@@ -466,7 +466,7 @@ export function LinksScreen() {
                         <span className="slug">{l.slug}</span>
                       </span>
                     </td>
-                    <td className="dest"><DestText url={l.url} /></td>
+                    <td className="dest"><DestText url={l.url} link={l} /></td>
                     <td>
                       {(l.forwardTo || l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
                         <span className="icons">

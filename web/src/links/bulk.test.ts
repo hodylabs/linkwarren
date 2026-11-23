@@ -5,7 +5,7 @@ import { CHUNK, csvName, downloadCsv, runBulk, shortUrls, toCsv } from "./bulk";
 
 const mk = (id: string, slug: string, o: Partial<Link> = {}): Link => ({
   id, domainId: "d1", slug, slugKey: slug, url: `https://example.com/${slug}`, redirectCode: 302, startsAt: null, expiresAt: null,
-  passQuery: true, hasPassword: false, routes: [], forwardTo: null, createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
+  passQuery: true, hasPassword: false, routes: [], forwardTo: null, kind: "url", createdBy: "uo", updatedBy: "uo", createdAt: 100, updatedAt: 100, ...o,
 });
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `l${i}`);
 const okAll = (req: FakeReq) => ({ body: { results: (req.body as { ids: string[] }).ids.map((id) => ({ id, ok: true })), pending: [] } });

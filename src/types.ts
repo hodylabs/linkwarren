@@ -1,4 +1,5 @@
 import { parsePerms, PERMS, type Perm } from "./roles";
+import { vcardOfRow, type VCard } from "./vcard";
 
 /** `role` is the coarse kind (owner or member); `roleId` the effective role (a custom one, or the built-in row `role` names). */
 export type UserRow = {
@@ -25,8 +26,14 @@ export type LinkRow = {
   passwordHash: string | null; routes: Route[];
   /** Set on a forwarder: the id of the link it forwards to (one hop, never another forwarder). Test by truthiness: cached rows may lack it. */
   forwardTo: string | null;
+  /** "vcard": the short link downloads `vcard` as a contact file instead of redirecting (url is VCARD_URL). Cached rows may lack it: test `=== "vcard"`. */
+  kind: "url" | "vcard";
+  /** Only on a vCard link, read through LINK_SELECT. */
+  vcard?: VCard;
   createdBy: string; updatedBy: string; createdAt: number; updatedAt: number;
 };
+/** A link row with its card (if any): the columns rowToLink reads. Unqualified links columns stay unambiguous after the join. */
+export const LINK_SELECT = "SELECT links.*, vcards.data AS vcard_data, vcards.photo AS vcard_photo FROM links LEFT JOIN vcards ON vcards.link_id = links.id";
 /** A link as the API returns it: the password hash is replaced by a flag. */
 export type ApiLink = Omit<LinkRow, "passwordHash"> & { hasPassword: boolean };
 export const toApiLink = ({ passwordHash, ...l }: LinkRow): ApiLink => ({ ...l, hasPassword: passwordHash !== null });
@@ -61,6 +68,8 @@ export const rowToLink = (r: R): LinkRow => ({
   startsAt: r.starts_at as number | null, expiresAt: r.expires_at as number | null, passQuery: r.pass_query === 1,
   passwordHash: (r.password_hash as string | null) ?? null, routes: parseRoutes(r.routes),
   forwardTo: (r.forward_to as string | null) ?? null,
+  kind: r.kind === "vcard" ? "vcard" : "url",
+  ...(r.kind === "vcard" && typeof r.vcard_data === "string" ? { vcard: vcardOfRow(r.vcard_data, r.vcard_photo) } : {}),
   createdBy: r.created_by as string, updatedBy: r.updated_by as string,
   createdAt: r.created_at as number, updatedAt: r.updated_at as number,
 });

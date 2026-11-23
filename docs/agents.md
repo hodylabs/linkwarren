@@ -61,6 +61,8 @@ Agents follow the person's current role. When an owner turns off **Connect AI ag
 `bulk_links` takes `action`, `ids` (1 to 50), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
 ### Routing
 
+Every link has a `kind`: `url` (a redirect) or `vcard` (a contact card: the short link downloads the card, see `docs/spec.md`). `get_link` and `search_links` show the kind and, for a card, its fields with `hasPhoto` in place of the photo. Contact cards are created and edited in the dashboard or through `/api/v1`, not through MCP; `update_link` on a card answers `vcard_url` for a new `url` and `vcard_rule` for a password or routes.
+
 A link destination (`url`, and each route `url`) is an `http(s)` URL, a `tel:` number (`tel:+1-555-123-4567`: an optional `+`, digits and `-` `.` `(` `)`, no parameters) or a `mailto:` address (one or more addresses separated by commas, optional `subject` and `body` only, no line breaks). A refused one answers `scheme`, `bad_tel` or `bad_mailto`. A domain's bare and not-found redirects take `http(s)` only.
 
 `create_link` and `update_link` (and `POST`/`PATCH /links`) take `routes`: up to 10 rules, each `{ countries, devices, url }`, tried top to bottom; the first match wins and everyone else goes to the main `url`. A rule needs at least one country or device. `devices` lists any of:
@@ -129,6 +131,11 @@ curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application
 curl -s -X PATCH -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
   -d '{"routes":[{"devices":["ios"],"url":"https://apps.example.com/ios"},{"devices":["android"],"url":"https://apps.example.com/android"}]}' "$LW/links/<link id>"
 
+# A contact card: the short link downloads it (write). Leave out url; every card field is optional but a name or organization.
+# phones[].type is cell, work, home or other; photo is base64 JPEG or PNG, at most 64 KB. PATCH with "vcard" replaces the whole card.
+curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
+  -d '{"domainId":"<domain id>","slug":"ada","kind":"vcard","vcard":{"firstName":"Ada","lastName":"Lovelace","org":"Example Ltd","phones":[{"type":"work","number":"+1 555 0100"}],"emails":["ada@example.com"],"websites":["https://example.com"]}}' "$LW/links"
+
 # Change the destination (write)
 curl -s -X PATCH -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \
   -d '{"url":"https://example.com/summer-sale"}' "$LW/links/<link id>"
@@ -139,6 +146,8 @@ curl -s -X DELETE -H "Authorization: Bearer $LW_KEY" "$LW/links/<link id>"
 # Daily clicks for up to 50 links, last 7 days
 curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<link id>"
 ```
+
+A card that fails its checks answers `400 {"error":"bad_vcard","field":"<field>"}` (`name`, `photo`, `phones.0`, `emails.1`, `websites.2`, `address.city`, `note`, ...). A contact card refuses `url` (`vcard_url`), a password or routes (`vcard_rule`) and a type change (`kind_change`); a plain link refuses `vcard` (`not_vcard`).
 
 ### Bulk changes
 

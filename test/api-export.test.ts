@@ -64,8 +64,8 @@ function countD1() {
 const restoreDB = () => { (env as unknown as Record<string, unknown>).DB = realDB; };
 
 // roles first: a restore needs them before users.role_id refers to them. Never deleted here: the built-in rows stay.
-const BASE_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "qr_codes", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
-const ALL_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "qr_codes", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "api_keys", "agent_connections", "tool_calls"];
+const BASE_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "vcards", "qr_codes", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
+const ALL_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "vcards", "qr_codes", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "api_keys", "agent_connections", "tool_calls"];
 const NEVER = ["sessions", "login_tokens", "passkeys", "auth_challenges", "auth_limits", "locks", "analytics_state"];
 
 beforeAll(setupAccess);
@@ -177,6 +177,8 @@ describe("POST /api/export/start", () => {
 
 describe("POST /api/export/page", () => {
   it("returns every seeded row of every table, with no secrets, hashes or session data anywhere", async () => {
+    await run("INSERT INTO links (id,domain_id,slug,slug_key,url,kind,created_by,updated_by,created_at,updated_at) VALUES ('l4','d1','card','card','https://vcard.invalid/','vcard','uo','uo',1,1)");
+    await run("INSERT INTO vcards (link_id,data,photo) VALUES ('l4','{\"firstName\":\"Ada\"}',NULL)");
     await begin(true);
     const out: Record<string, Record<string, unknown>[]> = {};
     let text = "";
@@ -186,7 +188,8 @@ describe("POST /api/export/page", () => {
       text += p.raw.join("\n");
     }
     for (const t of ALL_TABLES) expect([t, out[t]!.length > 0]).toEqual([t, true]);
-    expect(out.links!.map((l) => [l.id, l.protected])).toEqual([["l1", false], ["l2", true], ["l3", false]]);
+    expect(out.links!.map((l) => [l.id, l.protected, l.kind])).toEqual([["l1", false, "url"], ["l2", true, "url"], ["l3", false, "url"], ["l4", false, "vcard"]]);
+    expect(out.vcards).toEqual([{ link_id: "l4", data: '{"firstName":"Ada"}', photo: null }]);
     expect(out.links!.find((l) => l.id === "l3")!.forward_to).toBe("l1");
     expect(JSON.parse(out.links![0]!.routes as string)).toEqual([{ device: "ios", url: "https://example.com/ios" }]);
     for (const l of out.links!) expect(Object.keys(l)).not.toContain("password_hash");

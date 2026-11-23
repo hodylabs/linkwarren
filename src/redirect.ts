@@ -7,6 +7,7 @@ import { countryOf, pickDestination, routeDeviceOf, withQuery } from "./routing"
 import { handleProtected } from "./unlock";
 import type { DomainRow, LinkRow } from "./types";
 import { checkSlugShape, slugKey } from "./validate";
+import { serializeVcard } from "./vcard";
 
 export async function handleRedirect(req: Request, env: Env, now: number, ctx?: Ctx): Promise<Response> {
   const url = new URL(req.url);
@@ -46,7 +47,9 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   if (post) return notAllowed();
 
   const m = splitQrMarker(url.search);
-  const res = redirect(destinationOf(req, link, m.search), link.redirectCode, domain);
+  // A vCard link answers with the contact file itself (no redirect, routes or query); a card missing its row is not found.
+  if (link.kind === "vcard" && !link.vcard) return miss(domain.notfoundRedirect);
+  const res = link.kind === "vcard" ? vcardResponse(link, domain, head) : redirect(destinationOf(req, link, m.search), link.redirectCode, domain);
   // Off the hot path: the response never waits for, or fails because of, analytics.
   if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
   return res;
@@ -90,6 +93,19 @@ export const robots = (d: DomainRow | null): Record<string, string> => (d?.noind
 
 const redirect = (to: string, status: number, d: DomainRow) =>
   new Response(null, { status, headers: { location: to, "cache-control": "private, max-age=0", ...robots(d) } });
+
+/** The slug is already limited to [A-Za-z0-9._~-]; the filename is still rebuilt from that set so no header can be injected through it. */
+const vcardResponse = (link: LinkRow, d: DomainRow, head: boolean) =>
+  new Response(head ? null : serializeVcard(link.vcard!), {
+    status: 200,
+    headers: {
+      "content-type": "text/vcard; charset=utf-8",
+      "content-disposition": `attachment; filename="${link.slug.replace(/[^A-Za-z0-9._~-]/g, "_")}.vcf"`,
+      "cache-control": "private, max-age=0",
+      "x-content-type-options": "nosniff",
+      ...robots(d),
+    },
+  });
 
 const notAllowed = () =>
   new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD", "content-type": "text/plain; charset=utf-8" } });

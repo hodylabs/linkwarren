@@ -7,7 +7,7 @@ import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 const NOW = 1_800_000_000;
 const link = (o: Partial<Link> = {}): Link => ({
   id: "l1", domainId: "d1", slug: "spring", slugKey: "spring", url: "https://example.com/a", redirectCode: 302,
-  startsAt: null, expiresAt: null, passQuery: true, hasPassword: false, routes: [], forwardTo: null, createdBy: "u1", updatedBy: "u1", createdAt: 1, updatedAt: 1, ...o,
+  startsAt: null, expiresAt: null, passQuery: true, hasPassword: false, routes: [], forwardTo: null, kind: "url", createdBy: "u1", updatedBy: "u1", createdAt: 1, updatedAt: 1, ...o,
 });
 const dom = (status: Domain["status"]): Domain => ({
   id: "d1", host: "go.test", type: "main", status, ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
