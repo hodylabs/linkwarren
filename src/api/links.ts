@@ -9,7 +9,7 @@ import { parseSettings, settingsQ } from "../settings";
 import { canUseDomain, usableDomains } from "../perm";
 import { actorCan, can, type Guard } from "../roles";
 import { actor, type Grant } from "../principal";
-import { LINK_SELECT, ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
+import { LINK_SELECT, ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, toListLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
 import { checkVcard, emptyVcard, PHONE_TYPES, PHOTO_B64_MAX, VCARD_MAX, VCARD_URL, vcardData, type VCard } from "../vcard";
 import { bulk } from "./bulk";
@@ -205,7 +205,7 @@ links.get("/", async (c) => {
     `${LINK_SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`,
   ).bind(...binds).all()).results.map(rowToLink);
   const items = rows.slice(0, PAGE);
-  return c.json({ items: items.map(toApiLink), next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
+  return c.json({ items: items.map(toListLink), next: rows.length > PAGE ? `${items[items.length - 1]!.createdAt}.${items[items.length - 1]!.id}` : null });
 });
 
 // No POST /:id exists, so nothing shadows this.

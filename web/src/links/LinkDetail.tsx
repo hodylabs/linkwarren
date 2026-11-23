@@ -15,14 +15,14 @@ import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from
 import { RoutesEditor } from "./RoutesEditor";
 import { parseCountries, passwordProblem, routeSummary } from "./rules";
 import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
-import { cleanVcard, VcardForm } from "./VcardForm";
+import { cleanVcard, fullCard, VcardForm } from "./VcardForm";
 
 export type DetailHandle = { focusUrl(): void; copy(): void; focusQr(): void };
 
 type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[]; vcard: VCard | null };
 const draftOf = (l: Link): Draft => ({
   url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery,
-  password: "", passwordOn: l.hasPassword, routes: l.routes, vcard: l.kind === "vcard" ? (l.vcard ?? emptyVcard()) : null,
+  password: "", passwordOn: l.hasPassword, routes: l.routes, vcard: l.kind === "vcard" ? fullCard(l) : null,
 });
 const blank = (r: Route) => !r.countries.length && !r.devices.length && !r.url.trim();
 
@@ -53,7 +53,7 @@ function diff(l: Link, d: Draft): Record<string, unknown> {
   const { routes } = routesOf(d);
   if (JSON.stringify(routes) !== JSON.stringify(l.routes)) out.routes = routes;
   // A card is sent whole when it differs (blank rows never count as a change).
-  if (d.vcard && JSON.stringify(cleanVcard(d.vcard)) !== JSON.stringify(l.vcard ?? null)) out.vcard = cleanVcard(d.vcard);
+  if (d.vcard && JSON.stringify(cleanVcard(d.vcard)) !== JSON.stringify(base.vcard)) out.vcard = cleanVcard(d.vcard);
   return out;
 }
 

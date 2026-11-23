@@ -42,7 +42,12 @@ describe("create and read", () => {
     const got = (await (await call("a", "GET", `/api/links/${l.id}`)).json()) as L;
     expect(got.vcard).toEqual(l.vcard);
     const list = (await (await call("a", "GET", "/api/links")).json()) as { items: L[] };
-    expect(list.items[0]).toMatchObject({ kind: "vcard", vcard: { lastName: "Lovelace" } });
+    // Lists carry hasPhoto, never the photo; the single read above has it.
+    expect(list.items[0]).toMatchObject({ kind: "vcard", vcard: { lastName: "Lovelace", hasPhoto: true } });
+    expect(list.items[0]!.vcard).not.toHaveProperty("photo");
+    await call("a", "PATCH", `/api/links/${l.id}`, { vcard: { ...CARD, photo: null } });
+    const after = (await (await call("a", "GET", "/api/links")).json()) as { items: L[] };
+    expect(after.items[0]!.vcard).toMatchObject({ hasPhoto: false });
     const r = await fetchCard();
     expect([r.status, r.headers.get("content-type")]).toEqual([200, "text/vcard; charset=utf-8"]);
     expect(await r.text()).toContain("FN:Ada Lovelace\r\n");
@@ -155,7 +160,10 @@ describe("/api/v1, import and MCP", () => {
     const r = await v1("POST", "/links", { domainId: "dm", slug: "ada", kind: "vcard", vcard: CARD });
     expect(r.status).toBe(201);
     const { id } = (await r.json()) as L;
-    expect(await (await v1("GET", `/links/${id}`)).json()).toMatchObject({ kind: "vcard", vcard: { emails: ["ada@example.com"] } });
+    expect(await (await v1("GET", `/links/${id}`)).json()).toMatchObject({ kind: "vcard", vcard: { emails: ["ada@example.com"], photo: JPEG } });
+    const found = ((await (await v1("GET", "/links?q=ada")).json()) as { items: L[] }).items[0]!;
+    expect(found.vcard).toMatchObject({ hasPhoto: true });
+    expect(found.vcard).not.toHaveProperty("photo");
     expect((await v1("PATCH", `/links/${id}`, { url: "https://x.com" })).status).toBe(400);
   });
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { PHONE_TYPES, VCARD_MAX, type PhoneType, type VCard } from "../../../src/vcard";
+import type { Link } from "../api";
+import type { ListVCard } from "../../../src/types";
+import { emptyVcard, PHONE_TYPES, VCARD_MAX, type PhoneType, type VCard } from "../../../src/vcard";
 import { photoSrc, resizePhoto } from "./photo";
 
 const PHONE_LABEL: Record<PhoneType, string> = { cell: "Mobile", work: "Work", home: "Home", other: "Other" };
@@ -23,6 +25,18 @@ export function vcardFieldText(field: string): string {
 export const cleanVcard = (v: VCard): VCard => ({
   ...v, phones: v.phones.filter((p) => p.number.trim()), emails: v.emails.filter((e) => e.trim()), websites: v.websites.filter((w) => w.trim()),
 });
+
+/**
+ * A link's card as the form edits it. Lists send `hasPhoto` instead of the photo: a list card without a photo is complete,
+ * one with a photo needs the single-link read first (needsFullCard).
+ */
+export function fullCard(l: Pick<Link, "vcard">): VCard {
+  if (!l.vcard) return emptyVcard();
+  const { hasPhoto: _, ...v } = l.vcard as ListVCard & { photo?: string | null };
+  return { ...v, photo: v.photo ?? null };
+}
+export const needsFullCard = (l: Pick<Link, "kind" | "vcard">): boolean =>
+  l.kind === "vcard" && !!l.vcard && !("photo" in l.vcard) && l.vcard.hasPhoto;
 
 type TextKey = "firstName" | "lastName" | "org" | "title" | "note";
 type AddrKey = keyof VCard["address"];

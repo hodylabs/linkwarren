@@ -35,8 +35,17 @@ export type LinkRow = {
 /** A link row with its card (if any): the columns rowToLink reads. Unqualified links columns stay unambiguous after the join. */
 export const LINK_SELECT = "SELECT links.*, vcards.data AS vcard_data, vcards.photo AS vcard_photo FROM links LEFT JOIN vcards ON vcards.link_id = links.id";
 /** A link as the API returns it: the password hash is replaced by a flag. */
-export type ApiLink = Omit<LinkRow, "passwordHash"> & { hasPassword: boolean };
+/** A card as a list shows it: `hasPhoto` instead of the photo (up to 64 KB each); the single-link read has the photo. */
+export type ListVCard = Omit<VCard, "photo"> & { hasPhoto: boolean };
+export type ApiLink = Omit<LinkRow, "passwordHash" | "vcard"> & { hasPassword: boolean; vcard?: VCard | ListVCard };
 export const toApiLink = ({ passwordHash, ...l }: LinkRow): ApiLink => ({ ...l, hasPassword: passwordHash !== null });
+/** toApiLink for list answers: a card's photo becomes `hasPhoto`. */
+export const toListLink = (l: LinkRow): ApiLink => {
+  const a = toApiLink(l);
+  if (!l.vcard) return a;
+  const { photo, ...rest } = l.vcard;
+  return { ...a, vcard: { ...rest, hasPhoto: photo !== null } };
+};
 export type UserListItem = UserRow & { linkCount: number; agentCount: number; domains: { id: string; host: string; via: "owner" | "member" }[] };
 export type AuditItem = {
   id: number; at: number; actorId: string; actorEmail: string | null; actorName: string | null; via: string | null;
