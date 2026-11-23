@@ -10,7 +10,7 @@ import { Icon, Seg, Switch } from "../shell/ui";
 import { can, canUseDomain, mayOpen } from "../perms";
 import { useApp } from "../state";
 import { fromLocalInput, toLocalInput } from "../time";
-import { checkDestination, checkLinkName, checkSlugShape, LINK_NAME_MAX } from "../../../src/validate";
+import { checkDestination, checkLinkName, checkSlugShape } from "../../../src/validate";
 import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
 import { cleanVcard, formField, fullCard, VcardForm } from "./VcardForm";
 import { readUtm, suggestSlugs, withUtm, type Utm } from "./compose";
@@ -451,7 +451,7 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
           <label htmlFor="nl-name">
             Name <span>optional, to find it by</span>
           </label>
-          <input id="nl-name" className={err("name") ? "input sans bad" : "input sans"} value={d.name} maxLength={LINK_NAME_MAX} autoComplete="off" aria-invalid={err("name") ? true : undefined} onChange={(e) => set({ name: e.target.value })} />
+          <input id="nl-name" className={err("name") ? "input sans bad" : "input sans"} value={d.name} autoComplete="off" aria-invalid={err("name") ? true : undefined} onChange={(e) => set({ name: e.target.value })} />
           {err("name") && (
             <p className="err" role="alert">
               {errorText(err("name")!)}

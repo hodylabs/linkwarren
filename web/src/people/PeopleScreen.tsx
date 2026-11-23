@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type AuditItem, type Page, type UserItem } from "../api";
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
-import { navigate, useRoute } from "../router";
+import { navigate, useRoute, withoutQ } from "../router";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchChip, Tag } from "../shell/ui";
 import { can, seesRoles } from "../perms";
 import { useApp } from "../state";
@@ -197,7 +197,7 @@ function PeopleView() {
         action={manage && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
       >
         {seesRoles(me) && <PeopleTabs at="people" />}
-        <SearchChip q={query.get("q") ?? ""} onClear={() => navigate("/people")} />
+        <SearchChip q={query.get("q") ?? ""} onClear={() => navigate(withoutQ("/people"), { replace: true })} />
         {manage && <div className="chips" role="group" aria-label="Filter people">
           {FILTERS.map((f) => (
             <Chip key={f} pressed={filter === f} onClick={() => setFilter(f)}>

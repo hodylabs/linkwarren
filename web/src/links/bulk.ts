@@ -72,6 +72,8 @@ function cell(v: string): string {
   const s = /^\s*[=+\-@]|^[\t\r]/.test(v) ? `'${v}` : v;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
+/** A name in the CSV: a leading apostrophe is doubled, so the import (parseLinks.ts) can undo the formula guard exactly. */
+const nameCell = (n: string | null | undefined): string => (n ? (n.startsWith("'") ? `'${n}` : n) : "");
 const iso = (sec: number | null) => (sec === null ? "" : new Date(sec * 1000).toISOString());
 
 function status(l: Link, now: number): string {
@@ -87,7 +89,7 @@ export function toCsv(links: Link[], host: (domainId: string) => string, people:
   const rows = links.map((l) => [
     // A contact card has no destination (its stored url is a placeholder): left empty so a re-import never redirects to it.
     host(l.domainId) ? shortUrl(host(l.domainId), l.slug) : "", l.kind === "vcard" ? "" : l.url, l.kind ?? "url", host(l.domainId), l.slug, status(l, now), String(l.redirectCode), String(l.passQuery), String(l.hasPassword),
-    iso(l.startsAt), iso(l.expiresAt), l.routes.length ? JSON.stringify(l.routes) : "", l.forwardTo ? l.url : "", people(l.createdBy), iso(l.createdAt), l.name ?? "",
+    iso(l.startsAt), iso(l.expiresAt), l.routes.length ? JSON.stringify(l.routes) : "", l.forwardTo ? l.url : "", people(l.createdBy), iso(l.createdAt), nameCell(l.name),
   ]);
   return "\uFEFF" + [COLUMNS, ...rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
 }

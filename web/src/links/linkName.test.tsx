@@ -113,9 +113,25 @@ describe("link name in the dashboard", () => {
     expect(errors).toEqual([]);
     expect(body.links.map((l) => [l.slug, l.name ?? null])).toEqual([["spring", "Spring poster"], ["menu", null]]);
   });
+
+  it("the CSV round trip keeps names the formula guard touches, and names that start with an apostrophe", () => {
+    const names = ["@Team", "=sum", "-1 off", "'quoted", "'@both", "it's fine"];
+    const links = names.map((name, i) => mk(`n${i}`, `s${i}`, { name }));
+    const csv = toCsv(links, () => "go.test", () => "You");
+    expect(csv).toContain(",'@Team");
+    const { rows: r, lines } = parseCsvLines(csv);
+    expect(linksFromCsv(r, "go.test", lines).body.links.map((l) => l.name)).toEqual(names);
+  });
 });
 
 describe("one search", () => {
+  it("clearing the search on Domains drops only q, so the selected domain stays", async () => {
+    const { user } = boot("/domains?q=go&sel=d1");
+    await screen.findByText("go", { selector: ".qchip b" });
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    await waitFor(() => expect(location.search).toBe("?sel=d1"));
+  });
+
   it("the top bar's Search opens the palette; the page has no second search box", async () => {
     const { user } = boot("/links");
     await ready();

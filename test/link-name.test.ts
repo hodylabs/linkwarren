@@ -30,6 +30,10 @@ describe("checkLinkName", () => {
     expect(checkLinkName("   ")).toEqual({ ok: true, name: null });
     expect(checkLinkName(null)).toEqual({ ok: true, name: null });
     expect(checkLinkName("é".repeat(100))).toEqual({ ok: true, name: "é".repeat(100) });
+    // Counted in characters (code points), not UTF-16 units: 99 letters and one emoji is 100.
+    const emoji = String.fromCodePoint(0x1f600);
+    expect(checkLinkName("a".repeat(99) + emoji)).toEqual({ ok: true, name: "a".repeat(99) + emoji });
+    expect(checkLinkName("a".repeat(100) + emoji)).toEqual({ ok: false });
     for (const bad of ["x".repeat(101), "a\nb", "tab\there", `a${String.fromCharCode(0x2028)}b`, `a${String.fromCharCode(0x85)}b`]) expect(checkLinkName(bad)).toEqual({ ok: false });
   });
 });
@@ -83,7 +87,8 @@ describe("MCP inputs", () => {
   it("create_link and update_link take an optional name; search_links says it matches names", () => {
     expect(TOOLS.create_link!.input.safeParse({ domain: "go.test", slug: "a", url: "https://example.com/", name: "Spring poster" }).success).toBe(true);
     expect(TOOLS.update_link!.input.safeParse({ id: "l1", name: null }).success).toBe(true);
-    expect(TOOLS.create_link!.input.safeParse({ domain: "go.test", slug: "a", url: "https://example.com/", name: "x".repeat(101) }).success).toBe(false);
+    // Surrounding spaces do not count: the API trims before its 100-character check, so the tool passes them through.
+    expect(TOOLS.create_link!.input.safeParse({ domain: "go.test", slug: "a", url: "https://example.com/", name: `  ${"x".repeat(100)}  ` }).success).toBe(true);
     expect(TOOLS.search_links!.description).toContain("name");
   });
 });

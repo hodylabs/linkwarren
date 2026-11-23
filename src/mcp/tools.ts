@@ -40,7 +40,8 @@ async function domainOf(api: Api, hostOrId: string): Promise<Domain> {
 const time = z.number().int().nonnegative().nullable().optional();
 const url = z.string().min(1).max(2048).describe("Destination: an http(s) URL, a tel: number (tel:+15551234567) or a mailto: address (optional subject and body only)");
 const slug = z.string().min(1).max(64);
-const name = z.string().max(100).nullable().optional().describe("Optional name people search by (at most 100 characters); empty or null removes it");
+// The API trims and checks it (checkLinkName: at most 100 characters after trimming); this cap only bounds the input.
+const name = z.string().max(1000).nullable().optional().describe("Optional name people search by (at most 100 characters); empty or null removes it");
 const hostOrId = z.string().min(1).max(253).describe("Host (go.example.com) or domain id");
 const ROUTES =
   " Devices match when the visitor has any listed value: form factor (mobile, tablet, desktop), phone OS (ios, android)"

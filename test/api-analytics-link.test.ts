@@ -68,6 +68,18 @@ describe("GET /api/analytics?link=: one link's report", () => {
   });
 });
 
+describe("top links names (S12)", () => {
+  it("the overview names a top link only while its current domain is one the reader can use", async () => {
+    await run("UPDATE links SET name = 'Main poster' WHERE id = 'lM'");
+    expect((await json("?range=7", "a@example.com")).links).toEqual([expect.objectContaining({ linkId: "lM", name: "Main poster" })]);
+    // Moved to a private domain the member cannot use: its past clicks still show under the old address, never the name.
+    await run("UPDATE links SET domain_id = 'dB' WHERE id = 'lM'");
+    const after = (await json("?range=7", "a@example.com")).links;
+    expect(after.map((l: any) => [l.linkId, l.slug])).toEqual([["lM", "lM"]]);
+    expect(after[0]).not.toHaveProperty("name");
+  });
+});
+
 describe("parseTz: an IANA name Intl knows, or an offset in range", () => {
   it("accepts", () => {
     expect(parseTz("Europe/Paris")).toEqual({ zone: "Europe/Paris" });

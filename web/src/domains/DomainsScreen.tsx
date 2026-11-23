@@ -1,7 +1,7 @@
 import { plural } from "../copy";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
-import { navigate, useRoute } from "../router";
+import { navigate, useRoute, withoutQ } from "../router";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchChip, Tag } from "../shell/ui";
 import { can } from "../perms";
 import { useApp } from "../state";
@@ -103,7 +103,7 @@ export function DomainsScreen() {
           ))}
         </div>
         {admin && waiting > 0 && <span className="note">{waiting} waiting for you</span>}
-        <SearchChip q={query.get("q") ?? ""} onClear={() => navigate("/domains")} />
+        <SearchChip q={query.get("q") ?? ""} onClear={() => navigate(withoutQ("/domains"), { replace: true })} />
       </ScreenHeader>
       <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className="list" aria-label="Domains">

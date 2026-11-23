@@ -15,6 +15,14 @@ export function navigate(to: string, opts: { replace?: boolean; state?: unknown 
   emit();
 }
 
+/** `path` with the current query minus `q`: clearing a search keeps the selection and every other parameter. */
+export function withoutQ(path: string): string {
+  const p = new URLSearchParams(location.search);
+  p.delete("q");
+  const s = p.toString();
+  return `${path}${s ? `?${s}` : ""}`;
+}
+
 function subscribe(fn: () => void) {
   listeners.add(fn);
   return () => void listeners.delete(fn);

@@ -61,10 +61,13 @@ analytics.get("/", async (c) => {
     ((await c.env.DB.prepare("SELECT id, host FROM domains").all<{ id: string; host: string }>()).results).map((d) => [d.id, d.host]),
   );
   const report = buildReport(p.range, rows, hosts, { truncated: p.truncated, visitors: !!c.env.VISITOR_SALT?.trim() });
-  // S12: the top links' names (only the ones set), so Top links can show them; one read for at most TOP_LINKS ids.
+  // S12: the top links' names (only the ones set), so Top links can show them; one read for at most TOP_LINKS ids. Only for a
+  // link whose current domain is in the reader's scope: a link moved to a domain they cannot use keeps its old address, never its name.
   if (report.links.length) {
-    const named = new Map((await c.env.DB.prepare("SELECT id, name FROM links WHERE name IS NOT NULL AND id IN (SELECT value FROM json_each(?))")
-      .bind(JSON.stringify(report.links.map((l) => l.linkId))).all<{ id: string; name: string }>()).results.map((r) => [r.id, r.name]));
+    const dom = p.scope.domainIds;
+    const named = new Map((await c.env.DB.prepare(
+      `SELECT id, name FROM links WHERE name IS NOT NULL AND id IN (SELECT value FROM json_each(?))${dom ? " AND domain_id IN (SELECT value FROM json_each(?))" : ""}`,
+    ).bind(JSON.stringify(report.links.map((l) => l.linkId)), ...(dom ? [JSON.stringify(dom)] : [])).all<{ id: string; name: string }>()).results.map((r) => [r.id, r.name]));
     report.links = report.links.map((l) => (named.has(l.linkId) ? { ...l, name: named.get(l.linkId)! } : l));
   }
   return c.json(p.link ? { ...report, link: p.link } : report);

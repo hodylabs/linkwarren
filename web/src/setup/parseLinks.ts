@@ -77,7 +77,9 @@ export function linksFromCsv(rows: string[][], mainHost: string, lines?: number[
     const line = lines?.[i + 1] ?? i + 2;
     const cell = (k: number) => (k < 0 ? "" : (r[k] ?? "").trim());
     const slug = cell(at.slug), destination = cell(at.dest), host = cell(at.host), enabled = cell(at.enabled).toLowerCase();
-    const start = cell(at.start), end = cell(at.end), name = cell(at.name);
+    // The export guards a formula-like name with a leading apostrophe (and doubles a real one): undo exactly one.
+    const start = cell(at.start), end = cell(at.end), rawName = cell(at.name);
+    const name = /^'(\s*[=+\-@]|')/.test(rawName) ? rawName.slice(1) : rawName;
     if (!slug) return errors.push({ line, reason: "slug is empty" });
     // A CSV row has no card fields: a contact card comes back only through a JSON import with its vcard.
     if (cell(at.kind).toLowerCase() === "vcard") return errors.push({ line, reason: "contact cards cannot be imported from CSV; use a JSON import with the card's vcard fields" });
