@@ -5,7 +5,7 @@ import { useHotkeys, type Bindings } from "../keys";
 import { navigate, NavLink, useRoute } from "../router";
 import { switcherDomains } from "../shell/palette";
 import { useOpenSheets } from "../shell/Sheet";
-import { Kbd, ScreenHeader, Seg } from "../shell/ui";
+import { Icon, Kbd, ScreenHeader, Seg } from "../shell/ui";
 import { can } from "../perms";
 import { useApp } from "../state";
 import { Breakdowns, linkPage } from "./Breakdowns";
@@ -16,6 +16,7 @@ import { DomainPicker } from "./DomainPicker";
 import { filtersQuery, rangeProblem, readFilters, utcToday, type Filters, type Range } from "./filters";
 import { tiles } from "./view";
 import { viewerZone } from "../time";
+import { shortUrl } from "../links/linkView";
 
 /** Analytics screen hotkeys (outside text fields) and their text on the shortcuts sheet. */
 export const ANALYTICS_KEYS = {
@@ -59,7 +60,7 @@ export function safeDecode(s: string): string | null {
 }
 
 export function AnalyticsScreen() {
-  const { me, domains: listed, overlay } = useApp();
+  const { me, domains: listed, overlay, announce } = useApp();
   // R10: a domain manager also lists domains they cannot use (canUse false); their analytics need analytics.all.
   const domains = can(me, "analytics.all") ? listed : listed.filter((d) => d.canUse !== false);
   const sheets = useOpenSheets();
@@ -183,7 +184,7 @@ export function AnalyticsScreen() {
       d: () => !isLink && setPicker(true),
       l: () => searchRef.current?.focus(),
       v: () => setTable((t) => !t),
-      r: () => document.querySelector<HTMLElement>('.an [role=radiogroup] [aria-checked="true"]')?.focus(),
+      r: () => document.querySelector<HTMLElement>('.fbar [role=radiogroup] [aria-checked="true"]')?.focus(),
       x: () => exportRef.current?.click(),
       escape: (e) => {
         if (e.target === searchRef.current) searchRef.current?.blur();
@@ -255,70 +256,126 @@ export function AnalyticsScreen() {
   const shown = det && det.live === "ok" ? det : null;
   const title = report?.link ? `${report.link.host}/${report.link.slug}` : null;
 
+  const clearAll = () => {
+    cancelSearch();
+    setQInput("");
+    navigate(here, { replace: true });
+  };
+  const hourlyOff = report !== null && report.unit === "hour" && report.live !== "ok";
+  const noClicks = report !== null && report.totals.clicks === 0;
+  const copyLink = () => {
+    const l = report?.link;
+    if (!l) return;
+    navigator.clipboard.writeText(shortUrl(l.host, l.slug)).then(
+      () => announce("Copied"),
+      () => announce("Could not copy"),
+    );
+  };
+  const coverage = shown?.from
+    ? `Operating systems, browsers, languages, places and busiest times cover ${shown.from} to ${shown.to}.`
+    : shown && !shown.from
+      ? "This range is older than 90 days, so it has no operating system, browser, language, place or busiest-times detail."
+      : undefined;
+
   return (
     <>
-      <ScreenHeader title={isLink ? "Link analytics" : "Analytics"} text={isLink ? title ?? "" : crumb}>
-        {isLink && <NavLink className="btn" to="/analytics">All analytics</NavLink>}
-        {!isLink && <label className="search">
-          <input
-            ref={searchRef}
-            aria-label="Search links"
-            placeholder="Search links, for example spring"
-            maxLength={48}
-            autoComplete="off"
-            value={qInput}
-            onChange={(e) => {
-              const v = e.target.value;
-              setQInput(v);
-              cancelSearch();
-              timer.current = setTimeout(() => {
-                timer.current = null;
-                goRef.current({ q: v });
-              }, DEBOUNCE_MS);
-            }}
-          />
-          <Kbd>L</Kbd>
-        </label>}
-        {/* Enabled only while the report on screen answers the current filters: the CSV is built from it (R10). */}
-        <button type="button" className="btn act" ref={exportRef} disabled={!canExport} aria-keyshortcuts="X" onClick={() => canExport && downloadCsv(report, shown)}>
-          Export CSV<span className="k2">X</span>
-        </button>
-      </ScreenHeader>
-      <div className="an">
-        <div className="fbar" role="toolbar" aria-label="Filters">
-          <Seg cls="seg2" label="Date range" options={RANGE_OPTIONS} value={f.range} onChange={(v) => go({ range: v })} />
-          {f.range === "custom" && (
-            <div className="custom">
-              <label>
-                From <input type="date" ref={fromRef} max={today} defaultValue={f.from} />
-              </label>
-              <label>
-                To <input type="date" ref={toRef} max={today} defaultValue={f.to} />
-              </label>
+      {isLink ? (
+        <header className="top">
+          <div>
+            <NavLink className="btn sm ghost back" to="/analytics">
+              <Icon name="back" />All analytics
+            </NavLink>
+          </div>
+          <div className="identity">
+            <div className="grow">
+              <h1 className="eyebrow">Link analytics</h1>
+              {title && <p className="short big">{title}</p>}
             </div>
-          )}
-          {!isLink && <div
-            className="ddwrap"
-            ref={wrapRef}
-            onBlur={(e) => {
-              if (picker && !e.currentTarget.contains(e.relatedTarget as Node | null)) setPicker(false);
-            }}
-          >
-            <button
-              type="button"
-              ref={chipRef}
-              className={n ? "chip dd set" : "chip dd"}
-              aria-haspopup="listbox"
-              aria-expanded={picker}
-              aria-keyshortcuts="D"
-              onClick={() => (picker ? closePicker() : setPicker(true))}
+            {report?.link && (
+              <>
+                <button type="button" className="btn" onClick={copyLink}>
+                  <Icon name="copy" />Copy
+                </button>
+                <NavLink className="btn" to={`/links?q=${encodeURIComponent(report.link.slug)}&sel=${encodeURIComponent(report.link.linkId)}`}>
+                  <Icon name="links" />Open in links
+                </NavLink>
+              </>
+            )}
+          </div>
+        </header>
+      ) : (
+        <ScreenHeader title="Analytics" text={crumb} />
+      )}
+      <div className="an">
+        <div className="an-filters">
+          <div className="fbar" role="toolbar" aria-label="Filters">
+            <Seg label="Date range" options={RANGE_OPTIONS} value={f.range} onChange={(v) => go({ range: v })} />
+            {f.range === "custom" && (
+              <div className="custom">
+                <label>
+                  From <input type="date" ref={fromRef} max={today} defaultValue={f.from} />
+                </label>
+                <label>
+                  To <input type="date" ref={toRef} max={today} defaultValue={f.to} />
+                </label>
+              </div>
+            )}
+            {!isLink && <div
+              className="ddwrap"
+              ref={wrapRef}
+              onBlur={(e) => {
+                if (picker && !e.currentTarget.contains(e.relatedTarget as Node | null)) setPicker(false);
+              }}
             >
-              {chipLabel} <span className="car" aria-hidden="true">▾</span>
-              <Kbd>D</Kbd>
-            </button>
-            {picker && <DomainPicker domains={pickable} selected={f.domains} onToggle={toggle} onAll={() => go({ domains: [] })} onClose={closePicker} />}
-          </div>}
-          <span className="count">Bots and link previews are left out</span>
+              <button
+                type="button"
+                ref={chipRef}
+                className={n ? "chip dd set" : "chip dd"}
+                aria-haspopup="listbox"
+                aria-expanded={picker}
+                aria-keyshortcuts="D"
+                onClick={() => (picker ? closePicker() : setPicker(true))}
+              >
+                <Icon name="globe" />
+                {chipLabel} <span className="car" aria-hidden="true">▾</span>
+                <Kbd>D</Kbd>
+              </button>
+              {picker && <DomainPicker domains={pickable} selected={f.domains} onToggle={toggle} onAll={() => go({ domains: [] })} onClose={closePicker} />}
+            </div>}
+            {!isLink && <label className="search">
+              <Icon name="search" />
+              <input
+                ref={searchRef}
+                aria-label="Search links"
+                placeholder="Search links, for example spring"
+                maxLength={48}
+                autoComplete="off"
+                value={qInput}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setQInput(v);
+                  cancelSearch();
+                  timer.current = setTimeout(() => {
+                    timer.current = null;
+                    goRef.current({ q: v });
+                  }, DEBOUNCE_MS);
+                }}
+              />
+              <Kbd>L</Kbd>
+            </label>}
+            <span className="end">
+              {/* Enabled only while the report on screen answers the current filters: the CSV is built from it (R10). */}
+              <button type="button" className="btn" ref={exportRef} disabled={!canExport} aria-keyshortcuts="X" onClick={() => canExport && downloadCsv(report, shown)}>
+                <Icon name="dl" />Export CSV<span className="k2">X</span>
+              </button>
+            </span>
+          </div>
+          <p className="retention">
+            <Icon name="clock" />
+            <span>
+              <span>Bots and link previews are left out</span>. Each click keeps its full detail for three months (Analytics Engine retention); older days keep daily totals, countries, devices and referrers only.
+            </span>
+          </p>
         </div>
         {badLink && <p className="err" role="alert">That link was not found. Open it again from Links or go back to all analytics.</p>}
         {invalid && !badLink && <p className="err" role="alert">{problem === "order" ? "From must be on or before To" : errorText("bad_range")}</p>}
@@ -344,15 +401,7 @@ export function AnalyticsScreen() {
                   <button type="button" aria-label="Clear dates" onClick={() => go({ range: "30" })}>×</button>
                 </span>
               )}
-              <button
-                type="button"
-                className="btn ghost"
-                onClick={() => {
-                  cancelSearch();
-                  setQInput("");
-                  navigate(here, { replace: true });
-                }}
-              >
+              <button type="button" className="btn sm ghost" onClick={clearAll}>
                 Clear all
               </button>
             </>
@@ -362,30 +411,51 @@ export function AnalyticsScreen() {
           <div className={stale ? "an-data stale" : "an-data"} aria-busy={stale}>
             {report.live !== "ok" && <p className="note" role="status">{LIVE_NOTE[report.live]}</p>}
             {report.truncated && <p className="note" role="status">Showing the first 500 matching links</p>}
-            <div className="tiles">
-              {tiles(report).map((t) => (
-                <div className="tile2" key={t.label}>
-                  <small>{t.label}</small>
-                  <b>{t.value}</b>
-                  <span className={t.up ? "delta up" : "delta"}>{t.note}</span>
+            <div className="card an-sum">
+              <div className={noClicks ? "stats4 zero" : "stats4"}>
+                {tiles(report).map((t) => (
+                  <div className="tile2" key={t.label}>
+                    <small>{t.label}</small>
+                    <b>{t.value}</b>
+                    <span className={t.up ? "delta up" : "delta"}>{t.note}</span>
+                  </div>
+                ))}
+              </div>
+              {noClicks ? (
+                // One message with two ways forward, instead of a wall of empty cards.
+                <div className="empty-state" role="status">
+                  <span className="tile"><Icon name="empty" /></span>
+                  <p className="et">No clicks match these filters</p>
+                  <p className="ed">{hourlyOff ? HOURLY_EMPTY[report.live as keyof typeof HOURLY_EMPTY] : "Try a longer range, or clear the filters to see every domain."}</p>
+                  {(f.range !== "90" || anyFilter) && (
+                    <div className="acts">
+                      {f.range !== "90" && <button type="button" className="btn sm" onClick={() => go({ range: "90" })}>Show 90 days</button>}
+                      {anyFilter && <button type="button" className="btn sm ghost" onClick={clearAll}>Clear filters</button>}
+                    </div>
+                  )}
                 </div>
-              ))}
+              ) : (
+                <ClicksChart
+                  series={report.series}
+                  unit={report.unit}
+                  table={table}
+                  onToggle={() => setTable((t) => !t)}
+                  empty={hourlyOff ? HOURLY_EMPTY[report.live as keyof typeof HOURLY_EMPTY] : undefined}
+                />
+              )}
             </div>
-            <ClicksChart
-              series={report.series}
-              unit={report.unit}
-              table={table}
-              onToggle={() => setTable((t) => !t)}
-              empty={report.unit === "hour" && report.live !== "ok" ? HOURLY_EMPTY[report.live] : undefined}
-            />
-            <Breakdowns report={report} detail={det === undefined ? undefined : det} perLink={isLink} range={filtersQuery({ ...f, domains: [], q: "" })} />
-            {shown && <BusyTimes hours={shown.hours} zone={zone} />}
-            {det !== undefined && det?.live !== "ok" && <p className="note" role="status">{DETAIL_NOTE[det?.live ?? "unavailable"]}</p>}
-            <p className="muted">
-              {shown?.from ? `Operating systems, browsers, languages, places and busiest times cover ${shown.from} to ${shown.to}. ` : ""}
-              {shown && !shown.from ? "This range is older than 90 days, so it has no operating system, browser, language, place or busiest-times detail. " : ""}
-              Each click keeps its full detail for three months (Analytics Engine retention). Older days keep daily totals, countries, devices and referrers only. Only clicks since this version record the operating system, browser, language and place.
-            </p>
+            {!noClicks && (
+              <Breakdowns
+                report={report}
+                detail={det === undefined ? undefined : det}
+                perLink={isLink}
+                range={filtersQuery({ ...f, domains: [], q: "" })}
+                note={coverage}
+                busy={shown ? <BusyTimes hours={shown.hours} zone={zone} /> : undefined}
+              />
+            )}
+            {det !== undefined && det?.live !== "ok" && !noClicks && <p className="note" role="status">{DETAIL_NOTE[det?.live ?? "unavailable"]}</p>}
+            <p className="hint">Only clicks since this version record the operating system, browser, language and place.</p>
           </div>
         )}
       </div>

@@ -117,15 +117,15 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
         <svg ref={svgRef} className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Clicks over time split into QR scans and typed or clicked visits">
           {g.grid.map((l, k) => (
             <g key={k}>
-              <line x1={g.gridX.x1} x2={g.gridX.x2} y1={l.y} y2={l.y} stroke="#EEEFEB" />
+              <line className="grid" x1={g.gridX.x1} x2={g.gridX.x2} y1={l.y} y2={l.y} />
               <text x={g.gridX.label} y={l.y + 4} textAnchor="end">{l.label}</text>
             </g>
           ))}
           {g.bars.map((b, i) => (
             <g key={i} className={active?.i === i ? "bar on" : "bar"} onMouseMove={onMove(i)} onMouseLeave={() => setActive(null)}>
               <rect x={b.hx} y={g.plot.top} width={b.hw} height={g.plot.height} fill="transparent" />
-              {b.qrH > 0 && <rect x={b.x} y={b.qrY} width={b.w} height={b.qrH} fill="#E07418" />}
-              {b.typedPath && <path d={b.typedPath} fill="#3F6FB5" />}
+              {b.qrH > 0 && <rect className="b-qr" x={b.x} y={b.qrY} width={b.w} height={b.qrH} />}
+              {b.typedPath && <path className="b-ty" d={b.typedPath} />}
             </g>
           ))}
           {g.ticks.map((t) => (
@@ -141,7 +141,7 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
 
   return (
     <section
-      className="card2"
+      className="chart-sec"
       ref={cardRef}
       onFocus={() => (focusIn.current = true)}
       // A blur with no new target (the focused node was removed) keeps the flag, so the effect above can restore focus.
@@ -155,7 +155,7 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
           <span><i className="lg-qr" />From QR codes</span>
           <span><i className="lg-ty" />Typed or clicked</span>
         </div>
-        <button type="button" className="btn ghost tv" ref={toggleRef} onClick={onToggle} aria-keyshortcuts="V">
+        <button type="button" className="btn sm tv" ref={toggleRef} onClick={onToggle} aria-keyshortcuts="V">
           {table ? "Chart view" : "Table view"}<span className="k2">V</span>
         </button>
       </div>
