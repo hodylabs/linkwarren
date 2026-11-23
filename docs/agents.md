@@ -6,7 +6,7 @@ People with the Settings permission (owners always) turn agents on and off with 
 
 ## Connect an agent
 
-The MCP address is `<dashboard URL>/mcp`. Copy it from the API & agents screen (`C`). The dashboard URL is `https://<dashboard host>` (for example `https://dash.example.com/mcp`), or with the dashboard at a path `https://<main short domain>/dashboard` (for example `https://example.com/dashboard/mcp`); see [Dashboard at a path](#dashboard-at-a-path).
+The MCP address is `<dashboard URL>/mcp`. Copy it from the API & agents screen (`C`). The dashboard URL is `https://<dashboard host>` (for example `https://dash.example.com`, MCP address `https://dash.example.com/mcp`), or with the dashboard at a path `https://<main short domain>/dashboard` (for example `https://example.com/dashboard`, MCP address `https://example.com/dashboard/mcp`); see [Dashboard at a path](#dashboard-at-a-path).
 
 - **Claude (claude.ai and Claude Desktop):** Settings, Connectors, Add custom connector, paste the address.
 - **ChatGPT:** Plugins, the plus button, Add custom MCP server, paste the address and choose OAuth. Whether you can add one depends on your ChatGPT plan and workspace role.

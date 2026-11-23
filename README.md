@@ -14,6 +14,10 @@ The name and logo are covered by `TRADEMARK.md`. To contribute, read `CONTRIBUTI
 
 Multi-domain slugs, link rules (schedule, password, routing), analytics, bulk edit on the Links page, moving links between domains with forwarding of the old address, an owner switch for agent access, people and invites, a first-run setup wizard (with import, `docs/import.md`), and a full JSON export (`docs/backup.md`). See `docs/spec.md`.
 
+## Deploying
+
+The dashboard runs on its own host (for example `dash.example.com`) or at a path on the main short domain (for example `example.com/dashboard`). See [docs/deploy.md](docs/deploy.md).
+
 ## Privacy
 
 Short links set no cookies and run no scripts. What linkwarren records per click, and what it never stores, is in `docs/privacy.md`.

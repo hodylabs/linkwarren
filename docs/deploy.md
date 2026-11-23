@@ -61,7 +61,7 @@ This moves an instance that already has data from host mode (`dash.example.com`)
 
 - `AUTH_MODE` is `app` (or unset). Path mode refuses `access`.
 - **Email sign-in works** (`EMAIL_FROM` and the Resend key, see [Email sign-in links](#email-sign-in-links-resend)). Send yourself a link first. After the switch every session is gone, so an owner who only has a passkey is locked out.
-- The main short domain already routes to the Worker and is already one of your short domains.
+- The main short domain already routes to the Worker and is already a main domain in the dashboard (not shared or private).
 
 ### 2. Check what the switch touches
 
@@ -93,9 +93,9 @@ In your instance config (`wrangler.instance.jsonc`):
 - `LEGACY_DASHBOARD_HOST`: the old dashboard host (`dash.example.com`).
 - Keep the old host's custom domain or route: it must still reach the Worker to send the `301` and `410` answers. Keep the main domain's route too.
 
-### 5. Attach the main domain
+### 5. Check the main domain
 
-If the main short domain is not yet a short domain in the dashboard (or you add it after the switch), add it as a main domain. When Cloudflare is configured and the host is already the Worker's custom domain, that answers `409 dns_record_exists`. This is expected: confirm the takeover (`"confirmTakeover": true` in the API). See [domains.md](domains.md#the-dashboard-host).
+After precondition 3 the main short domain is already a main domain, so there is nothing to add. Only a new instance that starts in path mode adds it after the deploy, and only as a main domain (a shared or private add is `400 dashboard_main_only`). When Cloudflare is configured and the host is already the Worker's custom domain, that answers `409 dns_record_exists`. This is expected: confirm the takeover (`"confirmTakeover": true` in the API). See [domains.md](domains.md#the-dashboard-host).
 
 ### 6. Deploy
 
