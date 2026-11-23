@@ -30,6 +30,8 @@ The first row names the columns: `slug` and `destination` (or `url`) are require
 
 `POST /api/import` (owners and the `data` permission) takes at most 1000 links per request; add `?dryRun=1` to run every check and get the same report without writing anything. Keep slugs that differ only by case in the same request: a new domain is created case sensitive when its request holds such twins. `importRequests` in `src/importFormat.ts` splits a large file that way, the same split the wizard uses.
 
+A link may carry a `vcard` object (the contact card fields of `POST /api/v1/links`, see `docs/agents.md`): it is imported as a contact card link, its `destination` is ignored, and a card that fails the checks is a conflict with the reason `invalid_vcard`. This is how the `links` and `vcards` tables of a full export come back in: give each row of kind `vcard` the fields of its `vcards.data` plus `photo`.
+
 A link `destination` may be `http(s)`, `tel:` or `mailto:`, with the same strict checks as a link created in the dashboard; one that fails them is a conflict. A domain `customIndexUrl` or `customNotFoundUrl` must be `http(s)`: anything else is ignored and reported.
 
 The report lists `created`, `skipped` (already present with the same destination), `conflicts` with a reason per link, `protected`, the domains created, the case-sensitive domains and any ignored domain redirects. Missing domains are created private and active, owned by the person importing; existing domains are reused and never changed except for a domain redirect that is still empty. Disabled links become slug locks only. Imported links take the instance link defaults for redirect type and query pass-through.
