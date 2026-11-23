@@ -45,7 +45,12 @@ The audit log records that a link is a card, never what is on it.
 
 ## Over the API
 
-`POST /api/v1/links` with `"kind": "vcard"` and a `vcard` object (and no `url`) creates a card; `PATCH` with `vcard` replaces the whole card. The fields, their limits and the errors are in [api.md](api.md#contact-cards).
+`POST /api/v1/links` with `"kind": "vcard"` and a `vcard` object (and no `url`) creates a card; `PATCH` with `vcard` replaces the whole card. The fields, their limits and the errors are in [api.md](api.md#contact-cards). Set the base URL and a personal API key with write access first:
+
+```sh
+export LW_KEY='<your key>'
+export LW=https://dash.example.com/api/v1
+```
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $LW_KEY" -H "Content-Type: application/json" \

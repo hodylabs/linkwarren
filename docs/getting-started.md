@@ -63,7 +63,7 @@ Edit `wrangler.instance.jsonc`:
   - `AUTH_MODE`: keep `app`.
   - `EMAIL_FROM`: the sender of sign-in emails, an address on your verified Resend domain, for example `links@example.com`.
   - Delete `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` (they are for Cloudflare Access sign-in only).
-  - Delete the `CF_*` lines for now, or fill them in if you want linkwarren to attach domains in Cloudflare for you (see [deploy.md](deploy.md#cloudflare-domains-optional)).
+  - Keep `CF_ACCOUNT_ID` (your Cloudflare account id) if you want click analytics: live reports and the hourly rollup need it. Delete the other `CF_*` lines for now, or fill them in if you want linkwarren to attach domains in Cloudflare for you (see [deploy.md](deploy.md#cloudflare-domains-optional)).
 - `analytics_engine_datasets`: click analytics need Workers Analytics Engine turned on once for the account (dashboard: Workers & Pages, Analytics Engine; free). Turn it on now, or remove this line; a deploy with the line but without Analytics Engine fails with code 10089.
 - `routes`: one entry per host the Worker serves. Keep one for the dashboard host and one for your first short domain:
 
@@ -108,7 +108,7 @@ npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc
 Optional secrets, which you can add now or later:
 
 - `SECRETS_KEY` (`openssl rand -base64 32`): lets the owner paste the Resend key and a Cloudflare token in the dashboard, stored encrypted.
-- `VISITOR_SALT` (`openssl rand -hex 32`) and `AE_READ_TOKEN`: unique visitor counts and live click reports. See [deploy.md](deploy.md#analytics-optional).
+- `VISITOR_SALT` (`openssl rand -hex 32`) and `AE_READ_TOKEN`: unique visitor counts and live click reports. Analytics also needs the `CF_ACCOUNT_ID` var from step 3; if you deleted it, add it back to `vars` and deploy again. See [deploy.md](deploy.md#analytics-optional).
 
 Each `secret put` takes effect at once; no new deploy is needed.
 

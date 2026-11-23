@@ -29,7 +29,11 @@ export LW_KEY='<your key>'
 export LW=https://dash.example.com/api/v1
 ```
 
-Keep the key in an environment variable, not on the command line or in a file you commit.
+Keep the key in an environment variable, not on the command line or in a file you commit. The examples pass it with `-H`, so the expanded key is in curl's arguments while it runs; on a machine other people can log in to, give curl the header on standard input instead:
+
+```sh
+printf 'header = "Authorization: Bearer %s"\n' "$LW_KEY" | curl -s -K - "$LW/domains"
+```
 
 ## Errors
 

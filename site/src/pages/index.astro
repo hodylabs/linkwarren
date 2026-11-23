@@ -255,7 +255,7 @@ footer a{color:var(--text)}
           <ol class="steps">
             <li><b>Clone the repo</b><span><code>git clone {repo}</code></span></li>
             <li><b>Create the database and stores</b><span>One D1 database and two KV namespaces, with <code>wrangler</code>.</span></li>
-            <li><b>Deploy the Worker</b><span><code>npm run build:web</code> and <code>npx wrangler deploy</code>, with a Resend key for sign-in emails.</span></li>
+            <li><b>Deploy the Worker</b><span><code>npm run build:web</code> and <code>npx wrangler deploy -c wrangler.instance.jsonc</code>, with a Resend key for sign-in emails.</span></li>
             <li><b>Finish the setup wizard</b><span>Create the owner account, add a domain, and import your old links if you have them.</span></li>
           </ol>
           <p style="margin-top:22px"><a href="/docs/getting-started/">Full deploy guide</a></p>

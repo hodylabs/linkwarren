@@ -73,6 +73,7 @@ The exact costs per action, and why each limit is where it is, are in [deploy.md
 
 ## Where an instance hits the limits first
 
+- **KV reads (100,000 per day).** Every click reads two KV entries (the domain and the link), cached or not, so about 50,000 clicks a day use all the reads, before the Worker request limit. When a KV read fails, the redirect reads D1 instead and keeps working.
 - **KV writes (1,000 per day).** Every cache refill, OAuth step and logo change writes KV. A link clicked all day long refills its entry about every 5 minutes, up to about 288 writes a day, and its domain's entry about as often. So a few links in constant use, or many different links and missing slugs, can use the day's writes. Redirects keep working when they are gone: the cache write is skipped and the redirect reads D1 instead (a few rows read per click, against 5 million a day).
 - **Worker requests (100,000 per day).** Every click and every dashboard or API call is one request. What Cloudflare does past the limit is described on the [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) page; an instance with more traffic than that needs Workers Paid.
 - **Resend email (100 per day on its free tier).** Not Cloudflare, but it limits sign-in links and invites. Invites take at most 40 of the 100. The opt-in [weekly email](analytics.md#weekly-email) uses the same budget, at most 2 per hourly run. See [people-and-roles.md](people-and-roles.md#inviting-people).
