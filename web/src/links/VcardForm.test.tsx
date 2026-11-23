@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { emptyVcard, type VCard } from "../../../src/vcard";
-import { fitSize } from "./photo";
+import { fitSize, resizePhoto } from "./photo";
 import { cleanVcard, formField, VcardForm, vcardFieldText } from "./VcardForm";
 
 vi.mock("./photo", async (orig) => ({ ...(await orig<typeof import("./photo")>()), resizePhoto: vi.fn(async () => "/9j/AAAA") }));
@@ -11,6 +11,10 @@ vi.mock("./photo", async (orig) => ({ ...(await orig<typeof import("./photo")>()
 function Harness({ start = emptyVcard(), field = null, onChange }: { start?: VCard; field?: string | null; onChange?: (v: VCard) => void }) {
   const [v, setV] = useState(start);
   return <VcardForm id="t" value={v} field={field} onChange={(n) => (setV(n), onChange?.(n))} />;
+}
+function HarnessBusy({ start, onBusy, onChange }: { start: VCard; onBusy(b: boolean): void; onChange(v: VCard): void }) {
+  const [v, setV] = useState(start);
+  return <VcardForm id="t" value={v} onBusy={onBusy} onChange={(n) => (setV(n), onChange(n))} />;
 }
 
 describe("VcardForm", () => {
@@ -45,6 +49,23 @@ describe("VcardForm", () => {
     await user.click(screen.getByRole("button", { name: "Remove photo" }));
     expect(screen.queryByRole("img", { name: "Contact photo" })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add photo" }));
+  });
+
+  it("Remove photo during a resize drops that resize: the photo stays removed and the parent's wait ends", async () => {
+    let finish: (b64: string) => void = () => undefined;
+    vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
+    const busy: boolean[] = [];
+    const seen: VCard[] = [];
+    const user = userEvent.setup();
+    render(<HarnessBusy start={{ ...emptyVcard(), firstName: "Ada", photo: "/9j/OLD" }} onBusy={(b) => busy.push(b)} onChange={(v) => seen.push(v)} />);
+    fireEvent.change(screen.getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    expect(busy).toEqual([true]);
+    await user.click(screen.getByRole("button", { name: "Remove photo" }));
+    expect(busy.at(-1)).toBe(false);
+    finish("/9j/NEW");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen.at(-1)!.photo).toBeNull();
+    expect(screen.queryByRole("img", { name: "Contact photo" })).toBeNull();
   });
 
   it("shows the server's bad field under it and marks the box", () => {

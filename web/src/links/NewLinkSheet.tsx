@@ -86,6 +86,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const [kind, setKind] = useState<"url" | "vcard">("url");
   const [card, setCard] = useState<VCard>(emptyVcard);
   const [cardField, setCardField] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false); // a picked photo is still being resized
+  const cardWait = kind === "vcard" && photoBusy;
   const isCard = kind === "vcard";
   const pwRef = useRef<HTMLInputElement>(null);
   const routesRef = useRef<HTMLDivElement>(null);
@@ -159,7 +161,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   };
 
   const submit = async (copy: boolean) => {
-    if (busy || releasing || !domainId) return;
+    if (busy || releasing || !domainId || cardWait) return;
     const stop = blocked();
     // A card has no routing: its rules are never sent or checked.
     const rb = isCard ? ({ ok: true, routes: [] } as const) : routeBody();
@@ -327,7 +329,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
         {isCard ? (
           <div className="f">
             <p className="lbl">Contact card: opening or scanning the short link downloads it to the phone's contacts.</p>
-            <VcardForm id="nl-vc" value={card} field={cardField} onChange={(v) => {
+            <VcardForm id="nl-vc" value={card} field={cardField} onBusy={setPhotoBusy} onChange={(v) => {
                 setCard(v);
                 setCardField(null);
               }} />
@@ -554,10 +556,10 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       </div>
       <div className="sh-foot">
         <span className="left kh">{isCard ? "Rule keys S Q work outside text boxes" : "Rule keys T S P R Q work outside text boxes"}</span>
-        <button type="button" className="btn" disabled={busy || !domainId} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
+        <button type="button" className="btn" disabled={busy || !domainId || cardWait} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
           Create and copy <span className="k2">Ctrl ⇧ Enter</span>
         </button>
-        <button type="button" className="btn primary" disabled={busy || !domainId} aria-keyshortcuts="Control+Enter" onClick={() => void submit(false)}>
+        <button type="button" className="btn primary" disabled={busy || !domainId || cardWait} aria-keyshortcuts="Control+Enter" onClick={() => void submit(false)}>
           Create link<span className="k2">Ctrl Enter</span>
         </button>
       </div>

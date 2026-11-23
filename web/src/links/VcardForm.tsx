@@ -61,7 +61,11 @@ type ListKey = "phones" | "emails" | "websites";
  * The contact card fields of a vCard link. `field` is the bad_vcard field to mark (its error shows under it). Rows of phones,
  * emails and websites are added and removed with buttons; focus moves to the new row, or back to Add after a remove.
  */
-export function VcardForm({ id, value, onChange, field, readOnly }: { id: string; value: VCard; onChange(v: VCard): void; field?: string | null; readOnly?: boolean }) {
+export function VcardForm({ id, value, onChange, field, readOnly, onBusy }: {
+  id: string; value: VCard; onChange(v: VCard): void; field?: string | null; readOnly?: boolean;
+  /** True while a picked photo is being resized: the parent holds its save until then. */
+  onBusy?(busy: boolean): void;
+}) {
   const latest = useRef(value);
   latest.current = value;
   const set = (p: Partial<VCard>) => onChange({ ...latest.current, ...p });
@@ -71,6 +75,19 @@ export function VcardForm({ id, value, onChange, field, readOnly }: { id: string
   const focusNext = useRef<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
+  // Only the latest pick may land: a newer pick or Remove photo makes an older resize's result stale.
+  const pickSeq = useRef(0);
+  const busy = (on: boolean) => {
+    setReading(on);
+    onBusy?.(on);
+  };
+  const onBusyRef = useRef(onBusy);
+  onBusyRef.current = onBusy;
+  // Unmounted mid-resize (the type switched to Link): drop the pick and release the parent's wait.
+  useEffect(() => () => {
+    pickSeq.current++;
+    onBusyRef.current?.(false);
+  }, []);
   useEffect(() => {
     if (!focusNext.current) return;
     box.current?.querySelector<HTMLElement>(focusNext.current)?.focus();
@@ -138,14 +155,16 @@ export function VcardForm({ id, value, onChange, field, readOnly }: { id: string
 
   const pick = async (file: File | undefined) => {
     if (!file) return;
+    const n = ++pickSeq.current;
     setPhotoError(null);
-    setReading(true);
+    busy(true);
     try {
-      set({ photo: await resizePhoto(file) });
+      const photo = await resizePhoto(file);
+      if (n === pickSeq.current) set({ photo });
     } catch {
-      setPhotoError("This image could not be read. Try a JPEG or PNG photo.");
+      if (n === pickSeq.current) setPhotoError("This image could not be read. Try a JPEG or PNG photo.");
     } finally {
-      setReading(false);
+      if (n === pickSeq.current) busy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
@@ -161,6 +180,8 @@ export function VcardForm({ id, value, onChange, field, readOnly }: { id: string
             </button>
             {value.photo && (
               <button type="button" className="btn" onClick={() => {
+                  pickSeq.current++; // a resize still running is dropped, so it cannot bring a photo back
+                  busy(false);
                   set({ photo: null });
                   pickRef.current?.focus();
                 }}>

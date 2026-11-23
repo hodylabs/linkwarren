@@ -126,10 +126,18 @@ importApi.post("/", async (c) => {
   for (const d of doms.values()) { live.set(d.id, new Map()); locks.set(d.id, new Set()); }
   // Two queries in total, whatever the domain count: ids go in as one JSON bind (D1 caps queries per invocation and binds per query).
   const reused = JSON.stringify([...doms.values()].filter((d) => !d.isNew).map((d) => d.id));
+  // The exact keys a card row of this request asks for on a reused domain: only those cards' data and photos are read (a domain may
+  // hold thousands of cards with photos up to 64 KB each; reading them all could exceed the Worker's memory).
+  const cardKeys = JSON.stringify(b.links.flatMap((l) => {
+    const d = l.vcard ? doms.get(hostOf(l.host)) : undefined;
+    return d && !d.isNew ? [[d.id, slugKey(l.slug, d.cs)]] : [];
+  }));
   const [liveRows, lockRows, setRows, usableRows] = await c.env.DB.batch<{ domain_id: string; slug_key: string; url?: string; id?: string }>([
-    // A card link compares by its contents (the same string cardKey builds), every other link by its url.
-    c.env.DB.prepare(`SELECT links.domain_id, links.slug_key, CASE WHEN links.kind = 'vcard' THEN '${VCARD_URL}#' || coalesce(v.data, '') || '#' || coalesce(v.photo, '')
-      ELSE links.url END AS url FROM links LEFT JOIN vcards v ON v.link_id = links.id WHERE links.domain_id IN (SELECT value FROM json_each(?))`).bind(reused),
+    // A requested card compares by its contents (the same string cardKey builds); every other link by its url (a card's is the placeholder).
+    c.env.DB.prepare(`SELECT links.domain_id, links.slug_key, CASE WHEN v.link_id IS NOT NULL THEN '${VCARD_URL}#' || v.data || '#' || coalesce(v.photo, '')
+      ELSE links.url END AS url FROM links LEFT JOIN vcards v ON v.link_id = links.id AND links.kind = 'vcard'
+        AND EXISTS (SELECT 1 FROM json_each(?) k WHERE json_extract(k.value, '$[0]') = links.domain_id AND json_extract(k.value, '$[1]') = links.slug_key)
+      WHERE links.domain_id IN (SELECT value FROM json_each(?))`).bind(cardKeys, reused),
     c.env.DB.prepare("SELECT domain_id, slug_key FROM slug_locks WHERE domain_id IN (SELECT value FROM json_each(?))").bind(reused),
     settingsQ(c.env),
     c.env.DB.prepare(usableDomainsSql).bind(user.id),
