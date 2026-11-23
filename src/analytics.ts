@@ -245,6 +245,21 @@ export function localParts(ms: number, tz: Tz): { dow: number; hour: number; day
   return { dow: WEEKDAYS.indexOf(p.weekday!), hour: Number(p.hour) % 24, day: `${p.year}-${p.month}-${p.day}` };
 }
 
+/** The zone's UTC offset in minutes at `ms` ("GMT+05:30" from Intl; "GMT" is 0). */
+export function offsetMin(tz: Tz, ms: number): number {
+  if ("offset" in tz) return tz.offset;
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: tz.zone, timeZoneName: "longOffset" }).formatToParts(new Date(ms)).find((x) => x.type === "timeZoneName")?.value ?? "";
+  const m = /([+-])(\d{1,2})(?::(\d{2}))?/.exec(name);
+  return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] ?? 0)) : 0;
+}
+
+/**
+ * Seconds past the whole hour of the zone's offset (+05:30 is 1800, -03:30 is 1800, +05:45 is 2700), for aeDetail. DST moves
+ * offsets by whole hours, so the part past the hour holds over the range.
+ * shortcut: Lord Howe's 30-minute DST is the one exception; its summer and winter hours are filed with the offset at `ms`.
+ */
+export const shiftOf = (tz: Tz, ms: number): number => ((((offsetMin(tz, ms) % 60) + 60) % 60) * 60);
+
 export type DetailReport = {
   /** The UTC days covered; both "" when the range is wholly older than AE_DAYS. */
   live: Live; from: string; to: string;
@@ -266,9 +281,10 @@ export async function loadDetail(env: Env, range: Range, scope: Scope, tz: Tz, n
   };
   if (!aeConfigured(env)) return { ...out, live: "off" };
   if (from >= range.to) return { ...out, from: "", to: "" }; // the whole range is older than Analytics Engine keeps
+  const shift = shiftOf(tz, range.to.getTime());
   let rows: Awaited<ReturnType<typeof aeDetail>>;
   try {
-    rows = await aeDetail(env, from, range.to, scope);
+    rows = await aeDetail(env, from, range.to, scope, shift);
   } catch (e) {
     console.error("analytics detail read failed", errCode(e));
     return { ...out, live: "unavailable" };
@@ -277,7 +293,7 @@ export async function loadDetail(env: Env, range: Range, scope: Scope, tz: Tz, n
   for (const r of rows.dims) out[key[r.dim]].push({ value: r.value, clicks: r.clicks });
   for (const k of Object.values(key)) out[k].sort((a, b) => b.clicks - a.clicks);
   for (const h of rows.hours) {
-    const p = localParts(Date.parse(h.bucket), tz);
+    const p = localParts(Date.parse(h.bucket) - shift * 1000, tz); // the start of the local hour the bucket holds
     out.hours[p.dow]![p.hour]! += h.clicks;
   }
   return out;

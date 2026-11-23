@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { localParts, parseTz } from "../src/analytics";
+import { localParts, parseTz, shiftOf } from "../src/analytics";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -125,6 +125,36 @@ describe("GET /api/analytics/detail", () => {
     const r = await withAe(() => json("/detail?range=custom&from=2026-01-01&to=2026-01-07&tz=UTC"));
     expect(r).toMatchObject({ live: "ok", from: "", to: "", os: [] });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+  it("whole-hour zones keep the plain UTC hour query", async () => {
+    fetchSpy.mockImplementation(async () => Response.json({ data: [] }));
+    await withAe(() => json("/detail?range=7&tz=America/Toronto"));
+    const hourQ = fetchSpy.mock.calls.map((c: unknown[]) => JSON.parse(String((c[1] as RequestInit).body))).find((b: any) => b.query.includes("toStartOfHour"));
+    expect(hourQ.query).toContain("toStartOfHour(timestamp)");
+    expect(hourQ.params.shift).toBeUndefined();
+  });
+  it("+05:30 shifts timestamps by 30 minutes before the hour is cut, so 00:45Z files under 06:00 local", async () => {
+    fetchSpy.mockImplementation(async (_u: unknown, init: unknown) => {
+      const b = JSON.parse(String((init as RequestInit).body));
+      if (!b.query.includes("toStartOfHour")) return Response.json({ data: [] });
+      expect(b.query).toContain("toUnixTimestamp(timestamp) + toUInt32($shift)");
+      expect(b.params.shift).toBe("1800");
+      // A click at 2026-11-16 00:45Z, shifted by 30 min, falls in the 01:00 bucket; 01:00 - 30 min = 00:30Z = 06:00 IST, Monday.
+      return Response.json({ data: [{ bucket: "2026-11-16 01:00:00", n: 3 }] });
+    });
+    for (const tz of ["Asia/Kolkata", "330"]) {
+      const r = await withAe(() => json(`/detail?range=7&tz=${tz}`));
+      expect(r.hours[0][6]).toBe(3);
+      expect(r.hours[0][5]).toBe(0);
+    }
+  });
+  it("shiftOf: the part of the offset past the whole hour", () => {
+    expect(shiftOf({ zone: "Asia/Kolkata" }, NOW)).toBe(1800);
+    expect(shiftOf({ zone: "Asia/Kathmandu" }, NOW)).toBe(2700);
+    expect(shiftOf({ zone: "America/St_Johns" }, NOW)).toBe(1800);
+    expect(shiftOf({ zone: "Europe/Paris" }, NOW)).toBe(0);
+    expect(shiftOf({ offset: -210 }, NOW)).toBe(1800);
+    expect(shiftOf({ offset: 0 }, NOW)).toBe(0);
   });
   it("a 90-day detail clips to Analytics Engine's retention and splits the hours", async () => {
     fetchSpy.mockImplementation(async () => Response.json({ data: [] }));

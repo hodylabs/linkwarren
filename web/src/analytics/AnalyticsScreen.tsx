@@ -49,6 +49,15 @@ const DETAIL_NOTE = {
   unavailable: "Operating systems, browsers, languages, places and busiest times could not be loaded. Try again shortly.",
 } as const;
 
+/** A path segment decoded, or null when it is empty or not valid percent-encoding. */
+export function safeDecode(s: string): string | null {
+  try {
+    return decodeURIComponent(s) || null;
+  } catch {
+    return null;
+  }
+}
+
 export function AnalyticsScreen() {
   const { me, domains: listed, overlay } = useApp();
   // R10: a domain manager also lists domains they cannot use (canUse false); their analytics need analytics.all.
@@ -56,16 +65,19 @@ export function AnalyticsScreen() {
   const sheets = useOpenSheets();
   const { query, sub, id } = useRoute();
   // S10: /analytics/link/<id> is one link's page: the same range, chart, cards and CSV, without the domain and link filters.
-  const linkId = sub === "link" && id ? decodeURIComponent(id) : null;
-  const here = linkId ? linkPage(linkId) : "/analytics";
+  const isLink = sub === "link";
+  const linkId = isLink ? safeDecode(id) : null;
+  // A malformed or missing id (/analytics/link/%) is a "link not found" state, never a throw during render.
+  const badLink = isLink && !linkId;
+  const here = isLink && linkId ? linkPage(linkId) : "/analytics";
   const today = utcToday();
   const read = readFilters(query, today);
-  const f = linkId ? { ...read, domains: [], q: "" } : read;
+  const f = isLink ? { ...read, domains: [], q: "" } : read;
   const fq = filtersQuery(f);
   const key = linkId ? [fq, `link=${encodeURIComponent(linkId)}`].filter(Boolean).join("&") : fq;
   const zone = viewerZone();
   const problem = f.range === "custom" ? rangeProblem(f.from, f.to, today) : null;
-  const invalid = problem !== null;
+  const invalid = problem !== null || badLink;
 
   const [qInput, setQInput] = useState(f.q);
   const [picker, setPicker] = useState(false);
@@ -101,11 +113,16 @@ export function AnalyticsScreen() {
   }, [f.q]);
   useEffect(() => cancelSearch, []);
 
+  // A link page has no picker: one left open (Back onto a link page) would be hidden yet still hold the shortcuts and Escape.
+  useEffect(() => {
+    if (isLink) setPicker(false);
+  }, [isLink]);
+
   // `?pick=1` (palette "af") opens the picker once, then leaves the URL.
   const pick = query.has("pick");
   useEffect(() => {
     if (!pick) return;
-    setPicker(true);
+    if (!isLink) setPicker(true);
     go({});
   }, [pick]);
 
@@ -159,7 +176,7 @@ export function AnalyticsScreen() {
 
   useHotkeys(
     {
-      d: () => !linkId && setPicker(true),
+      d: () => !isLink && setPicker(true),
       l: () => searchRef.current?.focus(),
       v: () => setTable((t) => !t),
       r: () => document.querySelector<HTMLElement>('.an [role=radiogroup] [aria-checked="true"]')?.focus(),
@@ -236,9 +253,9 @@ export function AnalyticsScreen() {
 
   return (
     <>
-      <ScreenHeader title={linkId ? "Link analytics" : "Analytics"} text={linkId ? title ?? "" : crumb}>
-        {linkId && <NavLink className="btn" to="/analytics">All analytics</NavLink>}
-        {!linkId && <label className="search">
+      <ScreenHeader title={isLink ? "Link analytics" : "Analytics"} text={isLink ? title ?? "" : crumb}>
+        {isLink && <NavLink className="btn" to="/analytics">All analytics</NavLink>}
+        {!isLink && <label className="search">
           <input
             ref={searchRef}
             aria-label="Search links"
@@ -276,7 +293,7 @@ export function AnalyticsScreen() {
               </label>
             </div>
           )}
-          {!linkId && <div
+          {!isLink && <div
             className="ddwrap"
             ref={wrapRef}
             onBlur={(e) => {
@@ -299,7 +316,8 @@ export function AnalyticsScreen() {
           </div>}
           <span className="count">Bots and link previews are left out</span>
         </div>
-        {invalid && <p className="err" role="alert">{problem === "order" ? "From must be on or before To" : errorText("bad_range")}</p>}
+        {badLink && <p className="err" role="alert">That link was not found. Open it again from Links or go back to all analytics.</p>}
+        {invalid && !badLink && <p className="err" role="alert">{problem === "order" ? "From must be on or before To" : errorText("bad_range")}</p>}
         {error && !invalid && <p className="err" role="alert">{error}</p>}
         <div className="active">
           {anyFilter && (
@@ -356,7 +374,7 @@ export function AnalyticsScreen() {
               onToggle={() => setTable((t) => !t)}
               empty={report.unit === "hour" && report.live !== "ok" ? HOURLY_EMPTY[report.live] : undefined}
             />
-            <Breakdowns report={report} detail={det === undefined ? undefined : det} perLink={!!linkId} range={filtersQuery({ ...f, domains: [], q: "" })} />
+            <Breakdowns report={report} detail={det === undefined ? undefined : det} perLink={isLink} range={filtersQuery({ ...f, domains: [], q: "" })} />
             {shown && <BusyTimes hours={shown.hours} zone={zone} />}
             {det !== undefined && det?.live !== "ok" && <p className="note" role="status">{DETAIL_NOTE[det?.live ?? "unavailable"]}</p>}
             <p className="muted">

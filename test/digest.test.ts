@@ -194,6 +194,10 @@ describe("failed sends never starve the others", () => {
   it("outcomeOf: 409 and sends keep the week; network keeps the same key", () => {
     expect(outcomeOf({ ok: false, reason: "rejected", status: 409 })).toMatchObject({ keep: true });
     expect(outcomeOf({ ok: false, reason: "rejected", status: 429 })).toEqual({ keep: false, nextTry: true, error: "rejected_429" });
+    // 401 and 403 are the instance's key or sender account, not the address: retried, bounded by MAX_TRIES.
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 401 })).toEqual({ keep: false, nextTry: true, error: "rejected_401" });
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 403 })).toEqual({ keep: false, nextTry: true, error: "rejected_403" });
+    expect(outcomeOf({ ok: false, reason: "rejected", status: 400 })).toEqual({ keep: true, nextTry: false, error: "refused_400" });
     expect(outcomeOf({ ok: false, reason: "network" })).toEqual({ keep: false, nextTry: false, error: "network" });
     expect(outcomeOf(null)).toMatchObject({ keep: false, nextTry: false });
   });
