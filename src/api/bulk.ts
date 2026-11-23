@@ -65,6 +65,8 @@ const MINE = "EXISTS (SELECT 1 FROM links x WHERE x.id = json_extract(j.value,'$
 const UNLOCKED = "NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(json_extract(j.value,'$.k')))";
 /** No link on the target (bind: target id) holds key `k`. */
 const FREE = "NOT EXISTS (SELECT 1 FROM links o WHERE o.domain_id = ? AND o.slug_key = json_extract(j.value,'$.k'))";
+/** The target (bind: target id) is still active: a domain disabled since the reads takes no moved or copied link. */
+const ACTIVE = "EXISTS (SELECT 1 FROM domains WHERE id = ? AND status = 'active')";
 
 /**
  * S8: every statement's re-check of links.bulk (and links.create for a copy, which creates links) and, per row, of the edit
@@ -241,14 +243,14 @@ export async function bulk(c: Context<E>) {
       main = env.DB.prepare(
         `UPDATE links SET domain_id = ?, slug_key = json_extract(j.value,'$.k'), updated_by = json_extract(j.value,'$.f'), updated_at = max(?, links.updated_at + 1)
          FROM json_each(?) j WHERE links.id = json_extract(j.value,'$.t') AND links.updated_at = json_extract(j.value,'$.r')
-         AND ${UNLOCKED} AND ${FREE} AND ${G.sql} RETURNING links.id`,
-      ).bind(t, now, json, t, t, ...G.binds);
+         AND ${UNLOCKED} AND ${FREE} AND ${ACTIVE} AND ${G.sql} RETURNING links.id`,
+      ).bind(t, now, json, t, t, t, ...G.binds);
       stmts = [
         ...(reclaim.size ? [env.DB.prepare(
           `DELETE FROM links WHERE (domain_id, slug_key, forward_to) IN (SELECT ?, json_extract(j.value,'$.k'), l.id FROM json_each(?) j
-             JOIN links l ON l.id = json_extract(j.value,'$.t') AND l.updated_at = json_extract(j.value,'$.r') WHERE ${G.sql})
+             JOIN links l ON l.id = json_extract(j.value,'$.t') AND l.updated_at = json_extract(j.value,'$.r') WHERE ${G.sql} AND ${ACTIVE})
            AND NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(links.slug_key))`,
-        ).bind(t, back, ...G.binds, t)] : []),
+        ).bind(t, back, ...G.binds, t, t)] : []),
         main,
         env.DB.prepare(
           `INSERT INTO links (id, domain_id, slug, slug_key, url, redirect_code, starts_at, expires_at, pass_query, password_hash, routes, forward_to, created_by, updated_by, created_at, updated_at)
@@ -274,8 +276,8 @@ export async function bulk(c: Context<E>) {
         `INSERT INTO links (id, domain_id, slug, slug_key, url, redirect_code, starts_at, expires_at, pass_query, password_hash, routes, forward_to, created_by, updated_by, created_at, updated_at)
          SELECT json_extract(j.value,'$.n'), ?, s.slug, json_extract(j.value,'$.k'), s.url, s.redirect_code, s.starts_at, s.expires_at, s.pass_query, s.password_hash, s.routes,
            NULL, ?, ?, ?, ? FROM json_each(?) j JOIN links s ON s.id = json_extract(j.value,'$.t')
-         WHERE s.updated_at = json_extract(j.value,'$.r') AND ${UNLOCKED} AND ${FREE} AND ${G.sql} RETURNING id`,
-      ).bind(t, user.id, user.id, now, now, JSON.stringify(rows), t, t, ...G.binds);
+         WHERE s.updated_at = json_extract(j.value,'$.r') AND ${UNLOCKED} AND ${FREE} AND ${ACTIVE} AND ${G.sql} RETURNING id`,
+      ).bind(t, user.id, user.id, now, now, JSON.stringify(rows), t, t, t, ...G.binds);
       stmts = [
         main,
         // Same detail as a single create, plus the source; the copied hash is never in it (protection only).
@@ -349,27 +351,39 @@ export async function bulk(c: Context<E>) {
     );
   // The committed writes' cache keys go first, so a failing diagnosis read below never leaves a stale redirect cached.
   await Promise.all([...keys.map(([d, k]) => purge(env, d, k)), ...(cascaded ? [purgeReturned(env, res[stmts.indexOf(cascaded)]!)] : [])]);
-  // Something not written: tell a permission lost since the reads (forbidden) from a changed link (conflict). One batch, only then.
+  // Something not written: tell a permission lost since the reads (forbidden) or a target disabled since (target_not_active)
+  // from a changed link (conflict). One batch, only then. The writes are committed, so a failing read here never turns the
+  // answer into a 500: the undiagnosed links fall back to conflict (re-read and retry gives the precise answer).
   let lostPerm = (_: string) => false;
   if (done.length < accepted.length) {
-    const hb = actorCan(user.id, "links.bulk"), hc = actorCan(user.id, "links.create"), e = liveEdit(user.id, G_C, G_D);
-    const lost = JSON.stringify(accepted.filter(({ link }) => !applied.has(link.id)).map(({ link, g }) => ({ t: link.id, g })));
-    const [flags, no] = await env.DB.batch<Record<string, unknown>>([
-      env.DB.prepare(`SELECT ${hb.sql} b, ${hc.sql} c`).bind(...hb.binds, ...hc.binds),
-      env.DB.prepare(`SELECT json_extract(j.value,'$.t') t FROM json_each(?) j WHERE NOT ${e.sql}`).bind(lost, ...e.binds),
-    ]);
-    const f = flags!.results[0] ?? {};
-    const whole = !f.b || (copy && !f.c);
-    if (whole && !done.length) return c.json({ error: "forbidden" }, 403);
-    const refused = new Set(no!.results.map((r) => r.t as string));
-    lostPerm = (id) => whole || refused.has(id);
+    try {
+      const hb = actorCan(user.id, "links.bulk"), hc = actorCan(user.id, "links.create"), e = liveEdit(user.id, G_C, G_D);
+      const lost = JSON.stringify(accepted.filter(({ link }) => !applied.has(link.id)).map(({ link, g }) => ({ t: link.id, g })));
+      const [flags, no] = await env.DB.batch<Record<string, unknown>>([
+        env.DB.prepare(`SELECT ${hb.sql} b, ${hc.sql} c, ${target ? ACTIVE : "1"} a`).bind(...hb.binds, ...hc.binds, ...(target ? [target.id] : [])),
+        env.DB.prepare(`SELECT json_extract(j.value,'$.t') t FROM json_each(?) j WHERE NOT ${e.sql}`).bind(lost, ...e.binds),
+      ]);
+      const f = flags!.results[0] ?? {};
+      const whole = !f.b || (copy && !f.c);
+      if (whole && !done.length) return c.json({ error: "forbidden" }, 403);
+      // ACTIVE guards every row of the one write, so a disabled target means nothing was moved.
+      if (!f.a && !done.length) return c.json({ error: "target_not_active" }, 400);
+      const refused = new Set(no!.results.map((r) => r.t as string));
+      lostPerm = (id) => whole || refused.has(id);
+    } catch (e) {
+      console.warn("linkwarren: bulk diagnosis read failed", String(e));
+    }
   }
-  // Keyed by the selected id: a copy answers with the new link (the source is unchanged).
+  // Keyed by the selected id: a copy answers with the new link (the source is unchanged). Best effort, as above: ok without the link.
   const fresh = new Map<string, LinkRow>();
   if (b.action !== "delete" && done.length) {
     const want = newIds.size ? returned : done.map(({ link }) => link.id);
-    const rr = await env.DB.prepare("SELECT * FROM links WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(want)).all();
-    for (const r of rr.results) { const l = rowToLink(r); fresh.set(newIds.get(l.id) ?? l.id, l); }
+    try {
+      const rr = await env.DB.prepare("SELECT * FROM links WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(want)).all();
+      for (const r of rr.results) { const l = rowToLink(r); fresh.set(newIds.get(l.id) ?? l.id, l); }
+    } catch (e) {
+      console.warn("linkwarren: bulk result read failed", String(e));
+    }
   }
   for (const { link } of accepted) {
     const f = fresh.get(link.id);

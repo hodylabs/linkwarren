@@ -286,6 +286,17 @@ describe("race (Review Focus 1, D4)", () => {
       expect(await count("audit_log")).toBe(2);
       expect(await count("links WHERE domain_id = 'da'")).toBe(3);
     });
+
+    it(`${mode}: the target disabled between read and batch: 400 target_not_active, nothing written`, async () => {
+      for (const id of ["t1", "t2"]) await seed(id, "ua");
+      const restore = beforeBatch(4, () => run("UPDATE domains SET status = 'disabled' WHERE id = 'da'"));
+      let r;
+      try { r = await move("a", ["t1", "t2"], "da", mode); } finally { restore(); await run("UPDATE domains SET status = 'active' WHERE id = 'da'"); }
+      expect([r.status, await r.json()]).toEqual([400, { error: "target_not_active" }]);
+      expect(await count("links WHERE domain_id = 'da'")).toBe(0);
+      expect(await count("links WHERE domain_id = 'dm' AND forward_to IS NULL")).toBe(2);
+      expect(await count("audit_log")).toBe(0);
+    });
   }
 });
 
@@ -399,7 +410,7 @@ describe("delete removes forwarders (QR codes never land on a new link)", () => 
     expect(await count("links")).toBe(3);
   });
 
-  it("a failing diagnosis read after a partly written batch still clears the written link's cached redirect", async () => {
+  it("a failing diagnosis read after a partly written batch still answers the written link ok and clears its cached redirect", async () => {
     await seed("p1", "uo", { slug: "p1" });
     await seed("p2", "uo", { slug: "p2" });
     const h = harness();
@@ -411,9 +422,25 @@ describe("delete removes forwarders (QR codes never land on a new link)", () => 
       return real(q);
     });
     const restore = beforeBatch(3, () => run("UPDATE links SET updated_at = updated_at + 50 WHERE id = 'p2'"));
-    try { expect((await bulk("owner", { action: "redirect", ids: ["p1", "p2"], redirectCode: 301 })).status).toBe(500); } finally { restore(); vi.restoreAllMocks(); }
+    let r;
+    try { r = await answer(await bulk("owner", { action: "redirect", ids: ["p1", "p2"], redirectCode: 301 })); } finally { restore(); vi.restoreAllMocks(); }
+    // The committed write still answers ok; the undiagnosed one falls back to conflict (re-read and retry).
+    expect(byId(r.results)).toEqual({ p1: "ok", p2: "conflict" });
     expect(await one("SELECT redirect_code FROM links WHERE id = 'p1'")).toEqual({ redirect_code: 301 });
     expect(await env.CACHE.get("l2:dm:p1")).toBeNull();
+  });
+
+  it("a failing result read after a committed batch still answers ok, without the link", async () => {
+    await seed("p1", "uo", { slug: "p1" });
+    const real = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => {
+      if (q.startsWith("SELECT * FROM links WHERE id IN")) throw new Error("read down");
+      return real(q);
+    });
+    let r;
+    try { r = await answer(await bulk("owner", { action: "redirect", ids: ["p1"], redirectCode: 301 })); } finally { vi.restoreAllMocks(); }
+    expect(r.results).toEqual([{ id: "p1", ok: true }]);
+    expect(await one("SELECT redirect_code FROM links WHERE id = 'p1'")).toEqual({ redirect_code: 301 });
   });
 
   it("a revision change between read and batch: conflict, the link and its forwarders stay, no locks", async () => {
