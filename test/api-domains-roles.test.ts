@@ -122,6 +122,14 @@ describe("POST /api/domains", () => {
     expect(await one("SELECT owner_id FROM domains WHERE id = ?", r.id)).toEqual({ owner_id: "late" });
   });
 
+  it("race: an owner demoted to a domains.manage role before the insert: the shared domain goes to the first active owner", async () => {
+    const restore = beforeBatch(1, () => run("UPDATE users SET role = 'member', role_id = 'dmg' WHERE id = 'late'"));
+    let r;
+    try { r = await call("late", "POST", "/api/domains", { host: "demoted.test", type: "shared" }); } finally { restore(); }
+    expect(r.status).toBe(201);
+    expect(await one("SELECT owner_id FROM domains WHERE host = 'demoted.test'")).toEqual({ owner_id: "owner" });
+  });
+
   it("Member (domains.own) adds a private domain pending, owned by themselves, and no main or shared one (unchanged)", async () => {
     const r = await call("a", "POST", "/api/domains", { host: "a2.test", type: "private" });
     expect(r.status).toBe(201);

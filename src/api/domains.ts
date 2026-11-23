@@ -175,18 +175,20 @@ domains.post("/", async (c) => {
     bareRedirect: null, notfoundRedirect: null, caseSensitive: false, noindex: true, reservedExtra: [],
     createdAt: Math.floor(Date.now() / 1000),
   };
-  // A main or shared domain a non-owner adds is owned by the first active owner (R8): a member never owns one.
-  const firstOwner = user.role !== "owner" && type !== "private";
+  // A main or shared domain is owned by the actor if they are an owner at insert time, else by the first active owner (R8):
+  // a member never owns one. Read in the INSERT, not from the request snapshot, so a demotion in flight cannot slip through.
+  const shared = type !== "private";
+  const ownerSql = shared ? `COALESCE((SELECT id FROM users WHERE id = ? AND role = 'owner' AND status = 'active'), ${FIRST_OWNER})` : "?";
   const g = actorCan(user.id, manager ? "domains.manage" : "domains.own");
   let res;
   try {
     // The permission and the cap are inside the INSERT so a role edit or concurrent creates cannot slip past them; the follow-ups key on this row's id.
     res = await c.env.DB.batch([
       c.env.DB.prepare(
-        `INSERT INTO domains (id,host,type,status,owner_id,created_at) SELECT ?,?,?,?,${firstOwner ? FIRST_OWNER : "?"},?
-         WHERE ${g.sql}${firstOwner ? ` AND ${FIRST_OWNER} IS NOT NULL` : ""}
+        `INSERT INTO domains (id,host,type,status,owner_id,created_at) SELECT ?,?,?,?,${ownerSql},?
+         WHERE ${g.sql}${shared ? ` AND ${ownerSql} IS NOT NULL` : ""}
            AND (? OR (SELECT COUNT(*) FROM domains WHERE owner_id = ? AND status = 'pending') < ${MAX_PENDING_PER_MEMBER}) RETURNING owner_id`,
-      ).bind(d.id, host, type, d.status, ...(firstOwner ? [] : [user.id]), d.createdAt, ...g.binds, manager ? 1 : 0, user.id),
+      ).bind(d.id, host, type, d.status, user.id, d.createdAt, ...g.binds, ...(shared ? [user.id] : []), manager ? 1 : 0, user.id),
       c.env.DB.prepare("INSERT INTO domain_cf (domain_id, kind, updated_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM domains WHERE id = ?)")
         .bind(d.id, kind, d.createdAt, d.id),
       auditStmt(c.env, { actorId: user.id, action: "domain.create", targetType: "domain", targetId: d.id,
@@ -208,6 +210,7 @@ domains.post("/", async (c) => {
   // A domains.own create in the same account runs read-only (attach false): R3, no Cloudflare write. Any create-time
   // Cloudflare write (an attach, or an outside hostname) first re-checks the permission used: lost after the insert, the
   // domain stays as saved and unconnected (a domain manager connects it later), and nothing is written to Cloudflare.
+  // shortcut: a loss inside syncDomain's own Cloudflare reads (after this re-check) is not seen, as for every in-helper step; pass a held() check into syncDomain if that window matters.
   const writesCf = kind === "outside" || (kind === "account" && manager);
   // A failed re-check reads as lost (after a committed write it must not turn the answer into a 500).
   const still = !writesCf || (await holds(c.env, g).catch((e) => { logInternal(d.id, e); return false; }));
