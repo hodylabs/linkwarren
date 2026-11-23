@@ -682,9 +682,11 @@ a.hb-l:hover{text-decoration-color:currentColor}
 .qr-open{font-weight:500;padding:0 6px;margin-left:-6px}
 .qr-edit .qr>svg{width:168px;height:168px}
 .qr-edit .qr{min-height:60px}
+/* The preview row is sized before the SVG gets its CSS size, so it collapsed to 60px and the code spilled over its neighbours. */
+.qr-edit .qr:has(>svg){min-height:170px}
 .qr-style{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
 .qr-style input[type=color]{display:block;width:56px;height:34px;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:2px;cursor:pointer}
-@media (max-width:760px){.qr-style input[type=color]{width:64px;height:44px}}
+@media (max-width:760px){.qr-style input[type=color]{width:64px;height:44px}.ctl textarea{font-size:16px}}
 
 /* first-run setup wizard (setup.html) */
 .setup{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:100vh}

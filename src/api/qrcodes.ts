@@ -19,7 +19,9 @@ export const qrCodes = new Hono<E>();
 const forbidden = { error: "forbidden" } as const;
 // shortcut: one unpaged list; page it if someone ever keeps more than this many codes.
 const LIST_MAX = 500;
-const PER_PERSON_MAX = 1000;
+// shortcut: one person can never own more codes than the list shows; someone managing several people's codes still sees the
+// newest LIST_MAX only. Add a cursor when an install really needs more.
+const PER_PERSON_MAX = LIST_MAX;
 
 // Shape caps sit above the real limits (src/qrcode.ts qrProblem), so those keep their own error codes.
 const DATA = {

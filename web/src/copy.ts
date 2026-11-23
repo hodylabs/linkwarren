@@ -137,7 +137,7 @@ const ERRORS: Record<string, string> = {
   bad_color: "Pick colors as #RRGGBB.",
   inverted_colors: "Use a darker color for the code than for the background. Many scanners cannot read light on dark.",
   low_contrast: "These colors are too close. Pick a darker code or a lighter background.",
-  too_many_qr_codes: "You can have at most 1000 QR codes. Delete one first.",
+  too_many_qr_codes: "You can have at most 500 QR codes. Delete one first.",
   secrets_key_missing: "Saving a Wi-Fi password needs the SECRETS_KEY Worker secret. Ask the owner to set it, or make an open network code.",
 };
 
