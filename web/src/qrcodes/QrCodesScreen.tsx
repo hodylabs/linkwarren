@@ -348,7 +348,7 @@ export function QrCodesScreen() {
 
   return (
     <>
-      <ScreenHeader title="QR codes" count={items ? String(items.length) : undefined} text="codes for Wi-Fi, web addresses, text, email, phone, SMS and short links">
+      <ScreenHeader title="QR codes" count={items ? String(items.length) : undefined} text="Codes for Wi-Fi, web addresses, text, email, phone, SMS and short links">
         {/* Only once the list is in, so a late first load never drops a code just made. */}
         {creator && items !== null && <PrimaryButton label="New QR code" onClick={() => edit(null)} />}
       </ScreenHeader>

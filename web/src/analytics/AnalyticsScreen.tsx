@@ -200,7 +200,7 @@ export function AnalyticsScreen() {
   const pickable = [...switcherDomains(domains), ...extra.sort((a, b) => a.host.localeCompare(b.host))];
   const hostOf = (id: string) => pickable.find((d) => d.id === id)?.host ?? id;
   const n = f.domains.length;
-  const crumb = n === 0 ? "all domains you can see" : n === 1 ? `on ${hostOf(f.domains[0]!)}` : `${n} domains`;
+  const crumb = n === 0 ? "Clicks on every domain you can see" : n === 1 ? `Clicks on ${hostOf(f.domains[0]!)}` : `Clicks on ${n} domains`;
   const chipLabel = n === 0 ? "All domains" : n === 1 ? hostOf(f.domains[0]!) : `${n} domains`;
   const toggle = (id: string) => go({ domains: f.domains.includes(id) ? f.domains.filter((d) => d !== id) : [...f.domains, id] });
   const clearQ = () => {
