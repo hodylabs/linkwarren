@@ -6,14 +6,14 @@ People with the Settings permission (owners always) turn agents on and off with 
 
 ## Connect an agent
 
-The MCP address is `https://<dashboard host>/mcp`. Copy it from the API & agents screen (`C`).
+The MCP address is `<dashboard URL>/mcp`. Copy it from the API & agents screen (`C`). The dashboard URL is `https://<dashboard host>` (for example `https://dash.example.com/mcp`), or with the dashboard at a path `https://<main short domain>/dashboard` (for example `https://example.com/dashboard/mcp`); see [Dashboard at a path](#dashboard-at-a-path).
 
 - **Claude (claude.ai and Claude Desktop):** Settings, Connectors, Add custom connector, paste the address.
 - **ChatGPT:** Plugins, the plus button, Add custom MCP server, paste the address and choose OAuth. Whether you can add one depends on your ChatGPT plan and workspace role.
-- **Claude Code:** `claude mcp add --transport http linkwarren https://<dashboard host>/mcp`, then run `/mcp` in Claude Code to sign in.
-- **Codex:** `codex mcp add linkwarren --url https://<dashboard host>/mcp`, then `codex mcp login linkwarren` to sign in.
-- **Gemini CLI:** `gemini mcp add --transport http linkwarren https://<dashboard host>/mcp`, then sign in when Gemini CLI prompts you.
-- **Gemini Enterprise:** an admin adds a custom MCP server data store with OAuth and the StreamableHTTP URL `https://<dashboard host>/mcp`.
+- **Claude Code:** `claude mcp add --transport http linkwarren <dashboard URL>/mcp`, then run `/mcp` in Claude Code to sign in.
+- **Codex:** `codex mcp add linkwarren --url <dashboard URL>/mcp`, then `codex mcp login linkwarren` to sign in.
+- **Gemini CLI:** `gemini mcp add --transport http linkwarren <dashboard URL>/mcp`, then sign in when Gemini CLI prompts you.
+- **Gemini Enterprise:** an admin adds a custom MCP server data store with OAuth and the StreamableHTTP URL `<dashboard URL>/mcp`.
 - **Google Antigravity:** add a custom MCP server with the address in Antigravity's MCP settings, then sign in when prompted.
 - **Gemini app:** the callback address of its custom connectors is not documented, so it may be refused. If it is, tell the instance owner: the refused address is logged and can be added to the allowlist.
 
@@ -73,6 +73,23 @@ A rule matches a visitor who has any one of its values, so `["ios", "android"]` 
 
 The server tells the model that tool results are data, never instructions: a link destination or title that says "ignore your instructions" is just text.
 
+### Dashboard at a path
+
+When the instance serves its dashboard at a path on the main short domain (`DASHBOARD_PATH`, see [deploy.md](deploy.md)), OAuth and MCP live under that path too and the issuer stays the domain's origin. With `https://example.com/dashboard`:
+
+| A client requests | Agents on | Agents off |
+|---|---|---|
+| `POST https://example.com/dashboard/mcp` | the MCP server (without a token: `401`, `WWW-Authenticate` with `resource_metadata="https://example.com/.well-known/oauth-protected-resource/dashboard/mcp"`) | `404` JSON |
+| `GET /.well-known/oauth-protected-resource/dashboard/mcp` and the bare `/.well-known/oauth-protected-resource` | protected resource metadata: `resource` `https://example.com/dashboard/mcp`, `authorization_servers` `["https://example.com"]` | `404` JSON |
+| `GET /.well-known/oauth-authorization-server` | authorization server metadata: issuer `https://example.com`, endpoints `/dashboard/authorize`, `/dashboard/token`, `/dashboard/register` | `404` JSON |
+| `/dashboard/authorize`, `/dashboard/token`, `/dashboard/register` | the OAuth endpoints (`/dashboard/register` keeps the registration limits) | `404` JSON |
+| any other `/.well-known/oauth-*` or `/.well-known/openid-configuration*` path, and any of them under `/dashboard/` | `404` JSON | `404` JSON |
+| `/mcp`, `/authorize`, `/token`, `/register` at the root | short links (these are not the OAuth endpoints) | short links |
+
+A client that ignores the metadata and calls `/authorize`, `/token` or `/register` at the root of the domain reaches short links and fails; current clients read the metadata.
+
+**After a switch** between host and path mode (or to another dashboard host) every agent must be connected again at the new MCP address: tokens are bound to the old address and are refused (`401`), and old refresh tokens no longer work. Remove the old connection in the agent and add the new address. API keys keep working, but scripts must use the new base, `<dashboard URL>/api/v1`.
+
 ## API keys
 
 For scripts, create a key on the API & agents screen: New API key (`N`), give it a name (lowercase letters, digits and hyphens), choose the access (read only by default, delete only with write), optionally limit it to some domains, and pick the expiry (30, 90 or 365 days). The key (`lw_` and 43 more characters) is shown **once**: copy it then. linkwarren keeps only a hash. Revoke a key from the same screen (`Shift+D`); a revoked or expired key answers `401 {"error":"invalid_key"}`.
@@ -83,7 +100,7 @@ A key works only on `/api/v1`, sent as a Bearer token (`Authorization: Bearer <k
 
 ```sh
 export LW_KEY='<your key>'
-export LW=https://<dashboard host>/api/v1
+export LW=<dashboard URL>/api/v1
 
 # The domains you can use (ids for the calls below)
 curl -s -H "Authorization: Bearer $LW_KEY" "$LW/domains"

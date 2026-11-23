@@ -116,3 +116,11 @@ describe("isDiscoveryPath", () => {
     ["/.well-known/security.txt", false], ["/oauth-x", false], ["/.WELL-KNOWN/oauth-x", false],
   ])("%s -> %s", (p, want) => expect(isDiscoveryPath(p)).toBe(want));
 });
+
+describe("R1 refuses a prefix that collides with a root route of the dashboard or the OAuth provider", () => {
+  it.each(["/api", "/assets", "/auth", "/authorize", "/cdn-cgi", "/healthz", "/join", "/mcp", "/register", "/sign-in", "/token"])("%j is misconfigured", (p) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(dash(pathEnv({ DASHBOARD_PATH: p }))).toBeNull();
+    expect(log.mock.calls).toEqual([["dashboard config invalid: DASHBOARD_PATH"]]);
+  });
+});

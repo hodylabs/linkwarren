@@ -16,6 +16,9 @@ export type Dash = {
 
 // R1: one lowercase segment, no trailing slash, at most 32 characters after the slash.
 const PREFIX = /^\/[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+// Root segments of the app and the OAuth provider (and Cloudflare's own /cdn-cgi): a prefix equal to one would make the
+// wrapper's OAuth gate and the registration limiter judge a stripped path that collides with them.
+const RESERVED_PREFIXES: readonly string[] = ["/api", "/assets", "/auth", "/authorize", "/cdn-cgi", "/healthz", "/join", "/mcp", "/register", "/sign-in", "/token"];
 const blank = (v: unknown) => v == null || (typeof v === "string" && v.trim() === "");
 
 function compute(env: Env): Dash | string {
@@ -24,7 +27,7 @@ function compute(env: Env): Dash | string {
   const host = normalizeHost(rawHost);
   const rawPath: unknown = env.DASHBOARD_PATH;
   const pathMode = !blank(rawPath);
-  if (pathMode && (typeof rawPath !== "string" || !PREFIX.test(rawPath))) return "DASHBOARD_PATH";
+  if (pathMode && (typeof rawPath !== "string" || !PREFIX.test(rawPath) || RESERVED_PREFIXES.includes(rawPath))) return "DASHBOARD_PATH";
   // R14: an Access application cannot cover the prefix and bypass the discovery paths, so path mode is app mode only.
   if (pathMode && authMode(env) !== "app") return "AUTH_MODE";
   const rawLegacy: unknown = env.LEGACY_DASHBOARD_HOST;

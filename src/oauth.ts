@@ -79,16 +79,23 @@ export async function checkConnection(o: TokenExchangeCallbackOptions<Env>): Pro
   if (!ok) throw new OAuthError("invalid_grant", { description: "This connection was disconnected" });
 }
 
-let cached: { host: string; p: OAuthProvider<Env> } | undefined;
+let cached: { key: string; p: OAuthProvider<Env> } | undefined;
 
-/** One provider per dashboard host (the resource URL is derived from it). The library reads its KV as env.OAUTH_KV. */
+/**
+ * One provider per dashboard base (host + prefix; the resource URL is derived from it, so a token is bound to one base and
+ * refused after a switch). R5: every endpoint under the prefix, the issuer stays the origin (the token endpoint's origin),
+ * so the authorization-server metadata is the root RFC 8414 document. The library reads its KV as env.OAUTH_KV.
+ */
 export function provider(env: Env): OAuthProvider<Env> {
-  const host = normalizeHost(env.DASHBOARD_HOST);
-  if (cached?.host !== host)
+  const d = dash(env);
+  const host = d?.host ?? normalizeHost(env.DASHBOARD_HOST);
+  const P = d?.prefix ?? "";
+  const key = host + P;
+  if (cached?.key !== key)
     cached = {
-      host,
+      key,
       p: new OAuthProvider<Env>({
-        apiRoute: "/mcp",
+        apiRoute: `${P}/mcp`,
         apiHandler: mcpHandler,
         // Path mode: the app only ever sees inner (root) paths (R3); the wrapper sends nothing outside the prefix here.
         defaultHandler: {
@@ -98,9 +105,9 @@ export function provider(env: Env): OAuthProvider<Env> {
             return inner ? app.fetch(inner, e, ctx) : Response.json({ error: "not_found" }, { status: 404 });
           },
         },
-        authorizeEndpoint: "/authorize",
-        tokenEndpoint: "/token",
-        clientRegistrationEndpoint: "/register",
+        authorizeEndpoint: `${P}/authorize`,
+        tokenEndpoint: `${P}/token`,
+        clientRegistrationEndpoint: `${P}/register`,
         clientRegistrationCallback: checkRegistration,
         tokenExchangeCallback: checkConnection,
         accessTokenTTL: 86400,
@@ -108,7 +115,7 @@ export function provider(env: Env): OAuthProvider<Env> {
         clientRegistrationTTL: 2592000, // abandoned DCR clients age out
         scopesSupported: ["offline_access", "read", "write", "delete"],
         clientIdMetadataDocumentEnabled: false,
-        resourceMetadata: { resource: `https://${host}/mcp` },
+        resourceMetadata: { resource: `https://${host}${P}/mcp` },
       }),
     };
   return cached.p;

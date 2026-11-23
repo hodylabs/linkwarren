@@ -68,9 +68,9 @@ describe("path mode on the main short domain", () => {
   });
 
   it.each(["/.well-known/openid-configuration", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/x"])(
-    "discovery path %s is JSON 404, never a short-link page",
+    "discovery path %s is JSON 404 with agents off, never a short-link page (agents on: test/path-oauth.test.ts)",
     async (p) => {
-      const r = await call(p);
+      const r = await call(p, {}, pathEnv({ MCP_ENABLED: "0" }));
       expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
     },
   );

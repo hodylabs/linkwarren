@@ -28,6 +28,8 @@ export type ApprovalView = {
   /** The person the page was shown to; POST refuses a different signed-in person. Never a source of identity. */
   uid: string;
   handle: string;
+  /** The dashboard prefix ("" in host mode): the form posts to the same consent route it was served from. */
+  prefix: string;
 };
 
 /** The consent form. The client name and redirect host are client-supplied: escaped, and the host shown in bold mono. */
@@ -39,7 +41,7 @@ export function renderApproval(v: ApprovalView): string {
       `<p>${name} wants to use linkwarren as you. It will return to <b class="mono">${esc(v.redirectHost)}</b>.</p>` +
       (v.redirectIsLoopback ? `<p class="warn">This returns to an app on your own computer (local app).</p>` : "") +
       `<p class="muted">Signed in as ${esc(v.who.email)} (${esc(v.who.role)})</p>` +
-      `<form method="post" action="/authorize">` +
+      `<form method="post" action="${esc(v.prefix)}/authorize">` +
       `<input type="hidden" name="handle" value="${esc(v.handle)}">` +
       `<input type="hidden" name="uid" value="${esc(v.uid)}">` +
       `<fieldset><legend>Access</legend>` +
