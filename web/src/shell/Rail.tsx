@@ -162,9 +162,9 @@ export function TopBar({ mini, onMini }: { mini: boolean; onMini(): void }) {
         </button>
       )}
       <span className="grow" />
-      <button type="button" className={phone ? "btn ghost icon" : "btn ghost sm"} aria-label={phone ? "Jump to" : undefined} aria-keyshortcuts="Control+K" onClick={() => open({ kind: "palette" })}>
+      <button type="button" className={phone ? "btn ghost icon" : "btn ghost sm"} aria-label={phone ? "Search" : undefined} aria-keyshortcuts="Control+K" onClick={() => open({ kind: "palette" })}>
         <Icon name="search" />
-        {!phone && <>Jump to<kbd>Ctrl K</kbd></>}
+        {!phone && <>Search<kbd>Ctrl K</kbd></>}
       </button>
       <button type="button" className={phone ? "btn ghost icon" : "btn ghost sm icon"} aria-label="Keyboard shortcuts and help" aria-keyshortcuts="?" onClick={() => open({ kind: "shortcuts" })}>
         <Icon name="help" />

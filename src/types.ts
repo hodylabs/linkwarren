@@ -21,8 +21,8 @@ export type RouteDevice = (typeof ROUTE_DEVICES)[number];
 export type Route = { countries: string[]; devices: RouteDevice[]; url: string };
 export type LinkRow = {
   id: string; domainId: string; slug: string; slugKey: string; url: string;
-  /** S12: optional label for people (search, the dashboard). Not on the redirect path: the KV entry leaves it out. */
-  name: string | null;
+  /** S12: optional label for people (search, the dashboard). Not on the redirect path: a cached (KV) row has none. */
+  name?: string | null;
   redirectCode: 301 | 302; startsAt: number | null; expiresAt: number | null; passQuery: boolean;
   /** Worker-only (redirect path and KV); never sent to a client, see toApiLink. */
   passwordHash: string | null; routes: Route[];

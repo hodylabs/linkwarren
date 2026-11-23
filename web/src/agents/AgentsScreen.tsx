@@ -429,7 +429,6 @@ export function AgentsScreen() {
     <>
       <ScreenHeader
         title="API & agents"
-        text="Connect Claude, ChatGPT, Claude Code, Codex, Gemini or your own scripts."
         action={can(me, "keys") && <PrimaryButton label="New API key" shortcut="N" onClick={() => app.open({ kind: "newKey" })} />}
       />
       <div className={`body agents${open ? " open" : ""}${selected ? "" : " solo"}`}>

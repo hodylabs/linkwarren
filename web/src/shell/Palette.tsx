@@ -69,7 +69,8 @@ export function Palette() {
   const hostOf = (id: string) => domains.find((d) => d.id === id)?.host;
   const cmdItem = (c: Command): Item => ({ id: `c-${c.keys}`, label: c.label, keys: c.keys, run: c.run });
   const linkItem = (l: Link): Item => ({
-    id: `l-${l.id}`, label: l.slug, sub: hostOf(l.domainId), mono: true,
+    // S12: a named link reads by its name, with the short link beside it.
+    id: `l-${l.id}`, label: l.name ?? l.slug, sub: l.name ? `${hostOf(l.domainId) ?? ""}/${l.slug}` : hostOf(l.domainId), mono: !l.name,
     run: () => navigate(`/links?q=${encodeURIComponent(l.slug)}&sel=${encodeURIComponent(l.id)}`),
   });
   const cmdSections = (list: Command[]): Section[] =>

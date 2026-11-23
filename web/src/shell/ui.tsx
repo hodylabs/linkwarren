@@ -103,14 +103,15 @@ export function Seg<V extends string | number>({ options, value, onChange, label
 /** Page header: title with its count, one muted line, then the toolbar (search, filters, page action). */
 export function ScreenHeader({ title, count, text, action, children }: { title: string; count?: ReactNode; text?: ReactNode; action?: ReactNode; children?: ReactNode }) {
   return (
+    // One row: title and count, the toolbar (filters, chips), then the page action on the right; it wraps when narrow.
     <header className="top">
       <div className="t-row">
         <h1>{title}</h1>
         {count && <span className="t-count">{count}</span>}
+        {children && <div className="toolbar">{children}</div>}
         {action && <div className="t-act">{action}</div>}
       </div>
       {text && <p className="desc">{text}</p>}
-      {children && <div className="toolbar">{children}</div>}
     </header>
   );
 }
@@ -122,14 +123,16 @@ const SearchIcon = () => (
   </svg>
 );
 
-/** Opens the command palette; shows the current search, or the placeholder. */
-export const SearchButton = ({ q, placeholder, onOpen }: { q: string; placeholder: string; onOpen: () => void }) => (
-  <button type="button" className="search" onClick={onOpen} aria-keyshortcuts="Control+K">
-    <SearchIcon />
-    <span>{q || placeholder}</span>
-    <Kbd>Ctrl K</Kbd>
-  </button>
-);
+/** S12: the active `?q=` text filter as a small removable chip in the header (the top bar's Search is the one search box). */
+export const SearchChip = ({ q, onClear }: { q: string; onClear: () => void }) =>
+  q ? (
+    <span className="qchip">
+      Search: <b>{q}</b>
+      <button type="button" aria-label="Clear search" onClick={onClear}>
+        <Icon name="x" />
+      </button>
+    </span>
+  ) : null;
 
 /** Empty list: icon tile, title, one line, optional action. */
 export function Empty({ title, text, children }: { title: string; text: string; children?: ReactNode }) {

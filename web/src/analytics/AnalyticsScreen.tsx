@@ -200,7 +200,6 @@ export function AnalyticsScreen() {
   const pickable = [...switcherDomains(domains), ...extra.sort((a, b) => a.host.localeCompare(b.host))];
   const hostOf = (id: string) => pickable.find((d) => d.id === id)?.host ?? id;
   const n = f.domains.length;
-  const crumb = n === 0 ? "Clicks on every domain you can see" : n === 1 ? `Clicks on ${hostOf(f.domains[0]!)}` : `Clicks on ${n} domains`;
   const chipLabel = n === 0 ? "All domains" : n === 1 ? hostOf(f.domains[0]!) : `${n} domains`;
   const toggle = (id: string) => go({ domains: f.domains.includes(id) ? f.domains.filter((d) => d !== id) : [...f.domains, id] });
   const clearQ = () => {
@@ -289,7 +288,8 @@ export function AnalyticsScreen() {
           <div className="identity">
             <div className="grow">
               <h1 className="eyebrow">Link analytics</h1>
-              {title && <p className="short big">{title}</p>}
+              {report?.link?.name && <p className="lname big">{report.link.name}</p>}
+              {title && <p className={report?.link?.name ? "short" : "short big"}>{title}</p>}
             </div>
             {report?.link && !stale && (
               <>
@@ -304,7 +304,7 @@ export function AnalyticsScreen() {
           </div>
         </header>
       ) : (
-        <ScreenHeader title="Analytics" text={crumb} />
+        <ScreenHeader title="Analytics" />
       )}
       <div className="an">
         <div className="an-filters">

@@ -43,12 +43,12 @@ describe("link name API", () => {
     expect(((await (await post({ slug: "n3" })).json()) as { name: string | null }).name).toBeNull();
   });
 
-  it("refuses a bad name with bad_name on create and PATCH", async () => {
+  it("refuses a bad name with bad_link_name on create and PATCH", async () => {
     const r = await post({ slug: "bad", name: "x".repeat(101) });
-    expect([r.status, await r.json()]).toEqual([400, { error: "bad_name" }]);
+    expect([r.status, await r.json()]).toEqual([400, { error: "bad_link_name" }]);
     const { id } = (await (await post({ slug: "p" })).json()) as { id: string };
     const p = await call("PATCH", `/api/links/${id}`, { name: "a\nb" });
-    expect([p.status, await p.json()]).toEqual([400, { error: "bad_name" }]);
+    expect([p.status, await p.json()]).toEqual([400, { error: "bad_link_name" }]);
   });
 
   it("PATCH sets it, keeps it when absent, and clears it with null or empty", async () => {

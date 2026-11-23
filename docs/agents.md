@@ -48,20 +48,20 @@ Agents follow the person's current role. When an owner turns off **Connect AI ag
 | Tool | Needs | What it does |
 | --- | --- | --- |
 | `server_info` | read | Your access level, role (its name and permission keys), the MCP address and the limits |
-| `search_links` | read | Search the links you can see, newest first |
+| `search_links` | read | Search the links you can see by name, slug or destination, newest first |
 | `get_link` | read | One link by id or by short URL |
 | `list_domains` | read | The domains you can create links on (host, type and status) |
 | `check_slug` | read | Whether a slug is available, taken, locked, reserved or invalid |
 | `link_stats` | read | Daily clicks for one link over the last 7 days |
-| `create_link` | write | Create a short link |
-| `update_link` | write | Change a link |
+| `create_link` | write | Create a short link (with an optional `name`) |
+| `update_link` | write | Change a link (its `name` too: `null` or empty removes it) |
 | `delete_link` | delete | Delete a link, remove its forwarders and lock their slugs (needs `confirm: true`) |
 | `bulk_links` | write (delete also needs delete) | Change up to 50 links in one call: `delete`, `schedule`, `move`, `redirect` or `password` |
 
-`bulk_links` takes `action`, `ids` (1 to 50), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, kind, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
+`bulk_links` takes `action`, `ids` (1 to 50), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, name, kind, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
 ### Routing
 
-Every link has a `kind`: `url` (a redirect) or `vcard` (a contact card: the short link downloads the card, see `docs/spec.md`). `get_link` and `search_links` show the kind and, for a card, its fields with `hasPhoto` in place of the photo. Contact cards are created and edited in the dashboard or through `/api/v1`, not through MCP; `update_link` on a card answers `vcard_url` for a new `url` and `vcard_rule` for a password or routes.
+Every link has an optional `name` (at most 100 characters, one line; `null` when unset) that `get_link` and `search_links` return and `query` matches; a bad one answers `bad_link_name`. Every link has a `kind`: `url` (a redirect) or `vcard` (a contact card: the short link downloads the card, see `docs/spec.md`). `get_link` and `search_links` show the kind and, for a card, its fields with `hasPhoto` in place of the photo. Contact cards are created and edited in the dashboard or through `/api/v1`, not through MCP; `update_link` on a card answers `vcard_url` for a new `url` and `vcard_rule` for a password or routes.
 
 A link destination (`url`, and each route `url`) is an `http(s)` URL, a `tel:` number (`tel:+1-555-123-4567`: an optional `+`, digits and `-` `.` `(` `)`, no parameters) or a `mailto:` address (one or more addresses separated by commas, optional `subject` and `body` only, no line breaks). A refused one answers `scheme`, `bad_tel` or `bad_mailto`. A domain's bare and not-found redirects take `http(s)` only.
 

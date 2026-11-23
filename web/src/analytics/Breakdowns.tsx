@@ -3,7 +3,8 @@ import type { AnalyticsReport, DetailReport } from "../api";
 import { NavLink } from "../router";
 import { fmt } from "./view";
 
-type Row = { label: string; value: number; to?: string };
+/** `mono`: this row is an address (host/slug), set in the mono face; a named top link is not. */
+type Row = { label: string; value: number; to?: string; mono?: boolean };
 type Count = { value: string; clicks: number };
 const desc = <T extends { clicks: number }>(xs: T[]) => [...xs].sort((a, b) => b.clicks - a.clicks);
 const host = (h: string) => h || "Unknown domain";
@@ -66,9 +67,9 @@ function Bars({ rows, mono, empty, of }: { rows: Row[]; mono?: boolean; empty: s
       {rows.map((r, i) => (
         <li key={i}>
           {r.to ? (
-            <NavLink to={r.to} className={mono ? "hb-l mono" : "hb-l"} title={`Analytics for ${r.label}`}>{r.label}</NavLink>
+            <NavLink to={r.to} className={(r.mono ?? mono) ? "hb-l mono" : "hb-l"} title={`Analytics for ${r.label}`}>{r.label}</NavLink>
           ) : (
-            <span className={mono ? "hb-l mono" : "hb-l"} title={r.label}>{r.label}</span>
+            <span className={(r.mono ?? mono) ? "hb-l mono" : "hb-l"} title={r.label}>{r.label}</span>
           )}
           <span className="hb-n">
             <span className="hb-v">{fmt(r.value)}</span>
@@ -145,7 +146,8 @@ export function Breakdowns({ report: r, detail, perLink = false, range = "", not
     setTab(TABS[n]!.id);
     tabRefs.current[n]?.focus();
   };
-  const top = desc(r.links).slice(0, 6).map((l) => ({ label: `${host(l.host)}/${l.slug}`, value: l.clicks, to: linkPage(l.linkId, range) }));
+  // S12: a named link shows its name; an unnamed one its address (host/slug).
+  const top = desc(r.links).slice(0, 6).map((l) => ({ label: l.name ?? `${host(l.host)}/${l.slug}`, mono: !l.name, value: l.clicks, to: linkPage(l.linkId, range) }));
   const lower = [!perLink && (
     <section className="card toplinks-card" key="top">
       <div className="card-h"><h3>Top links</h3></div>

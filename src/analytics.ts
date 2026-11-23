@@ -21,11 +21,11 @@ export type AnalyticsReport = {
   from: string; to: string; unit: Unit; live: Live; truncated: boolean;
   totals: { clicks: number; qr: number; typed: number; bots: number; visitors: number | null; prevClicks: number | null };
   series: { bucket: string; qr: number; typed: number }[];
-  links: { linkId: string; domainId: string; host: string; slug: string; clicks: number }[];
+  links: { linkId: string; domainId: string; host: string; slug: string; clicks: number; name?: string }[];
   domains: { domainId: string; host: string; clicks: number }[];
   countries: Count[]; devices: Count[]; referrers: Count[];
   /** Per-link report only (S10). */
-  link?: { linkId: string; host: string; slug: string };
+  link?: { linkId: string; host: string; slug: string; name?: string | null };
 };
 
 const DAY_MS = 86_400_000;
@@ -302,13 +302,13 @@ export async function loadDetail(env: Env, range: Range, scope: Scope, tz: Tz, n
 }
 
 /** The link a per-link report is about, and its scope: the caller's usable domains (so a moved link's clicks on a domain they cannot use stay out) and this one link. Unknown or not visible is not_found either way. */
-export async function linkScope(env: Env, user: UserRow, linkId: string, only: readonly string[] | null): Promise<{ scope: Scope; link: { linkId: string; host: string; slug: string } } | { error: "not_found" }> {
-  const l = await env.DB.prepare("SELECT l.id, l.slug, l.domain_id, d.host FROM links l JOIN domains d ON d.id = l.domain_id WHERE l.id = ?")
-    .bind(linkId).first<{ id: string; slug: string; domain_id: string; host: string }>();
+export async function linkScope(env: Env, user: UserRow, linkId: string, only: readonly string[] | null): Promise<{ scope: Scope; link: { linkId: string; host: string; slug: string; name: string | null } } | { error: "not_found" }> {
+  const l = await env.DB.prepare("SELECT l.id, l.slug, l.name, l.domain_id, d.host FROM links l JOIN domains d ON d.id = l.domain_id WHERE l.id = ?")
+    .bind(linkId).first<{ id: string; slug: string; name: string | null; domain_id: string; host: string }>();
   if (!l) return { error: "not_found" };
   const s = await resolveScope(env, user, null, "", only);
   if ("error" in s || (s.scope.domainIds && !s.scope.domainIds.includes(l.domain_id))) return { error: "not_found" };
-  return { scope: { domainIds: s.scope.domainIds, linkIds: [l.id] }, link: { linkId: l.id, host: l.host, slug: l.slug } };
+  return { scope: { domainIds: s.scope.domainIds, linkIds: [l.id] }, link: { linkId: l.id, host: l.host, slug: l.slug, name: l.name } };
 }
 
 const desc = <T extends { clicks: number }>(m: Map<string, T>) => [...m.values()].filter((x) => x.clicks > 0).sort((a, b) => b.clicks - a.clicks);

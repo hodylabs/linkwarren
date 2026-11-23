@@ -173,7 +173,7 @@ importApi.post("/", async (c) => {
     if (!dom.cs && isTwin(host, l.slug)) return conflict(i, "case_twin");
     if (!l.enabled || l.protected) { disabled.push(i); return; }
     const nm = checkLinkName(l.name ?? null);
-    if (!nm.ok) return conflict(i, "bad_name");
+    if (!nm.ok) return conflict(i, "bad_link_name");
     const card = l.vcard ? cardOf(l.vcard) : null;
     if (card && "error" in card) return conflict(i, "invalid_vcard");
     const href = card ? VCARD_URL : dest(l.destination);

@@ -10,7 +10,7 @@ import { Icon, Seg, Switch } from "../shell/ui";
 import { can, canUseDomain, mayOpen } from "../perms";
 import { useApp } from "../state";
 import { fromLocalInput, toLocalInput } from "../time";
-import { checkDestination, checkSlugShape } from "../../../src/validate";
+import { checkDestination, checkLinkName, checkSlugShape, LINK_NAME_MAX } from "../../../src/validate";
 import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
 import { cleanVcard, formField, fullCard, VcardForm } from "./VcardForm";
 import { readUtm, suggestSlugs, withUtm, type Utm } from "./compose";
@@ -19,10 +19,10 @@ import { parseCountries, passwordProblem, routeSummary } from "./rules";
 import { RoutesEditor } from "./RoutesEditor";
 
 type Check = { status: "available" | "taken" | "locked" | "reserved" } | { status: "invalid"; reason: string };
-type Field = "url" | "slug" | "schedule" | "password" | "form";
+type Field = "name" | "url" | "slug" | "schedule" | "password" | "form";
 const SLUG_CODES = new Set(["taken", "locked", "reserved", "empty", "slug_too_long", "charset", "leading_dot", "too_long"]);
 const URL_CODES = new Set(["not_url", "scheme", "userinfo", "url_too_long", "loop", "too_long", "bad_tel", "bad_mailto"]);
-const fieldOf = (code: string): Field => (code === "bad_window" ? "schedule" : code.startsWith("password_") ? "password" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
+const fieldOf = (code: string): Field => (code === "bad_link_name" ? "name" : code === "bad_window" ? "schedule" : code.startsWith("password_") ? "password" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
 const DEBOUNCE_MS = 250;
 
 /** New and edit link sheet hotkeys and their text on the shortcuts sheet (the rule keys T S P R Q only outside text boxes). */
@@ -48,10 +48,10 @@ const isUrl = (s: string) => {
 };
 
 /** Everything the form edits. `passwordOn` is the open Password rule; `routes` are the editor rows (none = routing off). */
-type Draft = { url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[]; vcard: VCard };
-const NEW_DRAFT: Draft = { url: "", starts: "", ends: "", code: 302, pass: true, password: "", passwordOn: false, routes: [], vcard: emptyVcard() };
+type Draft = { name: string; url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[]; vcard: VCard };
+const NEW_DRAFT: Draft = { name: "", url: "", starts: "", ends: "", code: 302, pass: true, password: "", passwordOn: false, routes: [], vcard: emptyVcard() };
 const draftOf = (l: Link): Draft => ({
-  url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery,
+  name: l.name ?? "", url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery,
   password: "", passwordOn: l.hasPassword, routes: l.routes, vcard: l.kind === "vcard" ? fullCard(l) : emptyVcard(),
 });
 
@@ -60,6 +60,7 @@ function diff(l: Link, d: Draft, routes: Route[]): Record<string, unknown> {
   const base = draftOf(l);
   const out: Record<string, unknown> = {};
   if (d.url !== base.url) out.url = d.url;
+  if (d.name !== base.name) out.name = d.name.trim() || null;
   if (d.code !== base.code) out.redirectCode = d.code;
   if (d.pass !== base.pass) out.passQuery = d.pass;
   if (d.starts !== base.starts) out.startsAt = fromLocalInput(d.starts);
@@ -211,6 +212,7 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
   const filled = d.routes.filter((r) => !blank(r));
 
   const blocked = (): { field: Field; code: string } | null => {
+    if (!checkLinkName(d.name).ok) return { field: "name", code: "bad_link_name" };
     if (!editing) {
       if (check && check.status !== "available") return { field: "slug", code: check.status === "invalid" ? check.reason : check.status };
       if (!slug) return { field: "slug", code: "empty" };
@@ -277,6 +279,7 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
     setError(null);
     try {
       const body: Record<string, unknown> = cv?.ok ? { domainId, slug, kind: "vcard", vcard: cv.vcard } : { domainId, slug, url: d.url, redirectCode: d.code };
+      if (d.name.trim()) body.name = d.name.trim();
       if (startSec !== null) body.startsAt = startSec;
       if (endSec !== null) body.expiresAt = endSec;
       if (d.passwordOn && !isCard) body.password = d.password;
@@ -444,6 +447,17 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
         </span>
       </div>
       <div className="sh-body">
+        <div className="f">
+          <label htmlFor="nl-name">
+            Name <span>optional, to find it by</span>
+          </label>
+          <input id="nl-name" className={err("name") ? "input sans bad" : "input sans"} value={d.name} maxLength={LINK_NAME_MAX} autoComplete="off" aria-invalid={err("name") ? true : undefined} onChange={(e) => set({ name: e.target.value })} />
+          {err("name") && (
+            <p className="err" role="alert">
+              {errorText(err("name")!)}
+            </p>
+          )}
+        </div>
         {!editing && (
           <div className="f">
             <span className="lbl" id="nl-kind">Type</span>

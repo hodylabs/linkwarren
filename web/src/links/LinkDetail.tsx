@@ -92,7 +92,9 @@ export const LinkDetail = forwardRef<DetailHandle, {
     <aside className="detail" aria-label="Selected link">
       <div className="d-head">
         <CloseButton label="Close link details" onClick={onClose} />
-        <div className="short">
+        {/* S12: the name, when set, is the title; the short link sits under it. */}
+        {link.name && <div className="title lname">{link.name}</div>}
+        <div className={link.name ? "short sub" : "short"}>
           <span className="host">{host}/</span>
           <span className="slug">{link.slug}</span>
         </div>

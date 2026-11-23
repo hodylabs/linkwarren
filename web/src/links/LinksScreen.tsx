@@ -5,7 +5,7 @@ import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { hasUnsaved, UNSAVED } from "../unsaved";
 import { navigate, useRoute } from "../router";
 import { Sheet, useOpenSheets } from "../shell/Sheet";
-import { Chip, Empty, Icon, PrimaryButton, ScreenHeader, SearchButton } from "../shell/ui";
+import { Chip, Empty, Icon, PrimaryButton, ScreenHeader, SearchChip } from "../shell/ui";
 import { can } from "../perms";
 import { useApp } from "../state";
 import { BackBar, PHONE, useDetailView, useMedia } from "../shell/narrow";
@@ -411,10 +411,8 @@ export function LinksScreen() {
       <ScreenHeader
         title="Links"
         count={unfiltered ? plural(total, "link") : `${items.length} shown`}
-        text={`Short links ${host ? `on ${host}` : "on every domain you can see"}.`}
         action={canCreate && <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />}
       >
-        <SearchButton q={q} placeholder="Search slugs and destinations" onOpen={() => app.open({ kind: "palette" })} />
         <div className="chips" role="group" aria-label="Filter links">
           {STATUSES.map((s) => (
             <Chip key={s} pressed={status === s} onClick={() => setStatus(s)}>
@@ -425,11 +423,7 @@ export function LinksScreen() {
             Mine
           </Chip>
         </div>
-        {q && (
-          <button type="button" className="btn ghost" onClick={() => navigate("/links")}>
-            Clear search
-          </button>
-        )}
+        <SearchChip q={q} onClear={() => navigate("/links")} />
       </ScreenHeader>
       {app.instance && !app.instance.mainDomainId && can(me, "domains.manage") && (
         <div className="callout wait pad" role="status" aria-label="No main domain">
@@ -477,6 +471,12 @@ export function LinksScreen() {
               {items.map((l, i) => {
                 const st = linkState(l, domainOf(l.domainId), now);
                 const isSel = l.id === sel;
+                const short = (
+                  <span className="mchip">
+                    <span className="host">{domainOf(l.domainId)?.host}/</span>
+                    <span className="slug">{l.slug}</span>
+                  </span>
+                );
                 return (
                   <tr
                     key={l.id}
@@ -509,12 +509,11 @@ export function LinksScreen() {
                       <div className="two">
                         <span className={`dot2 ${st.tone}`} aria-hidden="true" />
                         <div className="t">
-                          <span className="mchip">
-                            <span className="host">{domainOf(l.domainId)?.host}/</span>
-                            <span className="slug">{l.slug}</span>
-                          </span>
+                          {/* S12: a named link reads by its name; its short link moves to the second line. Unnamed rows are unchanged. */}
+                          {l.name ? <span className="lname">{l.name}</span> : short}
                           <small>
                             {st.tone === "ok" ? <span className="sr-only">{st.label}. </span> : <><span className={`st-${st.tone}`}>{st.label}</span>, </>}
+                            {l.name && <>{short}, </>}
                             {creatorLabel(l.createdBy, me, users)}, {shortDate(l.createdAt)}
                           </small>
                         </div>

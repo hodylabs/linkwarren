@@ -41,11 +41,11 @@ export type AnalyticsReport = {
   from: string; to: string; unit: "day" | "hour"; live: "ok" | "off" | "unavailable"; truncated: boolean;
   totals: { clicks: number; qr: number; typed: number; bots: number; visitors: number | null; prevClicks: number | null };
   series: { bucket: string; qr: number; typed: number }[];
-  links: { linkId: string; domainId: string; host: string; slug: string; clicks: number }[];
+  links: { linkId: string; domainId: string; host: string; slug: string; clicks: number; name?: string }[];
   domains: { domainId: string; host: string; clicks: number }[];
   countries: Count[]; devices: Count[]; referrers: Count[];
   /** Only on a per-link report (`?link=`). */
-  link?: { linkId: string; host: string; slug: string };
+  link?: { linkId: string; host: string; slug: string; name?: string | null };
 };
 /** GET /api/analytics/detail (src/analytics.ts DetailReport): from Analytics Engine only, `from`..`to` are the UTC days covered. */
 export type DetailReport = {

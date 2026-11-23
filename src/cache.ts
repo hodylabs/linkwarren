@@ -38,7 +38,7 @@ export const getLink = (env: Env, domainId: string, key: string, ctx?: Ctx): Pro
     if (!r) return null;
     // The redirect never reads the name (S12), so it stays out of KV: a cached row has no `name`.
     const { name: _, ...cachedRow } = rowToLink(r);
-    return cachedRow as LinkRow;
+    return cachedRow;
   }, ctx);
 
 export const invalidateHost = (env: Env, host: string) => env.CACHE.delete(hostKey(host));

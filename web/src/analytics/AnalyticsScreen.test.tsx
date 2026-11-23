@@ -44,7 +44,7 @@ describe("Analytics screen", () => {
     await ready();
     expect(reports()).toEqual(["/api/analytics"]);
     expect(screen.getByRole("heading", { name: "Analytics" })).toBeTruthy();
-    expect(screen.getByText("Clicks on every domain you can see")).toBeTruthy();
+    expect(within(screen.getByRole("toolbar", { name: "Filters" })).getByRole("button", { name: /All domains/ })).toBeTruthy(); // the scope reads on the domain chip
     expect(screen.getByText("Bots and link previews are left out")).toBeTruthy();
   });
 
@@ -80,7 +80,7 @@ describe("Analytics screen", () => {
     await user.keyboard("{ArrowDown} ");
     await waitFor(() => expect(reports().at(-1)).toBe("/api/analytics?domains=d2"));
     expect(within(list).getAllByRole("option")[1]!.getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByText("Clicks on team.example.com")).toBeTruthy();
+    expect(within(screen.getByRole("toolbar", { name: "Filters" })).getByRole("button", { name: /team\.example\.com/ })).toBeTruthy();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /team\.example\.com/, expanded: false }));

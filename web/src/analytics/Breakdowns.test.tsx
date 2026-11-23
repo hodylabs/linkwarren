@@ -86,6 +86,17 @@ describe("Breakdowns", () => {
     expect(screen.getAllByRole("tabpanel")).toHaveLength(1); // the others are hidden
   });
 
+  it("Top links shows a link's name when it has one, in the body face; the others keep host/slug in mono", () => {
+    const links = [
+      { linkId: "a", domainId: "d1", host: "go.example.com", slug: "a", clicks: 2, name: "Spring poster" },
+      { linkId: "b", domainId: "d1", host: "go.example.com", slug: "b", clicks: 1 },
+    ];
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 3 }, links }} />);
+    expect(labels("Top links")).toEqual(["Spring poster", "go.example.com/b"]);
+    const [named, plain] = [...card("Top links").querySelectorAll(".hb-l")];
+    expect([named!.classList.contains("mono"), plain!.classList.contains("mono")]).toEqual([false, true]);
+  });
+
   it("Top links shares are of all the report's clicks, not of the six shown", () => {
     const links = Array.from({ length: 7 }, (_, i) => ({ linkId: `l${i}`, domainId: "d1", host: "go.example.com", slug: `s${i}`, clicks: 1 }));
     render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 7 }, links }} />);

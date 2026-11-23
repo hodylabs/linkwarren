@@ -51,7 +51,7 @@ describe("GET /api/analytics?link=: one link's report", () => {
   it("totals cover that link only and name it", async () => {
     const r = await json("?range=7&link=lM");
     expect(r.totals.clicks).toBe(3);
-    expect(r.link).toEqual({ linkId: "lM", host: "main.test", slug: "lM" });
+    expect(r.link).toEqual({ linkId: "lM", host: "main.test", slug: "lM", name: null });
     expect(r.links.map((l: any) => l.linkId)).toEqual(["lM"]);
   });
   it("a member cannot open another member's private link: 404, the same as an unknown one", async () => {

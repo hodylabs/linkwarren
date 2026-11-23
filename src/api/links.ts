@@ -226,7 +226,7 @@ links.post("/", async (c) => {
   const isCard = b.kind === "vcard";
   if (isCard !== (b.vcard !== undefined) || (!isCard && b.url === undefined)) return c.json({ error: "invalid_body" }, 400);
   const nm = checkLinkName(b.name ?? null);
-  if (!nm.ok) return c.json({ error: "bad_name" }, 400);
+  if (!nm.ok) return c.json({ error: "bad_link_name" }, 400);
   // Every pre-read in one batch, judged below in the old order. Slugs are ASCII, so lower(slug) = lower(slugKey(slug, *)).
   const [dr, mr, hr, lr, sr] = await c.env.DB.batch([
     domainQ(c.env, b.domainId), memberQ(c.env, b.domainId, user.id), hostsQ(c.env), lockQ(c.env, b.domainId, b.slug), settingsQ(c.env),
@@ -378,7 +378,7 @@ links.patch("/:id", async (c) => {
   const card = b.vcard === undefined ? null : cardOf(b.vcard);
   if (card && "error" in card) return c.json(card, 400);
   const nm = b.name === undefined ? null : checkLinkName(b.name);
-  if (nm && !nm.ok) return c.json({ error: "bad_name" }, 400);
+  if (nm && !nm.ok) return c.json({ error: "bad_link_name" }, 400);
   let url = link.url;
   if (b.url !== undefined) {
     const dest = await destination(c.env, b.url, [], hosts);

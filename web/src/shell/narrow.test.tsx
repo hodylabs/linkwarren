@@ -88,7 +88,7 @@ describe("phone nav drawer", () => {
     viewport([NARROW, PHONE]);
     const user = boot();
     await ready();
-    await user.click(screen.getByRole("button", { name: /Search slugs/ }));
+    await user.click(screen.getByRole("button", { name: "Search" })); // the top bar's Search, the one search (S12)
     await user.click(screen.getByRole("button", { name: "Close search and go" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });

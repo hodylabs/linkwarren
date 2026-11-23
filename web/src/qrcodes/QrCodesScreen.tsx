@@ -352,7 +352,6 @@ export function QrCodesScreen() {
       <ScreenHeader
         title="QR codes"
         count={items ? String(items.length) : undefined}
-        text="Codes for Wi-Fi, web addresses, text, email, phone, SMS and short links."
         action={creator && items !== null && <PrimaryButton label="New QR code" onClick={() => edit(null)} />}
       />
       <div className="body solo">
