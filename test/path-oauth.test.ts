@@ -2,6 +2,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
+import { LIMITS } from "../src/limits";
 import { resetMcpCache } from "../src/mcp/switch";
 import { handleRedirect } from "../src/redirect";
 import { setupAccess } from "./helpers/access";
@@ -93,6 +94,12 @@ describe("path mode with agents off", () => {
     const hello = await call("/hello", {}, off());
     expect([hello.status, hello.headers.get("location")]).toEqual([302, "https://dest.example.com/hello"]);
   });
+
+  it("a served discovery path answers 503 unavailable when the switch cannot be read", async () => {
+    vi.spyOn(env.DB, "prepare").mockImplementation(() => { throw new Error("D1 down"); });
+    for (const p of [PR, "/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server"])
+      expect([p, ...(await json(await call(p, {}, on())))]).toEqual([p, 503, "application/json", { error: "unavailable" }]);
+  });
 });
 
 describe("path mode full flow", () => {
@@ -124,7 +131,7 @@ describe("path mode full flow", () => {
     const list = await mcpCall(tok.access_token, "tools/list", undefined, undefined, e);
     expect(list.status).toBe(200);
     expect((list.body.result.tools as { name: string }[]).map((x) => x.name)).toContain("server_info");
-    const who = await mcpCall(tok.access_token, "tools/call", { name: "server_info", arguments: {} }, undefined, e);
+    const who = await mcpCall(tok.access_token, "tools/call", { name: "server_info", arguments: {} }, testCtx(), e); // ctx and env: still path mode
     expect(JSON.parse(who.body.result.content[0].text).mcpUrl).toBe(`${O}/dashboard/mcp`);
 
     const r = await token({ grant_type: "refresh_token", refresh_token: tok.refresh_token, client_id: clientId }, e);
@@ -133,14 +140,14 @@ describe("path mode full flow", () => {
     expect((await mcpCall(fresh.access_token, "tools/list", undefined, undefined, e)).status).toBe(200);
   });
 
-  it("POST /dashboard/register keeps the per-IP limiter", async () => {
+  it("POST /dashboard/register keeps the registration limiter per /24 block", async () => {
     const reg = (ip: string) =>
       call("/dashboard/register", {
         method: "POST",
         headers: { "content-type": "application/json", "cf-connecting-ip": ip },
         body: JSON.stringify({ redirect_uris: [CLAUDE_CB], client_name: "T", grant_types: ["authorization_code"], token_endpoint_auth_method: "none" }),
       }, on());
-    for (let i = 1; i <= 5; i++) expect((await reg(`203.0.113.${i}`)).status).toBe(201);
+    for (let i = 1; i <= LIMITS.reg.n; i++) expect((await reg(`203.0.113.${i}`)).status).toBe(201);
     const r = await reg("203.0.113.99");
     expect([r.status, await r.json()]).toEqual([429, { error: "rate_limited" }]);
   });
@@ -155,7 +162,7 @@ describe("switching an instance to path mode (R13)", () => {
     const r = await mcpCall(old.accessToken, "tools/list", undefined, undefined, e);
     expect(r.status).toBe(401);
     const refreshed = await token({ grant_type: "refresh_token", refresh_token: old.refreshToken, client_id: old.clientId }, e);
-    expect(refreshed.status).not.toBe(200);
+    expect([refreshed.status, await refreshed.json()]).toMatchObject([400, { error: "invalid_grant" }]);
     // And the other way round: a path-mode token is refused once the instance is back in host mode.
     const fresh = await connectAgent(`sw2-${crypto.randomUUID()}@example.com`, { env: e });
     expect((await mcpCall(fresh.accessToken, "tools/list", undefined, undefined, e)).status).toBe(200);

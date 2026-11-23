@@ -152,7 +152,8 @@ export async function mcpCall(token: string, method: string, params?: unknown, c
     headers: { host: new URL(originOf(e)).host, authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
   };
-  const r = ctx ? await worker.fetch(new Request(`${ORIGIN}/mcp`, init), env, ctx) : await fetchW("/mcp", init, e);
+  const r = !ctx ? await fetchW("/mcp", init, e)
+    : e ? await wrapper(new Request(dashUrl(e, "/mcp"), init), e, ctx) : await worker.fetch(new Request(`${ORIGIN}/mcp`, init), env, ctx);
   const text = await r.text();
   const data = (r.headers.get("content-type") ?? "").includes("text/event-stream") ? /^data: ?(.*)$/m.exec(text)?.[1] ?? "" : text;
   let body: unknown = null;
