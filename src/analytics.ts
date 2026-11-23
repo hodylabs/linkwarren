@@ -1,4 +1,4 @@
-import { aeConfigured, AeError, aeReport, type DayRow, type DimCount, type LinkRow, type Scope, type Unit } from "./ae";
+import { aeConfigured, aeDetail, AeError, aeReport, type DayRow, type DimCount, type LinkRow, type Scope, type Unit } from "./ae";
 import { utcDay } from "./clicks";
 import { rolledThrough } from "./cron";
 import type { Env } from "./env";
@@ -24,6 +24,8 @@ export type AnalyticsReport = {
   links: { linkId: string; domainId: string; host: string; slug: string; clicks: number }[];
   domains: { domainId: string; host: string; clicks: number }[];
   countries: Count[]; devices: Count[]; referrers: Count[];
+  /** Per-link report only (S10). */
+  link?: { linkId: string; host: string; slug: string };
 };
 
 const DAY_MS = 86_400_000;
@@ -209,6 +211,86 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
   live.links.forEach((r) => addLink({ ...r, seen: "~" })); // aeReport reads links and dims from max(aeFrom, range.from), after the seam
   live.dims.forEach(addDim);
   return out("ok");
+}
+
+/** A viewer's time zone: an IANA name Intl knows, or a fixed offset in minutes east of UTC (-720..840). */
+export type Tz = { zone: string } | { offset: number };
+
+/** `tz` as sent by the dashboard: "Europe/Paris", "UTC" or a minute offset like "-300" / "330". null = refused. */
+export function parseTz(v: string | undefined): Tz | null {
+  if (!v) return { offset: 0 };
+  if (/^[+-]?\d{1,3}$/.test(v)) {
+    const n = Number(v);
+    return n >= -720 && n <= 840 ? { offset: n } : null;
+  }
+  if (!/^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$/.test(v)) return null;
+  try {
+    return { zone: new Intl.DateTimeFormat("en-US", { timeZone: v }).resolvedOptions().timeZone };
+  } catch {
+    return null; // RangeError: not a zone this runtime knows
+  }
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** Local weekday (0 = Monday), hour and calendar day of an instant in `tz`. */
+export function localParts(ms: number, tz: Tz): { dow: number; hour: number; day: string } {
+  if ("offset" in tz) {
+    const d = new Date(ms + tz.offset * 60_000);
+    return { dow: (d.getUTCDay() + 6) % 7, hour: d.getUTCHours(), day: d.toISOString().slice(0, 10) };
+  }
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz.zone, weekday: "short", hour: "2-digit", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit" })
+      .formatToParts(new Date(ms)).map((x) => [x.type, x.value]),
+  );
+  return { dow: WEEKDAYS.indexOf(p.weekday!), hour: Number(p.hour) % 24, day: `${p.year}-${p.month}-${p.day}` };
+}
+
+export type DetailReport = {
+  /** The UTC days covered; both "" when the range is wholly older than AE_DAYS. */
+  live: Live; from: string; to: string;
+  os: Count[]; browsers: Count[]; languages: Count[]; places: Count[];
+  /** hours[weekday][hour], Monday first, in the viewer's zone. */
+  hours: number[][];
+};
+
+/**
+ * Per-click detail (S10): Analytics Engine only, so it covers the report range clipped to the last AE_DAYS days
+ * (Analytics Engine keeps three months). `from`/`to` say which UTC days it covers.
+ */
+export async function loadDetail(env: Env, range: Range, scope: Scope, tz: Tz, nowSec = Math.floor(Date.now() / 1000)): Promise<DetailReport> {
+  const floor = addMs(dayStart(utcDay(nowSec)), -(AE_DAYS - 1) * DAY_MS);
+  const from = range.from > floor ? range.from : floor;
+  const out: DetailReport = {
+    live: "ok", from: from.toISOString().slice(0, 10), to: addMs(range.to, -1).toISOString().slice(0, 10),
+    os: [], browsers: [], languages: [], places: [], hours: Array.from({ length: 7 }, () => new Array<number>(24).fill(0)),
+  };
+  if (!aeConfigured(env)) return { ...out, live: "off" };
+  if (from >= range.to) return { ...out, from: "", to: "" }; // the whole range is older than Analytics Engine keeps
+  let rows: Awaited<ReturnType<typeof aeDetail>>;
+  try {
+    rows = await aeDetail(env, from, range.to, scope);
+  } catch (e) {
+    console.error("analytics detail read failed", errCode(e));
+    return { ...out, live: "unavailable" };
+  }
+  const key = { os: "os", browser: "browsers", language: "languages", place: "places" } as const;
+  for (const r of rows.dims) out[key[r.dim]].push({ value: r.value, clicks: r.clicks });
+  for (const k of Object.values(key)) out[k].sort((a, b) => b.clicks - a.clicks);
+  for (const h of rows.hours) {
+    const p = localParts(Date.parse(h.bucket), tz);
+    out.hours[p.dow]![p.hour]! += h.clicks;
+  }
+  return out;
+}
+
+/** The link a per-link report is about, and its scope: the caller's usable domains (so a moved link's clicks on a domain they cannot use stay out) and this one link. Unknown or not visible is not_found either way. */
+export async function linkScope(env: Env, user: UserRow, linkId: string, only: readonly string[] | null): Promise<{ scope: Scope; link: { linkId: string; host: string; slug: string } } | { error: "not_found" }> {
+  const l = await env.DB.prepare("SELECT l.id, l.slug, l.domain_id, d.host FROM links l JOIN domains d ON d.id = l.domain_id WHERE l.id = ?")
+    .bind(linkId).first<{ id: string; slug: string; domain_id: string; host: string }>();
+  if (!l) return { error: "not_found" };
+  const s = await resolveScope(env, user, null, "", only);
+  if ("error" in s || (s.scope.domainIds && !s.scope.domainIds.includes(l.domain_id))) return { error: "not_found" };
+  return { scope: { domainIds: s.scope.domainIds, linkIds: [l.id] }, link: { linkId: l.id, host: l.host, slug: l.slug } };
 }
 
 const desc = <T extends { clicks: number }>(m: Map<string, T>) => [...m.values()].filter((x) => x.clicks > 0).sort((a, b) => b.clicks - a.clicks);
