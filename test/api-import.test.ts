@@ -379,6 +379,23 @@ describe("import by permission (S8 R12)", () => {
     await nothing();
   });
 
+  it("domains.manage lost before a chunk that adds a domain and a link on an existing one: nothing in that chunk lands", async () => {
+    await run("UPDATE users SET role_id = 'dd' WHERE id = 'ud'");
+    const restore = beforeBatch(2, () => run("UPDATE roles SET perms = '[\"data\"]' WHERE id = 'dd'"));
+    let r: Response;
+    try { r = await as(body([L("new.example", "n"), L(null, "a")])); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    await nothing();
+  });
+
+  it("membership of a shared domain lost before the write: its empty redirect is not filled", async () => {
+    await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dsh','ud')");
+    await run("UPDATE users SET role_id = 'dd' WHERE id = 'ud'");
+    const restore = beforeBatch(2, () => run("DELETE FROM domain_members"));
+    try { await as(body([], [D("shared.example", "https://example.org/home")])); } finally { restore(); }
+    expect(await all("SELECT bare_redirect FROM domains WHERE id = 'dsh'")).toEqual([{ bare_redirect: null }]);
+  });
+
   it("membership lost before the write: no link or lock lands on the shared domain, each reported forbidden", async () => {
     await run("INSERT INTO domain_members (domain_id,user_id) VALUES ('dsh','ud')");
     const restore = beforeBatch(2, () => run("DELETE FROM domain_members"));
