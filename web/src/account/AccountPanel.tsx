@@ -6,6 +6,7 @@ import { Sheet } from "../shell/Sheet";
 import { Tag } from "../shell/ui";
 import { clock, shortDate } from "../time";
 import { addPasskey, passkeysSupported } from "../signin/passkey";
+import { withBase } from "../base";
 
 /** Sign-in and security hotkeys and their text on the shortcuts sheet. */
 export const ACCOUNT_KEYS = {
@@ -21,7 +22,7 @@ type Confirm = { kind: "remove"; passkey: PasskeyItem } | { kind: "end"; session
 
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
 /** Where the page goes after this device is signed out. */
-const goHome = () => location.assign("/");
+const goHome = () => location.assign(withBase("/"));
 
 /** Passkeys and sessions of the signed-in person (app mode). Reused by the account sheet and by Settings. */
 export function AccountPanel() {

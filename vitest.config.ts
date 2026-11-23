@@ -30,7 +30,12 @@ export default defineConfig(async () => {
               const { pathname } = new URL(req.url);
               const hit = (body: string, type: string) =>
                 new Response(req.method === "HEAD" ? null : body, { headers: { "content-type": type, "x-fake-assets": "1" } });
-              if (pathname === "/") return hit("<!doctype html><title>lw</title>", "text/html; charset=utf-8");
+              // Shaped like the real build (Vite base "./"): relative asset URLs the Worker rewrites per mode (S8c R11).
+              if (pathname === "/")
+                return hit(
+                  '<!doctype html><html><head><title>lw</title><link rel="icon" href="./linkwarren-mark.svg"><script type="module" src="./assets/app.js"></script></head><body><a href="https://example.com/x">x</a></body></html>',
+                  "text/html; charset=utf-8",
+                );
               if (pathname === "/assets/app.js") return hit("export {}", "text/javascript");
               return new Response("not found", { status: 404, headers: { "x-fake-assets": "1" } });
             },

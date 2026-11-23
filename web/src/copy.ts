@@ -120,3 +120,10 @@ export const plural = (n: number, one: string, many = `${one}s`): string => `${n
 
 /** Plain-language text for an API error code. */
 export const errorText = (code: string): string => (Object.hasOwn(ERRORS, code) ? ERRORS[code]! : `Something went wrong (${code})`);
+
+// Import conflict reasons stay their code (the downloaded results keep it); only the ones that need words get them.
+const CONFLICTS: Record<string, string> = {
+  reserved_path: "This address is the dashboard's path on this domain.",
+};
+/** A readable import conflict reason. */
+export const conflictText = (reason: string): string => (Object.hasOwn(CONFLICTS, reason) ? CONFLICTS[reason]! : reason);

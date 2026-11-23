@@ -51,6 +51,8 @@ describe("path mode on the main short domain", () => {
   it.each(table)("%s", async (path, inner) => {
     const got = await answer(await call(path));
     const resolved = new URL(`https://short.test${path}`).pathname;
+    // The shell differs only by its rooted URLs and base meta (R11); undo those to compare with host mode.
+    if (inner !== null && typeof got[3] === "string") got[3] = got[3].replaceAll('"/dashboard', '"');
     expect(got).toEqual(inner === null ? await asShortLink(resolved) : await asDashboard(inner));
     if (inner === null) expect(got[3]).not.toContain('"email"');
   });
@@ -141,5 +143,43 @@ describe("legacy dashboard host (R10)", () => {
     const e = legacy({ DB: boom });
     expect((await old("/links", undefined, e)).status).toBe(301);
     expect((await old("/api/links", { method: "POST", body: "{}" }, e)).status).toBe(410);
+  });
+});
+
+describe("dashboard shell in path mode (R11)", () => {
+  const SHELL =
+    '<!doctype html><html><head><title>lw</title><link rel="icon" href="/dashboard/linkwarren-mark.svg"><script type="module" src="/dashboard/assets/app.js"></script><meta name="lw-base" content="/dashboard"></head><body><a href="https://example.com/x">x</a></body></html>';
+  const CSP =
+    "default-src 'self'; script-src https://short.test/dashboard/assets/; style-src https://short.test/dashboard/assets/; font-src https://short.test/dashboard/assets/; img-src https://short.test/dashboard/ data:; connect-src https://short.test/dashboard/; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+  it.each(["/dashboard", "/dashboard/", "/dashboard/links/abc", "/dashboard/domains/x?sel=1"])("%s gets the rewritten shell", async (p) => {
+    const r = await call(p);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe(SHELL);
+    expect(r.headers.get("content-security-policy")).toBe(CSP);
+    expect(r.headers.get("x-robots-tag")).toBe("noindex");
+    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(r.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+  });
+
+  it("/dashboard/sign-in gets the shell with no-referrer", async () => {
+    const r = await call("/dashboard/sign-in");
+    expect([r.status, await r.text(), r.headers.get("referrer-policy"), r.headers.get("content-security-policy")]).toEqual([200, SHELL, "no-referrer", CSP]);
+  });
+
+  it("/dashboard/assets/app.js is served unrewritten", async () => {
+    const r = await call("/dashboard/assets/app.js");
+    expect([r.status, await r.text(), r.headers.get("x-fake-assets")]).toEqual([200, "export {}", "1"]);
+  });
+
+  it("a missing asset under the prefix stays 404, not the shell", async () => {
+    const r = await call("/dashboard/assets/missing.js");
+    expect(r.status).toBe(404);
+    expect(await r.text()).not.toContain("<title>");
+  });
+
+  it("HEAD /dashboard/links is 200 with an empty body and the path CSP", async () => {
+    const r = await call("/dashboard/links", { method: "HEAD" });
+    expect([r.status, await r.text(), r.headers.get("content-security-policy")]).toEqual([200, "", CSP]);
   });
 });

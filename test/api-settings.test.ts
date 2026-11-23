@@ -424,7 +424,7 @@ describe("instance and settings", () => {
 
   it("GET /api/instance works for a member with defaults", async () => {
     const r = await call("a", "GET", "/api/instance");
-    expect([r.status, await r.json()]).toEqual([200, { name: null, logoVersion: null, configured: false, dashboardHost: "dash.test", mainDomainId: null, linkDefaults: { redirectCode: 302, passQuery: true }, update: null }]);
+    expect([r.status, await r.json()]).toEqual([200, { name: null, logoVersion: null, configured: false, dashboardHost: "dash.test", dashboardUrl: "https://dash.test", mainDomainId: null, linkDefaults: { redirectCode: 302, passQuery: true }, update: null }]);
     expect(r.headers.get("cache-control")).toBe("no-store");
     expect((await dash("/api/instance")).status).toBe(401);
   });
@@ -441,7 +441,7 @@ describe("instance and settings", () => {
     const r = await call("owner", "GET", "/api/settings");
     const j = (await r.json()) as Record<string, unknown>;
     expect(j).toEqual({
-      name: null, mainDomainId: null, dashboardHost: "dash.test", authMode: "access", teamDomain: "team.example.cloudflareaccess.com",
+      name: null, mainDomainId: null, dashboardHost: "dash.test", dashboardUrl: "https://dash.test", authMode: "access", teamDomain: "team.example.cloudflareaccess.com",
       emailFrom: "links@example.com", emailConfigured: true, secrets: { pasteAvailable: false, cf: "secret", resend: "secret" },
       linkRedirectCode: 302, linkPassQuery: true, updatesCheck: true, retention: { auditDays: 1096, clickDetailDays: 90 },
     });

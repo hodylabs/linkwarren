@@ -7,6 +7,7 @@ import { Switch } from "../shell/ui";
 import { can, mayAssign } from "../perms";
 import { RolePicker, RolesLoadError, useRoles } from "./RolePicker";
 import { useApp } from "../state";
+import { withBase } from "../base";
 
 /** Invite sheet hotkeys and their text on the shortcuts sheet. */
 export const INVITE_KEYS = {
@@ -15,7 +16,7 @@ export const INVITE_KEYS = {
 } as const;
 // A first check only; the server's rule (src/api/invites.ts) decides.
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-type Mail = { emailFrom: string | null; emailConfigured: boolean; dashboardHost: string };
+type Mail = { emailFrom: string | null; emailConfigured: boolean; dashboardUrl: string };
 
 /** The error code for an invite saved or re-sent without its email. */
 export const notSent = (reason: InviteResult["emailReason"]) => (reason === "too_many" ? "invite_too_many" : reason === "not_configured" ? "invite_email_off" : "not_sent");
@@ -63,7 +64,7 @@ export function InviteSheet() {
         app.announce(`Invited ${e}`);
       } else {
         setWhy(notSent(res.emailReason));
-        setAddress(`https://${mail?.dashboardHost ?? location.host}/`);
+        setAddress(`${mail?.dashboardUrl ?? `https://${location.host}${withBase("")}`}/`);
       }
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "internal";

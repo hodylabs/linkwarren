@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactN
 import { api, ApiError, type CfView, type Domain } from "../api";
 import { MANUAL_NOTE, outsideNote } from "../domains/AddDomainSheet";
 import { CfStatus } from "../domains/CfStatus";
-import { errorText, plural } from "../copy";
+import { conflictText, errorText, plural } from "../copy";
 import { downloadCsv } from "../links/bulk";
 import { useHotkeys, type Bindings } from "../keys";
 import { apexOf, normalizeHost } from "../../../src/host";
@@ -16,6 +16,7 @@ import { useApp } from "../state";
 import { chunkImport, errorsCsv, resultsCsv, runImport, type ImportRun } from "./importRun";
 import { parseLinksFile, type ImportBody, type LineError } from "./parseLinks";
 import { PASSWORDS_UNKNOWN, passwordsUnknown } from "../../../src/importFormat";
+import { withBase } from "../base";
 
 /** Wizard hotkeys (the navrow shows them; the shell's shortcuts sheet is not on screen here). */
 export const WIZARD_KEYS = { "mod+enter": "Continue", "alt+arrowleft": "Back", escape: "Back (or dismiss the record warning)" } as const;
@@ -325,7 +326,7 @@ export function SetupWizard() {
   if (loadError)
     return (
       <div className="gate" role="alert">
-        <img src="/linkwarren-mark.svg" alt="" />
+        <img src={withBase("/linkwarren-mark.svg")} alt="" />
         <p>{settingsError(loadError)}</p>
         <button type="button" className="btn" onClick={() => setLoadTry((n) => n + 1)}>Retry</button>
       </div>
@@ -506,7 +507,7 @@ export function SetupWizard() {
               {" Retry continues from that part; nothing is imported twice."}
             </p>
           )}
-          {r && <Rows items={r.report.conflicts.map((c) => `${c.host}/${c.slug}: ${c.reason}`)} />}
+          {r && <Rows items={r.report.conflicts.map((c) => `${c.host}/${c.slug}: ${conflictText(c.reason)}`)} />}
           {result && result.report.protected.length > 0 && (
             <>
               <h3>{`${plural(result.report.protected.length, "password link")} imported locked`}</h3>

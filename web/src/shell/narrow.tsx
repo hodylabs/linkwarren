@@ -1,5 +1,6 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { navigate, useRoute } from "../router";
+import { stripBase } from "../base";
 
 /** List and detail share one column (tablets and phones). Keep in step with styles.css. */
 export const NARROW = "(max-width: 1080px)";
@@ -60,7 +61,7 @@ export function useDetailView(path: string) {
       shown.current = sel;
     } else if (was.current) {
       const want = shown.current;
-      if (want && sel !== want && location.pathname === path) {
+      if (want && sel !== want && stripBase(location.pathname) === path) {
         const p = new URLSearchParams(location.search);
         p.set("sel", want);
         return navigate(`${path}?${p}`, { replace: true }); // runs again with the new selection, then focuses

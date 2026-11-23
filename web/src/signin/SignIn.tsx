@@ -4,16 +4,17 @@ import { errorText } from "../copy";
 import { useHotkeys } from "../keys";
 import { goNext } from "./next";
 import { addPasskey, passkeysSupported, signInWithPasskey } from "./passkey";
+import { stripBase, withBase } from "../base";
 
 /**
  * R4: the email link's token rides in the fragment of /sign-in. Read it and drop it from the URL (and so from history,
  * screenshots and any later Referer) before anything is fetched or rendered. Call once, from a useState initializer.
  */
 export function takeToken(): { token: string | null; incomplete: boolean } {
-  if (location.pathname !== "/sign-in" || !location.hash) return { token: null, incomplete: false };
+  if (stripBase(location.pathname) !== "/sign-in" || !location.hash) return { token: null, incomplete: false };
   const m = /^#token=([A-Za-z0-9_-]{43})$/.exec(location.hash);
   const incomplete = !m && location.hash.startsWith("#token=");
-  history.replaceState(null, "", "/sign-in");
+  history.replaceState(null, "", withBase("/sign-in"));
   return { token: m ? m[1]! : null, incomplete };
 }
 
@@ -174,7 +175,7 @@ export function SignIn({ next, token, incomplete, onSpent, join }: { next: strin
     <main className="signin">
       <div className="signin-card">
         <div className="signin-brand">
-          <img src="/linkwarren-mark.svg" alt="" />
+          <img src={withBase("/linkwarren-mark.svg")} alt="" />
           <span>linkwarren</span>
         </div>
         {error && <p className="signin-err" role="alert">{error}</p>}
