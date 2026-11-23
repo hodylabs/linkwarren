@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { CfView, Domain, Me, UserItem } from "../api";
 import { canManage, domainDiff, draftOf, needsFinish, ownerLabel, parseReserved, sharedWith, statusTag } from "./domainView";
 import { cfSettled } from "./useCfPoll";
+import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const dom = (o: Partial<Domain> = {}): Domain => ({
   id: "d1", host: "go.test", type: "shared", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: false, ...o,

@@ -197,3 +197,41 @@ describe("GET /api/analytics/links", () => {
     });
   });
 });
+
+describe("analytics.all (S8 R10)", () => {
+  beforeEach(async () => {
+    await run("DELETE FROM api_keys");
+    await run("DELETE FROM roles WHERE builtin = 0");
+    await run(`INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('an','Analysts','["analytics.all","keys"]',0,1,1)`);
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('uc','c@example.com','member','an','active',1)");
+  });
+
+  it("sees every domain, including one it cannot use; a Member does not", async () => {
+    const r = await json("?range=7", "c@example.com");
+    expect(r.domains.map((d: any) => d.domainId).sort()).toEqual(["dB", "dM", "dS"]);
+    expect(r.totals.clicks).toBe(9);
+    expect((await json("?range=7&domains=dB", "c@example.com")).totals.clicks).toBe(3);
+    expect((await json("?range=7", "a@example.com")).domains.map((d: any) => d.domainId).sort()).toEqual(["dM", "dS"]);
+    expect((await get("?range=7&domains=dB", "a@example.com")).status).toBe(403);
+  });
+
+  it("per-link stats on a domain it cannot use: 200 for analytics.all, 403 for a Member", async () => {
+    const r = await get("/links?ids=lB", "c@example.com");
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).items[0]).toMatchObject({ linkId: "lB", clicks: 3 });
+    expect((await get("/links?ids=lB", "a@example.com")).status).toBe(403);
+  });
+
+  it("a key restricted to one domain still sees only that domain", async () => {
+    const k = await dash("/api/keys", {
+      method: "POST",
+      headers: { "Cf-Access-Jwt-Assertion": await tokenFor("c@example.com"), "content-type": "application/json" },
+      body: JSON.stringify({ name: "ci", write: false, del: false, domainIds: ["dM"], expiresInDays: 90 }),
+    });
+    expect(k.status).toBe(201);
+    const { secret } = (await k.json()) as { secret: string };
+    const v1 = (p: string) => dash(`/api/v1/analytics${p}`, { headers: { authorization: `Bearer ${secret}` } });
+    expect((await v1("/links?ids=lM")).status).toBe(200);
+    expect((await v1("/links?ids=lB")).status).toBe(403);
+  });
+});

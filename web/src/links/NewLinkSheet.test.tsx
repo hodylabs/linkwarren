@@ -5,9 +5,10 @@ import App from "../App";
 import type { Domain, Link, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const dm: Domain = {
   id: "dm", host: "go.test", type: "main", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 0, isMember: false,
@@ -83,6 +84,15 @@ describe("New link sheet", () => {
     expect(options).toEqual(["go.test", "alt.test"]);
     await user.keyboard("{Alt>}d{/Alt}");
     expect(document.activeElement).toBe(screen.getByLabelText("Domain"));
+  });
+
+  it("a domain manager's list carries domains they cannot use (canUse false): the picker leaves them out", async () => {
+    const { user } = boot({
+      me: { ...member, ...customRole(["links.create", "domains.manage"]) },
+      routes: { "GET /api/domains": () => ({ body: [{ ...dm, canUse: true }, { ...dx, type: "shared", isMember: true, canUse: false }, { ...dx, id: "dy", host: "ok.test", type: "shared", isMember: true }] }) },
+    });
+    const sheet = await open(user);
+    expect(within(sheet).getAllByRole("option").map((o) => o.textContent)).toEqual(["go.test", "ok.test"]);
   });
 
   it("Ctrl+Enter sends exactly the four fields", async () => {

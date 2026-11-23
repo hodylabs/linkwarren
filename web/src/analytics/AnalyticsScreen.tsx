@@ -6,6 +6,7 @@ import { navigate, useRoute } from "../router";
 import { switcherDomains } from "../shell/palette";
 import { useOpenSheets } from "../shell/Sheet";
 import { Kbd, ScreenHeader, Seg } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { Breakdowns } from "./Breakdowns";
 import { ClicksChart } from "./ClicksChart";
@@ -43,7 +44,9 @@ const HOURLY_EMPTY = {
 const DEBOUNCE_MS = 250;
 
 export function AnalyticsScreen() {
-  const { domains, overlay } = useApp();
+  const { me, domains: listed, overlay } = useApp();
+  // R10: a domain manager also lists domains they cannot use (canUse false); their analytics need analytics.all.
+  const domains = can(me, "analytics.all") ? listed : listed.filter((d) => d.canUse !== false);
   const sheets = useOpenSheets();
   const { query } = useRoute();
   const today = utcToday();
@@ -59,6 +62,8 @@ export function AnalyticsScreen() {
   const [loaded, setLoaded] = useState<{ key: string; report: AnalyticsReport } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
+  // R10: every domain any report named this session, so a narrower report never drops one from the picker or its host.
+  const seen = useRef(new Map<string, string>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
@@ -99,7 +104,9 @@ export function AnalyticsScreen() {
     setError(null);
     api<AnalyticsReport>("GET", `/api/analytics${key ? `?${key}` : ""}`, undefined, ac.signal).then(
       (r) => {
-        if (g === seq.current) setLoaded({ key, report: r });
+        if (g !== seq.current) return;
+        for (const d of r.domains) seen.current.set(d.domainId, d.host);
+        setLoaded({ key, report: r });
       },
       (e: unknown) => {
         if (g === seq.current && !ac.signal.aborted) setError(errorText(e instanceof ApiError ? e.code : "internal"));
@@ -137,7 +144,12 @@ export function AnalyticsScreen() {
     overlay === null && sheets === 0 && !picker,
   );
 
-  const hostOf = (id: string) => domains.find((d) => d.id === id)?.host ?? id;
+  // R10: analytics.all reaches domains /api/domains does not list; the reports name them, so they can be picked too.
+  const extra = can(me, "analytics.all")
+    ? [...seen.current].filter(([id]) => !domains.some((d) => d.id === id)).map(([id, host]) => ({ id, host }))
+    : [];
+  const pickable = [...switcherDomains(domains), ...extra.sort((a, b) => a.host.localeCompare(b.host))];
+  const hostOf = (id: string) => pickable.find((d) => d.id === id)?.host ?? id;
   const n = f.domains.length;
   const crumb = n === 0 ? "all domains you can see" : n === 1 ? `on ${hostOf(f.domains[0]!)}` : `${n} domains`;
   const chipLabel = n === 0 ? "All domains" : n === 1 ? hostOf(f.domains[0]!) : `${n} domains`;
@@ -251,7 +263,7 @@ export function AnalyticsScreen() {
               {chipLabel} <span className="car" aria-hidden="true">▾</span>
               <Kbd>D</Kbd>
             </button>
-            {picker && <DomainPicker domains={switcherDomains(domains)} selected={f.domains} onToggle={toggle} onAll={() => go({ domains: [] })} onClose={closePicker} />}
+            {picker && <DomainPicker domains={pickable} selected={f.domains} onToggle={toggle} onAll={() => go({ domains: [] })} onClose={closePicker} />}
           </div>
           <span className="count">Bots and link previews are left out</span>
         </div>

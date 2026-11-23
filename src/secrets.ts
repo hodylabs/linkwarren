@@ -3,6 +3,7 @@
 // key = the Worker secret SECRETS_KEY (base64 of exactly 32 bytes). Exports must skip `key LIKE 'secret.%'`; getSettings never reads them.
 // Plaintext, key and ciphertext never reach logs, errors, audit detail or API responses.
 import { auditStmt } from "./audit";
+import type { Guard } from "./roles";
 import type { Env } from "./env";
 
 export type SecretName = "CF_API_TOKEN" | "RESEND_API_KEY";
@@ -37,7 +38,8 @@ export const secretsReady = (env: Env): boolean => rawKey(env) !== null;
 
 const aesKey = (raw: Uint8Array, use: "encrypt" | "decrypt") => crypto.subtle.importKey("raw", raw, "AES-GCM", false, [use]);
 
-export async function putSecretStmts(env: Env, actorId: string, name: SecretName, plaintext: string): Promise<D1PreparedStatement[]> {
+/** `guard` (optional): an SQL condition both statements also need, e.g. the actor is still an owner. */
+export async function putSecretStmts(env: Env, actorId: string, name: SecretName, plaintext: string, guard?: Guard): Promise<D1PreparedStatement[]> {
   const raw = rawKey(env);
   if (!raw) throw new SecretsError("secrets_key_missing");
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
@@ -46,18 +48,18 @@ export async function putSecretStmts(env: Env, actorId: string, name: SecretName
   const key = rowKey(name);
   return [
     env.DB.prepare(
-      "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-    ).bind(key, value, Math.floor(Date.now() / 1000), actorId),
+      `INSERT INTO settings (key, value, updated_at, updated_by) SELECT ?,?,?,? WHERE ${guard?.sql ?? "1"} ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    ).bind(key, value, Math.floor(Date.now() / 1000), actorId, ...(guard?.binds ?? [])),
     auditStmt(env, { actorId, action: "secret.update", targetType: "settings", targetId: key, detail: { name } },
       { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [key, value] }),
   ];
 }
 
-export function deleteSecretStmts(env: Env, actorId: string, name: SecretName): D1PreparedStatement[] {
+export function deleteSecretStmts(env: Env, actorId: string, name: SecretName, guard?: Guard): D1PreparedStatement[] {
   const key = rowKey(name);
   return [
-    env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(key),
-    auditStmt(env, { actorId, action: "secret.delete", targetType: "settings", targetId: key, detail: { name } }),
+    env.DB.prepare(`DELETE FROM settings WHERE key = ?${guard ? ` AND ${guard.sql}` : ""}`).bind(key, ...(guard?.binds ?? [])),
+    auditStmt(env, { actorId, action: "secret.delete", targetType: "settings", targetId: key, detail: { name } }, guard),
   ];
 }
 

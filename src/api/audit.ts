@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
+import { requirePerm } from "../roles";
 import type { AuditItem, UserRow } from "../types";
 import type { Grant } from "../principal";
 
@@ -26,8 +27,8 @@ const query = z.strictObject({
 });
 const CURSOR = /^[1-9]\d{0,15}$/;
 
-audit.get("/", async (c) => {
-  if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
+// S8: reading the audit log is the `audit` permission (an owner has it).
+audit.get("/", requirePerm("audit"), async (c) => {
   const raw = new URL(c.req.url).searchParams;
   const cursor = raw.get("cursor");
   if (cursor !== null && !CURSOR.test(cursor)) return c.json({ error: "bad_cursor" }, 400);

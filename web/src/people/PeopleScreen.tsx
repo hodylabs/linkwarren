@@ -4,10 +4,12 @@ import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
+import { can, seesRoles } from "../perms";
 import { useApp } from "../state";
 import { BackBar, useDetailView } from "../shell/narrow";
 import { clock, shortDate } from "../time";
 import { describeAudit } from "./auditText";
+import { PeopleTabs, RolesView } from "./RolesView";
 
 const FILTERS = ["everyone", "invited", "disabled"] as const;
 
@@ -17,6 +19,7 @@ export const PEOPLE_KEYS = {
   k: "Previous person",
   escape: "Clear the selected person",
   n: "Invite a person",
+  o: "Show roles",
 } as const;
 const KINDS = [
   ["all", "All"],
@@ -48,7 +51,14 @@ function auditQuery(actor: string | null, kind: Kind, cursor: string | null): st
   return `/api/audit${s ? `?${s}` : ""}`;
 }
 
+/** /people and /people/roles (S8 R15); a role that cannot see roles gets the people view at either address. */
 export function PeopleScreen() {
+  const { me } = useApp();
+  const { sub } = useRoute();
+  return sub === "roles" && seesRoles(me) ? <RolesView /> : <PeopleView />;
+}
+
+function PeopleView() {
   const app = useApp();
   // Link counts change on other screens; refresh them each time People opens.
   useEffect(() => { app.reloadUsers().catch(() => undefined); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -57,7 +67,8 @@ export function PeopleScreen() {
   const q = (query.get("q") ?? "").toLowerCase();
   const sel = query.get("sel");
   const { open, back } = useDetailView("/people");
-  const isOwner = me.role === "owner";
+  const manage = can(me, "people.manage"); // invite and manage people (S8)
+  const audit = can(me, "audit");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("everyone");
   const [kind, setKind] = useState<Kind>("all");
   const [items, setItems] = useState<AuditItem[]>([]);
@@ -89,6 +100,7 @@ export function PeopleScreen() {
 
   // New scope: start over with the first page. A stale answer (older generation) is dropped.
   useEffect(() => {
+    if (!audit) return; // the audit log needs the audit permission (S8 R2)
     const g = ++generation.current;
     loading.current = false;
     setNext(null);
@@ -111,7 +123,7 @@ export function PeopleScreen() {
         setError(errorText(e instanceof ApiError ? e.code : "internal"));
       },
     );
-  }, [scope]);
+  }, [scope, audit]);
 
   const loadMore = useCallback(async () => {
     if (!next || loading.current) return;
@@ -157,7 +169,7 @@ export function PeopleScreen() {
   }, [list]);
 
   const move = (step: 1 | -1) => {
-    if (list.length === 0) return;
+    if (!manage || list.length === 0) return; // no people list without people.manage
     const to = at < 0 ? list[step === 1 ? 0 : list.length - 1] : list[at + step];
     if (to) select(to.id, true);
   };
@@ -170,30 +182,34 @@ export function PeopleScreen() {
         if (isTypingTarget(e.target)) return;
         if (sel) (open ? back() : select(null));
       },
-      n: (e) => void (!e.shiftKey && isOwner && app.open({ kind: "invite" })),
+      n: (e) => void (!e.shiftKey && manage && app.open({ kind: "invite" })),
+      o: (e) => void (!e.shiftKey && seesRoles(me) && navigate("/people/roles")),
     } satisfies Bindings<typeof PEOPLE_KEYS>,
     overlay === null,
   );
 
   return (
     <>
+      {/* An audit-only role (no people.manage) reads only the log, so the header speaks of the log alone. */}
       <ScreenHeader
-        title="People & audit log"
-        count={`${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending`}
-        text="Who can sign in, what they can reach, and every change made by a person or an agent."
+        title={manage ? "People & audit log" : "Audit log"}
+        count={manage ? `${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending` : undefined}
+        text={manage ? "Who can sign in, what they can reach, and every change made by a person or an agent." : "Every change made by a person or an agent, across every domain."}
       >
-        <SearchButton q={q} placeholder="Search people and activity" onOpen={() => app.open({ kind: "palette" })} />
-        <div className="chips" role="group" aria-label="Filter people">
+        {seesRoles(me) && <PeopleTabs at="people" />}
+        <SearchButton q={q} placeholder={manage ? "Search people and activity" : "Search and go"} onOpen={() => app.open({ kind: "palette" })} />
+        {manage && <div className="chips" role="group" aria-label="Filter people">
           {FILTERS.map((f) => (
             <Chip key={f} pressed={filter === f} onClick={() => setFilter(f)}>
               {f[0]!.toUpperCase() + f.slice(1)}
             </Chip>
           ))}
-        </div>
-        {isOwner && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
+        </div>}
+        {manage && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
       </ScreenHeader>
-      <div className={open ? "body people open" : "body people"}>
-        <section className="list" aria-label="People" ref={listRef} tabIndex={-1}>
+      {/* An audit-only role (no people.manage) gets the audit log alone: no people list to open a person from. */}
+      <div className={!manage ? "body people solo" : open ? "body people open" : "body people"}>
+        {manage && <section className="list" aria-label="People" ref={listRef} tabIndex={-1}>
           <table>
             <thead>
               <tr>
@@ -227,7 +243,7 @@ export function PeopleScreen() {
                     </span>
                   </td>
                   <td>
-                    {u.role === "owner" ? "Owner" : "Member"}{" "}
+                    {u.role === "owner" ? "Owner" : u.roleName}{" "}
                     {u.status === "invited" && <Tag tone="wait">Invited {shortDate(u.createdAt)}</Tag>}
                     {u.status === "disabled" && <Tag tone="off">Disabled</Tag>}
                   </td>
@@ -239,9 +255,9 @@ export function PeopleScreen() {
             </tbody>
           </table>
           {users !== null && list.length === 0 && <Empty title="No people match." text="Try another filter or search." />}
-        </section>
-        {open && <BackBar label="All people" onBack={back} />}
-        <aside className="detail" aria-label="Audit log">
+        </section>}
+        {manage && open && <BackBar label="All people" onBack={back} />}
+        {audit && <aside className="detail" aria-label="Audit log">
           <div className="d-head">
             <div className="title">Activity across every domain</div>
             <div className="row">
@@ -293,7 +309,7 @@ export function PeopleScreen() {
             <span>Kept for 3 years</span>
             <span>Every change, by every person and agent</span>
           </div>
-        </aside>
+        </aside>}
       </div>
     </>
   );

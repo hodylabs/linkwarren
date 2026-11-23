@@ -6,6 +6,7 @@ import {
 } from "../src/session";
 import { dash } from "./helpers/access";
 import { signedIn } from "./helpers/session";
+import { MEMBER_DEFAULT } from "../src/roles";
 
 const e = env as { AUTH_MODE?: unknown };
 const orig = e.AUTH_MODE;
@@ -77,7 +78,7 @@ describe("readSession through /api/me (app mode)", () => {
     const s = await signedIn();
     const r = await me(s.cookie);
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ id: s.user.id, email: "a@example.com", name: null, role: "member", authMode: "app", passkeys: 0 });
+    expect(await r.json()).toEqual({ id: s.user.id, email: "a@example.com", name: null, role: "member", roleId: "member", roleName: "Member", perms: [...MEMBER_DEFAULT], authMode: "app", passkeys: 0 });
     expect(r.headers.get("set-cookie")).toBeNull();
   });
 

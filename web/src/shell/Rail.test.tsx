@@ -5,8 +5,9 @@ import type { Me } from "../api";
 import { AppProvider, useApp } from "../state";
 import { fakeApi } from "../test/fakeApi";
 import { Rail } from "./Rail";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const base: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const base: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 afterEach(() => vi.unstubAllGlobals());
 
 function boot(me: Me, signOut: () => { status: number; body?: unknown } = () => ({ status: 204 })) {
@@ -53,5 +54,24 @@ describe("Rail footer", () => {
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
     expect(api.calls.filter((c) => c.path === "/api/account/sign-out")).toHaveLength(2);
+  });
+});
+
+describe("Rail follows the role", () => {
+  const nav = () => screen.getAllByRole("navigation", { name: "Screens" })[0]!;
+  const items = () => [...nav().querySelectorAll("a, .nav-sep")].map((e) => e.textContent);
+  it("a Member gets today's rail and the role name", () => {
+    boot({ ...base, id: "um", role: "member", ...MEMBER_ROLE });
+    expect(items()).toEqual(["LinksG L", "DomainsG D", "AnalyticsG A", "API & agentsG I"]);
+    expect(screen.getByText("Member")).toBeTruthy();
+  });
+  it("the owner keeps the Owner group", () => {
+    boot(base);
+    expect(items()).toEqual(["LinksG L", "DomainsG D", "AnalyticsG A", "Owner", "People & audit logG P", "API & agentsG I", "SettingsG S"]);
+  });
+  it("a custom role shows its name and only the screens it may open", () => {
+    boot({ ...base, id: "uh", ...customRole(["settings"], "Site admin") });
+    expect(items()).toEqual(["LinksG L", "DomainsG D", "AnalyticsG A", "Manage", "API & agentsG I", "SettingsG S"]);
+    expect(screen.getByText("Site admin")).toBeTruthy();
   });
 });

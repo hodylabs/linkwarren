@@ -3,6 +3,7 @@ import { checkSlugShape } from "../../../src/validate";
 import { api, ApiError, type Link, type Page } from "../api";
 import { errorText } from "../copy";
 import { navigate } from "../router";
+import { can, canSee } from "../perms";
 import { useApp } from "../state";
 import { Kbd } from "./ui";
 import { buildCommands, paletteKey, type Command } from "./palette";
@@ -28,8 +29,7 @@ function Keys({ keys, buf }: { keys: string; buf: string }) {
 export function Palette() {
   const app = useApp();
   const { me, domains, users, currentDomainId, close } = app;
-  const isOwner = me.role === "owner";
-  const cmds = useMemo(() => buildCommands(app, isOwner, app.me.authMode === "app"), [app.domains, app.open, app.setCurrentDomain, isOwner, app.me.authMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cmds = useMemo(() => buildCommands(app, me, me.authMode === "app"), [app.domains, app.open, app.setCurrentDomain, me]); // eslint-disable-line react-hooks/exhaustive-deps
   const [buf, setBuf] = useState("");
   const [text, setText] = useState("");
   const [sel, setSel] = useState(0);
@@ -84,7 +84,7 @@ export function Palette() {
     const doms = domains.filter((d) => includes(d.host, text));
     if (doms.length)
       sections.push({ title: "Domains", items: doms.map((d) => ({ id: `d-${d.id}`, label: d.host, mono: true, run: () => navigate(`/domains?sel=${encodeURIComponent(d.id)}`) })) });
-    const people = isOwner ? (users ?? []).filter((u) => includes(u.name, text) || includes(u.email, text)) : [];
+    const people = canSee(me, "people") ? (users ?? []).filter((u) => includes(u.name, text) || includes(u.email, text)) : [];
     if (people.length)
       sections.push({ title: "People", items: people.map((u) => ({ id: `p-${u.id}`, label: u.name || u.email, sub: u.name ? u.email : undefined, run: () => navigate(`/people?sel=${encodeURIComponent(u.id)}`) })) });
   } else if (buf) {
@@ -98,7 +98,7 @@ export function Palette() {
   const settled = text !== "" && found?.q === text;
   const failed = settled && found.error !== undefined;
   const nothing = settled && !failed && flat.length === 0;
-  const canCreate = checkSlugShape(text).ok;
+  const canCreate = can(me, "links.create") && checkSlugShape(text).ok;
 
   const choose = (run: () => void) => {
     close();

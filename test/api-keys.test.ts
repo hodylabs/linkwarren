@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KEY_SHAPE } from "../src/keys";
+import { MEMBER_DEFAULT } from "../src/roles";
+import { beforeBatch, beforeQuery } from "./helpers/race";
 import { sha256Hex } from "../src/session";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 
@@ -125,5 +127,87 @@ describe("DELETE /api/keys/:id", () => {
   it("a member revokes their own key", async () => {
     const { key } = (await (await create(A, { name: "one" })).json()) as { key: KeyItem };
     expect((await as(A, `/api/keys/${key.id}`, { method: "DELETE" })).status).toBe(204);
+  });
+});
+
+describe("a people manager and other people's keys (S8 R4)", () => {
+  const M = "manager@example.com", X = "x@example.com";
+  const revoked = async (id: string) => (await env.DB.prepare("SELECT revoked_at r FROM api_keys WHERE id = ?").bind(id).first<{ r: number | null }>())!.r !== null;
+  const key = async (email: string, name: string) => ((await (await create(email, { name })).json()) as { key: KeyItem }).key.id;
+  beforeEach(async () => {
+    await run("DELETE FROM roles WHERE builtin = 0");
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('mg','Manager',?,0,1,1), ('au','Auditors','[\"audit\",\"keys\"]',0,1,1)", JSON.stringify([...MEMBER_DEFAULT, "people.manage"]));
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('um',?,'member','mg','active',1), ('ux',?,'member','au','active',1)", M, X);
+  });
+
+  it("?all=1 lists own and within; revoking within is 204; an owner's or a stronger person's is 403; a member still gets 404", async () => {
+    const ko = await key(O, "own"), ka = await key(A, "ak"), kx = await key(X, "xk"), km = await key(M, "mk");
+    const l = (await (await as(M, "/api/keys?all=1")).json()) as { items: KeyItem[] };
+    expect(l.items.map((k) => [k.id, k.userEmail]).sort()).toEqual([[ka, A], [km, M]].sort());
+    for (const id of [ko, kx]) {
+      const r = await as(M, `/api/keys/${id}`, { method: "DELETE" });
+      expect([r.status, await r.json()]).toEqual([403, { error: "role_above_you" }]);
+      expect(await revoked(id)).toBe(false);
+    }
+    expect((await as(M, `/api/keys/${ka}`, { method: "DELETE" })).status).toBe(204);
+    expect(await revoked(ka)).toBe(true);
+    const r = await as(B, `/api/keys/${ko}`, { method: "DELETE" });
+    expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
+  });
+
+  it("race: people.manage removed before the ?all=1 query: only their own keys are listed", async () => {
+    await key(A, "ak");
+    const km = await key(M, "mk");
+    const restore = beforeQuery("JOIN users u ON u.id = k.user_id", () => run("UPDATE roles SET perms = ? WHERE id = 'mg'", JSON.stringify(MEMBER_DEFAULT)));
+    let l: { items: KeyItem[] };
+    try { l = (await (await as(M, "/api/keys?all=1")).json()) as { items: KeyItem[] }; } finally { restore(); }
+    expect(l.items.map((k) => k.id)).toEqual([km]);
+  });
+
+  it("people.manage removed between read and batch: 403 and nothing revoked or audited", async () => {
+    const ka = await key(A, "ak");
+    const restore = beforeBatch(1, () => run("UPDATE roles SET perms = ? WHERE id = 'mg'", JSON.stringify(MEMBER_DEFAULT)));
+    let r: Response;
+    try { r = await as(M, `/api/keys/${ka}`, { method: "DELETE" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await revoked(ka)).toBe(false);
+    expect((await env.DB.prepare("SELECT 1 FROM audit_log WHERE action = 'key.revoke'").all()).results).toEqual([]);
+  });
+});
+
+// S8 R7: creating a key needs the role's `keys`; listing and revoking your own keys stay baseline (R3).
+describe("the keys permission", () => {
+  const role = (id: string, perms: readonly string[]) =>
+    run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms", id, `Role ${id}`, JSON.stringify(perms));
+  const keyCount = async () => (await env.DB.prepare("SELECT COUNT(*) n FROM api_keys").first<{ n: number }>())!.n;
+  const createAudits = async () => (await env.DB.prepare("SELECT COUNT(*) n FROM audit_log WHERE action = 'key.create'").first<{ n: number }>())!.n;
+
+  it("a role without it: POST 403 forbidden before the body is read, nothing written; own keys still list and revoke", async () => {
+    await role("nk", ["keys"]);
+    await run("UPDATE users SET role_id = 'nk' WHERE id = 'ua'");
+    const made = await create(A, { name: "old" });
+    expect(made.status).toBe(201);
+    const { key } = (await made.json()) as { key: KeyItem };
+    await role("nk", []);
+    const r = await create(A, { name: "new" });
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    const bad = await as(A, "/api/keys", { method: "POST", body: "{nope" });
+    expect([bad.status, await bad.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await keyCount()).toBe(1);
+    expect(await createAudits()).toBe(1);
+    const list = (await (await as(A, "/api/keys")).json()) as { items: KeyItem[] };
+    expect(list.items.map((k) => k.id)).toEqual([key.id]);
+    expect((await as(A, `/api/keys/${key.id}`, { method: "DELETE" })).status).toBe(204);
+  });
+
+  it("race: keys removed between the check and the insert: 403, no key, no audit row", async () => {
+    await role("kr", ["keys"]);
+    await run("UPDATE users SET role_id = 'kr' WHERE id = 'ua'");
+    const restore = beforeBatch(1, () => role("kr", []));
+    let r: Response;
+    try { r = await create(A, { name: "late" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await keyCount()).toBe(0);
+    expect(await createAudits()).toBe(0);
   });
 });

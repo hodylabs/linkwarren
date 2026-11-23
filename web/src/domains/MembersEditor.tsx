@@ -2,11 +2,12 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ApiError, type Domain } from "../api";
 import { errorText } from "../copy";
 import { Switch } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 
 const label = (u: { name: string | null; email: string; status: string }) => `${u.name || u.email}${u.status === "disabled" ? " (disabled)" : ""}`;
 
-/** Owner only. Saves the whole member set in one call, so it is all or nothing. */
+/** Needs domains.manage (S8 R8). Saves the whole member set in one call, so it is all or nothing. */
 export function MembersEditor({ domain }: { domain: Domain }) {
   const app = useApp();
   const { me, users } = app;
@@ -30,7 +31,7 @@ export function MembersEditor({ domain }: { domain: Domain }) {
   }, [savedKey, domain.id]);
   useEffect(() => setError(null), [domain.id]);
 
-  if (me.role !== "owner") return null;
+  if (!can(me, "domains.manage")) return null;
   if (domain.type === "main")
     return (
       <div className="sect">

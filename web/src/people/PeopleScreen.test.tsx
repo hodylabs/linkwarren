@@ -1,14 +1,15 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { AuditItem, Me, UserItem } from "../api";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const u = (id: string, o: Partial<UserItem> = {}): UserItem => ({
-  id, email: `${id}@example.com`, name: id.toUpperCase(), role: "member", status: "active", createdAt: 1, linkCount: 2, agentCount: 0, domains: [], ...o,
+  id, email: `${id}@example.com`, name: id.toUpperCase(), role: "member", roleId: "member", roleName: "Member", perms: [], status: "active", createdAt: 1, linkCount: 2, agentCount: 0, domains: [], ...o,
 });
 const USERS = [
   u("uo", { name: "Olive", role: "owner", linkCount: 9 }),
@@ -200,9 +201,39 @@ describe("People screen", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Something went wrong");
   });
 
-  it("a member sees the Owner only pane and no users or audit request", async () => {
+  it("shows each person's role name; people.manage invites, and without audit there is no audit log request", async () => {
+    const { api } = boot({ me: { ...member, ...customRole(["people.manage"]) }, routes: { "GET /api/users": () => ({ body: { items: [...USERS, u("uh", { name: "Hal", roleId: "hl", roleName: "Helper" })] } }) } });
+    await waitFor(() => expect(rows()).toHaveLength(5));
+    expect(within(rows()[4]!).getByText(/Helper/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Invite person/ })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Audit log" })).toBeNull();
+    expect(auditPaths(api)).toHaveLength(0);
+  });
+
+  it("an audit-only role reads the audit log, with no Invite", async () => {
+    const { api } = boot({ me: { ...member, ...customRole(["audit"]) } });
+    await screen.findByRole("complementary", { name: "Audit log" });
+    expect(screen.queryByRole("button", { name: /Invite person/ })).toBeNull();
+    // Straight to the audit log: no people table to dead-end on, no "0 people" count, no people filters.
+    expect(screen.queryByRole("region", { name: "People" })).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText(/0 people/)).toBeNull();
+    expect(screen.queryByRole("group", { name: "Filter people" })).toBeNull();
+    await waitFor(() => expect(auditPaths(api).length).toBeGreaterThan(0));
+  });
+
+  it("an audit-only header is about the audit log: no people search, no sign-in wording", async () => {
+    boot({ me: { ...member, ...customRole(["audit"]) } });
+    await screen.findByRole("complementary", { name: "Audit log" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Audit log");
+    const top = document.querySelector("header.top")!.textContent!;
+    expect(top).not.toMatch(/Search people|Who can sign in/);
+    expect(top).toContain("Every change made by a person or an agent");
+  });
+
+  it("a member sees the Not in your role pane and no users or audit request", async () => {
     const { api } = boot({ me: member });
-    await screen.findByText("Owner only");
+    await screen.findByText("Not in your role");
     expect(api.calls.filter((c) => c.path.startsWith("/api/users") || c.path.startsWith("/api/audit"))).toHaveLength(0);
   });
 });

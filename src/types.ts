@@ -1,6 +1,10 @@
+import { parsePerms, PERMS, type Perm } from "./roles";
+
+/** `role` is the coarse kind (owner or member); `roleId` the effective role (a custom one, or the built-in row `role` names). */
 export type UserRow = {
   id: string; email: string; name: string | null;
   role: "owner" | "member"; status: "invited" | "active" | "disabled"; createdAt: number;
+  roleId: string; roleName: string; perms: readonly Perm[];
 };
 /** The public side of an app-mode session (never the cookie secret or its hash). */
 export type SessionRef = { id: string; createdAt: number };
@@ -34,10 +38,16 @@ export type AuditItem = {
 
 type R = Record<string, unknown>;
 
-export const rowToUser = (r: R): UserRow => ({
-  id: r.id as string, email: r.email as string, name: r.name as string | null,
-  role: r.role as UserRow["role"], status: r.status as UserRow["status"], createdAt: r.created_at as number,
-});
+/** Needs a row selected with USER_COLS and ROLE_JOIN (src/roles.ts); a row without them throws, so a missed join never yields a permissionless user. */
+export const rowToUser = (r: R): UserRow => {
+  if (typeof r.role_key !== "string") throw new Error("user row without role join");
+  const role = r.role as UserRow["role"];
+  return {
+    id: r.id as string, email: r.email as string, name: r.name as string | null,
+    role, status: r.status as UserRow["status"], createdAt: r.created_at as number,
+    roleId: r.role_key, roleName: r.role_name as string, perms: role === "owner" ? [...PERMS] : parsePerms(r.role_perms),
+  };
+};
 export const rowToDomain = (r: R): DomainRow => ({
   id: r.id as string, host: r.host as string, type: r.type as DomainRow["type"],
   status: r.status as DomainRow["status"], ownerId: r.owner_id as string,

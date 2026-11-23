@@ -5,6 +5,7 @@ import { displayName } from "./email";
 import { readSession } from "./session";
 import { getSettings } from "./settings";
 import type { Env } from "./env";
+import { ROLE_JOIN, USER_COLS } from "./roles";
 import { rowToUser, type SessionRef, type UserRow } from "./types";
 import { FULL_GRANT, type Grant } from "./principal";
 
@@ -46,7 +47,7 @@ export async function verifyAccess(token: string, env: Env, keys?: JWTVerifyGetK
 }
 
 export const findUser = async (env: Env, email: string) => {
-  const r = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(email).first(); // email column is NOCASE
+  const r = await env.DB.prepare(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.email = ?`).bind(email).first(); // email column is NOCASE
   return r ? rowToUser(r) : null;
 };
 

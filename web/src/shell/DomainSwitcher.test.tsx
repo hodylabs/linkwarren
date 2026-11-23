@@ -4,8 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { Domain, Me } from "../api";
 import { fakeApi } from "../test/fakeApi";
+import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive Owner", role: "owner" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive Owner", role: "owner", ...OWNER_ROLE };
 const dom = (id: string, host: string, type: Domain["type"], status: Domain["status"] = "active"): Domain => ({
   id, host, type, status, ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 7, isMember: false,
@@ -43,7 +44,7 @@ describe("DomainSwitcher", () => {
   });
 
   it("members see Shared with you", async () => {
-    const { user } = await boot({ ...owner, role: "member", id: "um" });
+    const { user } = await boot({ ...owner, role: "member", ...MEMBER_ROLE, id: "um" });
     await user.click(screen.getByRole("button", { name: /Switch domain/ }));
     expect(sw().textContent).toContain("Shared with you");
   });

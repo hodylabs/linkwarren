@@ -3,6 +3,7 @@ import { api, ApiError } from "../api";
 import { errorText } from "../copy";
 import { NavLink, useRoute, type Screen } from "../router";
 import { logoUrl } from "../settings/api";
+import { canSee, isOwner } from "../perms";
 import { useApp } from "../state";
 import { PHONE, useMedia } from "./narrow";
 import { Sheet } from "./Sheet";
@@ -42,8 +43,6 @@ const ICONS: Record<Screen, ReactNode> = {
     </>
   ),
 };
-
-export const OWNER_ONLY: ReadonlySet<Screen> = new Set<Screen>(["people", "settings"]);
 
 export const SCREEN_TITLES: Record<Screen, string> = {
   links: "Links",
@@ -90,7 +89,7 @@ export function Rail() {
     if (!phone && menuOpen) close();
   }, [phone, menuOpen, close]);
   const current = domains.find((d) => d.id === currentDomainId);
-  const isOwner = me.role === "owner";
+  const admin = canSee(me, "people") || canSee(me, "settings");
   const appMode = me.authMode === "app";
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const signingOut = useRef(false);
@@ -114,14 +113,14 @@ export function Rail() {
         <Item screen="links" current={screen} />
         <Item screen="domains" current={screen} />
         <Item screen="analytics" current={screen} />
-        {/* R9: members manage their own keys and agents; the owner keeps the entry under Owner as in the mockup. */}
-        {!isOwner && <Item screen="agents" current={screen} />}
-        {isOwner && (
+        {/* R9: everyone manages their own keys and agents; with People or Settings it sits in their group, as the owner's does. */}
+        {!admin && <Item screen="agents" current={screen} />}
+        {admin && (
           <>
-            <div className="nav-sep">Owner</div>
-            <Item screen="people" current={screen} />
+            <div className="nav-sep">{isOwner(me) ? "Owner" : "Manage"}</div>
+            {canSee(me, "people") && <Item screen="people" current={screen} />}
             <Item screen="agents" current={screen} />
-            <Item screen="settings" current={screen} />
+            {canSee(me, "settings") && <Item screen="settings" current={screen} />}
           </>
         )}
       </nav>
@@ -130,7 +129,7 @@ export function Rail() {
           {initials(me.name, me.email)}
         </span>
         <div>
-          {isOwner ? "Owner" : "Member"}
+          {me.roleName}
           <br />
           {appMode ? (
             <>

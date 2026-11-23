@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash } from "./helpers/access";
 import { auditStmt } from "../src/audit";
 import { signedIn, withCookie } from "./helpers/session";
+import { MEMBER_DEFAULT } from "../src/roles";
 
 const e = env as { AUTH_MODE?: string };
 const origMode = e.AUTH_MODE;
@@ -200,7 +201,7 @@ describe("/api/me", () => {
   it("reports authMode and the passkey count in app mode", async () => {
     const a = await signedIn("a@example.com");
     await addKey(a.user.id);
-    expect(await (await call(a.cookie, "GET", "/api/me")).json()).toEqual({ id: a.user.id, email: "a@example.com", name: null, role: "member", authMode: "app", passkeys: 1 });
+    expect(await (await call(a.cookie, "GET", "/api/me")).json()).toEqual({ id: a.user.id, email: "a@example.com", name: null, role: "member", roleId: "member", roleName: "Member", perms: [...MEMBER_DEFAULT], authMode: "app", passkeys: 1 });
   });
 });
 

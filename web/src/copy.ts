@@ -103,6 +103,16 @@ const ERRORS: Record<string, string> = {
   invite_email: "Enter a full email address, like jordan@example.com.",
   email_taken: "This email is already in linkwarren.",
   bad_domain: "One of those domains is no longer shared. Reload and try again.",
+  role_in_use: "People still have this role. Choose where they go.",
+  role_name_taken: "Another role already has this name.",
+  role_above_you: "That role has permissions you do not have.",
+  owner_fixed: "The owner role always has every permission and cannot be changed.",
+  too_many_roles: "You can have up to 20 custom roles.",
+  bad_name: "Use 1 to 40 characters.",
+  bad_perms: "One of those permissions is not known. Reload and try again.",
+  builtin: "Owner and Member are built in and cannot be deleted.",
+  bad_move_to: "Pick another role for their people.",
+  bad_role: "That role no longer exists. Reload and try again.",
 };
 
 /** "1 link", "2 links"; pass `many` for irregular plurals. */

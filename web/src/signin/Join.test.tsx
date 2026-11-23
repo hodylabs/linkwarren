@@ -4,10 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gate } from "../shell/Gate";
 import { fakeApi } from "../test/fakeApi";
 import { nav } from "./next";
+import { OWNER_ROLE } from "../test/roles";
 
 vi.mock("@simplewebauthn/browser", () => ({ browserSupportsWebAuthn: () => true, startAuthentication: vi.fn(), startRegistration: vi.fn() }));
 
-const owner = { id: "u1", email: "owner@example.com", name: null, role: "owner" as const, authMode: "app" as const, passkeys: 1 };
+const owner = { id: "u1", email: "owner@example.com", name: null, role: "owner" as const, ...OWNER_ROLE, authMode: "app" as const, passkeys: 1 };
 let assign: ReturnType<typeof vi.fn<(url: string) => void>>;
 beforeEach(() => {
   history.replaceState(null, "", "/join");
@@ -26,7 +27,7 @@ describe("/join signed out", () => {
     app();
     const h = await screen.findByRole("heading", { name: "You were invited to <b>Acme</b>" });
     expect(h.querySelector("b")).toBeNull();
-    expect(document.activeElement).toBe(h);
+    await waitFor(() => expect(document.activeElement).toBe(h));
     expect(screen.getByText("Sign in with the address the invite was sent to.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Use a passkey" })).toBeTruthy();
     await userEvent.setup().type(screen.getByLabelText("Email"), "a@example.com{Enter}");
@@ -47,7 +48,7 @@ describe("/join signed in", () => {
     fakeApi({ "GET /api/me": () => ({ body: owner }) });
     app();
     const h = await screen.findByRole("heading", { name: "You are signed in as owner@example.com" });
-    expect(document.activeElement).toBe(h);
+    await waitFor(() => expect(document.activeElement).toBe(h));
     expect(screen.getByText("If this invite was sent to another address, sign out first, then open the invite again.")).toBeTruthy();
     expect(screen.queryByText("app")).toBeNull();
     const cont = screen.getByRole("button", { name: /Continue as owner@example.com/ });

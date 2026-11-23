@@ -58,6 +58,8 @@ const checkRegistration = ({ clientMetadata }: { clientMetadata: Record<string, 
 /**
  * Every code exchange and refresh re-reads the connection and its person (one D1 read): a revoked connection (for example a
  * disconnect whose KV revoke failed) or a disabled person gets invalid_grant, and the library then revokes the grant.
+ * The role is not checked here (S8 R7 ruling): a token for a role without `agents` still refreshes, and every tool call is
+ * refused in resolve (src/mcp/run.ts), so turning the permission back on restores the connection as it was.
  * No D1, no token (temporarily_unavailable, the grant is kept).
  */
 export async function checkConnection(o: TokenExchangeCallbackOptions<Env>): Promise<void> {

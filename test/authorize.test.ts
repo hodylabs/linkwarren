@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanClientName } from "../src/mcp/authorize";
 import { setupAccess, tokenFor } from "./helpers/access";
 import { CLAUDE_CB, authorizePath, connectAgentFull, openConsent, pkce, postConsent, registerClient, signInHeaders, token } from "./helpers/oauth";
+import { beforeBatch } from "./helpers/race";
 
 const e = env as { AUTH_MODE?: string };
 const orig = e.AUTH_MODE;
@@ -397,5 +398,77 @@ describe("final fix wave", () => {
     await env.OAUTH_KV.delete(`client:${first.clientId}`);
     expect((await postConsent(auth, p.binding, { handle: p.handle, uid: p.uid, action: "approve", access: "read" })).status).toBe(500);
     expect(await env.DB.prepare("SELECT revoked_at FROM agent_connections WHERE id = ?").bind(first.connId).first("revoked_at")).toBeNull();
+  });
+});
+
+// S8 R7: connecting an agent needs the role's `agents`, on the page, on the form, and inside the connection's insert.
+describe("/authorize and the agents permission", () => {
+  const COPY = "Your role does not allow connecting AI agents.";
+  const role = (id: string, perms: readonly string[]) =>
+    env.DB.prepare("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms")
+      .bind(id, `Role ${id}`, JSON.stringify(perms)).run();
+  const userId = async (email: string) => (await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>())!.id;
+  const nothingFor = async (email: string) => {
+    const id = await userId(email);
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE user_id = ?").bind(id).first("n")).toBe(0);
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM audit_log WHERE actor_id = ? AND action = 'agent.connect'").bind(id).first("n")).toBe(0);
+    expect((await env.OAUTH_PROVIDER!.listUserGrants(id)).items).toEqual([]);
+  };
+
+  it("GET: a role without it gets the 403 page; no consent state, no KV write, no limiter row", async () => {
+    const email = "no-agents@example.com";
+    await role("na", ["keys"]);
+    const { path } = await request();
+    const auth = await signInHeaders(email, "na");
+    const put = vi.spyOn(env.OAUTH_KV, "put");
+    const page = await openConsent(path, auth);
+    expect(page.res.status).toBe(403);
+    expect(page.html).toContain(COPY);
+    expect([page.handle, page.binding]).toEqual(["", ""]);
+    expect(put).not.toHaveBeenCalled();
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM auth_limits WHERE key = ?").bind(`authz:${await userId(email)}`).first("n")).toBe(0);
+  });
+
+  it("POST: agents removed after the page was shown: 403 page, no connection, audit or grant", async () => {
+    const email = "late-agents@example.com";
+    await role("pa", ["agents"]);
+    const { path } = await request();
+    const auth = await signInHeaders(email, "pa");
+    const page = await openConsent(path, auth);
+    expect(page.res.status).toBe(200);
+    // signInHeaders(email, roleId) really puts the person on the named role
+    expect(await env.DB.prepare("SELECT role, role_id FROM users WHERE email = ?").bind(email).first()).toEqual({ role: "member", role_id: "pa" });
+    await role("pa", []);
+    const r = await postConsent(auth, page.binding, { handle: page.handle, uid: page.uid, action: "approve", access: "read" });
+    expect(r.status).toBe(403);
+    expect(await r.text()).toContain(COPY);
+    await nothingFor(email);
+  });
+
+  it("race: agents removed between the check and the insert: 403 page, no connection, audit or grant", async () => {
+    const email = "race-agents@example.com";
+    await role("ra", ["agents"]);
+    const { path } = await request();
+    const auth = await signInHeaders(email, "ra");
+    const page = await openConsent(path, auth);
+    const restore = beforeBatch(1, () => role("ra", []));
+    let r: Response;
+    try { r = await postConsent(auth, page.binding, { handle: page.handle, uid: page.uid, action: "approve", access: "read" }); } finally { restore(); }
+    expect(r.status).toBe(403);
+    expect(await r.text()).toContain(COPY);
+    await nothingFor(email);
+  });
+
+  it("POST deny with agents off: the standard access_denied redirect, nothing stored", async () => {
+    const email = "deny-agents@example.com";
+    await role("da", ["agents"]);
+    const { path, clientId } = await request();
+    const auth = await signInHeaders(email, "da");
+    const page = await openConsent(path, auth);
+    await role("da", []);
+    const r = await postConsent(auth, page.binding, { handle: page.handle, uid: page.uid, action: "deny" });
+    expect(r.status).toBe(302);
+    expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBe("access_denied");
+    expect(await env.DB.prepare("SELECT COUNT(*) n FROM agent_connections WHERE client_id = ?").bind(clientId).first("n")).toBe(0);
   });
 });

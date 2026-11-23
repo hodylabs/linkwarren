@@ -5,9 +5,10 @@ import App from "../App";
 import type { Me } from "../api";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 import type { CloudflareSettings } from "./api";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "o@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const CFG: CloudflareSettings = {
   configured: true, outsideReady: true, accountName: "Northwind", cnameTarget: "t.example.com", fallbackOrigin: "active",
   hostnames: { used: 2, limit: 100 }, attachedCount: 3, controlsEnabled: false,
@@ -199,10 +200,26 @@ describe("Cloudflare settings", () => {
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
-  it("a member sees Owner only", async () => {
+  it("a member sees that their role cannot open Settings", async () => {
     boot({ me: member });
-    expect(await screen.findByText("Owner only")).toBeTruthy();
+    expect(await screen.findByText("Not in your role")).toBeTruthy();
     expect(screen.queryByText(/Connected to the account/)).toBeNull();
+  });
+
+  it("a settings role sees the section and the controls, but no token paste field, no Remove and no Check token (owner only)", async () => {
+    const { user } = boot({
+      me: { ...member, ...customRole(["settings"]) },
+      routes: { "GET /api/settings": () => ({ body: { authMode: "app", dashboardHost: "links.example.com", secrets: { pasteAvailable: true, cf: "dashboard", resend: "missing" } } }) },
+    });
+    await screen.findByText(/Connected to the account/);
+    expect(screen.getByText("Cloudflare API token")).toBeTruthy();
+    expect(document.querySelector("input[type=password]")).toBeNull();
+    expect(screen.queryByText(/npx wrangler secret put/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Check token/ })).toBeNull();
+    expect(screen.getByRole("switch", { name: "Cloudflare controls in domain settings" })).toBeTruthy();
+    await user.keyboard("c");
+    expect(screen.queryByText(/permissions confirmed/)).toBeNull();
   });
 });
 

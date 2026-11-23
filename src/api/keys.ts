@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { hashKey, newKey } from "../keys";
 import { usableDomains } from "../perm";
 import { actor, type Grant } from "../principal";
+import { actorCan, can, mayManage, parsePerms, within } from "../roles";
 import { rowToKey, type UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -23,15 +24,20 @@ const createBody = z.strictObject({
 // Active = not revoked (an expired key still counts and keeps its name until revoked; it is listed with its expiresAt).
 keys.get("/", async (c) => {
   const u = c.var.user;
-  const all = u.role === "owner" && c.req.query("all") === "1";
+  // Owners see everyone's; people.manage holders their own and those of people within their role (R4).
+  const all = can(u, "people.manage") && c.req.query("all") === "1";
+  // mayManage re-checks people.manage in the query, so a permission lost after the snapshot lists only their own.
+  const w = mayManage({ col: "k.user_id" }, u.id);
   const rows = all
-    ? await c.env.DB.prepare(`SELECT ${KEY_COLS}, u.email FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.revoked_at IS NULL ORDER BY k.created_at, k.id`).all()
+    ? await c.env.DB.prepare(`SELECT ${KEY_COLS}, u.email FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.revoked_at IS NULL
+      AND ${w.sql} ORDER BY k.created_at, k.id`).bind(...w.binds).all()
     : await c.env.DB.prepare(`SELECT ${KEY_COLS} FROM api_keys k WHERE k.user_id = ? AND k.revoked_at IS NULL ORDER BY k.created_at, k.id`).bind(u.id).all();
   return c.json({ items: rows.results.map((r) => rowToKey(r, all)) });
 });
 
 keys.post("/", async (c) => {
   const u = c.var.user;
+  if (!can(u, "keys")) return c.json({ error: "forbidden" }, 403); // S8 R7, before the body is read
   const body = createBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const b = body.data;
@@ -45,18 +51,22 @@ keys.post("/", async (c) => {
   }
   const { secret, prefix } = newKey();
   const id = crypto.randomUUID(), now = Math.floor(Date.now() / 1000), expiresAt = now + b.expiresInDays * 86400;
+  const ok = actorCan(u.id, "keys");
   try {
-    // The cap is checked inside the insert, so parallel creates cannot pass it together.
+    // The cap and the role's keys are checked inside the insert, so parallel creates or a role edit cannot pass them together.
     const res = await c.env.DB.batch([
       c.env.DB.prepare(
         `INSERT INTO api_keys (id,user_id,name,prefix,hash,can_write,can_delete,domain_ids,expires_at,created_at)
-         SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND revoked_at IS NULL) < ?`,
-      ).bind(id, u.id, b.name, prefix, await hashKey(secret), b.write ? 1 : 0, b.del ? 1 : 0, JSON.stringify(domainIds), expiresAt, now, u.id, MAX_ACTIVE),
+         SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND revoked_at IS NULL) < ? AND ${ok.sql}`,
+      ).bind(id, u.id, b.name, prefix, await hashKey(secret), b.write ? 1 : 0, b.del ? 1 : 0, JSON.stringify(domainIds), expiresAt, now, u.id, MAX_ACTIVE, ...ok.binds),
       auditStmt(c.env, { ...actor(c), action: "key.create", targetType: "api_key", targetId: id,
         detail: { name: b.name, prefix, write: b.write, del: b.del, domainIds } },
         { sql: "EXISTS (SELECT 1 FROM api_keys WHERE id = ?)", binds: [id] }),
     ]);
-    if (!res[0]!.meta.changes) return c.json({ error: "too_many_keys" }, 409);
+    if (!res[0]!.meta.changes) {
+      const w = await c.env.DB.prepare(`SELECT ${ok.sql} ok`).bind(...ok.binds).first<{ ok: number }>();
+      return w?.ok ? c.json({ error: "too_many_keys" }, 409) : c.json({ error: "forbidden" }, 403);
+    }
   } catch (e) {
     if (/UNIQUE/.test(String(e))) return c.json({ error: "name_taken" }, 409);
     throw e;
@@ -66,21 +76,31 @@ keys.post("/", async (c) => {
   return c.json({ key, secret }, 201);
 });
 
-// Own key, or the owner for anyone's. Someone else's key answers 404 like an unknown one.
+// Own key (R3, never blocked), or a people manager's over someone within (owners: anyone's). Someone else's key answers
+// 404 like an unknown one to anyone who does not manage people; a manager is told when the person is above them.
 keys.delete("/:id", async (c) => {
   const u = c.var.user;
   const id = c.req.param("id");
-  const row = await c.env.DB.prepare("SELECT user_id, name, prefix FROM api_keys WHERE id = ? AND revoked_at IS NULL AND (user_id = ? OR ? = 1)")
-    .bind(id, u.id, u.role === "owner" ? 1 : 0).first<{ user_id: string; name: string; prefix: string }>();
-  if (!row) return c.json({ error: "not_found" }, 404);
+  const row = await c.env.DB.prepare(`SELECT k.user_id, k.name, k.prefix, u.role, r.perms FROM api_keys k JOIN users u ON u.id = k.user_id
+    JOIN roles r ON r.id = COALESCE(u.role_id, u.role) WHERE k.id = ? AND k.revoked_at IS NULL`)
+    .bind(id).first<{ user_id: string; name: string; prefix: string; role: string; perms: string }>();
+  const own = row?.user_id === u.id;
+  if (!row || (!own && !can(u, "people.manage"))) return c.json({ error: "not_found" }, 404);
+  if (!own && u.role !== "owner" && (row.role === "owner" || !within(parsePerms(row.perms), u))) return c.json({ error: "role_above_you" }, 403);
   const now = Math.floor(Date.now() / 1000);
+  const g = mayManage(row.user_id, u.id);
   const res = await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").bind(now, id),
+    c.env.DB.prepare(`UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL AND ${g.sql}`).bind(now, id, ...g.binds),
     // changes() is the UPDATE's own count: a parallel revoke in the same second writes no second row.
     auditStmt(c.env, { ...actor(c), action: "key.revoke", targetType: "api_key", targetId: id,
       detail: { name: row.name, prefix: row.prefix, userId: row.user_id } },
       { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM api_keys WHERE id = ? AND revoked_at = ?)", binds: [id, now] }),
   ]);
-  if (!res[0]!.meta.changes) return c.json({ error: "not_found" }, 404);
+  if (!res[0]!.meta.changes) {
+    const a = actorCan(u.id, "people.manage");
+    const w = await c.env.DB.prepare(`SELECT ${g.sql} ok, ${a.sql} a`).bind(...g.binds, ...a.binds).first<{ ok: number; a: number }>();
+    if (w?.ok) return c.json({ error: "not_found" }, 404); // revoked in between
+    return c.json({ error: !own && w?.a ? "role_above_you" : "forbidden" }, 403);
+  }
   return c.body(null, 204);
 });

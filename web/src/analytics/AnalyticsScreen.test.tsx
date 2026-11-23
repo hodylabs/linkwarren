@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { AnalyticsReport, Domain, Me } from "../api";
 import { fakeApi, type FakeReq, type FakeRes } from "../test/fakeApi";
+import { customRole, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
 const dom = (id: string, host: string, type: Domain["type"]): Domain => ({
   id, host, type, status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 3, isMember: false,
@@ -19,11 +20,11 @@ const report = (clicks: number, o: Partial<AnalyticsReport> = {}): AnalyticsRepo
   series: [], links: [], domains: [], countries: [], devices: [], referrers: [], ...o,
 });
 
-function boot(path = "/analytics", answer: (req: FakeReq) => FakeRes | Promise<FakeRes> = () => ({ body: report(10) })) {
+function boot(path = "/analytics", answer: (req: FakeReq) => FakeRes | Promise<FakeRes> = () => ({ body: report(10) }), me: Me = owner, list: Domain[] = domains) {
   history.replaceState(null, "", path);
   const api = fakeApi({
-    "GET /api/me": () => ({ body: owner }),
-    "GET /api/domains": () => ({ body: domains }),
+    "GET /api/me": () => ({ body: me }),
+    "GET /api/domains": () => ({ body: list }),
     "GET /api/users": () => ({ body: { items: [] } }),
     "GET /api/analytics": answer,
   });
@@ -350,3 +351,36 @@ describe("Analytics screen", () => {
   });
 });
 
+
+describe("Analytics domain filter follows the role", () => {
+  const far = { domainId: "dx", host: "far.example.com", clicks: 4 };
+  const options = () => within(screen.getByRole("listbox")).getAllByRole("option").map((o) => o.textContent);
+  const helper = (perms: Parameters<typeof customRole>[0]): Me => ({ id: "uh", email: "h@example.com", name: null, ...customRole(perms) });
+  it("with analytics.all the picker also lists the domains the report returns", async () => {
+    boot("/analytics?pick=1", () => ({ body: report(10, { domains: [far] }) }), helper(["analytics.all"]), [domains[2]!]);
+    await waitFor(() => expect(options()).toEqual(["go.example.comMain", "far.example.com"]));
+  });
+  it("with analytics.all every domain seen in any report this session stays pickable, and a zero-click pick shows its host", async () => {
+    const near = { domainId: "dy", host: "near.example.com", clicks: 0 };
+    // A filtered report names only the picked domains that had clicks.
+    const answer = (req: FakeReq) => {
+      const picked = (req.url.searchParams.get("domains") ?? "").split(",").filter(Boolean);
+      return { body: report(10, { domains: picked.length ? [far, near].filter((d) => picked.includes(d.domainId) && d.clicks > 0) : [far, near] }) };
+    };
+    const { user } = boot("/analytics?pick=1", answer, helper(["analytics.all"]), [domains[2]!]);
+    await waitFor(() => expect(options()).toEqual(["go.example.comMain", "far.example.com", "near.example.com"]));
+    await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: /near\.example\.com/ }));
+    await waitFor(() => expect(location.search).toContain("domains=dy"));
+    await waitFor(() => expect(screen.getByText("near.example.com", { selector: "b" })).toBeTruthy());
+    expect(options()).toEqual(["go.example.comMain", "far.example.com", "\u2713near.example.com"]);
+    await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: /far\.example\.com/ }));
+    await waitFor(() => expect(location.search).toContain("domains=dy%2Cdx"));
+    expect(options()).toEqual(["go.example.comMain", "\u2713far.example.com", "\u2713near.example.com"]);
+  });
+  it("without analytics.all: only usable domains, never report extras or canUse false ones", async () => {
+    boot("/analytics?pick=1", () => ({ body: report(10, { domains: [far] }) }), helper(["domains.manage"]), [domains[2]!, { ...domains[1]!, canUse: false }]);
+    await screen.findByRole("listbox");
+    await ready();
+    expect(options()).toEqual(["go.example.comMain"]);
+  });
+});

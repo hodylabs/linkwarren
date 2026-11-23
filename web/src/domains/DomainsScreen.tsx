@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
 import { navigate, useRoute } from "../router";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { BackBar, useDetailView } from "../shell/narrow";
 import { DomainDetail } from "./DomainDetail";
@@ -28,7 +29,8 @@ export const DOMAINS_KEYS = {
 export function DomainsScreen() {
   const app = useApp();
   const { me, domains, users, overlay } = app;
-  const isOwner = me.role === "owner";
+  const admin = can(me, "domains.manage"); // domain administration (S8 R8), not only owners
+  const canAdd = admin || can(me, "domains.own");
   const { query } = useRoute();
   const q = (query.get("q") ?? "").toLowerCase();
   const sel = query.get("sel");
@@ -101,8 +103,8 @@ export function DomainsScreen() {
             </Chip>
           ))}
         </div>
-        {isOwner && waiting > 0 && <span className="note">{waiting} waiting for you</span>}
-        <PrimaryButton label="Add domain" shortcut="N" onClick={() => app.open({ kind: "addDomain" })} />
+        {admin && waiting > 0 && <span className="note">{waiting} waiting for you</span>}
+        {canAdd && <PrimaryButton label="Add domain" shortcut="N" onClick={() => app.open({ kind: "addDomain" })} />}
       </ScreenHeader>
       <div className={`body${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className="list" aria-label="Domains">
@@ -113,13 +115,13 @@ export function DomainsScreen() {
                 <th>Type</th>
                 <th>Status</th>
                 <th>Owner</th>
-                {isOwner && <th>Shared with</th>}
+                {admin && <th>Shared with</th>}
                 <th className="num">Links</th>
               </tr>
             </thead>
             <tbody>
               {items.map((d, i) => {
-                const tag = statusTag(d, isOwner);
+                const tag = statusTag(d, admin);
                 return (
                   <tr
                     key={d.id}
@@ -137,10 +139,10 @@ export function DomainsScreen() {
                     </td>
                     <td>{TYPE_LABEL[d.type]}</td>
                     <td>
-                      <Tag tone={tag.tone}>{tag.label}</Tag>
+                      <Tag tone={tag.tone}>{tag.label}</Tag>{d.canUse === false && <> <Tag tone="off">Admin only</Tag></>}
                     </td>
                     <td data-label="Owner">{ownerLabel(d, me, users)}</td>
-                    {isOwner && <td data-label="Shared with">{sharedWith(d, users, me)}</td>}
+                    {admin && <td data-label="Shared with">{sharedWith(d, users, me)}</td>}
                     <td className="num" data-label="Links">{d.linkCount}</td>
                   </tr>
                 );
@@ -149,9 +151,11 @@ export function DomainsScreen() {
           </table>
           {items.length === 0 && (
             <Empty title="No domains match." text="Try another filter or search, or add a domain.">
-              <button type="button" className="btn primary" onClick={() => app.open({ kind: "addDomain" })}>
-                Add a domain
-              </button>
+              {canAdd && (
+                <button type="button" className="btn primary" onClick={() => app.open({ kind: "addDomain" })}>
+                  Add a domain
+                </button>
+              )}
             </Empty>
           )}
         </section>

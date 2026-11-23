@@ -17,18 +17,33 @@ import { normalizeHost } from "../host";
 import { deleteSecretStmts, putSecretStmts, secretsReady, secretStatus, type SecretName } from "../secrets";
 import { rowToCf, rowToDomain, type UserRow } from "../types";
 import type { Grant } from "../principal";
+import { actorCan, can, requirePerm, type Guard } from "../roles";
+import { holds } from "./domains";
+import { ACTOR_OK } from "./users";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
 export const settings = new Hono<E>();
 
 const CONTROLS = "cf.controls";
 const notConfigured = { error: "cloudflare_not_configured" } as const;
+const forbidden = { error: "forbidden" } as const;
 
 const ownerOnly = async (c: { var: { user: UserRow }; json: (b: unknown, s: 403) => Response }, next: () => Promise<void>) => {
-  if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
+  if (c.var.user.role !== "owner") return c.json(forbidden, 403);
   await next();
 };
-settings.use("*", ownerOnly);
+/** The SQL re-checks of this router's two gates, for the write's own batch. */
+const mayEdit = (u: UserRow): Guard => actorCan(u.id, "settings");
+const isOwner = (u: UserRow): Guard => ({ sql: ACTOR_OK, binds: [u.id] });
+/** One settings upsert, written only while `g` holds. */
+const upsertIf = (env: Env, key: string, value: string, actorId: string, g: Guard) => env.DB.prepare(
+  `INSERT INTO settings (key, value, updated_at, updated_by) SELECT ?,?,?,? WHERE ${g.sql} ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+).bind(key, value, Math.floor(Date.now() / 1000), actorId, ...g.binds);
+// S8 R5: `settings` opens this router; secret writes and the token check add ownerOnly on their route. Domain managers
+// also read the Cloudflare page (read only, no secret), so they see whether the Cloudflare controls are on.
+const needSettings = requirePerm("settings");
+settings.use("*", (c, next) =>
+  c.req.method === "GET" && c.req.path === "/api/settings/cloudflare" && can(c.var.user, "domains.manage") ? next() : needSettings(c, next));
 
 /** Any signed-in user: what the rail, document title and link form need. */
 export const instance = new Hono<E>();
@@ -42,12 +57,14 @@ instance.get("/", async (c) => {
 instance.get("/logo", async (c) => {
   const r = await c.env.CACHE.getWithMetadata<{ type?: string; v?: number }>(LOGO_KEY, "arrayBuffer");
   const type = r.metadata?.type;
-  if (!r.value || !LOGO_TYPES.includes(type as LogoType)) {
+  // logoVersion null = removed: serve 404 even if a failed KV delete left bytes behind. A D1 read, so no extra KV op
+  // (KV deletes are capped at 1000/day on Free) and nothing to retry.
+  if (!r.value || !LOGO_TYPES.includes(type as LogoType) || (await getSettings(c.env)).logoVersion === null) {
     c.header("Cache-Control", "no-store");
     return c.json({ error: "no_logo" }, 404);
   }
-  // Cacheable only under the version these bytes carry: a stale KV read (eventual consistency) or a version the D1
-  // write never reached is never cached under the new ?v= URL.
+  // Cacheable only under the version these bytes carry: a stale KV read (eventual consistency) or bytes the KV write
+  // never reached are never cached under the new ?v= URL.
   const current = r.metadata?.v !== undefined && c.req.query("v") === String(r.metadata.v);
   return new Response(r.value, { headers: { "Content-Type": type!, ...LOGO_HEADERS, ...(current ? {} : { "Cache-Control": "no-store" }) } });
 });
@@ -93,7 +110,11 @@ settings.patch("/", async (c) => {
   if (main !== undefined && !(await validMain(c.env, main))) return c.json({ error: "bad_main_domain" }, 400);
   // Re-checked in SQL: a domain disabled or retyped after the read above leaves every key of this patch unwritten.
   const res = await c.env.DB.batch(settingStmts(c.env, c.var.user.id, patch, main === undefined ? undefined : { sql: MAIN_OK, binds: [main] }));
-  if (main !== undefined && !res[0]!.meta.changes) return c.json({ error: "bad_main_domain" }, 400);
+  // An upsert always changes a row, so none written means a guard refused it: the permission, else the main domain.
+  if (!res[0]!.meta.changes) {
+    if (!(await holds(c.env, mayEdit(c.var.user)))) return c.json(forbidden, 403);
+    return c.json({ error: "bad_main_domain" }, 400);
+  }
   return c.json(await settingsBody(c.env));
 });
 
@@ -117,24 +138,31 @@ settings.put("/logo", bodyLimit({ maxSize: LOGO_BODY_MAX + 256, onError: (c) => 
   if (!(await hit(c.env, limitKey.logoDay, LIMITS.logoDay))) return c.json({ error: "too_many" }, 429);
   const type = check.type;
   const v = Date.now();
-  // One KV write per upload (R7). The stored name is fixed: no user-provided filename is ever kept.
-  await c.env.CACHE.put(LOGO_KEY, bytes, { metadata: { type, v } });
-  await c.env.DB.batch([
+  const res = await c.env.DB.batch([
     ...settingStmts(c.env, c.var.user.id, { logoVersion: v }),
     logoAudit(c.env, c.var.user.id, "logo.update", { type, bytes: bytes.length },
       { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: ["instance.logoVersion", JSON.stringify(v)] }),
   ]);
+  if (!res[0]!.meta.changes) return c.json(forbidden, 403);
+  // The bytes follow the guarded version, so a refused request leaves the served logo as it was. One KV write per upload (R7),
+  // under a fixed name: no user-provided filename is ever kept. Should it fail, the old bytes stay served uncached (no-store).
+  await c.env.CACHE.put(LOGO_KEY, bytes, { metadata: { type, v } });
   return c.json({ logoVersion: v });
 });
 settings.delete("/logo", async (c) => {
   // Nothing to remove: no KV delete, no audit.
   if ((await getSettings(c.env)).logoVersion === null) return c.json({ logoVersion: null });
   if (!(await hit(c.env, limitKey.logoDay, LIMITS.logoDay))) return c.json({ error: "too_many" }, 429);
-  await c.env.CACHE.delete(LOGO_KEY);
-  await c.env.DB.batch([
+  // The audit first, on the version this batch's guarded DELETE then removes: only a request that removes it records it.
+  const may = mayEdit(c.var.user);
+  const res = await c.env.DB.batch([
+    logoAudit(c.env, c.var.user.id, "logo.remove", {}, { sql: `EXISTS (SELECT 1 FROM settings WHERE key = ?) AND ${may.sql}`, binds: ["instance.logoVersion", ...may.binds] }),
     ...settingStmts(c.env, c.var.user.id, { logoVersion: null }),
-    logoAudit(c.env, c.var.user.id, "logo.remove", {}, { sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", binds: ["instance.logoVersion"] }),
   ]);
+  // Nothing deleted: removed concurrently (fine), or the permission is gone (the bytes stay).
+  if (!res[0]!.meta.changes && !(await holds(c.env, may))) return c.json(forbidden, 403);
+  // Only after the guarded change: a refused request never removes the served logo.
+  await c.env.CACHE.delete(LOGO_KEY);
   return c.json({ logoVersion: null });
 });
 
@@ -152,13 +180,15 @@ setup.post("/complete", async (c) => {
   const missing = (["name", "mainDomain"] as const).filter((k) => !steps[k]);
   if (missing.length) return c.json({ error: "incomplete", missing }, 400);
   const now = Math.floor(Date.now() / 1000);
-  const once = { sql: "NOT EXISTS (SELECT 1 FROM settings WHERE key = 'setup.completedAt')", binds: [] };
+  // Still an active owner (R5), and not completed yet.
+  const own = isOwner(c.var.user);
+  const once = { sql: `NOT EXISTS (SELECT 1 FROM settings WHERE key = 'setup.completedAt') AND ${own.sql}`, binds: own.binds };
   // The audit runs first under the same guard as the insert, so exactly one of two racing calls writes both rows.
   const res = await c.env.DB.batch([
     auditStmt(c.env, { actorId: c.var.user.id, action: "setup.complete", targetType: "settings", targetId: "setup.completedAt", detail: {} }, once),
-    c.env.DB.prepare(`INSERT INTO settings (key, value, updated_at, updated_by) SELECT 'setup.completedAt', ?, ?, ? WHERE ${once.sql}`).bind(JSON.stringify(now), now, c.var.user.id),
+    c.env.DB.prepare(`INSERT INTO settings (key, value, updated_at, updated_by) SELECT 'setup.completedAt', ?, ?, ? WHERE ${once.sql}`).bind(JSON.stringify(now), now, c.var.user.id, ...once.binds),
   ]);
-  if (res[1]!.meta.changes === 0) return c.json({ error: "already_configured" }, 409);
+  if (res[1]!.meta.changes === 0) return (await holds(c.env, own)) ? c.json({ error: "already_configured" }, 409) : c.json(forbidden, 403);
   return c.json({ configured: true });
 });
 
@@ -195,7 +225,7 @@ settings.get("/cloudflare", async (c) => {
 });
 
 const checkBody = z.strictObject({ token: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/).optional() });
-settings.post("/cloudflare/check", async (c) => {
+settings.post("/cloudflare/check", ownerOnly, async (c) => {
   const text = await c.req.text();
   let raw: unknown = {};
   try {
@@ -223,13 +253,12 @@ settings.patch("/cloudflare", async (c) => {
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const value = body.data.controlsEnabled ? "1" : "0";
   const user = c.var.user;
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-    ).bind(CONTROLS, value, Math.floor(Date.now() / 1000), user.id),
+  const [set] = await c.env.DB.batch([
+    upsertIf(c.env, CONTROLS, value, user.id, mayEdit(user)),
     auditStmt(c.env, { actorId: user.id, action: "settings.update", targetType: "settings", targetId: CONTROLS, detail: { key: CONTROLS, value } },
-      { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [CONTROLS, value] }),
+      { sql: "changes() > 0 AND EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [CONTROLS, value] }),
   ]);
+  if (!set!.meta.changes) return c.json(forbidden, 403);
   return c.json({ controlsEnabled: body.data.controlsEnabled });
 });
 
@@ -243,16 +272,18 @@ settings.post("/cloudflare/setup", async (c) => {
   if (!cfg.saasZoneId || !cfg.cnameTarget) return c.json({ error: "outside_not_configured" }, 409);
   const { saasZoneId: zoneId, cnameTarget: target } = cfg;
   const userId = c.var.user.id;
-  const upsert = (key: string, value: string) => c.env.DB.prepare(
-    "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-  ).bind(key, value, Math.floor(Date.now() / 1000), userId);
   const setting = async (key: string) => (await c.env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>())?.value ?? null;
-  // The upsert and the audit share one batch; the audit is guarded by the row it records.
-  const record = (recordId: string | null, error?: string) => c.env.DB.batch([
-    ...(recordId ? [upsert(TARGET_RECORD, recordId)] : []),
-    auditStmt(c.env, { actorId: userId, action: "cloudflare.setup", targetType: "settings", targetId: "cloudflare", detail: { target, ...(recordId ? { recordId } : {}), ...(error ? { error } : {}) } },
-      recordId ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [TARGET_RECORD, recordId] } : undefined),
-  ]);
+  // Both statements re-check `settings`; the audit is also guarded by the row it records. A refusal leaves a created
+  // record recognisable by its intent mark, so a retry by someone allowed still records it.
+  const g = mayEdit(c.var.user);
+  const record = async (recordId: string | null, error?: string) => {
+    const res = await c.env.DB.batch([
+      ...(recordId ? [upsertIf(c.env, TARGET_RECORD, recordId, userId, g)] : []),
+      auditStmt(c.env, { actorId: userId, action: "cloudflare.setup", targetType: "settings", targetId: "cloudflare", detail: { target, ...(recordId ? { recordId } : {}), ...(error ? { error } : {}) } },
+        recordId ? { sql: `${g.sql} AND EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)`, binds: [...g.binds, TARGET_RECORD, recordId] } : g),
+    ]);
+    return res.at(-1)!.meta.changes > 0;
+  };
   let created: string | null = null;
   try {
     // Every refusal comes before the first write.
@@ -265,16 +296,17 @@ settings.post("/cloudflare/setup", async (c) => {
     // Ours: the stored id, or the comment of a create whose id was lost when its D1 write failed. Anything else is foreign.
     const unrecorded = records.filter((r) => r.id !== ours);
     if (unrecorded.some((r) => !intent || r.comment !== mark(intent))) return c.json({ error: "target_in_use" }, 409);
+    // The first write re-checks `settings` (the intent row in SQL, else one read): lost, nothing reaches Cloudflare.
     if (!records.length) {
       const n = crypto.randomUUID();
-      await upsert(TARGET_INTENT, n).run();
+      if (!(await upsertIf(c.env, TARGET_INTENT, n, userId, g).run()).meta.changes) return c.json(forbidden, 403);
       created = (await createDns(cfg, zoneId, target, mark(n))).id;
-    }
+    } else if (!fb && !(await holds(c.env, g))) return c.json(forbidden, 403);
     // shortcut: Cloudflare has no conditional write for the fallback origin, so one set in the dashboard between the read above
     // and this PUT is replaced. The window is one round trip; use a conditional write if Cloudflare ever offers one.
     if (!fb) await setFallbackOrigin(cfg);
     const now = fb ?? (await getFallbackOrigin(cfg).catch(() => null));
-    await record(created ?? unrecorded[0]?.id ?? null);
+    if (!(await record(created ?? unrecorded[0]?.id ?? null))) return c.json(forbidden, 403);
     return c.json({ target, fallbackOrigin: now?.status === "active" ? "active" : "pending" });
   } catch (e) {
     const f = cfFail(e);
@@ -338,7 +370,7 @@ const secretName = (p: string): SecretName | null => (p === "cf" ? "CF_API_TOKEN
 const secretBody = z.strictObject({ value: z.string().max(512) });
 settings.get("/secrets", async (c) => c.json(await secretStatus(c.env)));
 
-settings.put("/secrets/:name", async (c) => {
+settings.put("/secrets/:name", ownerOnly, async (c) => {
   const name = secretName(c.req.param("name"));
   if (!name) return c.json({ error: "not_found" }, 404);
   const body = secretBody.safeParse(await c.req.json().catch(() => null));
@@ -359,14 +391,17 @@ settings.put("/secrets/:name", async (c) => {
       return c.json(f.body, f.status);
     }
   }
-  await c.env.DB.batch(await putSecretStmts(c.env, c.var.user.id, name, value));
+  // Re-checked in SQL: an owner demoted meanwhile stores nothing.
+  const [set] = await c.env.DB.batch(await putSecretStmts(c.env, c.var.user.id, name, value, isOwner(c.var.user)));
+  if (!set!.meta.changes) return c.json(forbidden, 403);
   return c.json(await secretStatus(c.env));
 });
 
-settings.delete("/secrets/:name", async (c) => {
+settings.delete("/secrets/:name", ownerOnly, async (c) => {
   const name = secretName(c.req.param("name"));
   if (!name) return c.json({ error: "not_found" }, 404);
-  await c.env.DB.batch(deleteSecretStmts(c.env, c.var.user.id, name));
+  const [del] = await c.env.DB.batch(deleteSecretStmts(c.env, c.var.user.id, name, isOwner(c.var.user)));
+  if (!del!.meta.changes && !(await holds(c.env, isOwner(c.var.user)))) return c.json(forbidden, 403);
   return c.json(await secretStatus(c.env));
 });
 

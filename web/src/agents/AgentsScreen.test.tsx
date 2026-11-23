@@ -7,9 +7,10 @@ import { errorText } from "../copy";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
 import { canText } from "./AgentsScreen";
 import { HOWTO } from "./howto";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: "Mia", role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: "Mia", role: "member", ...MEMBER_ROLE };
 const DAY = 86400;
 const now = Math.floor(Date.now() / 1000);
 const MAIN: Domain = {
@@ -24,7 +25,7 @@ const key = (o: Partial<KeyItem>): KeyItem => ({
   id: "k1", userId: "um", userEmail: null, name: "zapier", prefix: "lw_abcdefg", write: false, del: false, domainIds: [],
   createdAt: now - 50 * DAY, lastUsedAt: null, expiresAt: now + 40 * DAY, ...o,
 });
-const dana: UserItem = { id: "ud", email: "dana@example.com", name: "Dana R.", role: "member", status: "active", createdAt: 1, linkCount: 0, agentCount: 1, domains: [] };
+const dana: UserItem = { id: "ud", email: "dana@example.com", name: "Dana R.", role: "member", roleId: "member", roleName: "Member", perms: MEMBER_ROLE.perms, status: "active", createdAt: 1, linkCount: 0, agentCount: 1, domains: [] };
 const mcpUrl = () => `https://${location.host}/mcp`;
 
 function boot(me: Me, routes: FakeRoutes = {}) {
@@ -339,5 +340,58 @@ describe("canText", () => {
     expect(canText(key({ write: true }), hosts)).toBe("Create links");
     expect(canText(key({ write: true, del: true, domainIds: ["d1"] }), hosts)).toBe("Create and delete links on go.test");
     expect(canText(key({ domainIds: ["d1", "d2"] }), hosts)).toBe("Read links on 2 domains");
+  });
+});
+
+describe("API & agents follows the role", () => {
+  it("a Member keeps New API key, the agent address and a plain key row", async () => {
+    boot(member);
+    await loaded();
+    expect(screen.getByRole("button", { name: /New API key/ })).toBeTruthy();
+    expect(screen.getByText(mcpUrl())).toBeTruthy();
+    expect(screen.queryByText("Paused by role")).toBeNull();
+  });
+
+  it("with keys off: no New API key, N opens nothing, and their key says Paused by role (still listed to revoke)", async () => {
+    const { user } = boot({ ...member, ...customRole(["agents"]) });
+    await loaded();
+    expect(screen.queryByRole("button", { name: /New API key/ })).toBeNull();
+    await user.keyboard("n");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const row = screen.getByRole("cell", { name: "zapier" }).closest("tr")!;
+    expect(within(row).getByText("Paused by role")).toBeTruthy();
+    expect(within(row).getByText("Unused 6 weeks")).toBeTruthy(); // the key's own state stays beside it
+  });
+
+  it("an expired key keeps Expired beside Paused by role", async () => {
+    boot({ ...member, ...customRole(["agents"]) }, { "GET /api/keys": () => ({ body: { items: [key({ expiresAt: now - DAY })] } }) });
+    const row = (await loaded()).closest("tr")!;
+    expect(within(row).getByText("Paused by role")).toBeTruthy();
+    expect(within(row).getByText("Expired")).toBeTruthy();
+  });
+
+  it("with agents off their connection row says Paused by role beside its access; with agents on it does not", async () => {
+    boot({ ...member, ...customRole(["keys"]) });
+    await loaded();
+    const conn = screen.getByRole("cell", { name: "Claude" }).closest("tr")!;
+    expect(within(conn).getByText("Paused by role")).toBeTruthy();
+    expect(within(conn).getByText("Read only")).toBeTruthy();
+    const keyRow = screen.getByRole("cell", { name: "zapier" }).closest("tr")!;
+    expect(within(keyRow).queryByText("Paused by role")).toBeNull();
+  });
+
+  it("with agents off: no agent address or connect help, the reason instead; keys stay", async () => {
+    boot({ ...member, ...customRole(["keys"]) });
+    await loaded();
+    expect(screen.getByText("Your role does not allow AI agents.")).toBeTruthy();
+    expect(screen.queryByText(mcpUrl())).toBeNull();
+    expect(screen.queryByRole("group", { name: "Agent" })).toBeNull();
+    expect(screen.getByRole("button", { name: /New API key/ })).toBeTruthy();
+  });
+
+  it("the MCP switch follows settings, not ownership", async () => {
+    boot({ ...member, ...customRole(["settings", "agents"]) });
+    await loaded();
+    expect(screen.getByRole("switch", { name: "Agent connections (MCP)" })).toBeTruthy();
   });
 });

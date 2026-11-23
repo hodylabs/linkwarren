@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
+import { actorCan, can, requirePerm } from "../roles";
 import type { UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow } };
@@ -12,8 +13,10 @@ export const exportApi = new Hono<E>();
  * locks, analytics_state, links.password_hash, api_keys.hash, settings rows `secret.%` (encrypted secrets, src/secrets.ts).
  * `computed`: name -> boolean SQL expression. `where`: a fixed filter. SQL is built only from this constant, never from input.
  */
-export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]; computed?: Record<string, string>; where?: string; analytics?: true }[] = [
-  { table: "users", columns: ["id", "email", "name", "role", "status", "created_at"] },
+export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]; computed?: Record<string, string>; where?: string; analytics?: true; audit?: true }[] = [
+  // Roles before users: a restore inserts them before users.role_id refers to them (S8).
+  { table: "roles", columns: ["id", "name", "perms", "builtin", "created_at", "updated_at", "updated_by"] },
+  { table: "users", columns: ["id", "email", "name", "role", "role_id", "status", "created_at"] },
   { table: "domains", columns: ["id", "host", "type", "status", "owner_id", "bare_redirect", "notfound_redirect", "case_sensitive", "noindex", "reserved_extra", "created_at"] },
   { table: "domain_cf", columns: ["domain_id", "kind", "zone_id", "dns_record_id", "route_id", "hostname_id", "dns", "ownership", "certificate", "errors", "last_error", "checked_at", "security_level", "rate_limit", "updated_at"] },
   { table: "domain_members", columns: ["domain_id", "user_id"] },
@@ -23,7 +26,8 @@ export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]
     computed: { protected: "password_hash IS NOT NULL" },
   },
   { table: "slug_locks", columns: ["domain_id", "slug_key", "locked_at", "locked_by"] },
-  { table: "audit_log", columns: ["id", "at", "actor_id", "via", "action", "target_type", "target_id", "detail"] },
+  // Only for people who may read the audit log (owners always): `data` alone never crosses the `audit` boundary.
+  { table: "audit_log", columns: ["id", "at", "actor_id", "via", "action", "target_type", "target_id", "detail"], audit: true },
   { table: "settings", columns: ["key", "value", "updated_at", "updated_by"], where: "key NOT LIKE 'secret.%'" },
   // Rollups are kept forever and can hold millions of rows: out unless the owner asks (each exported row is one D1 read).
   { table: "clicks_daily", columns: ["day", "link_id", "domain_id", "slug", "qr", "typed", "bots", "visitors"], analytics: true },
@@ -41,10 +45,8 @@ const RUN_TTL_S = 6 * 3600;
 const q = (id: string) => `"${id}"`;
 const outColumns = (t: (typeof EXPORT_TABLES)[number]) => [...t.columns, ...Object.keys(t.computed ?? {})];
 
-exportApi.use("*", async (c, next) => {
-  if (c.var.user.role !== "owner") return c.json({ error: "forbidden" }, 403);
-  await next();
-});
+// S8 R12: `data` exports the whole instance; every page re-checks it.
+exportApi.use("*", requirePerm("data"));
 
 /** R7 logo (KV `instance:logo`, metadata `{ type }`) as base64, or null. */
 async function logo(env: Env): Promise<{ type: string; data: string } | null> {
@@ -61,18 +63,21 @@ exportApi.post("/start", async (c) => {
   const body = startBody.safeParse((await c.req.json().catch(() => null)) ?? {});
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const { includeAnalytics } = body.data;
-  const tables = EXPORT_TABLES.filter((t) => includeAnalytics || !t.analytics);
+  const tables = EXPORT_TABLES.filter((t) => (includeAnalytics || !t.analytics) && (!t.audit || can(c.var.user, "audit")));
   // Estimates: MAX(rowid) is one index seek per table (never a scan); an upper bound when rows were deleted.
   const est = await c.env.DB.batch(tables.map((t) => c.env.DB.prepare(`SELECT COALESCE(MAX(rowid), 0) AS n FROM ${q(t.table)}`)));
   const rows = est.map((r) => Number((r.results[0] as { n: number } | undefined)?.n ?? 0));
   const estimatedReads = rows.reduce((a, b) => a + b, 0);
   const run = crypto.randomUUID(), now = Math.floor(Date.now() / 1000);
   const names = tables.map((t) => t.table);
-  await c.env.DB.batch([
+  // The run and its audit re-check `data` in SQL: lost meanwhile, neither is written.
+  const may = actorCan(c.var.user.id, "data");
+  const [, lock] = await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM locks WHERE key LIKE 'export:%' AND until <= ?").bind(now),
-    c.env.DB.prepare("INSERT INTO locks (key, token, until) VALUES (?,?,?)").bind(`export:${run}`, `${c.var.user.id}|${includeAnalytics ? 1 : 0}`, now + RUN_TTL_S),
-    auditStmt(c.env, { actorId: c.var.user.id, action: "export.run", targetType: "instance", targetId: "export", detail: { tables: names, includeAnalytics, estimatedReads } }),
+    c.env.DB.prepare(`INSERT INTO locks (key, token, until) SELECT ?,?,? WHERE ${may.sql}`).bind(`export:${run}`, `${c.var.user.id}|${includeAnalytics ? 1 : 0}`, now + RUN_TTL_S, ...may.binds),
+    auditStmt(c.env, { actorId: c.var.user.id, action: "export.run", targetType: "instance", targetId: "export", detail: { tables: names, includeAnalytics, estimatedReads } }, may),
   ]);
+  if (!lock!.meta.changes) return c.json({ error: "forbidden" }, 403);
   return c.json({
     format: "linkwarren-export",
     version: 1,
@@ -90,6 +95,7 @@ exportApi.post("/page", async (c) => {
   const body = pageBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const t = EXPORT_TABLES.find((x) => x.table === body.data.table)!;
+  if (t.audit && !can(c.var.user, "audit")) return c.json({ error: "forbidden" }, 403);
   const { after, run } = body.data;
   const live = await c.env.DB.prepare("SELECT token FROM locks WHERE key = ? AND until > ?").bind(`export:${run}`, Math.floor(Date.now() / 1000)).first<{ token: string }>();
   const [owner, analytics] = (live?.token ?? "").split("|");

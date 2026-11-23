@@ -3,7 +3,9 @@ import { api, ApiError, type InviteResult } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
-import { Seg, Switch } from "../shell/ui";
+import { Switch } from "../shell/ui";
+import { can, mayAssign } from "../perms";
+import { RolePicker, RolesLoadError, useRoles } from "./RolePicker";
 import { useApp } from "../state";
 
 /** Invite sheet hotkeys and their text on the shortcuts sheet. */
@@ -11,10 +13,6 @@ export const INVITE_KEYS = {
   "mod+enter": "Send the invite, in the Invite sheet",
   c: "Copy the dashboard address, when no email was sent",
 } as const;
-const ROLES: { value: "member" | "owner"; label: string }[] = [
-  { value: "member", label: "Member" },
-  { value: "owner", label: "Owner" },
-];
 // A first check only; the server's rule (src/api/invites.ts) decides.
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 type Mail = { emailFrom: string | null; emailConfigured: boolean; dashboardHost: string };
@@ -28,9 +26,15 @@ const inviteError = (code: string) => errorText({ invalid_body: "invite_email", 
 export function InviteSheet() {
   const app = useApp();
   const main = app.domains.filter((d) => d.type === "main");
-  const shared = app.domains.filter((d) => d.type === "shared");
+  // Only owners and domain managers may give access to shared domains here; the server refuses the rest (src/api/invites.ts).
+  const shared = can(app.me, "domains.manage") ? app.domains.filter((d) => d.type === "shared") : [];
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"member" | "owner">("member");
+  const [chosen, setRole] = useState<string | null>(null); // a role id, once picked
+  const { roles, error: rolesError, reload: reloadRoles } = useRoles();
+  // Until one is picked: Member, or the first role a people manager below Member may give (R4). None at all: no invite.
+  const role = chosen ?? roles?.find((r) => r.id !== "owner" && mayAssign(app.me, r))?.id ?? null;
+  const perms = roles?.find((r) => r.id === role)?.perms ?? [];
+  const ownDomains = role === "owner" || perms.includes("domains.own") || perms.includes("domains.manage");
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mail, setMail] = useState<Mail | null>(null);
@@ -45,14 +49,14 @@ export function InviteSheet() {
   }, []);
 
   const submit = async () => {
-    if (busy.current || address !== null) return;
+    if (busy.current || address !== null || role === null) return;
     const e = email.trim();
     if (!EMAIL.test(e)) return setError("invite_email");
     busy.current = true;
     setPending(true);
     setError(null);
     try {
-      const res = await api<InviteResult>("POST", "/api/users/invite", { email: e, role, domainIds: role === "owner" ? [] : picked });
+      const res = await api<InviteResult>("POST", "/api/users/invite", { email: e, roleId: role, domainIds: role === "owner" ? [] : picked });
       app.reloadUsers().catch(() => undefined);
       if (res.emailed) {
         app.close();
@@ -62,7 +66,10 @@ export function InviteSheet() {
         setAddress(`https://${mail?.dashboardHost ?? location.host}/`);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.code : "internal"); // the typed values stay in the form
+      const code = err instanceof ApiError ? err.code : "internal";
+      setError(code); // the typed values stay in the form
+      // The picked role was deleted meanwhile: drop the stale list (no send, no default from it) until a reload succeeds; the email and domains stay.
+      if (code === "bad_role") { setRole(null); void reloadRoles(true); }
     } finally {
       busy.current = false;
       setPending(false);
@@ -114,9 +121,12 @@ export function InviteSheet() {
             </div>
             <div className="f">
               <h3 className="lbl">Role</h3>
-              <Seg label="Role" options={ROLES} value={role} onChange={setRole} />
+              {/* Owner only for owners; a people manager picks among roles within their own permissions (R4). */}
+              {roles && role !== null && <RolePicker value={role} onChange={setRole} roles={roles} me={app.me} allowOwner />}
+              {roles && role === null && <p className="err" role="alert">Every role has permissions you do not have, so you cannot invite anyone. Ask an owner.</p>}
+              {!roles && rolesError && <RolesLoadError onRetry={() => void reloadRoles()} />}
             </div>
-            {role === "member" && (
+            {role !== "owner" && (
               <div className="f">
                 <h3 className="lbl">Domains they can use</h3>
                 <div className="rules">
@@ -137,7 +147,7 @@ export function InviteSheet() {
                 </div>
               </div>
             )}
-            <p className="hint">They get an email with a link to sign in. They sign in with their email, and can add a passkey and their own private domains.</p>
+            <p className="hint">They get an email with a link to sign in. They sign in with their email, and can add a passkey{ownDomains && " and their own private domains"}.</p>
             {error && (
               <p className="err" role="alert">{inviteError(error)}</p>
             )}

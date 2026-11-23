@@ -68,12 +68,14 @@ export type ToolDef = {
 
 export const TOOLS: Record<string, ToolDef> = {
   server_info: {
-    description: "This connection's access level, your role, the MCP URL and the rate limits.",
+    description: "This connection's access level, your role (its name and permission keys), the MCP URL and the rate limits.",
     input: z.strictObject({}),
     run: async (_api, _a, p, env) => ({
       version: VERSION,
       access: p.grant.del ? "write+delete" : p.grant.write ? "write" : "read",
       role: p.user.role,
+      roleName: p.user.roleName,
+      perms: p.user.perms,
       mcpUrl: `https://${normalizeHost(env.DASHBOARD_HOST)}/mcp`,
       limits: { perUserPerMinute: LIMITS.apiUser.n, perConnectionPerMinute: LIMITS.apiConn.n, perUserPerDay: LIMITS.apiDay.n },
     }),

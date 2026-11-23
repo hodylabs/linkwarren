@@ -9,8 +9,8 @@ const TYPE = { main: "Main", shared: "Shared", private: "Private" } as const;
  * or Enter toggles, Esc closes (the caller returns focus to its chip). The caller closes it on a mousedown outside.
  */
 export function DomainPicker({ domains, selected, onToggle, onAll, onClose }: {
-  /** Already in display order. */
-  domains: Domain[];
+  /** Already in display order. No type: a domain known only from the report (analytics.all), shown without a type. */
+  domains: (Pick<Domain, "id" | "host"> & { type?: Domain["type"] })[];
   selected: string[];
   onToggle: (id: string) => void;
   onAll: () => void;
@@ -76,7 +76,7 @@ export function DomainPicker({ domains, selected, onToggle, onAll, onClose }: {
             >
               <span className="cb" aria-hidden="true">{on ? "✓" : ""}</span>
               {d.host}
-              <span className="ty">{TYPE[d.type]}</span>
+              {d.type && <span className="ty">{TYPE[d.type]}</span>}
             </div>
           );
         })}

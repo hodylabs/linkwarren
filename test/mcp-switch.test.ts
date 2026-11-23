@@ -4,6 +4,7 @@ import { MCP_KEY, MCP_TTL_MS, mcpState, rememberMcp, resetMcpCache } from "../sr
 import { OAUTH_PATHS } from "../src/oauth";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { connectAgent, mcpCall } from "./helpers/oauth";
+import { beforeBatch } from "./helpers/race";
 // @ts-expect-error Vite raw import, no type declaration in this project
 import exampleConfig from "../wrangler.instance.example.jsonc?raw";
 
@@ -266,6 +267,36 @@ describe("GET/PUT /api/agents/mcp", () => {
       expect([p, r.status]).not.toEqual([p, 200]);
     }
     expect(await env.DB.prepare("SELECT COUNT(*) n FROM settings").first("n")).toBe(0);
+  });
+});
+
+// S8 R5: the switch is a `settings` right, re-checked in the write's batch.
+describe("PUT /api/agents/mcp by permission (S8 R5)", () => {
+  const S = "s@example.com";
+  beforeEach(async () => {
+    await env.DB.prepare("DELETE FROM roles WHERE builtin = 0").run();
+    await env.DB.prepare("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('st','Settings','[\"settings\"]',0,1,1)").run();
+    await env.DB.prepare("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('us',?,'member','st','active',1)").bind(S).run();
+  });
+  const row = () => env.DB.prepare("SELECT value, updated_by FROM settings WHERE key = ?").bind(MCP_KEY).first();
+
+  it("a settings role changes the switch, audited as them; a member gets 403", async () => {
+    const r = await put(S, { on: false });
+    expect([r.status, await r.json()]).toEqual([200, { on: false, locked: false }]);
+    expect(await row()).toEqual({ value: "0", updated_by: "us" });
+    expect((await audits()).map((a) => a.actor_id)).toEqual(["us"]);
+    const m = await put(A, { on: true });
+    expect([m.status, await m.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await row()).toEqual({ value: "0", updated_by: "us" });
+  });
+
+  it("settings lost between the check and the batch: nothing written or audited, 403", async () => {
+    const restore = beforeBatch(1, () => env.DB.prepare("UPDATE roles SET perms = '[]' WHERE id = 'st'").run());
+    let r: Response;
+    try { r = await put(S, { on: false }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await row()).toBe(null);
+    expect(await audits()).toEqual([]);
   });
 });
 

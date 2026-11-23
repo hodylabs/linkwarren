@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { canManageDomain, canUseDomain } from "../src/perm";
+import { ROLE_JOIN, USER_COLS } from "../src/roles";
 import type { DomainRow, UserRow } from "../src/types";
 
 const user = (role: UserRow["role"], status: UserRow["status"] = "active"): UserRow =>
-  ({ id: "u1", email: "u@x.dev", name: null, role, status, createdAt: 0 });
+  ({ id: "u1", email: "u@x.dev", name: null, role, status, createdAt: 0, roleId: role, roleName: role, perms: [] });
 const dom = (type: DomainRow["type"], status: DomainRow["status"], owned: boolean): DomainRow => ({
   id: "d1", host: "x.dev", type, status, ownerId: owned ? "u1" : "other",
   bareRedirect: null, notfoundRedirect: null, caseSensitive: false, noindex: false, reservedExtra: [], createdAt: 0,
@@ -96,7 +97,7 @@ describe("usableDomainsSql mirrors canUseDomain", () => {
     await db.batch(stmts);
     const domains = (await db.prepare("SELECT * FROM domains").all()).results.map(rowToDomain);
     for (const [uid] of users) {
-      const u = rowToUser((await db.prepare("SELECT * FROM users WHERE id = ?").bind(uid).first())!);
+      const u = rowToUser((await db.prepare(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = ?`).bind(uid).first())!);
       const mem = new Set((await db.prepare("SELECT domain_id FROM domain_members WHERE user_id = ?").bind(uid).all<{ domain_id: string }>()).results.map((r) => r.domain_id));
       const expected = domains.filter((d) => canUseDomain(u, d, mem.has(d.id), null)).map((d) => d.id).sort();
       const got = (await db.prepare(`SELECT id FROM domains WHERE id IN (${usableDomainsSql})`).bind(uid).all<{ id: string }>()).results.map((r) => r.id).sort();
@@ -108,5 +109,23 @@ describe("usableDomainsSql mirrors canUseDomain", () => {
         expect([uid, only, res]).toEqual([uid, only, exp]);
       }
     }
+  });
+});
+
+describe("canManageDomain with roles (S8 R8)", () => {
+  const custom = (perms: UserRow["perms"], status: UserRow["status"] = "active"): UserRow => ({ ...user("member", status), roleId: "c", roleName: "C", perms });
+  it("domains.manage manages every domain, not owned, any type and status", () => {
+    for (const type of ["main", "shared", "private"] as const)
+      for (const status of ["active", "pending", "disabled"] as const)
+        expect(canManageDomain(custom(["domains.manage"]), dom(type, status, false))).toBe(true);
+  });
+  it("but it does not make a domain usable: a shared domain without membership stays unusable", () => {
+    expect(canUseDomain(custom(["domains.manage"]), dom("shared", "active", false), false, null)).toBe(false);
+    expect(canUseDomain(custom(["domains.manage"]), dom("private", "active", false), false, null)).toBe(false);
+  });
+  it("domains.own alone manages only domains the person owns; nothing for a disabled person", () => {
+    expect(canManageDomain(custom(["domains.own"]), dom("shared", "active", false))).toBe(false);
+    expect(canManageDomain(custom(["domains.own"]), dom("private", "pending", true))).toBe(true);
+    expect(canManageDomain(custom(["domains.manage"], "disabled"), dom("main", "active", false))).toBe(false);
   });
 });

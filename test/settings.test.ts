@@ -7,6 +7,8 @@ const all = async (sql: string, ...a: unknown[]) => (await env.DB.prepare(sql).b
 
 beforeEach(async () => {
   await env.DB.batch(["settings", "audit_log"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  // settingStmts re-checks the actor's settings permission (S8 R5): the actor is an active owner.
+  await run("INSERT OR REPLACE INTO users (id,email,role,status,created_at) VALUES ('uo','owner@example.com','owner','active',1)");
 });
 
 const DEFAULTS = { name: null, mainDomainId: null, logoVersion: null, linkRedirectCode: 302, linkPassQuery: true, setupCompletedAt: null };
@@ -61,5 +63,12 @@ describe("settingStmts", () => {
   });
   it("an empty patch writes nothing", () => {
     expect(settingStmts(env, "uo", {})).toEqual([]);
+  });
+  it("an actor without the settings permission writes and audits nothing", async () => {
+    await run("INSERT OR REPLACE INTO users (id,email,role,status,created_at) VALUES ('um','m@example.com','member','active',1)");
+    await env.DB.batch(settingStmts(env, "um", { name: "A" }));
+    await run("UPDATE users SET status = 'disabled' WHERE id = 'uo'");
+    await env.DB.batch(settingStmts(env, "uo", { name: "B" }));
+    expect([await all("SELECT key FROM settings"), await all("SELECT id FROM audit_log")]).toEqual([[], []]);
   });
 });

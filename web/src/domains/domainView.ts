@@ -1,20 +1,21 @@
 import type { CfView, Domain, Me, UserItem } from "../api";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
 import type { Tone } from "../links/linkView";
+import { can } from "../perms";
 
-/** Mirrors the server's canManageDomain: the instance owner, or the domain's own owner. */
-export const canManage = (me: Me, d: Domain): boolean => me.role === "owner" || d.ownerId === me.id;
+/** Mirrors the server's canManageDomain (S8 R8): an owner or a domains.manage holder, or the domain's own owner. */
+export const canManage = (me: Me, d: Domain): boolean => can(me, "domains.manage") || d.ownerId === me.id;
 
 /** An account domain that is not waiting for approval and that Cloudflare does not serve: only Finish connecting changes that. */
 export const needsFinish = (v: CfView): boolean => v.kind === "account" && !v.attachOnApproval && !v.attached && v.ownership !== "verified";
 
-export function statusTag(d: Domain, isOwner: boolean): { label: string; tone: Tone } {
+export function statusTag(d: Domain, admin: boolean): { label: string; tone: Tone } {
   const cf = d.cloudflare;
   if (d.status === "active" && cf?.kind === "account" && (needsFinish(cf) || cf.lastError)) return { label: "Not connected", tone: "bad" };
   const dns = cf?.kind === "outside" ? cf.dns : null;
   if (d.status !== "disabled" && (dns === "missing" || dns === "wrong_target")) return { label: "DNS record missing", tone: "bad" };
   if (d.status === "active") return { label: "Active", tone: "ok" };
-  if (d.status === "pending") return { label: isOwner ? "Needs your approval" : "Waiting for approval", tone: "wait" };
+  if (d.status === "pending") return { label: admin ? "Needs your approval" : "Waiting for approval", tone: "wait" };
   return { label: "Disabled", tone: "off" };
 }
 
@@ -38,14 +39,14 @@ export function parseReserved(text: string): ReservedParse {
 /** "You", or the owner's name (the instance owner can look people up); a member only ever sees "Someone else". */
 export function ownerLabel(d: Domain, me: Me, users: UserItem[] | null): string {
   if (d.ownerId === me.id) return "You";
-  if (me.role !== "owner") return "Someone else";
+  if (!can(me, "domains.manage")) return "Someone else";
   const u = users?.find((x) => x.id === d.ownerId);
   return u ? u.name || u.email : "Someone else";
 }
 
-/** Text for the "Shared with" column. null = the column is hidden (members). */
+/** Text for the "Shared with" column. null = the column is hidden (without domains.manage). */
 export function sharedWith(d: Domain, users: UserItem[] | null, me: Me): string | null {
-  if (me.role !== "owner") return null;
+  if (!can(me, "domains.manage")) return null;
   if (d.type === "main") return "Everyone";
   const names = (users ?? [])
     .filter((u) => u.domains.some((x) => x.id === d.id && x.via === "member"))

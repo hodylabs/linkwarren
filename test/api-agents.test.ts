@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { MEMBER_DEFAULT } from "../src/roles";
 import { connectAgent, mcpCall, token } from "./helpers/oauth";
+import { beforeBatch, beforeQuery } from "./helpers/race";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -297,5 +299,74 @@ describe("final fix wave", () => {
     expect((await as(O, "/api/agents/mcp", { method: "PUT", body: JSON.stringify({ on: !on }) })).status).toBe(403);
     expect(await one("SELECT value FROM settings WHERE key = 'mcp.enabled'")).toEqual(before);
     expect([...(await audits("agent.access")), ...(await audits("agent.disconnect")), ...(await audits("settings.update"))]).toHaveLength(0);
+  });
+});
+
+describe("a people manager and other people's connections (S8 R4)", () => {
+  const M = "manager@example.com";
+  const open = async () => (await env.DB.prepare("SELECT id FROM agent_connections WHERE revoked_at IS NULL ORDER BY id").all<{ id: string }>()).results.map((r) => r.id);
+  beforeEach(async () => {
+    await run("DELETE FROM roles WHERE builtin = 0");
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('mg','Manager',?,0,1,1), ('st','Settings','[\"settings\"]',0,1,1)", JSON.stringify([...MEMBER_DEFAULT, "people.manage"]));
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('um',?,'member','mg','active',1)", M);
+  });
+
+  it("?all=1 lists within; lower and disconnect within; raise refused; an owner's is 403 role_above_you", async () => {
+    const a = await connectAgent(A, { write: true });
+    const o = await connectAgent(O);
+    expect((await list(M, "?all=1")).map((i) => [i.id, i.userEmail])).toEqual([[a.connId, A]]);
+    for (const r of [await patch(M, o.connId, { write: false, del: false }), await del(M, o.connId)]) expect([r.status, await r.json()]).toEqual([403, { error: "role_above_you" }]);
+    const up = await patch(M, a.connId, { write: true, del: true });
+    expect([up.status, await up.json()]).toEqual([403, { error: "owner_cannot_raise" }]);
+    expect((await patch(M, a.connId, { write: false, del: false })).status).toBe(200);
+    expect((await del(M, a.connId)).status).toBe(204);
+    expect(await open()).toEqual([o.connId]);
+  });
+
+  it("race: people.manage removed before the ?all=1 query: only their own connections are listed", async () => {
+    await connectAgent(A);
+    const restore = beforeQuery("FROM agent_connections c JOIN users u", () => run("UPDATE roles SET perms = ? WHERE id = 'mg'", JSON.stringify(MEMBER_DEFAULT)));
+    let items;
+    try { items = await list(M, "?all=1"); } finally { restore(); }
+    expect(items).toEqual([]);
+  });
+
+  it("the person moves to a stronger role between read and batch: 403 and still connected", async () => {
+    const a = await connectAgent(A);
+    const restore = beforeBatch(1, () => run("UPDATE users SET role_id = 'st' WHERE id = 'ua'"));
+    let r: Response;
+    try { r = await del(M, a.connId); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "role_above_you" }]);
+    expect(await open()).toEqual([a.connId]);
+  });
+});
+
+// S8 R7: raising your own connection needs `agents`; lowering and disconnecting stay open (R3).
+describe("raising a connection needs agents", () => {
+  const role = (id: string, perms: readonly string[]) =>
+    run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms", id, `Role ${id}`, JSON.stringify(perms));
+
+  it("without agents: raise is 403 forbidden and writes nothing; lowering and disconnecting work", async () => {
+    await role("rz", ["agents"]);
+    await run("UPDATE users SET role_id = 'rz' WHERE id = 'ua'");
+    const a = await connectAgent(A, { write: true });
+    await role("rz", []);
+    const r = await patch(A, a.connId, { write: true, del: true });
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await one("SELECT can_write, can_delete FROM agent_connections WHERE id = ?", a.connId)).toEqual({ can_write: 1, can_delete: 0 });
+    expect((await patch(A, a.connId, { write: false, del: false })).status).toBe(200);
+    expect((await del(A, a.connId)).status).toBe(204);
+  });
+
+  it("race: agents removed between the read and the raise writes nothing and answers 403", async () => {
+    await role("ry", ["agents"]);
+    await run("UPDATE users SET role_id = 'ry' WHERE id = 'ua'");
+    const a = await connectAgent(A);
+    const restore = beforeBatch(1, () => role("ry", []));
+    let r: Response;
+    try { r = await patch(A, a.connId, { write: true, del: false }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await one("SELECT can_write FROM agent_connections WHERE id = ?", a.connId)).toEqual({ can_write: 0 });
+    expect(await audits("agent.access")).toEqual([]);
   });
 });

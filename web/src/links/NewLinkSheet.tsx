@@ -5,6 +5,7 @@ import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { Sheet } from "../shell/Sheet";
 import { Seg } from "../shell/ui";
+import { can, canUseDomain } from "../perms";
 import { useApp } from "../state";
 import { fromLocalInput } from "../time";
 import { checkDestination, checkSlugShape } from "../../../src/validate";
@@ -61,7 +62,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const app = useApp();
   const { me, domains, currentDomainId } = app;
   const usable = useMemo(
-    () => domains.filter((d) => d.status !== "disabled" && (me.role === "owner" || d.type === "main" || d.isMember || d.ownerId === me.id)),
+    () => domains.filter((d) => canUseDomain(me, d)),
     [domains, me],
   );
   const [domainId, setDomainId] = useState(() => (usable.some((d) => d.id === currentDomainId) ? currentDomainId! : (usable.find((d) => d.type === "main") ?? usable[0])?.id ?? ""));
@@ -332,7 +333,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
               {errorText(err("slug")!)}
             </p>
           )}
-          {check?.status === "locked" && me.role === "owner" && (
+          {check?.status === "locked" && can(me, "links.editAny") && (
             <p className="err">
               <button type="button" className="btn" onClick={() => {
                   setReleaseError(null);

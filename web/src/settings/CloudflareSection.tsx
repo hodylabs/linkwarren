@@ -3,6 +3,7 @@ import { ApiError } from "../api";
 import { plural } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Kbd, Switch } from "../shell/ui";
+import { isOwner } from "../perms";
 import { useApp } from "../state";
 import { checkCloudflare, getCloudflare, PERMISSIONS, resyncBatch, setControls, setupOutside, type CheckResult, type CloudflareSettings, type SecretStatus } from "./api";
 import { settingsError } from "./copy";
@@ -52,7 +53,8 @@ export function PermList({ check }: { check: CheckResult }) {
 }
 
 export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatus; onSecrets: (s: SecretStatus) => void }) {
-  const { overlay } = useApp();
+  const { overlay, me } = useApp();
+  const owner = isOwner(me); // the token and its check stay owner only (S8 R5)
   const [s, setS] = useState<CloudflareSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [check, setCheck] = useState<CheckResult | null>(null);
@@ -177,7 +179,7 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
 
   useHotkeys(
     {
-      c: () => void runCheck(),
+      c: () => void (owner && runCheck()),
       escape: () => abort.current?.abort(),
     } satisfies Bindings<typeof SETTINGS_KEYS>,
     overlay === null && (resync.running || !!s?.configured),
@@ -191,7 +193,7 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
   };
   const token = (
     <>
-      <SecretField name="cf" status={secrets.cf} pasteAvailable={secrets.pasteAvailable} onSaved={(st) => {
+      <SecretField name="cf" status={secrets.cf} pasteAvailable={secrets.pasteAvailable} readOnly={!owner} onSaved={(st) => {
         onSecrets(st);
         tokenGen.current++;
         setCheck(null);
@@ -228,7 +230,7 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
         {s.hostnames ? ` (${s.hostnames.used} of ${s.hostnames.limit} free hostnames used)` : ""}.
       </div>
       {token}
-      <div className="sfield">
+      {owner && <div className="sfield">
         <div>
           <b>Token permissions</b>
           <small>What the token may do in this Cloudflare account</small>
@@ -239,7 +241,7 @@ export function CloudflareSection({ secrets, onSecrets }: { secrets: SecretStatu
             Check token<Kbd>C</Kbd>
           </button>
         </div>
-      </div>
+      </div>}
       {checkError && <p className="err" role="alert">{settingsError(checkError)}</p>}
       {check && <PermList check={check} />}
       <div className="toggle sfield">

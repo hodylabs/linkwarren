@@ -6,9 +6,10 @@ import { AppProvider, useApp } from "../state";
 import { Palette } from "./Palette";
 import type { Domain, Me } from "../api";
 import { fakeApi, type FakeRoutes } from "../test/fakeApi";
+import { MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive Owner", role: "owner" };
-const member: Me = { id: "um", email: "member@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive Owner", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "member@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const dom = (id: string, host: string, type: Domain["type"]): Domain => ({
   id, host, type, status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 3, isMember: false,
@@ -297,20 +298,23 @@ describe("G chords from the shell", () => {
   });
 
   it("times out and ignores other keys in between", async () => {
-    await boot(owner, {}, "/analytics");
+    // API & agents binds neither D nor X, so a stray letter cannot open a screen panel and change who owns the keys.
+    await boot(owner, { "GET /api/keys": () => ({ body: [] }), "GET /api/agents/connections": () => ({ body: [] }), "GET /api/agents/mcp": () => ({ body: { on: true, locked: false } }) }, "/agents");
+    await screen.findByRole("heading", { level: 1 });
     vi.useFakeTimers({ toFake: ["Date"] });
-    const press = (key: string) => fireEvent.keyDown(document.body, { key });
+    vi.setSystemTime(1_700_000_000_000);
+    const press = (key: string) => act(() => void fireEvent.keyDown(document.body, { key }));
     press("g");
-    vi.setSystemTime(Date.now() + 5000);
+    vi.setSystemTime(1_700_000_005_000); // past the 1.5 s chord window
     press("d");
-    expect(location.pathname).toBe("/analytics");
+    expect(location.pathname).toBe("/agents");
     press("g");
     press("x");
     press("d");
-    expect(location.pathname).toBe("/analytics");
+    expect(location.pathname).toBe("/agents");
     press("g");
     press("d");
-    expect(location.pathname).toBe("/domains");
+    await waitFor(() => expect(location.pathname).toBe("/domains"));
   });
 
   it("is off while an overlay is open", async () => {

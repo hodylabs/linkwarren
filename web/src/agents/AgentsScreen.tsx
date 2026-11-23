@@ -7,6 +7,7 @@ import { initials } from "../shell/Rail";
 import { BackBar, useDetailView } from "../shell/narrow";
 import { Confirm } from "../shell/Sheet";
 import { Chip, CloseButton, PrimaryButton, ScreenHeader, Switch, Tag } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { clock, shortDate } from "../time";
 import { CLIENTS, HOWTO, type Client } from "./howto";
@@ -257,7 +258,8 @@ function KeyDetail({ item: k, person, hosts, onModal, onClose, onGone }: DetailP
 export function AgentsScreen() {
   const app = useApp();
   const { me, users, domains, overlay } = app;
-  const isOwner = me.role === "owner";
+  const settingsOk = can(me, "settings"); // the MCP on/off switch is an instance setting (S8 R5)
+  const agentsOk = can(me, "agents");
   const { query } = useRoute();
   const sel = query.get("sel");
   const { open, show, back } = useDetailView("/agents");
@@ -274,8 +276,8 @@ export function AgentsScreen() {
   const url = `https://${location.host}/mcp`;
   const hosts = new Map(domains.map((d) => [d.id, d.host]));
 
-  // The owner sees everyone's; members get their own (the server enforces it either way).
-  const all = isOwner ? "?all=1" : "";
+  // Owners and people managers see everyone's they may manage; others get their own (the server enforces it either way).
+  const all = can(me, "people.manage") ? "?all=1" : "";
   const gen = useRef(0);
   const reading = useRef(false);
   const load = useCallback(() => {
@@ -333,6 +335,11 @@ export function AgentsScreen() {
     return { label: u?.name || mail || "Someone", name: u?.name ?? null, email: mail, own: false };
   };
 
+  // R7: a key (or connection) whose person's role has no `keys` (`agents`) is refused, not revoked; it stays listed to revoke.
+  const paused = (row: { userId: string }, p: "keys" | "agents") => {
+    const who = row.userId === me.id ? me : users?.find((u) => u.id === row.userId);
+    return who !== undefined && !can(who, p);
+  };
   const ids = [...(conns ?? []).map((c) => c.id), ...(keys ?? []).map((k) => k.id)];
   const at = sel ? ids.indexOf(sel) : -1;
   const selConn = conns?.find((c) => c.id === sel) ?? null;
@@ -381,7 +388,7 @@ export function AgentsScreen() {
   }, [conns, keys]);
 
   const copy = () => {
-    if (mcp !== "on") return;
+    if (mcp !== "on" || !agentsOk) return;
     navigator.clipboard.writeText(url).then(() => app.announce("Copied"), () => app.announce("Could not copy. Select the address and copy it."));
   };
 
@@ -420,17 +427,21 @@ export function AgentsScreen() {
   return (
     <>
       <ScreenHeader title="API & agents" text="connect Claude, ChatGPT, Claude Code, Codex, Gemini or your own scripts">
-        <PrimaryButton label="New API key" shortcut="N" onClick={() => app.open({ kind: "newKey" })} />
+        {can(me, "keys") && <PrimaryButton label="New API key" shortcut="N" onClick={() => app.open({ kind: "newKey" })} />}
       </ScreenHeader>
       <div className={`body agents${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className="list" aria-label="Agents and API keys">
           <div className="connect">
             <div>
               <h3>Connect an agent</h3>
-              <p>
-                Add this address as a connector in Claude, ChatGPT, Claude Code, Codex or Gemini. You sign in, choose read only or read and write, and the agent acts as you: it can
-                never see or change more than you can.
-              </p>
+              {agentsOk ? (
+                <p>
+                  Add this address as a connector in Claude, ChatGPT, Claude Code, Codex or Gemini. You sign in, choose read only or read and write, and the agent acts as you: it can
+                  never see or change more than you can.
+                </p>
+              ) : (
+                <p>Your role does not allow AI agents.</p>
+              )}
             </div>
             {mcpState && (
               <div className="toggle">
@@ -441,12 +452,12 @@ export function AgentsScreen() {
                       ? "Locked off by the deploy config (MCP_ENABLED=0)."
                       : mcpState.on
                         ? "Turning this off does not disconnect agents. Their calls are refused until you turn it back on."
-                        : isOwner
+                        : settingsOk
                           ? "Agents cannot connect until you turn this on."
                           : "Agent connections are turned off on this instance. Ask the owner."}
                   </small>
                 </div>
-                {isOwner ? (
+                {settingsOk ? (
                   <fieldset className="plain" disabled={mcpState.locked} aria-busy={saving}>
                     <Switch checked={mcpState.on} onChange={setMcpOn} label="Agent connections (MCP)" describedBy="mcp-hint" disabled={mcpState.locked} />
                   </fieldset>
@@ -460,7 +471,7 @@ export function AgentsScreen() {
                 {mcpError}
               </p>
             )}
-            {mcp === "on" && (
+            {mcp === "on" && agentsOk && (
               <>
                 <div className="mcp">
                   <span className="mono">{url}</span>
@@ -506,7 +517,7 @@ export function AgentsScreen() {
                   <tr key={c.id} {...row(c.id)}>
                     <td>{c.clientName}</td>
                     <td><Who p={person(c.userId, c.userEmail)} /></td>
-                    <td>{access(c.write)}</td>
+                    <td>{paused(c, "agents") && <><Tag tone="off">Paused by role</Tag> </>}{access(c.write)}</td>
                     <td data-label="Connected">{shortDate(c.createdAt)}</td>
                     <td data-label="Last used">{used(c.lastUsedAt)}</td>
                     <td className="num" data-label="Calls, 7 days">{c.calls7d}</td>
@@ -540,6 +551,7 @@ export function AgentsScreen() {
                     <td data-label="Last used">{used(k.lastUsedAt)}</td>
                     {/* Expired keys still count toward the 20-key cap until revoked, so they stay listed. */}
                     <td data-label="Expires">
+                      {paused(k, "keys") && <><Tag tone="off">Paused by role</Tag> </>}
                       {expired(k) ? <Tag tone="bad">Expired</Tag> : unused(k) ? <Tag tone="bad">Unused 6 weeks</Tag> : longDate(k.expiresAt)}
                     </td>
                   </tr>

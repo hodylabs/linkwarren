@@ -3,6 +3,7 @@ import { utcDay } from "./clicks";
 import { rolledThrough } from "./cron";
 import type { Env } from "./env";
 import { usableDomains } from "./perm";
+import { can } from "./roles";
 import type { UserRow } from "./types";
 
 /**
@@ -66,15 +67,20 @@ export function resolveRange(q: RangeQuery, nowSec: number): Range | { error: "b
   return { from, to: tomorrow, unit: "day", prev: back(from, tomorrow) };
 }
 
+/** Analytics' domain set for analytics.all (S8 R10): every domain, narrowed by a grant's restriction; usableDomains otherwise. */
+export const everyDomain = (only: readonly string[] | null): { sql: string; binds: unknown[] } =>
+  only ? { sql: "SELECT id FROM domains WHERE id IN (SELECT value FROM json_each(?))", binds: [JSON.stringify(only)] } : { sql: "SELECT id FROM domains", binds: [] };
+
 const ids = (r: { results: Record<string, unknown>[] }) => r.results.map((x) => String(x.id));
 
 export async function resolveScope(
   env: Env, user: UserRow, domainIds: string[] | null, q: string, only: readonly string[] | null,
 ): Promise<{ scope: Scope; truncated: boolean } | { error: "forbidden" }> {
   let scopeDomains: string[] | null = null;
-  // `only` is a grant's domain restriction: it narrows the owner too.
-  if (domainIds || user.role !== "owner" || only) {
-    const u = usableDomains(user.id, only);
+  // `only` is a grant's domain restriction: it narrows the owner and analytics.all too (S8 R10).
+  const all = can(user, "analytics.all");
+  if (domainIds || !all || only) {
+    const u = all ? everyDomain(only) : usableDomains(user.id, only);
     const usable = new Set(ids(await env.DB.prepare(u.sql).bind(...u.binds).all()));
     if (domainIds) {
       if (domainIds.some((id) => !usable.has(id))) return { error: "forbidden" };

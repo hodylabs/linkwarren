@@ -7,6 +7,7 @@ import {
 } from "@simplewebauthn/server";
 import type { Env } from "./env";
 import { normalizeHost } from "./host";
+import { ROLE_JOIN, USER_COLS } from "./roles";
 import { rowToUser, type UserRow } from "./types";
 
 export const CHALLENGE_TTL = 300;
@@ -111,7 +112,7 @@ export async function verifyAuthentication(env: Env, response: unknown): Promise
   const r = response as Record<string, unknown> & { response: Record<string, unknown> }; // shape checked by challengeOf
   if (typeof r.id !== "string" || r.id.length > 1366) return fail(); // 1023-byte WebAuthn credential id cap, base64url
   const row = await env.DB.prepare(
-    "SELECT p.id pid, p.public_key, p.counter, p.transports, u.* FROM passkeys p JOIN users u ON u.id = p.user_id WHERE p.credential_id = ?",
+    `SELECT p.id pid, p.public_key, p.counter, p.transports, ${USER_COLS} FROM passkeys p JOIN users u ON u.id = p.user_id ${ROLE_JOIN} WHERE p.credential_id = ?`,
   ).bind(r.id).first<Record<string, unknown>>();
   if (!row) return fail();
   const user = rowToUser(row);

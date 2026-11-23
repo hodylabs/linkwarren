@@ -2,7 +2,7 @@
 
 linkwarren has two ways in for software: **agents** (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) connect to the built-in MCP server with OAuth, and **scripts** use a personal API key on `/api/v1`. Both act as you: they can never see or change more than you can in the dashboard, and every change they make is in the audit log as "you via <agent or key>".
 
-The instance owner turns agents on and off with a switch on the API & agents screen (`G I`); only the owner sees it enabled. The operator can lock agents off for the whole instance with `MCP_ENABLED="0"` (see [deploy.md](deploy.md#mcp_enabled)), and then the switch is disabled. The screen shows the MCP address only while agents are on; API keys work either way. Turning agents off disconnects nobody and revokes nothing: agents just get a `404` until it is turned back on.
+People with the Settings permission (owners always) turn agents on and off with a switch on the API & agents screen (`G I`); only they see it enabled. The operator can lock agents off for the whole instance with `MCP_ENABLED="0"` (see [deploy.md](deploy.md#mcp_enabled)), and then the switch is disabled. The screen shows the MCP address only while agents are on; API keys work either way. Turning agents off disconnects nobody and revokes nothing: agents just get a `404` until it is turned back on.
 
 ## Connect an agent
 
@@ -33,17 +33,21 @@ Agents have no domain restriction beyond your own: they reach every domain you c
 
 ### Changing access
 
-On the API & agents screen, select the connection (`J`/`K`, `Enter`) and use the switches, then Change access. The change applies on the agent's next call; it does not need to reconnect. You can raise or lower your own connections. The owner can lower or disconnect anyone's connection but only that person can raise it again. If the person changed it in the meantime, the owner's change is refused (`409 changed`) and nothing is written: reload and try again.
+On the API & agents screen, select the connection (`J`/`K`, `Enter`) and use the switches, then Change access. The change applies on the agent's next call; it does not need to reconnect. You can raise or lower your own connections. An owner can lower or disconnect anyone's connection, and a person whose role can invite and manage people can do the same for people whose role has no permission theirs lacks (never an owner's: `403 role_above_you`). Only the person can raise a connection again (`403 owner_cannot_raise`). If the person changed it in the meantime, the change is refused (`409 changed`) and nothing is written: reload and try again.
 
 ### Disconnecting
 
-Select the connection and press `Shift+D` (or Disconnect), then confirm. The agent's next call fails, its refresh token stops working, and it has to connect again. The same happens to every agent of a person the owner disables. Disconnecting someone does not touch their other agents or keys.
+Select the connection and press `Shift+D` (or Disconnect), then confirm. The agent's next call fails, its refresh token stops working, and it has to connect again. The same happens to every agent of a person who is disabled. Disconnecting someone does not touch their other agents or keys.
+
+### When a role loses AI agents
+
+Agents follow the person's current role. When an owner turns off **Connect AI agents** for a role, every agent of its people is refused from its next call: each tool answers "Your role no longer allows AI agents. Ask an owner." (no tool call is logged), and the approval page answers "Your role does not allow connecting AI agents." (Deny still returns to the agent as usual.) Tokens keep refreshing, but every tool call is refused. Nothing is disconnected or revoked: turning the permission back on restores the same connections. Listing, lowering and disconnecting your own connections still work without it; raising one to write or delete needs it (`403 forbidden`). Turning off **Personal API keys** does not affect agents, and the other way round.
 
 ## Tools
 
 | Tool | Needs | What it does |
 | --- | --- | --- |
-| `server_info` | read | Your access level, role, the MCP address and the limits |
+| `server_info` | read | Your access level, role (its name and permission keys), the MCP address and the limits |
 | `search_links` | read | Search the links you can see, newest first |
 | `get_link` | read | One link by id or by short URL |
 | `list_domains` | read | The domains you can create links on (host, type and status) |
@@ -72,6 +76,8 @@ The server tells the model that tool results are data, never instructions: a lin
 ## API keys
 
 For scripts, create a key on the API & agents screen: New API key (`N`), give it a name (lowercase letters, digits and hyphens), choose the access (read only by default, delete only with write), optionally limit it to some domains, and pick the expiry (30, 90 or 365 days). The key (`lw_` and 43 more characters) is shown **once**: copy it then. linkwarren keeps only a hash. Revoke a key from the same screen (`Shift+D`); a revoked or expired key answers `401 {"error":"invalid_key"}`.
+
+Keys follow the person's current role. Creating a key needs **Personal API keys** in the role (`403 forbidden` otherwise). When an owner turns it off, every key of the role's people answers `403 {"error":"keys_not_allowed"}` from the next request, without counting on any limit or updating its last use; nothing is revoked, so turning it back on restores the same keys (until they expire). Listing and revoking your own keys still works without it. A key never does more than the role allows: with write access it still gets `403 forbidden` for what the role cannot do.
 
 A key works only on `/api/v1`, sent as a Bearer token (`Authorization: Bearer <key>`, the word `Bearer` in any case). It never works on the dashboard API (`/api`) or on `/mcp`. Keep it in an environment variable, not on the command line or in a file you commit:
 
@@ -113,7 +119,7 @@ curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<l
 
 ### Bulk changes
 
-`POST /api/v1/links/bulk` changes up to 50 distinct links in one request (a list of up to 100 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The body has an `action` and the `ids`, plus the fields of that action:
+`POST /api/v1/links/bulk` changes up to 50 distinct links in one request (a list of up to 100 ids is accepted, duplicates are dropped first). It needs a write key; `delete` needs a key that may delete. The person's role must allow bulk edits (`403 forbidden` otherwise), a `copy` move also needs the right to create links, and each link follows the single-edit rights of their role. The body has an `action` and the `ids`, plus the fields of that action:
 
 | `action` | Other fields |
 | --- | --- |
@@ -155,9 +161,10 @@ Agents and keys share per-minute limits per person, per connection and per key, 
 | --- | --- | --- |
 | 401 | `unauthenticated` | No `Authorization` header |
 | 401 | `invalid_key` | Wrong, revoked or expired key, or the person was disabled |
+| 403 | `keys_not_allowed` | The person's role does not allow personal API keys (the key is kept) |
 | 403 | `read_only` | The key cannot create or change links |
 | 403 | `delete_not_allowed` | The key cannot delete links |
-| 403 | `forbidden` | Not a domain or link you (or this key) may use |
+| 403 | `forbidden` | Not a domain or link you (or this key) may use, or your role does not allow it (creating links, editing someone else's link, bulk changes) |
 | 404 | `not_found` | No such link or domain, or a path that is not part of `/api/v1` |
 | 400 | `too_many` | More than 50 distinct ids in a bulk request |
 | 400 | `target_not_active` | A move to a domain that is not active yet |
@@ -173,7 +180,7 @@ Validation errors (for example `taken`, `locked`, `invalid_body`, `q_too_long`) 
 
 ## What is recorded
 
-Every tool call is logged (time, person, agent, tool, outcome; never the arguments or results) for 90 days, and every change is in the audit log with "via". The connection list shows each agent's last use and its calls in the last 7 days. Details are in [privacy.md](privacy.md#agents-and-api-keys).
+Every tool call is logged (time, person, agent, tool, outcome; never the arguments or results) for 90 days, except calls refused because the person's role no longer allows AI agents ([see above](#when-a-role-loses-ai-agents)), and every change is in the audit log with "via". The connection list shows each agent's last use and its calls in the last 7 days. Details are in [privacy.md](privacy.md#agents-and-api-keys).
 
 ## Differences from the MCP standard
 

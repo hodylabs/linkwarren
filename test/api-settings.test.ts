@@ -600,6 +600,19 @@ describe("logo and main domain hardening (Task 11)", () => {
     expect((await actions()).filter((a) => a[0].startsWith("logo."))).toEqual([]);
   });
 
+  it("DELETE whose KV delete fails once: the retry no-ops and public GET /logo is already 404", async () => {
+    await call("owner", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(env.CACHE, "delete").mockRejectedValueOnce(new Error("kv down"));
+    expect((await call("owner", "DELETE", "/api/settings/logo")).status).toBe(500);
+    expect(await env.CACHE.get("instance:logo", "arrayBuffer")).not.toBe(null);
+    const g = await call("a", "GET", "/api/instance/logo");
+    expect([g.status, await g.json()]).toEqual([404, { error: "no_logo" }]);
+    const retry = await call("owner", "DELETE", "/api/settings/logo");
+    expect([retry.status, await retry.json()]).toEqual([200, { logoVersion: null }]);
+    expect((await call("a", "GET", "/api/instance/logo")).status).toBe(404);
+  });
+
   it("logo changes are limited to 20 per UTC day: then 429 too_many and no KV write", async () => {
     await run("INSERT INTO auth_limits (key, window_start, count) VALUES ('logo:day', ?, 20)", Math.floor(Date.now() / 1000));
     const putSpy = vi.spyOn(env.CACHE, "put");
@@ -616,5 +629,229 @@ describe("logo and main domain hardening (Task 11)", () => {
     expect([r.status, await r.json()]).toEqual([400, { error: "bad_main_domain" }]);
     expect(await all("SELECT * FROM settings WHERE key = 'instance.mainDomainId'")).toEqual([]);
     expect((await actions()).filter((a) => a[0] === "settings.update")).toEqual([]);
+  });
+});
+
+// S8 R5: `settings` covers the instance settings and the Cloudflare connection settings. Pasting secrets, the Cloudflare
+// token check and the first-run setup stay owner only, and secrets stay write-only for everyone.
+describe("settings by permission (S8 R5)", () => {
+  const setPerms = (perms: string[]) => run("UPDATE roles SET perms = ? WHERE id = 'st'", JSON.stringify(perms));
+  beforeEach(async () => {
+    await run("DELETE FROM roles WHERE builtin = 0");
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('st','Settings','[\"settings\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('us','s@example.com','member','st','active',1)");
+    EMAIL.s = "s@example.com";
+    await env.CACHE.delete("instance:logo");
+    await run("DELETE FROM auth_limits");
+  });
+  const by = async (actor: string) => (await all("SELECT action FROM audit_log WHERE actor_id = ? ORDER BY id", actor)).map((r) => r.action);
+
+  it("a settings role changes the instance settings, logo and Cloudflare controls, each audited as them", async () => {
+    await mainDom("dm", "m.test");
+    const p = await call("s", "PATCH", "/api/settings", { name: "Acme", mainDomainId: "dm", linkRedirectCode: 301 });
+    expect(p.status).toBe(200);
+    expect(await p.json()).toMatchObject({ name: "Acme", mainDomainId: "dm", linkRedirectCode: 301 });
+    expect((await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) })).status).toBe(200);
+    expect((await call("s", "DELETE", "/api/settings/logo")).status).toBe(200);
+    expect((await call("s", "PATCH", S, { controlsEnabled: true })).status).toBe(200);
+    expect(await by("us")).toEqual(["settings.update", "settings.update", "settings.update", "settings.update", "logo.update", "logo.remove", "settings.update", "settings.update"]);
+  });
+
+  it("a settings role reads the settings, the secret status and the Cloudflare page, never a secret value", async () => {
+    const fake = installFakeCloudflare({ zones });
+    e.RESEND_API_KEY = "re_workerSECRET123";
+    try {
+      const g = await call("s", "GET", "/api/settings");
+      expect(g.status).toBe(200);
+      const text = await g.text();
+      for (const v of [STORED, "re_workerSECRET123"]) expect(text).not.toContain(v);
+      const sec = await call("s", "GET", "/api/settings/secrets");
+      expect(sec.status).toBe(200);
+      const st = await sec.text();
+      for (const v of [STORED, "re_workerSECRET123"]) expect(st).not.toContain(v);
+      expect((await call("s", "GET", S)).status).toBe(200);
+    } finally {
+      e.RESEND_API_KEY = undefined;
+    }
+    expect(fake.calls.filter((x) => x.method !== "GET")).toEqual([]);
+  });
+
+  it("a settings role sends the test email", async () => {
+    e.EMAIL_FROM = "links@example.com";
+    e.RESEND_API_KEY = "re_testkey12345";
+    const f = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ id: "1" }));
+    try {
+      expect((await call("s", "POST", "/api/settings/email/test")).status).toBe(200);
+      expect(JSON.parse(String(f.mock.calls[0]![1]!.body)).to).toEqual(["s@example.com"]);
+    } finally {
+      e.EMAIL_FROM = undefined;
+      e.RESEND_API_KEY = undefined;
+    }
+  });
+
+  it("secret writes, the token check and the first-run setup stay owner only: 403 before any body, Cloudflare call or write", async () => {
+    const fake = installFakeCloudflare({ zones });
+    for (const [m, p, b] of [["PUT", "/api/settings/secrets/cf", { value: CAND }], ["PUT", "/api/settings/secrets/resend", { value: "re_abcdefghijkl" }],
+      ["DELETE", "/api/settings/secrets/cf"], ["POST", `${S}/check`, { token: CAND }], ["POST", `${S}/check`, {}], ["PUT", "/api/settings/secrets/nope", { value: "x" }],
+      ["GET", "/api/setup"], ["POST", "/api/setup/complete"]] as const) {
+      const r = await call("s", m, p, b);
+      expect([m, p, r.status, await r.json()]).toEqual([m, p, 403, { error: "forbidden" }]);
+    }
+    expect(fake.calls).toEqual([]);
+    expect(await all("SELECT key FROM settings")).toEqual([]);
+    expect(await by("us")).toEqual([]);
+  });
+
+  it("a domains.manage holder without settings reads the Cloudflare page (same shape, no secret), every write stays settings", async () => {
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('dmr','Domains','[\"domains.manage\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('ud','d@example.com','member','dmr','active',1)");
+    EMAIL.d = "d@example.com";
+    const fake = installFakeCloudflare({ zones });
+    const own = await call("owner", "GET", S);
+    const g = await call("d", "GET", S);
+    expect(g.status).toBe(200);
+    const text = await g.text();
+    expect(text).not.toContain(STORED);
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(Object.keys((await own.json()) as object).sort());
+    for (const [m, p, b] of [["GET", "/api/settings"], ["GET", "/api/settings/secrets"], ["PATCH", S, { controlsEnabled: true }], ["POST", `${S}/setup`], ["POST", `${S}/resync`]] as const) {
+      const r = await call("d", m, p, b);
+      expect([m, p, r.status, await r.json()]).toEqual([m, p, 403, { error: "forbidden" }]);
+    }
+    expect(fake.calls.filter((x) => x.method !== "GET")).toEqual([]);
+    expect(await by("ud")).toEqual([]);
+  });
+
+  it("a member gets 403 on the secret status and the test email too", async () => {
+    for (const [m, p] of [["GET", "/api/settings/secrets"], ["POST", "/api/settings/email/test"]] as const) {
+      const r = await call("a", m, p);
+      expect([m, p, r.status, await r.json()]).toEqual([m, p, 403, { error: "forbidden" }]);
+    }
+  });
+
+  it("settings lost between the check and the batch: PATCH writes and audits nothing, 403", async () => {
+    const restore = beforeBatch(1, () => setPerms([]));
+    let r: Response;
+    try { r = await call("s", "PATCH", "/api/settings", { name: "Acme" }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await all("SELECT key FROM settings")).toEqual([]);
+    expect(await by("us")).toEqual([]);
+  });
+
+  it("settings lost between the check and the batch: Cloudflare controls and the logo version are not written, 403", async () => {
+    let restore = beforeBatch(1, () => setPerms([]));
+    let r: Response;
+    try { r = await call("s", "PATCH", S, { controlsEnabled: true }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    await setPerms(["settings"]);
+    restore = beforeBatch(1, () => setPerms([]));
+    try { r = await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await all("SELECT key FROM settings")).toEqual([]);
+    expect(await by("us")).toEqual([]);
+  });
+
+  it("settings lost before the logo batch: the served logo stays as it was, for PUT and DELETE", async () => {
+    const put = await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    const { logoVersion } = (await put.json()) as { logoVersion: number };
+    const served = async () => {
+      const r = await env.CACHE.getWithMetadata<{ v: number }>("instance:logo", "arrayBuffer");
+      return [r.value ? Array.from(new Uint8Array(r.value)) : null, r.metadata?.v ?? null];
+    };
+    const before = await served();
+    expect(before).toEqual([Array.from(pngBytes(4, 4)), logoVersion]);
+    let restore = beforeBatch(1, () => setPerms([]));
+    let r: Response;
+    try { r = await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(8, 8)) }); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await served()).toEqual(before);
+    await setPerms(["settings"]);
+    restore = beforeBatch(1, () => setPerms([]));
+    try { r = await call("s", "DELETE", "/api/settings/logo"); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await served()).toEqual(before);
+    expect(((await (await call("a", "GET", "/api/instance")).json()) as { logoVersion: number }).logoVersion).toBe(logoVersion);
+    expect(await by("us")).toEqual(["settings.update", "logo.update"]);
+  });
+
+  it("a logo removed concurrently: the late DELETE records no second logo.remove, and none at all once settings is lost", async () => {
+    await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    const gone = () => run("DELETE FROM settings WHERE key = 'instance.logoVersion'");
+    let restore = beforeBatch(1, gone);
+    let r: Response;
+    try { r = await call("s", "DELETE", "/api/settings/logo"); } finally { restore(); }
+    expect(r.status).toBe(200);
+    await call("s", "PUT", "/api/settings/logo", { type: "image/png", data: b64(pngBytes(4, 4)) });
+    restore = beforeBatch(1, async () => { await gone(); await setPerms([]); });
+    try { r = await call("s", "DELETE", "/api/settings/logo"); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect((await by("us")).filter((a) => a === "logo.remove" || a === "settings.update").length).toBe(2); // the two PUTs' settings.update only
+  });
+
+  it("settings lost before the Cloudflare setup's first write: nothing reaches Cloudflare or D1, 403", async () => {
+    const fake = installFakeCloudflare({ zones });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (u, i) => {
+      const req = new Request(u as RequestInfo, i);
+      if (req.url.includes("/dns_records")) await setPerms([]);
+      return fake.handle(req);
+    });
+    const r = await call("s", "POST", `${S}/setup`);
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(fake.calls.filter((x) => x.method !== "GET")).toEqual([]);
+    expect(await all("SELECT key FROM settings")).toEqual([]);
+    expect(await by("us")).toEqual([]);
+  });
+
+  it("settings lost before the Cloudflare setup records an existing record: no record id, no audit, 403", async () => {
+    const fake = installFakeCloudflare({ zones });
+    fake.state.fallbackOrigin = "edge.test";
+    await run("INSERT INTO settings (key,value,updated_at,updated_by) VALUES ('cf.target_record_intent','n1',1,'uo')");
+    fake.state.dns.push({ id: "r1", zoneId: "zsaas", type: "AAAA", name: "edge.test", content: "100::", proxied: true, comment: "linkwarren setup n1" });
+    const restore = beforeBatch(1, () => setPerms([]));
+    let r: Response;
+    try { r = await call("s", "POST", `${S}/setup`); } finally { restore(); }
+    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+    expect(await all("SELECT key FROM settings")).toEqual([{ key: "cf.target_record_intent" }]);
+    expect(await by("us")).toEqual([]);
+    await setPerms(["settings"]);
+    expect((await call("s", "POST", `${S}/setup`)).status).toBe(200);
+    expect(await all("SELECT value FROM settings WHERE key = 'cf.target_record_id'")).toEqual([{ value: "r1" }]);
+    expect(await by("us")).toEqual(["cloudflare.setup"]);
+  });
+
+  it("an owner demoted between the check and the batch deletes no secret", async () => {
+    e.SECRETS_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    try {
+      expect((await call("owner", "PUT", "/api/settings/secrets/resend", { value: "re_abcdefghijkl" })).status).toBe(200);
+      const keys = await all("SELECT key FROM settings ORDER BY key");
+      const restore = beforeBatch(1, () => run("UPDATE users SET role = 'member' WHERE id = 'uo'"));
+      let r: Response;
+      try { r = await call("owner", "DELETE", "/api/settings/secrets/resend"); } finally { restore(); }
+      expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+      expect(await all("SELECT key FROM settings ORDER BY key")).toEqual(keys);
+      expect((await all("SELECT action FROM audit_log WHERE actor_id = 'uo' ORDER BY id")).map((x) => x.action)).not.toContain("secret.delete");
+    } finally {
+      e.SECRETS_KEY = undefined;
+    }
+  });
+
+  it("an owner demoted between the check and the batch stores no secret and completes no setup", async () => {
+    e.SECRETS_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    try {
+      let restore = beforeBatch(1, () => run("UPDATE users SET role = 'member' WHERE id = 'uo'"));
+      let r: Response;
+      try { r = await call("owner", "PUT", "/api/settings/secrets/resend", { value: "re_abcdefghijkl" }); } finally { restore(); }
+      expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+      expect(await all("SELECT key FROM settings")).toEqual([]);
+      await run("UPDATE users SET role = 'owner' WHERE id = 'uo'");
+      await mainDom("dm", "m.test");
+      await run("INSERT INTO settings (key,value,updated_at,updated_by) VALUES ('instance.name','\"Acme\"',1,'uo'), ('instance.mainDomainId','\"dm\"',1,'uo')");
+      restore = beforeBatch(1, () => run("UPDATE users SET role = 'member' WHERE id = 'uo'"));
+      try { r = await call("owner", "POST", "/api/setup/complete"); } finally { restore(); }
+      expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
+      expect(await all("SELECT key FROM settings WHERE key = 'setup.completedAt'")).toEqual([]);
+      expect(await by("uo")).toEqual([]);
+    } finally {
+      e.SECRETS_KEY = undefined;
+    }
   });
 });

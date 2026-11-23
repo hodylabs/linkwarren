@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, type Domain } from "../api";
 import { Seg } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { patchDomainCf, type ControlsPatch } from "../settings/api";
 import { settingsError } from "../settings/copy";
@@ -35,7 +36,7 @@ export function CfControls({ domain, controlsEnabled }: { domain: Domain; contro
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const busy = useRef(false);
-  if (me.role !== "owner" || domain.cloudflare?.kind !== "account" || !controlsEnabled) return null;
+  if (!can(me, "domains.manage") || domain.cloudflare?.kind !== "account" || !controlsEnabled) return null;
 
   const save = async () => {
     if (busy.current) return;

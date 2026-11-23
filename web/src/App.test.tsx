@@ -5,9 +5,10 @@ import App from "./App";
 import type { Domain, Me } from "./api";
 import { errorText } from "./copy";
 import { fakeApi, type FakeRoutes } from "./test/fakeApi";
+import { MEMBER_ROLE, OWNER_ROLE } from "./test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive Owner", role: "owner" };
-const member: Me = { id: "um", email: "member@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive Owner", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "member@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const dom = (id: string, host: string, type: Domain["type"]): Domain => ({
   id, host, type, status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 3, isMember: false,
@@ -47,9 +48,9 @@ describe("App shell", () => {
     expect(calls.some((c) => c.path.startsWith("/api/users"))).toBe(false);
   });
 
-  it("member at /people sees Owner only and no owner API call is made", async () => {
+  it("member at /people sees Not in your role and no owner API call is made", async () => {
     const { calls } = boot(member, {}, "/people");
-    expect(await screen.findByText("Owner only")).toBeTruthy();
+    expect(await screen.findByText("Not in your role")).toBeTruthy();
     await screen.findByRole("button", { name: /Switch domain/ });
     expect(calls.some((c) => c.path.startsWith("/api/users") || c.path.startsWith("/api/audit"))).toBe(false);
   });
@@ -76,7 +77,7 @@ describe("App shell", () => {
     await user.keyboard("gi");
     expect(location.pathname).toBe("/agents");
     expect(await screen.findByRole("heading", { name: "API & agents" })).toBeTruthy();
-    expect(screen.queryByText("Owner only")).toBeNull();
+    expect(screen.queryByText("Not in your role")).toBeNull();
     expect(item.getAttribute("aria-current")).toBe("page");
   });
 

@@ -1,7 +1,8 @@
-import type { AppState } from "../state";
-import type { Domain } from "../api";
+import type { AppState, Overlay } from "../state";
+import type { Domain, Me } from "../api";
+import { canSee, mayOpen, seesRoles } from "../perms";
 import { navigate } from "../router";
-import { SECTIONS } from "../settings/copy";
+import { sectionsFor } from "../settings/copy";
 
 /** `quiet`: left out of the opening list; found by typing its name or its first key. */
 export type Command = { keys: string; section: "Go to" | "Create" | "Switch" | "Help"; label: string; run: () => void; quiet?: true };
@@ -37,23 +38,27 @@ export function switcherDomains(domains: Domain[]): Domain[] {
 type Ctx = Pick<AppState, "domains" | "open" | "setCurrentDomain">;
 
 /** `appMode`: linkwarren signs people in itself (not Cloudflare Access), so the account sheet exists. */
-export function buildCommands(ctx: Ctx, isOwner: boolean, appMode = false): Command[] {
+export function buildCommands(ctx: Ctx, me: Pick<Me, "role" | "perms">, appMode = false): Command[] {
   const go = (keys: string, label: string, to: string): Command => ({ keys, section: "Go to", label, run: () => navigate(to) });
+  const create = (keys: string, label: string, o: Overlay): Command[] =>
+    mayOpen(me, o) ? [{ keys, section: "Create", label, run: () => ctx.open(o) }] : [];
   return [
     go("gl", "Links", "/links"),
     go("gd", "Domains", "/domains"),
     go("ga", "Analytics", "/analytics"),
     go("af", "Filter analytics by domain", "/analytics?pick=1"),
     go("gi", "API & agents", "/agents"),
-    ...(isOwner ? [go("gp", "People & audit log", "/people"), go("gs", "Settings", "/settings")] : []),
-    ...(isOwner ? SECTIONS.map((s, i): Command => ({ ...go(`s${i + 1}`, `Settings: ${s.label}`, `/settings/${s.id}`), quiet: true })) : []),
+    ...(canSee(me, "people") ? [go("gp", "People & audit log", "/people")] : []),
+    ...(seesRoles(me) ? [go("gr", "Roles", "/people/roles")] : []),
+    ...(canSee(me, "settings") ? [go("gs", "Settings", "/settings")] : []),
+    ...(canSee(me, "settings") ? sectionsFor(me).map((s, i): Command => ({ ...go(`s${i + 1}`, `Settings: ${s.label}`, `/settings/${s.id}`), quiet: true })) : []),
     ...switcherDomains(ctx.domains).slice(0, 9).map((d, i): Command => ({
       keys: `g${i + 1}`, section: "Switch", label: `Switch to ${d.host}`, run: () => ctx.setCurrentDomain(d.id),
     })),
-    { keys: "cl", section: "Create", label: "New link", run: () => ctx.open({ kind: "newLink" }) },
-    { keys: "cd", section: "Create", label: "Add a domain", run: () => ctx.open({ kind: "addDomain" }) },
-    { keys: "ck", section: "Create", label: "New API key", run: () => ctx.open({ kind: "newKey" }) },
-    ...(isOwner ? [{ keys: "cp", section: "Create" as const, label: "Invite a person", run: () => ctx.open({ kind: "invite" }) }] : []),
+    ...create("cl", "New link", { kind: "newLink" }),
+    ...create("cd", "Add a domain", { kind: "addDomain" }),
+    ...create("ck", "New API key", { kind: "newKey" }),
+    ...create("cp", "Invite a person", { kind: "invite" }),
     { keys: "sd", section: "Switch", label: "Switch domain", run: () => ctx.open({ kind: "switcher" }) },
     ...(appMode ? [{ keys: "ys", section: "Help" as const, label: "Sign-in and security", run: () => ctx.open({ kind: "account" }) }] : []),
     { keys: "?", section: "Help", label: "All keyboard shortcuts", run: () => ctx.open({ kind: "shortcuts" }) },

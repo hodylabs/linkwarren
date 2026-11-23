@@ -8,6 +8,7 @@ import { domains } from "../src/api/domains";
 import { analytics } from "../src/api/analytics";
 import { resolveScope } from "../src/analytics";
 import { FULL_GRANT, type Grant } from "../src/principal";
+import { ROLE_JOIN, USER_COLS } from "../src/roles";
 import { rowToUser, type UserRow } from "../src/types";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
@@ -18,7 +19,7 @@ const EMAIL: Record<string, string> = { uo: "owner@example.com", ua: "a@example.
 function as(userId: string, grant: Grant) {
   const a = new Hono<{ Bindings: Env; Variables: { user: UserRow; grant: Grant } }>();
   a.use("*", async (c, next) => {
-    c.set("user", rowToUser((await one<Record<string, unknown>>("SELECT * FROM users WHERE id = ?", userId))!));
+    c.set("user", rowToUser((await one<Record<string, unknown>>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = ?`, userId))!));
     c.set("grant", grant);
     await next();
   });
@@ -88,6 +89,18 @@ describe("restricted grant: domains", () => {
     expect(((await r.json()) as { id: string }[]).map((d) => d.id).sort()).toEqual(["dA", "dS"]);
   });
 
+  it("a domains.manage holder's full list is narrowed by the grant too", async () => {
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('dmg','Dmg','[\"domains.manage\"]',0,1,1)");
+    await run("INSERT INTO users (id,email,role,role_id,status,created_at) VALUES ('ud','d@example.com','member','dmg','active',1)");
+    try {
+      const r = await as("ud", restricted(["dA", "dS"]))("GET", "/api/domains");
+      expect(((await r.json()) as { id: string; canUse: boolean }[]).map((d) => [d.id, d.canUse])).toEqual([["dA", true], ["dS", false]]);
+    } finally {
+      await run("DELETE FROM users WHERE id = 'ud'");
+      await run("DELETE FROM roles WHERE id = 'dmg'");
+    }
+  });
+
   it("analytics/links?ids= for a link on a disallowed domain is refused", async () => {
     const call = as("uo", restricted(["dA"]));
     expect((await call("GET", "/api/analytics/links?ids=lb")).status).toBe(403);
@@ -96,7 +109,7 @@ describe("restricted grant: domains", () => {
   });
 
   it("resolveScope honours the restriction, for the owner too", async () => {
-    const owner = rowToUser((await one<Record<string, unknown>>("SELECT * FROM users WHERE id = 'uo'"))!);
+    const owner = rowToUser((await one<Record<string, unknown>>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = 'uo'`))!);
     expect(await resolveScope(env, owner, null, "", ["dA"])).toEqual({ scope: { domainIds: ["dA"], linkIds: null }, truncated: false });
     expect(await resolveScope(env, owner, ["dB"], "", ["dA"])).toEqual({ error: "forbidden" });
     expect(await resolveScope(env, owner, null, "", null)).toEqual({ scope: { domainIds: null, linkIds: null }, truncated: false });

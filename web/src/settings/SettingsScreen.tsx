@@ -6,15 +6,17 @@ import { useApp } from "../state";
 import { hasUnsaved, UNSAVED } from "../unsaved";
 import { getSettings, type SettingsBody } from "./api";
 import { CloudflareSection } from "./CloudflareSection";
-import { SECTIONS, settingsError, type SectionId } from "./copy";
+import { sectionsFor, settingsError, type SectionId } from "./copy";
 import { BackupsSection, DataSection, EmailSection, InstanceSection, LinkDefaultsSection, SignInSection } from "./sections";
 
 const STEP: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
-/** Owner only (App renders "Owner only" for members before this mounts). Each section is its own URL, /settings/<section> (R15). */
+/** Needs the settings permission (App renders "Not in your role" before this mounts); secrets stay owner only. Each section is its own URL, /settings/<section> (R15). */
 export function SettingsScreen() {
   const { sub } = useRoute();
-  const section = SECTIONS.find((x) => x.id === sub)?.id;
+  const app = useApp();
+  const sections = sectionsFor(app.me);
+  const section = sections.find((x) => x.id === sub)?.id;
   useEffect(() => {
     if (!section) navigate("/settings/instance", { replace: true });
   }, [section]);
@@ -29,7 +31,6 @@ export function SettingsScreen() {
     return () => ac.abort();
   }, [tries]);
 
-  const app = useApp();
   const nav = useRef<HTMLElement>(null);
   // Arrow keys move between sections like a tab list: each step replaces the history entry, so Back leaves Settings
   // instead of walking back through every section passed. A click or Enter on a section link is a normal navigation.
@@ -42,8 +43,8 @@ export function SettingsScreen() {
     // From the focused link (Tab may have moved past the open section), else from the open section.
     const links = [...(nav.current?.querySelectorAll("a") ?? [])];
     const from = links.indexOf(document.activeElement as HTMLAnchorElement);
-    const i = ((from >= 0 ? from : SECTIONS.findIndex((x) => x.id === section)) + step + SECTIONS.length) % SECTIONS.length;
-    navigate(`/settings/${SECTIONS[i]!.id}`, { replace: true });
+    const i = ((from >= 0 ? from : sections.findIndex((x) => x.id === section)) + step + sections.length) % sections.length;
+    navigate(`/settings/${sections[i]!.id}`, { replace: true });
     links[i]?.focus();
   };
 
@@ -60,10 +61,10 @@ export function SettingsScreen() {
 
   return (
     <>
-      <ScreenHeader title="Settings" text="Owner only" />
+      <ScreenHeader title="Settings" text="This instance, for everyone on it" />
       <div className="setwrap">
         <nav className="subnav" aria-label="Settings sections" ref={nav} onKeyDown={onNavKey}>
-          {SECTIONS.map((x) => (
+          {sections.map((x) => (
             <NavLink key={x.id} to={`/settings/${x.id}`} aria-current={x.id === section ? "page" : undefined}
               onClick={(e) => x.id !== section && hasUnsaved() && (e.preventDefault(), app.announce(UNSAVED))}>
               {x.label}

@@ -6,6 +6,7 @@ import { hasUnsaved, UNSAVED } from "../unsaved";
 import { navigate, useRoute } from "../router";
 import { Sheet, useOpenSheets } from "../shell/Sheet";
 import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
+import { can } from "../perms";
 import { useApp } from "../state";
 import { BackBar, PHONE, useDetailView, useMedia } from "../shell/narrow";
 import { BULK_KEYS, BulkBar, type BulkAction } from "./BulkBar";
@@ -169,7 +170,11 @@ export function LinksScreen() {
   const at = items.findIndex((l) => l.id === sel);
   const selected = at >= 0 ? items[at]! : null;
   const selectedId = selected?.id ?? null;
-  const canEdit = (l: Link) => me.role === "owner" || l.createdBy === me.id || domainOf(l.domainId)?.ownerId === me.id;
+  // R9: an owner, anyone's with links.editAny, their own with links.create, or any on a domain they own.
+  const canEdit = (l: Link) =>
+    can(me, "links.editAny") || (l.createdBy === me.id && can(me, "links.create")) || domainOf(l.domainId)?.ownerId === me.id;
+  const canCreate = can(me, "links.create");
+  const canBulk = can(me, "links.bulk");
 
   useEffect(() => {
     if (!wantQr || !selectedId) return;
@@ -218,7 +223,9 @@ export function LinksScreen() {
   const latest = useRef({ picked, items });
   latest.current = { picked, items };
   // Every change the person makes goes through here, so the count is announced (the bar's text is not a live region).
+  // Without links.bulk nothing can be selected, whatever starts it (X, Shift+click, a long press, Ctrl+A).
   const pick = (next: Sel) => {
+    if (!canBulk && next.ids.size > 0) return;
     setPicked(next);
     const n = latest.current.items.filter((l) => next.ids.has(l.id)).length;
     app.announce(n > 0 ? `${n} selected` : "Selection cleared");
@@ -374,7 +381,7 @@ export function LinksScreen() {
             Clear search
           </button>
         )}
-        <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />
+        {canCreate && <PrimaryButton label="New link" shortcut="N" onClick={() => app.open({ kind: "newLink" })} />}
       </ScreenHeader>
       {picking && !open && (
         <BulkBar count={pickedLinks.length} cannot={pickedLinks.filter((l) => !canEdit(l)).length} onAction={onAction} onClear={clearPick} />
@@ -389,7 +396,7 @@ export function LinksScreen() {
           <table>
             <thead>
               <tr>
-                {(!phone || picking) && (
+                {canBulk && (!phone || picking) && (
                   <th className="pick">
                     <input
                       type="checkbox"
@@ -428,7 +435,7 @@ export function LinksScreen() {
                     onPointerCancel={endPress}
                     onContextMenu={(e) => phone && e.preventDefault()}
                   >
-                    {(!phone || picking) && (
+                    {canBulk && (!phone || picking) && (
                       <td className="pick">
                         <input
                           type="checkbox"
@@ -490,9 +497,11 @@ export function LinksScreen() {
           {loaded && items.length === 0 && !loadError &&
             (unfiltered ? (
               <Empty title="No links here yet." text="Short links you make show up here, newest first.">
-                <button type="button" className="btn primary" onClick={() => app.open({ kind: "newLink" })}>
-                  Create a link
-                </button>
+                {canCreate && (
+                  <button type="button" className="btn primary" onClick={() => app.open({ kind: "newLink" })}>
+                    Create a link
+                  </button>
+                )}
               </Empty>
             ) : (
               <Empty title="No links match." text="Try another filter, or clear the search." />

@@ -1,11 +1,12 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { hashPassword, iterationsOf } from "../password";
 import { passwordRule } from "../password-rule";
 import { parseSettings, settingsQ } from "../settings";
-import { canManageDomain, canUseDomain, usableDomains } from "../perm";
+import { canUseDomain, usableDomains } from "../perm";
+import { actorCan, can, type Guard } from "../roles";
 import { actor, type Grant } from "../principal";
 import { ROUTE_DEVICES, rowToDomain, rowToLink, toApiLink, type DomainRow, type LinkRow, type Route, type UserRow } from "../types";
 import { checkSlug, slugKey } from "../validate";
@@ -181,6 +182,7 @@ links.post("/bulk", bulk);
 
 links.post("/", async (c) => {
   const user = c.var.user;
+  if (!can(user, "links.create")) return c.json(forbidden, 403);
   const body = createBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: bodyError(body.error) }, 400);
   const b = body.data;
@@ -217,19 +219,20 @@ links.post("/", async (c) => {
     passwordHash, routes: rt.routes, forwardTo: null,
     createdBy: user.id, updatedBy: user.id, createdAt: now, updatedAt: now,
   };
+  const may = actorCan(user.id, "links.create");
   try {
-    // The lock check is repeated inside the insert so a delete racing this request cannot be bypassed.
+    // The lock check and the permission are repeated inside the insert so a delete or a role edit racing this request cannot be bypassed.
     const res = await c.env.DB.batch([
       c.env.DB.prepare(
         `INSERT INTO links (id,domain_id,slug,slug_key,url,redirect_code,starts_at,expires_at,pass_query,password_hash,routes,created_by,updated_by,created_at,updated_at)
-         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?))`,
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM slug_locks WHERE domain_id = ? AND lower(slug_key) = lower(?)) AND ${may.sql}`,
       ).bind(link.id, domain.id, link.slug, key, link.url, link.redirectCode, startsAt, expiresAt, link.passQuery ? 1 : 0,
-        passwordHash, JSON.stringify(link.routes), user.id, user.id, now, now, domain.id, key),
+        passwordHash, JSON.stringify(link.routes), user.id, user.id, now, now, domain.id, key, ...may.binds),
       auditStmt(c.env, { ...actor(c), action: "link.create", targetType: "link", targetId: link.id,
         detail: { host: domain.host, slug: link.slug, url: link.url, ...(passwordHash ? { protection: "set" } : {}), ...(link.routes.length ? { routes: link.routes.length } : {}) } },
       { sql: "EXISTS (SELECT 1 FROM links WHERE id = ?)", binds: [link.id] }),
     ]);
-    if (res[0]!.meta.changes === 0) return c.json({ error: "locked" }, 409);
+    if (res[0]!.meta.changes === 0) return await stillCan(c.env, may) ? c.json({ error: "locked" }, 409) : c.json(forbidden, 403);
   } catch (e) {
     if (String(e).includes("UNIQUE")) return c.json({ error: "taken" }, 409);
     throw e;
@@ -238,9 +241,52 @@ links.post("/", async (c) => {
   return c.json(toApiLink(link), 201);
 });
 
-/** The edit rule: domain use (narrowed by the grant's domains), and (creator or domain manager). Shared with the bulk route. */
+/** After a guarded write changed nothing: does the guard still hold (so the cause was something else)? */
+const stillCan = async (env: Env, g: Guard) => !!(await env.DB.prepare(`SELECT ${g.sql} ok`).bind(...g.binds).first<{ ok: number }>())?.ok;
+
+/**
+ * Which R9 path lets `user` edit `link` (domain use aside): "none" needs no permission (an owner, the domain's owner), "own"
+ * is the creator with links.create, "any" is links.editAny, null is no right at all. The write re-checks it (editGuard).
+ */
+export type EditRight = "none" | "own" | "any";
+export function editRight(user: UserRow, link: LinkRow, domain: DomainRow): EditRight | null {
+  if (user.role === "owner" || domain.ownerId === user.id) return "none";
+  if (link.createdBy === user.id && can(user, "links.create")) return "own";
+  return can(user, "links.editAny") ? "any" : null;
+}
+
+/** The edit rule (R9): domain use (narrowed by the grant's domains), and (owner, domain owner, creator with links.create, or links.editAny). Shared with the bulk route. */
 export const canEditLink = (user: UserRow, link: LinkRow, domain: DomainRow, member: boolean, only: readonly string[] | null): boolean =>
-  canUseDomain(user, domain, member, only) && (link.createdBy === user.id || canManageDomain(user, domain));
+  canUseDomain(user, domain, member, only) && editRight(user, link, domain) !== null;
+
+/**
+ * What a write's edit right is re-checked from (liveEdit): `c` 1 when the actor created the link, `d` the link's domain id
+ * when the actor owned that domain at read time (else null: a domain-owner path gained in flight is not taken, fail closed).
+ */
+export type EditFacts = { c: 0 | 1; d: string | null };
+export const editFacts = (user: UserRow, link: LinkRow, domain: DomainRow): EditFacts =>
+  ({ c: link.createdBy === user.id ? 1 : 0, d: domain.ownerId === user.id ? domain.id : null });
+
+/**
+ * The R9 right as it stands at write time, from SQL expressions for the facts (`c`, `d`): the actor is an active owner, holds
+ * links.editAny, created the link and holds links.create, or (active) still owns the domain. Never the right read earlier, so a
+ * demotion or role edit in flight cannot keep a path it removed. The row-free checks come first: only a domain owner's rows
+ * reach the per-row probe.
+ */
+export const liveEdit = (userId: string, c: string, d: string, dBinds: unknown[] = []): Guard => {
+  const cr = actorCan(userId, "links.create"), a = actorCan(userId, "links.editAny");
+  return {
+    sql: `(EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active' AND role = 'owner') OR ${a.sql} OR (${c} = 1 AND ${cr.sql})
+      OR (${d} IS NOT NULL AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active') AND EXISTS (SELECT 1 FROM domains WHERE id = ${d} AND owner_id = ?)))`,
+    binds: [userId, ...a.binds, ...cr.binds, ...dBinds, userId, ...dBinds, userId],
+  };
+};
+
+/** The SQL re-check of the edit rule for a single link's write batch (domain use is checked by the caller). */
+export const editGuard = (user: UserRow, link: LinkRow, domain: DomainRow): Guard => {
+  const f = editFacts(user, link, domain);
+  return liveEdit(user.id, String(f.c), "?", [f.d]);
+};
 
 /** Loads a link and enforces edit rights (canEditLink); `withHosts` also reads the active hosts in the same batch. */
 async function editable(c: { env: Env; var: { user: UserRow; grant: Grant } }, id: string, withHosts = false) {
@@ -270,6 +316,7 @@ links.patch("/:id", async (c) => {
   const found = await editable(c, c.req.param("id"), b.url !== undefined || !!b.routes?.length);
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain, hosts } = found;
+  const g = editGuard(user, link, domain);
   // A forwarder is never edited: it can only be deleted.
   if (link.forwardTo) return c.json({ error: "forwarder" }, 409);
   let url = link.url;
@@ -314,14 +361,11 @@ links.patch("/:id", async (c) => {
   const res = await c.env.DB.batch([
     auditStmt(c.env, { ...actor(c), action: "link.update", targetType: "link", targetId: link.id,
       detail: { host: domain.host, slug: link.slug, url: next.url, ...(protection ? { protection } : {}), ...(b.routes !== undefined ? { routes: next.routes.length } : {}) } },
-    { sql: "EXISTS (SELECT 1 FROM links WHERE id = ? AND updated_at = ?)", binds: [link.id, link.updatedAt] }),
-    c.env.DB.prepare(`UPDATE links SET ${cols.map(([k]) => `${k}=?`).join(", ")} WHERE id=? AND updated_at=?`)
-      .bind(...cols.map(([, v]) => v), link.id, link.updatedAt),
+    { sql: `EXISTS (SELECT 1 FROM links WHERE id = ? AND updated_at = ?) AND ${g.sql}`, binds: [link.id, link.updatedAt, ...g.binds] }),
+    c.env.DB.prepare(`UPDATE links SET ${cols.map(([k]) => `${k}=?`).join(", ")} WHERE id=? AND updated_at=? AND ${g.sql}`)
+      .bind(...cols.map(([, v]) => v), link.id, link.updatedAt, ...g.binds),
   ]);
-  if (res[1]!.meta.changes === 0) {
-    const gone = !(await c.env.DB.prepare("SELECT 1 FROM links WHERE id = ?").bind(link.id).first());
-    return gone ? c.json({ error: "not_found" }, 404) : c.json({ error: "conflict" }, 409);
-  }
+  if (res[1]!.meta.changes === 0) return lost(c, link.id, g);
   await purge(c.env, link.domainId, link.slugKey);
   return c.json(toApiLink(next));
 });
@@ -329,23 +373,30 @@ links.patch("/:id", async (c) => {
 /**
  * Deleting a link deletes every forwarder aimed at it and locks their slugs, so a printed QR code for an old
  * address never lands on an unrelated link. `parents`: JSON array of `{ t: link id, ... }`; `guard` reads
- * `j.value` and must hold only while that link is still there to delete. Lock, audit (one row per forwarder) and delete, in that
+ * `j.value` (its binds come last) and must hold only while that link is still there to delete and the actor may delete it. Lock, audit (one row per forwarder) and delete, in that
  * order, before the parent's own DELETE in the same batch; the DELETE returns the cache keys to purge. Index probes only
  * (links_forward_to).
  */
-export function forwarderDeletes(env: Env, who: { actorId: string; via: string | null }, now: number, parents: string, guard: string): D1PreparedStatement[] {
+export function forwarderDeletes(env: Env, who: { actorId: string; via: string | null }, now: number, parents: string, g: Guard): D1PreparedStatement[] {
+  const guard = g.sql;
   const of = `FROM json_each(?) j JOIN links f ON f.forward_to = json_extract(j.value,'$.t')`;
   return [
     env.DB.prepare(`INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT f.domain_id, f.slug_key, ?, ? ${of} WHERE ${guard}`)
-      .bind(now, who.actorId, parents),
+      .bind(now, who.actorId, parents, ...g.binds),
     env.DB.prepare(
       `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
        SELECT ?, ?, ?, 'link.delete', 'link', f.id, json_object('host', d.host, 'slug', f.slug, 'url', f.url, 'forwarderOf', f.forward_to)
        ${of} JOIN domains d ON d.id = f.domain_id WHERE ${guard}`,
-    ).bind(now, who.actorId, who.via, parents),
+    ).bind(now, who.actorId, who.via, parents, ...g.binds),
     env.DB.prepare(`DELETE FROM links WHERE forward_to IN (SELECT json_extract(j.value,'$.t') FROM json_each(?) j WHERE ${guard}) RETURNING domain_id, slug_key`)
-      .bind(parents),
+      .bind(parents, ...g.binds),
   ];
+}
+
+/** A guarded PATCH or DELETE that changed nothing: the link is gone (404), the permission is (403), or it changed (409). */
+async function lost(c: Context<E>, id: string, g: Guard) {
+  const r = await c.env.DB.prepare(`SELECT EXISTS (SELECT 1 FROM links WHERE id = ?) still, ${g.sql} ok`).bind(id, ...g.binds).first<{ still: number; ok: number }>();
+  return !r?.still ? c.json({ error: "not_found" }, 404) : !r.ok ? c.json(forbidden, 403) : c.json({ error: "conflict" }, 409);
 }
 
 /** Purges the cache keys a forwarderDeletes DELETE returned. */
@@ -357,24 +408,25 @@ links.delete("/:id", async (c) => {
   const found = await editable(c, c.req.param("id"));
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain } = found;
+  const g = editGuard(user, link, domain);
   // Every write runs only while the link is still the revision read (same address, same updated_at): a racing second delete or
   // a move in between writes nothing, so a moved link's new address is never left unlocked.
   const rev = "id = ? AND domain_id = ? AND slug_key = ? AND updated_at = ?", revBinds = [link.id, link.domainId, link.slugKey, link.updatedAt];
-  const here = { sql: `EXISTS (SELECT 1 FROM links WHERE ${rev})`, binds: revBinds };
+  const here = { sql: `EXISTS (SELECT 1 FROM links WHERE ${rev}) AND ${g.sql}`, binds: [...revBinds, ...g.binds] };
   const now = Math.floor(Date.now() / 1000);
   const parent = JSON.stringify([{ t: link.id, d: link.domainId, s: link.slugKey, u: link.updatedAt }]);
   const res = await c.env.DB.batch([
     c.env.DB.prepare(`INSERT OR IGNORE INTO slug_locks (domain_id, slug_key, locked_at, locked_by) SELECT ?,?,?,? WHERE ${here.sql}`)
-      .bind(link.domainId, link.slugKey, now, user.id, ...revBinds),
+      .bind(link.domainId, link.slugKey, now, user.id, ...here.binds),
     auditStmt(c.env, { ...actor(c), action: "link.delete", targetType: "link", targetId: link.id,
       detail: { host: domain.host, slug: link.slug, url: link.url } }, here),
-    ...forwarderDeletes(c.env, actor(c), now, parent, "EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t') AND domain_id = json_extract(j.value,'$.d') AND slug_key = json_extract(j.value,'$.s') AND updated_at = json_extract(j.value,'$.u'))"),
-    c.env.DB.prepare(`DELETE FROM links WHERE ${rev}`).bind(...revBinds),
+    ...forwarderDeletes(c.env, actor(c), now, parent, {
+      sql: `EXISTS (SELECT 1 FROM links WHERE id = json_extract(j.value,'$.t') AND domain_id = json_extract(j.value,'$.d') AND slug_key = json_extract(j.value,'$.s') AND updated_at = json_extract(j.value,'$.u')) AND ${g.sql}`,
+      binds: g.binds,
+    }),
+    c.env.DB.prepare(`DELETE FROM links WHERE ${rev} AND ${g.sql}`).bind(...revBinds, ...g.binds),
   ]);
-  if (res[5]!.meta.changes === 0) {
-    const still = await c.env.DB.prepare("SELECT 1 FROM links WHERE id = ?").bind(link.id).first();
-    return still ? c.json({ error: "conflict" }, 409) : c.json({ error: "not_found" }, 404);
-  }
+  if (res[5]!.meta.changes === 0) return lost(c, link.id, g);
   await Promise.all([purge(c.env, link.domainId, link.slugKey), purgeReturned(c.env, res[4]!)]);
   return c.body(null, 204);
 });
@@ -383,22 +435,24 @@ export const locks = new Hono<E>();
 
 locks.delete("/:domainId/:slugKey", async (c) => {
   const user = c.var.user;
-  if (user.role !== "owner") return c.json(forbidden, 403);
+  if (!can(user, "links.editAny")) return c.json(forbidden, 403);
   const { domainId, slugKey: raw } = c.req.param();
   const domain = await getDomain(c.env, domainId);
-  if (!domain) return c.json({ error: "not_found" }, 404);
+  // Unknown and unusable answer alike, so a domain id is never confirmed to someone who cannot use it.
+  if (!domain || !canUseDomain(user, domain, await isMember(c.env, domain.id, user.id), c.var.grant.domains)) return c.json(forbidden, 403);
   const key = slugKey(raw, domain.caseSensitive);
-  const match = "domain_id = ? AND lower(slug_key) = lower(?)";
+  const g = actorCan(user.id, "links.editAny");
+  const match = `domain_id = ? AND lower(slug_key) = lower(?) AND ${g.sql}`;
   // Audit first, in the same batch, from the rows the DELETE removes; HAVING skips it when no lock matches (lost race).
   const res = await c.env.DB.batch([
     c.env.DB.prepare(
       `INSERT INTO audit_log (at, actor_id, via, action, target_type, target_id, detail)
        SELECT ?, ?, NULL, 'lock.release', 'lock', ?, json_object('domainId', ?, 'slugKeys', json_group_array(slug_key))
        FROM slug_locks WHERE ${match} HAVING COUNT(*) > 0`,
-    ).bind(Math.floor(Date.now() / 1000), user.id, `${domainId}/${key}`, domainId, domainId, key),
-    c.env.DB.prepare(`DELETE FROM slug_locks WHERE ${match}`).bind(domainId, key),
+    ).bind(Math.floor(Date.now() / 1000), user.id, `${domainId}/${key}`, domainId, domainId, key, ...g.binds),
+    c.env.DB.prepare(`DELETE FROM slug_locks WHERE ${match}`).bind(domainId, key, ...g.binds),
   ]);
-  if (res[1]!.meta.changes === 0) return c.json({ error: "not_found" }, 404);
+  if (res[1]!.meta.changes === 0) return await stillCan(c.env, g) ? c.json({ error: "not_found" }, 404) : c.json(forbidden, 403);
   await purge(c.env, domainId, key);
   return c.body(null, 204);
 });

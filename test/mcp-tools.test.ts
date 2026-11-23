@@ -4,7 +4,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import pkg from "../package.json";
 import { INSTRUCTIONS } from "../src/mcp/server";
 import { apiAs, TOOLS } from "../src/mcp/tools";
-import { ApiError } from "../src/mcp/run";
+import { ApiError, ROLE_REFUSED } from "../src/mcp/run";
+import { MEMBER_DEFAULT, ROLE_JOIN, USER_COLS } from "../src/roles";
 import { rowToUser } from "../src/types";
 import { VERSION } from "../src/version";
 import { setupAccess } from "./helpers/access";
@@ -101,7 +102,7 @@ describe("server", () => {
     const r = await tool(t.accessToken, "server_info");
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({
-      version: VERSION, access: "read", role: "member", mcpUrl: "https://dash.test/mcp",
+      version: VERSION, access: "read", role: "member", roleName: "Member", perms: [...MEMBER_DEFAULT], mcpUrl: "https://dash.test/mcp",
       limits: { perUserPerMinute: 120, perConnectionPerMinute: 60, perUserPerDay: 1000 },
     });
     expect(r.raw).not.toContain("@");
@@ -567,10 +568,52 @@ describe("bounded inputs", () => {
   });
 
   it("apiAs refuses a path outside /api/v1 with a plain error, not an API answer", async () => {
-    const user = rowToUser((await one<Row>("SELECT * FROM users WHERE id = 'ua'"))!);
+    const user = rowToUser((await one<Row>(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = 'ua'`))!);
     const api = apiAs(env, createExecutionContext(), { user, grant: { write: false, del: false, domains: null, via: "t" }, limiterKey: "api:c:x" });
     const e = await api("GET", "/../keys").catch((x: unknown) => x);
     expect(e).toBeInstanceOf(Error);
     expect(e).not.toBeInstanceOf(ApiError);
+  });
+});
+
+// S8 R7: a connection follows its person's current role: refused (not revoked) without `agents`, never more than the role.
+describe("agents follow the role", () => {
+  const role = (id: string, perms: readonly string[]) =>
+    run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES (?,?,?,0,1,1) ON CONFLICT(id) DO UPDATE SET perms = excluded.perms", id, `Role ${id}`, JSON.stringify(perms));
+
+  it("agents off: every call refused with the role copy, nothing written; on again: the same token works", async () => {
+    await role("ag", ["agents", "links.create"]);
+    const t = await connectAgent(A, { write: true, roleId: "ag" });
+    // connectAgent's roleId really puts the person on the named role
+    expect(await one("SELECT role_id FROM users WHERE id = 'ua'")).toEqual({ role_id: "ag" });
+    expect((await tool(t.accessToken, "server_info")).isError).toBeFalsy();
+    await role("ag", ["links.create"]);
+    const limits = await all<Row>("SELECT * FROM auth_limits ORDER BY key");
+    for (const [name, args] of [["server_info", {}], ["search_links", {}], ["create_link", { domain: "go.test", slug: "late", url: "https://y.com" }]] as const) {
+      const r = await tool(t.accessToken, name, args);
+      unlogged();
+      expect([name, r.isError, r.content[0]!.text]).toEqual([name, true, ROLE_REFUSED]);
+    }
+    expect(ROLE_REFUSED).toBe("Your role no longer allows AI agents. Ask an owner.");
+    expect(await one("SELECT 1 FROM links WHERE slug = 'late'")).toBeNull();
+    expect(await all<Row>("SELECT * FROM auth_limits ORDER BY key")).toEqual(limits);
+    expect(await one("SELECT revoked_at FROM agent_connections WHERE id = ?", t.connId)).toEqual({ revoked_at: null });
+    await role("ag", ["agents", "links.create"]);
+    expect((await tool(t.accessToken, "server_info")).isError).toBeFalsy();
+  });
+
+  it("a write connection never exceeds the role: links.create removed, create_link is forbidden and writes nothing", async () => {
+    await role("aw", ["agents", "links.create"]);
+    const t = await connectAgent(A, { write: true, roleId: "aw" });
+    await role("aw", ["agents"]);
+    expect(errOf(await tool(t.accessToken, "create_link", { domain: "go.test", slug: "late", url: "https://y.com" }))).toEqual({ error: "forbidden", status: 403 });
+    expect(await one("SELECT 1 FROM links WHERE slug = 'late'")).toBeNull();
+  });
+
+  it("keys off does not touch agents; server_info shows the role's name and permissions", async () => {
+    await role("ak", ["agents"]);
+    const t = await connectAgent(A, { roleId: "ak" });
+    const r = await tool(t.accessToken, "server_info");
+    expect(r.structuredContent).toMatchObject({ role: "member", roleName: "Role ak", perms: ["agents"] });
   });
 });

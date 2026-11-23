@@ -53,11 +53,11 @@ beforeEach(async () => {
 describe("PATCH /api/users/:id role", () => {
   it("promotes a member; audit user.role", async () => {
     const m = await signedIn("m@example.com");
-    const r = await patch(A.cookie, m.user.id, { role: "owner" });
+    const r = await patch(A.cookie, m.user.id, { roleId: "owner" });
     expect(r.status).toBe(200);
     const { user: u } = (await r.json()) as { user: { id: string; role: string; linkCount: number; domains: unknown[] } };
     expect(u).toMatchObject({ id: m.user.id, role: "owner", status: "active", linkCount: 0, domains: [] });
-    expect(await audits("user.role")).toEqual([{ actor_id: A.user.id, target_id: m.user.id, detail: JSON.stringify({ email: "m@example.com", from: "member", to: "owner", movedDomains: [] }) }]);
+    expect(await audits("user.role")).toEqual([{ actor_id: A.user.id, target_id: m.user.id, detail: JSON.stringify({ email: "m@example.com", from: "Member", to: "Owner", fromId: "member", toId: "owner", movedDomains: [] }) }]);
   });
 
   it("demoting owner B moves B's main and shared domains to the actor, leaves the private one", async () => {
@@ -65,34 +65,34 @@ describe("PATCH /api/users/:id role", () => {
     await dom("dm", "go.test", "main", B.user.id);
     await dom("ds", "s.test", "shared", B.user.id);
     await dom("dp", "p.test", "private", B.user.id);
-    const r = await patch(A.cookie, B.user.id, { role: "member" });
+    const r = await patch(A.cookie, B.user.id, { roleId: "member" });
     expect(r.status).toBe(200);
     expect(((await r.json()) as { user: { role: string } }).user.role).toBe("member");
     expect(await rows("SELECT id, owner_id FROM domains ORDER BY id")).toEqual([
       { id: "dm", owner_id: A.user.id }, { id: "dp", owner_id: B.user.id }, { id: "ds", owner_id: A.user.id },
     ]);
     const [a] = await audits("user.role");
-    expect(JSON.parse(a!.detail as string)).toEqual({ email: "b@example.com", from: "owner", to: "member", movedDomains: ["go.test", "s.test"] });
+    expect(JSON.parse(a!.detail as string)).toEqual({ email: "b@example.com", from: "Owner", to: "Member", fromId: "owner", toId: "member", movedDomains: ["go.test", "s.test"] });
   });
 
   it("member 403 (PATCH and DELETE), unknown id 404, empty body 400 no_changes, extra key 400", async () => {
     const m = await signedIn("m@example.com");
     const o = await signedIn("o2@example.com", { role: "owner" });
-    for (const r of [await patch(m.cookie, o.user.id, { role: "member" }), await remove(m.cookie, o.user.id), await patch(m.cookie, "nope", { role: "owner" })]) {
+    for (const r of [await patch(m.cookie, o.user.id, { roleId: "member" }), await remove(m.cookie, o.user.id), await patch(m.cookie, "nope", { roleId: "owner" })]) {
       expect(r.status).toBe(403);
       expect(await r.json()).toEqual({ error: "forbidden" });
     }
-    expect((await patch(A.cookie, "nope", { role: "owner" })).status).toBe(404);
+    expect((await patch(A.cookie, "nope", { roleId: "owner" })).status).toBe(404);
     expect((await remove(A.cookie, "nope")).status).toBe(404);
     const e = await patch(A.cookie, m.user.id, {});
     expect([e.status, await e.json()]).toEqual([400, { error: "no_changes" }]);
-    expect((await patch(A.cookie, m.user.id, { role: "owner", email: "x@example.com" })).status).toBe(400);
-    expect((await patch(A.cookie, m.user.id, { role: "admin" })).status).toBe(400);
+    expect((await patch(A.cookie, m.user.id, { roleId: "owner", email: "x@example.com" })).status).toBe(400);
+    expect((await patch(A.cookie, m.user.id, { roleId: "admin" })).status).toBe(400);
     expect(await user(o.user.id)).toEqual({ role: "owner", status: "active" });
   });
 
   it("self: PATCH or DELETE self is 409 self", async () => {
-    for (const r of [await patch(A.cookie, A.user.id, { role: "member" }), await patch(A.cookie, A.user.id, { status: "disabled" }), await remove(A.cookie, A.user.id)]) {
+    for (const r of [await patch(A.cookie, A.user.id, { roleId: "member" }), await patch(A.cookie, A.user.id, { status: "disabled" }), await remove(A.cookie, A.user.id)]) {
       expect(r.status).toBe(409);
       expect(await r.json()).toEqual({ error: "self" });
     }
@@ -119,7 +119,7 @@ describe("Review Focus 1: never zero owners", () => {
     const C = await signedIn("c@example.com", { role: "owner" });
     const restore = beforeBatch(1, () => run("UPDATE users SET status = 'disabled' WHERE id = ?", C.user.id));
     let r: Response;
-    try { r = await patch(A.cookie, B.user.id, { role: "member" }); } finally { restore(); }
+    try { r = await patch(A.cookie, B.user.id, { roleId: "member" }); } finally { restore(); }
     expect(r.status).toBe(200);
     expect(await user(A.user.id)).toEqual({ role: "owner", status: "active" });
     expect(await user(B.user.id)).toEqual({ role: "member", status: "active" });
@@ -128,7 +128,7 @@ describe("Review Focus 1: never zero owners", () => {
 
   it("(c) the only active owner changing themselves is 409 self", async () => {
     await signedIn("m@example.com");
-    expect((await patch(A.cookie, A.user.id, { role: "member" })).status).toBe(409);
+    expect((await patch(A.cookie, A.user.id, { roleId: "member" })).status).toBe(409);
     expect(await activeOwners()).toBe(1);
   });
 });
@@ -307,7 +307,7 @@ describe("hardening (Task 11)", () => {
     const B = await signedIn("b@example.com", { role: "owner" });
     await env.DB.batch(Array.from({ length: 150 }, (_, i) =>
       env.DB.prepare("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES (?,?,'shared','active',?,1)").bind(`d${i}`, `s${i}.test`, B.user.id)));
-    const r = await patch(A.cookie, B.user.id, { role: "member" });
+    const r = await patch(A.cookie, B.user.id, { roleId: "member" });
     expect(r.status).toBe(200);
     expect(await one("SELECT COUNT(*) n FROM domains WHERE owner_id = ?", A.user.id)).toEqual({ n: 150 });
     const [a] = await audits("user.role");

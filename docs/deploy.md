@@ -165,7 +165,7 @@ Sign-in links are sent through [Resend](https://resend.com) only.
 3. Create an API key with **sending access only**, restricted to that domain.
 4. Give the key to linkwarren one of two ways: as a Worker secret (`npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`, never in `vars`; it wins when set), or, after your first sign-in, pasted by the owner in the setup wizard or Settings, which stores it encrypted in the database (needs `SECRETS_KEY`). The first key of a fresh app-mode instance must be the Worker secret (see above).
 5. Set the var `EMAIL_FROM` to an address on that verified domain, e.g. `links@example.com`. Mail is sent as `<instance name> <EMAIL_FROM>`.
-6. In Settings, use **Send test email**: it mails the signed-in owner only, at most once a minute, and counts against the hourly instance cap.
+6. In Settings, use **Send test email**: it mails the signed-in person who sends it (an owner, or a role with the `settings` permission) only, at most once a minute, and counts against the hourly instance cap.
 
 All mail shares one Resend budget: the Resend free tier sends 100 emails a day for the account (sign-in links, invites and test mails together). linkwarren splits it with its own caps: at most 50 sign-in emails per hour, and invites at most 1 per address per minute, 20 per hour and 40 per UTC day for the instance, so at least 60 of the 100 stay for sign-in links. The sign-in hourly cap alone does not stop a busy day from reaching 100: once Resend refuses, every mail fails (the Worker logs `resend_rejected` with the status) until Resend's daily reset, and people without a passkey cannot sign in until then. Onboarding a large team on the free tier, invite at most 40 people a day, or use a paid Resend plan. At an invite cap the person is still created and the dashboard says the email was not sent (`too_many`); resend it later. Invites and sign-in links use the instance name in the subject and sender. The invite says who invited the person, links only to `https://<dashboard host>/join` (no address, id or token in the URL), and adds an owner line for owners.
 
@@ -256,11 +256,11 @@ Agents (Claude, ChatGPT, Claude Code, Codex, Gemini and other MCP clients) conne
 
 ### MCP_ENABLED
 
-Whether agents can connect is the owner's switch on the API & agents screen. It is stored in the D1 table `settings` (key `mcp.enabled`), changed only by the owner, and each change is written to the audit log as `settings.update`. Every signed-in person sees the state; only the owner can change it. The Worker caches the value for 10 seconds per isolate: the isolate that saved it applies it at once, others within 10 seconds.
+Whether agents can connect is a switch on the API & agents screen. It is stored in the D1 table `settings` (key `mcp.enabled`), changed only by people with the Settings permission (owners always), and each change is written to the audit log as `settings.update`. Every signed-in person sees the state; only people with Settings can change it. The Worker caches the value for 10 seconds per isolate: the isolate that saved it applies it at once, others within 10 seconds.
 
 The var `MCP_ENABLED` is the instance-wide lock:
 
-- **Unset or `"1"`:** the owner's switch decides. With no saved choice, agents are on only when the var is `"1"`, otherwise off. So a fresh instance has agents off until the owner turns them on.
+- **Unset or `"1"`:** the switch decides. With no saved choice, agents are on only when the var is `"1"`, otherwise off. So a fresh instance has agents off until the owner turns them on.
 - **Exactly `"0"`:** agents are locked off and the switch is disabled (a save answers `409 mcp_locked`). Any other value, for example `"false"`, does not lock: once a choice is saved, the switch decides.
 
 Off, `/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` (with or without `/mcp`) answer `404 {"error":"not_found"}` (`/authorize` in any URL encoding): no agent can register, connect, refresh or call a tool. It revokes nothing: grants and connections stay, and turning agents back on makes them work again. If D1 cannot be read to decide, the same paths answer `503 {"error":"unavailable"}` (agents are treated as off). API keys on `/api/v1` are not affected either way.

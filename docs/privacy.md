@@ -42,12 +42,12 @@ When people connect agents (MCP) or create API keys (see [agents.md](agents.md))
 - **API keys:** the name, the access chosen, the domains it is limited to, created, expiry, last use and revoked times, a SHA-256 hash of the key and its first 10 characters for display. The key itself is shown once and never stored.
 - **Agent connections:** the agent's name, the host it redirects back to (for example `claude.ai`), the access chosen, when it was connected or disconnected. Last use is read from the tool calls.
 - **Audit log:** a change made by an agent or a key is recorded like any other change, with "via" naming the agent or the key (for example "Mia via Claude"). Kept 3 years like the rest of the audit log.
-- **The agents switch:** whether agents may connect is a row in the D1 `settings` table (`mcp.enabled`). Each change by the owner is audited as `settings.update`.
+- **The agents switch:** whether agents may connect is a row in the D1 `settings` table (`mcp.enabled`). Each change, by a person with the Settings permission, is audited as `settings.update`.
 - **Bulk changes** write one audit row per link, with "via" like any change. A move records the old and new host, the slug, the destination and the id of the forwarder it left (`link.move`); a copy records the new link with the id it was copied from (`link.create`). Deleting a link also records one `link.delete` row per forwarder it removes (`forwarderOf` names the link). A password change records only that protection was set or cleared, never the password or its hash.
 
 A bulk CSV export from the Links page is generated in your browser and never sent to the server. It holds destinations, rules and creators as that person may see them, and `has_password` (yes or no), never a password.
 
-The OAuth state (registered clients, grants and hashed tokens) lives in the `OAUTH_KV` namespace. A grant carries only the person's id, the connection id and the agent's name, never link data. Grants end with Disconnect or when their refresh token expires (30 days unused); client registrations are kept 30 days.
+The OAuth state (registered clients, grants and hashed tokens) lives in the `OAUTH_KV` namespace. A grant carries only the person's id, the connection id and the agent's name, never link data. Grants end with Disconnect or when their refresh token expires (30 days unused); client registrations are kept 30 days. A role that loses AI agents keeps its people's grants and connections (refused, not deleted); an agent that keeps refreshing keeps its grant until it is disconnected.
 
 When an agent tries to register with a callback address the instance does not allow, linkwarren logs one line with that address's origin and path (never its query, the agent's name or any secret), so the owner can decide to allow it.
 
@@ -57,7 +57,8 @@ When an agent tries to register with a callback address the instance does not al
 
 The people who use the dashboard are stored in the instance's D1 database:
 
-- **People:** email address, name (optional), role (owner or member), status (invited, active or disabled) and when they were added.
+- **People:** email address, name (optional), role (Owner, Member or a custom role, shown by its name), status (invited, active or disabled) and when they were added.
+- **Roles:** each custom role's name, its permission toggles, when it was created and changed, and who changed it last. Roles hold no personal data beyond that last editor.
 - **Sign-in** (when the instance runs its own sign-in, `AUTH_MODE=app`): sessions with the sign-in method, the device (a short label from the browser) and the IP range (the /24 or /48, never the full address), passkeys (the public key and a name, never a private key), and email sign-in tokens, of which only a SHA-256 hash is stored. Sessions and tokens end when they expire or when the person signs out, is disabled or is removed.
 - **Sign-in limiter:** a sign-in email request counts against the address (hashed) and against the requester's IP range (the /24 or /48, never the full address). These counters live in the same rate-limit table as the password limits and are cleaned up the same way, normally within about two hours.
 - **Removing a person** deletes their row, sessions, passkeys, keys and agent connections. Their email address stays in the audit log, in the details of entries such as an invite, a role change, a revoked invite and the removal itself, for the 3-year audit retention.

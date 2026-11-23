@@ -5,9 +5,10 @@ import App from "../App";
 import type { Domain, Link, Me } from "../api";
 import { errorText } from "../copy";
 import { fakeApi, type FakeRes, type FakeRoutes } from "../test/fakeApi";
+import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
-const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner" };
-const member: Me = { id: "um", email: "m@example.com", name: null, role: "member" };
+const owner: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
+const member: Me = { id: "um", email: "m@example.com", name: null, role: "member", ...MEMBER_ROLE };
 const domain: Domain = {
   id: "d1", host: "go.test", type: "main", status: "active", ownerId: "uo", bareRedirect: null, notfoundRedirect: null,
   caseSensitive: false, noindex: true, reservedExtra: [], createdAt: 1, linkCount: 3, isMember: false,
@@ -1108,5 +1109,43 @@ describe("unsaved draft guard (S2 ruling)", () => {
     rows()[1]!.focus();
     await user.keyboard("j");
     expect(rows()[2]!.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("Links screen follows the role", () => {
+  const mine = mk("m1", "mine", { createdBy: "um" });
+  it("a Member keeps today's toolbar: New link, the select column and their own link's Delete", async () => {
+    boot({ me: member, path: "/links?sel=m1", page: () => ({ body: { items: [mine], next: null } }) });
+    await ready();
+    expect(screen.getByRole("button", { name: /New link/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Select every loaded link" })).toBeTruthy();
+    expect(within(detail()).getByRole("button", { name: /^Delete/ })).toBeTruthy();
+  });
+
+  it("without links.create: no New link button, N opens nothing, and their own link is read-only", async () => {
+    const me: Me = { ...member, ...customRole(["links.bulk"]) };
+    const { user } = boot({ me, path: "/links?sel=m1", page: () => ({ body: { items: [mine], next: null } }) });
+    await ready();
+    expect(screen.queryByRole("button", { name: /New link/ })).toBeNull();
+    expect(within(detail()).queryByRole("button", { name: /^Delete/ })).toBeNull();
+    rows()[0]!.focus();
+    await user.keyboard("n");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("without links.bulk: no select column and X selects nothing", async () => {
+    const me: Me = { ...member, ...customRole(["links.create"]) };
+    const { user } = boot({ me });
+    await ready();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    rows()[0]!.focus();
+    await user.keyboard("x");
+    expect(screen.queryByText(/selected/)).toBeNull();
+  });
+
+  it("links.editAny lets a role edit a teammate's link", async () => {
+    boot({ me: { ...member, ...customRole(["links.editAny"]) }, path: "/links?sel=l3" });
+    await ready();
+    expect(within(detail()).getByRole("button", { name: /^Delete/ })).toBeTruthy();
   });
 });
