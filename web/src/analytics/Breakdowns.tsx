@@ -136,7 +136,8 @@ export function Breakdowns({ report: r, detail, perLink = false, range = "", not
   // The ARIA tab pattern: one Tab stop, the arrows, Home and End move and select.
   const onKey = (e: KeyboardEvent) => {
     const i = TABS.findIndex((t) => t.id === tab);
-    const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TABS.length - 1 }[e.key];
+    const keys: Record<string, number> = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TABS.length - 1 };
+    const to = keys[e.key];
     if (to === undefined) return;
     e.preventDefault();
     const n = (to + TABS.length) % TABS.length;

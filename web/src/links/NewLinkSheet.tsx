@@ -122,6 +122,13 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
   const [photoBusy, setPhotoBusy] = useState(false); // a picked photo is still being resized: Create and Save wait
   const isCard = kind === "vcard";
   const cardWait = isCard && photoBusy;
+  const photoBusyNow = useRef(photoBusy);
+  photoBusyNow.current = photoBusy;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
   const pwRef = useRef<HTMLInputElement>(null);
   const routesRef = useRef<HTMLDivElement>(null);
   const [check, setCheck] = useState<Check | null>(null);
@@ -296,7 +303,8 @@ export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { sl
       onSaved?.(saved);
       app.announce("Saved");
       // Typed on while it saved: stay open, and the new revision keeps those fields. Otherwise the sheet is done.
-      if (JSON.stringify(latest.current) === JSON.stringify(d)) close();
+      // A photo still resizing is a newer edit too; a sheet closed (and maybe reopened) meanwhile is not this one to close.
+      if (mounted.current && !photoBusyNow.current && JSON.stringify(latest.current) === JSON.stringify(d)) close();
     } catch (e) {
       fail(e);
     } finally {

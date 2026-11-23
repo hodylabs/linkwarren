@@ -291,7 +291,7 @@ export function AnalyticsScreen() {
               <h1 className="eyebrow">Link analytics</h1>
               {title && <p className="short big">{title}</p>}
             </div>
-            {report?.link && (
+            {report?.link && !stale && (
               <>
                 <button type="button" className="btn" onClick={copyLink}>
                   <Icon name="copy" />Copy

@@ -228,10 +228,10 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .ver a:hover{text-decoration:underline}
 /* the collapsed rail: icons only */
 .app.mini .rail{padding:14px 10px}
-.app.mini .nav a{justify-content:center;padding:0}
-.app.mini .nav a .lbl,.app.mini .nav a .k,.app.mini .nav-sep,.app.mini .ver,.app.mini .switch b,.app.mini .switch small,.app.mini .switch svg{display:none}
-.app.mini .nav-sep{display:block;height:12px;padding:0;font-size:0}
-.app.mini .switch{justify-content:center;padding:0}
+.app.mini .rail .nav a{justify-content:center;padding:0}
+.app.mini .rail .nav a .lbl,.app.mini .rail .nav a .k,.app.mini .rail .nav-sep,.app.mini .rail .ver,.app.mini .rail .switch b,.app.mini .rail .switch small,.app.mini .rail .switch svg{display:none}
+.app.mini .rail .nav-sep{display:block;height:12px;padding:0;font-size:0}
+.app.mini .rail .switch{justify-content:center;padding:0}
 
 /* the account menu: a small sheet hung under the avatar */
 .scrim.menu-scrim{background:transparent;align-items:flex-start;justify-content:flex-end;padding:56px 16px 0}
@@ -832,6 +832,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
   .tab{flex:1;min-height:38px;font-size:14px}
   .toplinks a{min-height:52px}
   .qr-style input[type=color]{width:64px;height:44px}
+  .qr{flex-wrap:wrap}
 
   /* setup */
   .setup{grid-template-columns:minmax(0,1fr);min-height:0}
