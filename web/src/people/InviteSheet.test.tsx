@@ -219,6 +219,18 @@ describe("Invite sheet", () => {
     await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("https://example.com/dashboard/"));
   });
 
+  it("not emailed in host mode: the address is the dashboard host's root", async () => {
+    const settings = { ...SETTINGS, dashboardHost: "links.example.com", dashboardUrl: "https://links.example.com" };
+    const { user } = boot({ settings, invite: () => ({ status: 201, body: { user: {}, emailed: false, emailReason: "not_configured" } }) });
+    await ready();
+    await user.keyboard("n");
+    await screen.findByRole("dialog", { name: "Invite a person" });
+    await user.keyboard("jordan@example.com{Control>}{Enter}{/Control}");
+    await within(sheet()).findByText(/Invite saved/);
+    expect(sheet().textContent).toContain("Send them this address: https://links.example.com/");
+    expect(sheet().textContent).not.toContain("/dashboard");
+  });
+
   it("a saved invite that was not emailed says why", async () => {
     const { user } = boot({ invite: () => ({ status: 201, body: { user: {}, emailed: false, emailReason: "too_many" } }) });
     await ready();
