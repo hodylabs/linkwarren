@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KEY_SHAPE } from "../src/keys";
 import { MEMBER_DEFAULT } from "../src/roles";
-import { beforeBatch } from "./helpers/race";
+import { beforeBatch, beforeQuery } from "./helpers/race";
 import { sha256Hex } from "../src/session";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 
@@ -153,6 +153,15 @@ describe("a people manager and other people's keys (S8 R4)", () => {
     expect(await revoked(ka)).toBe(true);
     const r = await as(B, `/api/keys/${ko}`, { method: "DELETE" });
     expect([r.status, await r.json()]).toEqual([404, { error: "not_found" }]);
+  });
+
+  it("race: people.manage removed before the ?all=1 query: only their own keys are listed", async () => {
+    await key(A, "ak");
+    const km = await key(M, "mk");
+    const restore = beforeQuery("JOIN users u ON u.id = k.user_id", () => run("UPDATE roles SET perms = ? WHERE id = 'mg'", JSON.stringify(MEMBER_DEFAULT)));
+    let l: { items: KeyItem[] };
+    try { l = (await (await as(M, "/api/keys?all=1")).json()) as { items: KeyItem[] }; } finally { restore(); }
+    expect(l.items.map((k) => k.id)).toEqual([km]);
   });
 
   it("people.manage removed between read and batch: 403 and nothing revoked or audited", async () => {

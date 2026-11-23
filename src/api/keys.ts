@@ -5,7 +5,7 @@ import type { Env } from "../env";
 import { hashKey, newKey } from "../keys";
 import { usableDomains } from "../perm";
 import { actor, type Grant } from "../principal";
-import { actorCan, can, mayManage, parsePerms, personWithin, within } from "../roles";
+import { actorCan, can, mayManage, parsePerms, within } from "../roles";
 import { rowToKey, type UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -26,10 +26,11 @@ keys.get("/", async (c) => {
   const u = c.var.user;
   // Owners see everyone's; people.manage holders their own and those of people within their role (R4).
   const all = can(u, "people.manage") && c.req.query("all") === "1";
-  const w = personWithin({ col: "k.user_id" }, u.id);
+  // mayManage re-checks people.manage in the query, so a permission lost after the snapshot lists only their own.
+  const w = mayManage({ col: "k.user_id" }, u.id);
   const rows = all
     ? await c.env.DB.prepare(`SELECT ${KEY_COLS}, u.email FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.revoked_at IS NULL
-      AND (k.user_id = ? OR ${w.sql}) ORDER BY k.created_at, k.id`).bind(u.id, ...w.binds).all()
+      AND ${w.sql} ORDER BY k.created_at, k.id`).bind(...w.binds).all()
     : await c.env.DB.prepare(`SELECT ${KEY_COLS} FROM api_keys k WHERE k.user_id = ? AND k.revoked_at IS NULL ORDER BY k.created_at, k.id`).bind(u.id).all();
   return c.json({ items: rows.results.map((r) => rowToKey(r, all)) });
 });

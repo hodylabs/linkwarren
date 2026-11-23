@@ -4,7 +4,7 @@ import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { MCP_KEY, mcpState, rememberMcp, resetMcpCache } from "../mcp/switch";
 import { actor, type Grant } from "../principal";
-import { actorCan, can, mayManage, parsePerms, personWithin, requirePerm, within } from "../roles";
+import { actorCan, can, mayManage, parsePerms, requirePerm, within } from "../roles";
 import type { UserRow } from "../types";
 
 type E = { Bindings: Env; Variables: { user: UserRow; grant: Grant } };
@@ -52,10 +52,11 @@ async function find(env: Env, u: UserRow, id: string): Promise<{ row: Row } | { 
 agents.get("/connections", async (c) => {
   const u = c.var.user;
   const all = can(u, "people.manage") && c.req.query("all") === "1";
-  const w = personWithin({ col: "c.user_id" }, u.id);
+  // mayManage re-checks people.manage in the query, so a permission lost after the snapshot lists only their own.
+  const w = mayManage({ col: "c.user_id" }, u.id);
   // shortcut: no pagination, connections per instance are few (same as keys); add a cursor if it grows.
   const rows = all
-    ? await c.env.DB.prepare(`${SELECT} AND (c.user_id = ? OR ${w.sql}) ORDER BY c.created_at, c.id`).bind(now() - WEEK, u.id, ...w.binds).all<Row>()
+    ? await c.env.DB.prepare(`${SELECT} AND ${w.sql} ORDER BY c.created_at, c.id`).bind(now() - WEEK, ...w.binds).all<Row>()
     : await c.env.DB.prepare(`${SELECT} AND c.user_id = ? ORDER BY c.created_at, c.id`).bind(now() - WEEK, u.id).all<Row>();
   return c.json({ items: rows.results.map((r) => toItem(r, all)) });
 });

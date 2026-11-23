@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { MEMBER_DEFAULT } from "../src/roles";
 import { connectAgent, mcpCall, token } from "./helpers/oauth";
-import { beforeBatch } from "./helpers/race";
+import { beforeBatch, beforeQuery } from "./helpers/race";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const one = <T>(sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).first<T>();
@@ -321,6 +321,14 @@ describe("a people manager and other people's connections (S8 R4)", () => {
     expect((await patch(M, a.connId, { write: false, del: false })).status).toBe(200);
     expect((await del(M, a.connId)).status).toBe(204);
     expect(await open()).toEqual([o.connId]);
+  });
+
+  it("race: people.manage removed before the ?all=1 query: only their own connections are listed", async () => {
+    await connectAgent(A);
+    const restore = beforeQuery("FROM agent_connections c JOIN users u", () => run("UPDATE roles SET perms = ? WHERE id = 'mg'", JSON.stringify(MEMBER_DEFAULT)));
+    let items;
+    try { items = await list(M, "?all=1"); } finally { restore(); }
+    expect(items).toEqual([]);
   });
 
   it("the person moves to a stronger role between read and batch: 403 and still connected", async () => {
