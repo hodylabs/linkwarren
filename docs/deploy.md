@@ -1,6 +1,12 @@
+---
+title: Deploying linkwarren
+description: The deeper deploy reference, covering configuration, path mode, Cloudflare domains, analytics, sign-in, agents and their limits.
+slug: docs/deploy
+---
+
 # Deploying linkwarren
 
-linkwarren runs as one Cloudflare Worker with a D1 database and a KV namespace. These steps are generic; use your own names and ids.
+linkwarren runs as one Cloudflare Worker with a D1 database and two KV namespaces (`CACHE` and `OAUTH_KV`). These steps are generic; use your own names and ids. For a first install step by step, start with [getting-started.md](getting-started.md); every variable is listed in [configuration.md](configuration.md).
 
 ## Configuration
 
@@ -185,7 +191,7 @@ Without the binding, dashboard paths answer `503 {"error":"no_assets"}`. Unknown
 
 ## Steps
 
-1. Create the D1 database and the KV namespace (`npx wrangler d1 create`, `npx wrangler kv namespace create`) and put their ids in `wrangler.instance.jsonc`.
+1. Create the D1 database and the two KV namespaces, one for `CACHE` and one for `OAUTH_KV` (`npx wrangler d1 create`, `npx wrangler kv namespace create`), and put their ids in `wrangler.instance.jsonc`.
 2. Apply migrations to the remote database: `npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc`.
 3. Build the dashboard (`npm run build:web`), then deploy: `npx wrangler deploy -c wrangler.instance.jsonc`.
 4. Add one route per short domain plus the dashboard host (custom domains in the config).
@@ -330,7 +336,7 @@ Health checks: `/healthz` sits behind Access on the dashboard host. Add an Acces
 
 ### Updating to a new release
 
-linkwarren never updates itself. Once a day it checks GitHub for the latest release (see [privacy.md](privacy.md#update-check)), and owners and people with the Settings permission see "vX.Y.Z available" next to the dashboard version, linking to the release notes. To update, read the notes, pull the release, apply any new migrations and deploy it by hand as in Steps above. The check can be turned off in Settings, This instance (**Check for updates**).
+linkwarren never updates itself. Once a day it checks GitHub for the latest release (see [privacy.md](privacy.md#update-check)), and owners and people with the Settings permission see "vX.Y.Z available" next to the dashboard version, linking to the release notes. To update, read the notes, pull the release, apply any new migrations and deploy it by hand as in Steps above ([updating.md](updating.md) has the commands). The check can be turned off in Settings, This instance (**Check for updates**).
 
 ### Upgrading an existing instance
 

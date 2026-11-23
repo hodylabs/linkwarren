@@ -1,15 +1,17 @@
 ---
-title: linkwarren - Design Spec
+title: Design spec
+description: The requirements and architecture linkwarren is built to.
+slug: docs/spec
 project: linkwarren
 type: design-spec
-status: in-development
+status: released
 tags: [linkwarren, link-shortener, cloudflare-workers, d1, mcp, open-source]
 created: 2026-11-20
 ---
 
 > [!abstract] What this is
 > **linkwarren** is a self-hosted, multi-domain link shortener that runs entirely in your own Cloudflare account (Workers, D1, KV, Analytics Engine). One owner, many users, many domains, each domain with its own set of slugs. Open source under AGPL-3.0.
-> Status: in development.
+> Status: released. Versions are on the [releases page](https://github.com/hodylabs/linkwarren/releases).
 
 ## 1. Why build it
 

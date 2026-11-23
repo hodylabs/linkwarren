@@ -1,3 +1,9 @@
+---
+title: Local development
+description: Tests, the dashboard build, running the dashboard against a local Worker, and the docs site.
+slug: docs/development
+---
+
 # Local development
 
 The dashboard is a React app in `web/`, built by Vite into `web/dist`, which the Worker serves on the dashboard host. In development, Vite serves the app and proxies `/api` to a local Worker.
@@ -13,6 +19,16 @@ npm run build:web  # writes web/dist, then runs check:web
 ```
 
 `check:web` fails the build if anything in `web/dist` contains `data:font`. The dashboard CSP allows fonts and images only from the same origin, so an inlined font would be blocked; `web/vite.config.ts` sets `assetsInlineLimit: 0` so Vite never inlines assets.
+
+## The docs site
+
+linkwarren.dev is an Astro Starlight site in `site/`, with its own `package.json`. It reads the docs straight from `docs/*.md` (one source, edited in the same pull request as the code), so a doc needs frontmatter with `title`, `description` and `slug: docs/<file name>`, and links between docs stay relative (`[domains.md](domains.md)`), which works on GitHub and on the site. To run it locally:
+
+```sh
+cd site && npm ci && npm run dev
+```
+
+`npm run build` writes the static site to `site/dist` and fails on a broken internal link. A GitHub Actions workflow (`.github/workflows/pages.yml`) builds and publishes it to GitHub Pages on every push to `main` that changes `site/` or `docs/`.
 
 ## Running the dashboard against a local Worker
 

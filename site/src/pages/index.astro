@@ -1,0 +1,306 @@
+---
+// The landing page, ported from the approved mockup. Docs live under /docs (Starlight).
+import "@fontsource/unbounded/500.css";
+import "@fontsource/unbounded/700.css";
+import "@fontsource/ibm-plex-sans/400.css";
+import "@fontsource/ibm-plex-sans/500.css";
+import "@fontsource/ibm-plex-sans/600.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import mark from "../../../design/logo/linkwarren-mark.svg?url";
+import markOnDark from "../../../design/logo/linkwarren-mark-on-dark.svg?url";
+import pkg from "../../../package.json";
+
+const repo = "https://github.com/hodylabs/linkwarren";
+const version = `v${pkg.version}`;
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linkwarren: a self-hosted link shortener for many domains</title>
+<meta name="description" content="Short links on your own domains, in your own Cloudflare account. Open source, AGPL, fits the Workers free plan.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://linkwarren.dev/">
+<script is:inline>
+  // Follow the theme picked in the docs (Starlight stores it), else the system setting.
+  try {
+    const t = localStorage.getItem("starlight-theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch {}
+</script>
+<style is:global>
+:root{
+  --graphite:#15181D; --rail:#1C2026; --rail-hi:#262B33; --rail-text:#C9CED6; --rail-dim:#7D8591;
+  --bg:#F6F6F3; --panel:#FFFFFF; --line:#E4E5E0; --line-soft:#EEEFEB;
+  --text:#1B1E23; --muted:#646B75; --faint:#9AA0A8;
+  --signal:#FD8D27; --signal-deep:#D9661A; --signal-wash:#FFF3E6;
+  --btn-bg:var(--graphite); --btn-text:#fff; --btn-hover:var(--rail-hi); --block-line:transparent;
+  --mono:"IBM Plex Mono",ui-monospace,monospace; --sans:"IBM Plex Sans",system-ui,sans-serif; --display:"Unbounded",sans-serif;
+  --wrap:1120px;
+}
+/* Dark mode: the same graphite blocks on a deeper ground, with a hairline so they still read as blocks. */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1115; --panel:#1C2026; --line:#2A2F37; --line-soft:#23272E;
+    --text:#E6E8EC; --muted:#9AA0A8; --faint:#7D8591; --signal-wash:#3D2410; --signal-deep:#FD8D27;
+    --btn-bg:var(--signal); --btn-text:var(--graphite); --btn-hover:#FE9A3F; --block-line:#2A2F37;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1115; --panel:#1C2026; --line:#2A2F37; --line-soft:#23272E;
+  --text:#E6E8EC; --muted:#9AA0A8; --faint:#7D8591; --signal-wash:#3D2410; --signal-deep:#FD8D27;
+  --btn-bg:var(--signal); --btn-text:var(--graphite); --btn-hover:#FE9A3F; --block-line:#2A2F37;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:400 17px/1.6 var(--sans)}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--signal);outline-offset:3px;border-radius:4px}
+.wrap{max-width:var(--wrap);margin:0 auto;padding:0 24px}
+.skip{position:absolute;left:-999px}.skip:focus{left:16px;top:12px;background:var(--panel);padding:8px 12px;z-index:9}
+
+/* Top bar */
+header.top{display:flex;align-items:center;justify-content:space-between;height:68px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;font:500 18px/1 var(--display);letter-spacing:-.01em}
+.brand img{width:30px;height:30px}
+nav.top a{text-decoration:none;color:var(--muted);margin-left:24px;font-size:15px}
+nav.top a:hover{color:var(--text)}
+nav.top a.gh{color:var(--text);border:1px solid var(--line);background:var(--panel);padding:8px 14px;border-radius:8px}
+
+/* Hero */
+.hero{display:grid;grid-template-columns:1.05fr 1fr;gap:56px;align-items:center;padding:56px 0 72px}
+h1{font:700 clamp(34px,4.6vw,54px)/1.08 var(--display);letter-spacing:-.025em;margin:0 0 22px;max-width:13ch}
+.lede{font-size:19px;color:var(--muted);max-width:46ch;margin:0 0 30px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn{display:inline-flex;align-items:center;min-height:46px;padding:0 20px;border-radius:9px;font-weight:600;font-size:16px;text-decoration:none}
+.btn.primary{background:var(--btn-bg);color:var(--btn-text)}
+.btn.primary:hover{background:var(--btn-hover)}
+.btn.ghost{border:1px solid var(--line);background:var(--panel)}
+.install{font:400 14px/1 var(--mono);color:var(--muted);margin-top:22px}
+.install code{background:var(--panel);border:1px solid var(--line);padding:6px 9px;border-radius:6px;color:var(--text)}
+
+/* The warren: one install, many exits */
+.warren{background:var(--graphite);border:1px solid var(--block-line);border-radius:16px;padding:26px 24px 20px;color:var(--rail-text);position:relative;margin:0}
+.warren svg{display:block;width:100%;height:auto}
+.warren .cap{font:400 13px/1.5 var(--mono);color:var(--rail-dim);margin-top:10px;display:flex;justify-content:space-between;gap:16px;white-space:nowrap}
+.tun{fill:none;stroke:var(--signal);stroke-width:2;stroke-linecap:round;stroke-dasharray:420;stroke-dashoffset:420;animation:dig 1.4s cubic-bezier(.3,.6,.2,1) forwards}
+.tun.d2{animation-delay:.12s}.tun.d3{animation-delay:.24s}.tun.d4{animation-delay:.36s}.tun.d5{animation-delay:.48s}
+.exit{opacity:0;animation:pop .4s ease-out forwards}
+.exit.d1{animation-delay:1.0s}.exit.d2{animation-delay:1.12s}.exit.d3{animation-delay:1.24s}.exit.d4{animation-delay:1.36s}.exit.d5{animation-delay:1.48s}
+@keyframes dig{to{stroke-dashoffset:0}}
+@keyframes pop{to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.tun{animation:none;stroke-dashoffset:0}.exit{animation:none;opacity:1}}
+.host{font:500 13px var(--mono);fill:#fff}
+.dest{font:400 12px var(--mono);fill:var(--rail-dim)}
+
+/* Sections */
+section{padding:72px 0;border-top:1px solid var(--line)}
+h2{font:500 clamp(24px,2.6vw,32px)/1.2 var(--display);letter-spacing:-.015em;margin:0 0 14px;max-width:24ch}
+.sub{color:var(--muted);max-width:60ch;margin:0 0 40px}
+
+/* Screens */
+.shot{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 var(--line-soft),0 18px 40px -24px rgba(21,24,29,.35)}
+.shot .bar{height:34px;display:flex;align-items:center;gap:6px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--bg)}
+.shot .bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.shot .bar span{margin-left:10px;font:400 12px var(--mono);color:var(--faint)}
+.shot .ph{aspect-ratio:16/10;display:grid;grid-template-columns:64px 1fr}
+.shot .ph .r{background:var(--rail)}
+.shot .ph .c{display:grid;place-items:center;color:var(--faint);font:400 13px var(--mono);background:
+  repeating-linear-gradient(0deg,transparent 0 39px,var(--line-soft) 39px 40px)}
+.shots{display:grid;grid-template-columns:1.4fr 1fr;gap:24px}
+.shots .stack{display:grid;gap:24px}
+.shots figure{margin:0}
+.shots figcaption{font-size:15px;color:var(--muted);margin-top:10px}
+.inline-code{font:14px var(--mono)}
+
+/* Features: plain two-column list, grouped by what a person does */
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:40px 48px}
+.feat h3{font:600 17px/1.3 var(--sans);margin:0 0 8px;display:flex;align-items:center;gap:10px}
+.feat h3::before{content:"";width:10px;height:10px;background:var(--signal);clip-path:polygon(0 0,100% 35%,40% 100%)}
+.feat p{margin:0;color:var(--muted);font-size:16px}
+.feat code,.steps code{font:400 14px var(--mono);background:var(--panel);border:1px solid var(--line);padding:1px 6px;border-radius:5px;color:var(--text)}
+
+/* Deploy steps: a real sequence, so numbered */
+.split{display:grid;grid-template-columns:1fr 1.1fr;gap:56px;align-items:start}
+ol.steps{list-style:none;padding:0;margin:0;counter-reset:s}
+ol.steps li{counter-increment:s;display:grid;grid-template-columns:40px 1fr;gap:4px 14px;padding:18px 0;border-bottom:1px solid var(--line)}
+ol.steps li::before{content:counter(s);grid-row:span 2;width:30px;height:30px;border-radius:8px;background:var(--signal-wash);color:var(--signal-deep);font:500 14px/30px var(--display);text-align:center}
+ol.steps b{font-weight:600}
+ol.steps span{color:var(--muted);font-size:16px;overflow-wrap:anywhere}
+.free{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px}
+.free h3{margin:0 0 6px;font:500 18px var(--display)}
+.free table{width:100%;border-collapse:collapse;font-size:15px}
+.free th,.free td{text-align:left;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.free th{font-weight:500;color:var(--muted)}
+.free td:last-child,.free th:last-child{text-align:right}
+.free td:last-child{font-family:var(--mono);font-size:14px}
+.free p{font-size:14px;color:var(--muted);margin:14px 0 0}
+
+/* Agents band: the one dark block below the hero */
+.agents{background:var(--graphite);border:1px solid var(--block-line);color:var(--rail-text);border-radius:16px;padding:44px;display:grid;grid-template-columns:1fr 1fr;gap:44px;align-items:center}
+.agents h2{color:#fff}
+.agents p{color:var(--rail-text)}
+.agents pre{margin:0;background:var(--rail);border:1px solid var(--rail-hi);border-radius:10px;padding:18px;font:400 13.5px/1.7 var(--mono);color:var(--rail-text);overflow:auto}
+.agents pre .k{color:var(--signal)}
+.agents pre .d{color:var(--rail-dim)}
+.agents code{font:14px var(--mono);color:#fff}
+
+footer{padding:40px 0 56px;border-top:1px solid var(--line);color:var(--muted);font-size:15px;display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+footer a{color:var(--text)}
+
+@media (max-width:900px){
+  .hero,.split,.agents,.shots{grid-template-columns:1fr}
+  .feat{grid-template-columns:1fr 1fr}
+  .agents{padding:28px}
+  nav.top a:not(.gh){display:none}
+}
+@media (max-width:560px){
+  .wrap{padding:0 16px}
+  .feat{grid-template-columns:1fr}
+  .btn{min-height:48px}
+  section{padding:56px 0}
+  .warren .cap{white-space:normal}
+  .install{line-height:2.2}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/"><img src={mark} alt="">linkwarren</a>
+    <nav class="top" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#deploy">Deploy</a>
+      <a href="#agents">Agents</a>
+      <a href="/docs/getting-started/">Docs</a>
+      <a class="gh" href={repo}>GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <div class="hero">
+      <div>
+        <h1>Short links on every domain you own.</h1>
+        <p class="lede">linkwarren is a self-hosted link shortener for people with more than one domain. It runs in your own Cloudflare account on Workers, D1 and KV, fits the free plan, and keeps every click on infrastructure you control.</p>
+        <div class="cta">
+          <a class="btn primary" href="#deploy">Deploy your own</a>
+          <a class="btn ghost" href={repo}>Read the code</a>
+        </div>
+        <p class="install">Open source, <a href={`${repo}/blob/main/LICENSE`}>AGPL-3.0</a>. Current release <code>{version}</code></p>
+      </div>
+
+      <figure class="warren" aria-label="One linkwarren install serving short links on five domains">
+        <svg viewBox="0 0 460 300" role="img" aria-hidden="true">
+          <image href={markOnDark} x="14" y="112" width="76" height="76"/>
+          <path class="tun d1" d="M92 150 C170 150 170 34 250 34"/>
+          <path class="tun d2" d="M92 150 C170 150 170 92 250 92"/>
+          <path class="tun d3" d="M92 150 L250 150"/>
+          <path class="tun d4" d="M92 150 C170 150 170 208 250 208"/>
+          <path class="tun d5" d="M92 150 C170 150 170 266 250 266"/>
+          <g class="exit d1"><circle cx="250" cy="34" r="4" fill="#FD8D27"/><text class="host" x="262" y="31">example.com/menu</text><text class="dest" x="262" y="47">to the restaurant site</text></g>
+          <g class="exit d2"><circle cx="250" cy="92" r="4" fill="#FD8D27"/><text class="host" x="262" y="89">go.example.org/sale</text><text class="dest" x="262" y="105">phones to the app store</text></g>
+          <g class="exit d3"><circle cx="250" cy="150" r="4" fill="#FD8D27"/><text class="host" x="262" y="147">ex.am/cv</text><text class="dest" x="262" y="163">password protected</text></g>
+          <g class="exit d4"><circle cx="250" cy="208" r="4" fill="#FD8D27"/><text class="host" x="262" y="205">links.example.net/wifi</text><text class="dest" x="262" y="221">from a printed QR code</text></g>
+          <g class="exit d5"><circle cx="250" cy="266" r="4" fill="#FD8D27"/><text class="host" x="262" y="263">example.com/call</text><text class="dest" x="262" y="279">tel: link</text></g>
+        </svg>
+        <figcaption class="cap"><span>one install</span><span>many domains, each with its own slugs</span></figcaption>
+      </figure>
+    </div>
+
+    <section aria-labelledby="see">
+      <h2 id="see">A dashboard you will want to open</h2>
+      <p class="sub">Links, domains, analytics and people in one place. It works with a keyboard, on a phone, and in path mode at <code class="inline-code">example.com/dashboard</code> if you would rather not spend a hostname on it.</p>
+      <div class="shots">
+        <figure>
+          <div class="shot"><div class="bar"><i></i><i></i><i></i><span>example.com/dashboard/links</span></div><div class="ph"><div class="r"></div><div class="c">screenshot: Links</div></div></div>
+          <figcaption>Every link across every domain, with bulk edit and moves that keep the old address working.</figcaption>
+        </figure>
+        <div class="stack">
+          <figure>
+            <div class="shot"><div class="bar"><i></i><i></i><i></i><span>analytics</span></div><div class="ph"><div class="r"></div><div class="c">screenshot: Analytics</div></div></div>
+            <figcaption>Clicks, QR scans, where they came from and when.</figcaption>
+          </figure>
+          <figure>
+            <div class="shot"><div class="bar"><i></i><i></i><i></i><span>qr codes</span></div><div class="ph"><div class="r"></div><div class="c">screenshot: QR codes</div></div></div>
+            <figcaption>QR codes for links, Wi-Fi and contact cards.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" aria-labelledby="fh">
+      <h2 id="fh">What it does</h2>
+      <p class="sub">The things a link shortener should do, without a monthly plan or someone else's tracking.</p>
+      <div class="feat">
+        <div><h3>Many domains</h3><p>Add as many domains as you like. Each keeps its own slugs, so <code>a.com/x</code> and <code>b.com/x</code> can go to different places.</p></div>
+        <div><h3>Link rules</h3><p>Start and end dates, passwords, and routing by device or operating system. Plus <code>tel:</code> and <code>mailto:</code> links.</p></div>
+        <div><h3>Safe moves</h3><p>Move links between domains and the old address keeps forwarding, so printed QR codes never break.</p></div>
+        <div><h3>Analytics</h3><p>Clicks over time, QR scans apart from typed visits, countries, cities, devices and busiest hours, a page per link and a weekly email. Bots filtered out, no cookies.</p></div>
+        <div><h3>Contact cards and QR</h3><p>vCard links that save a contact in one tap, and a QR generator for Wi-Fi, web addresses, text, email, phone, SMS and short links.</p></div>
+        <div><h3>People and roles</h3><p>Invite people, give them their own domains, and shape custom roles. Sign in with passkeys.</p></div>
+        <div><h3>Import and export</h3><p>Bring links in from JSON or CSV, and take a full JSON backup out at any time.</p></div>
+        <div><h3>API and MCP</h3><p>A REST API with personal keys, and an MCP server so AI agents can manage links with your permissions.</p></div>
+        <div><h3>Yours to run</h3><p>Your account, your data, your bill. Updates are tagged releases you deploy when you choose.</p></div>
+      </div>
+    </section>
+
+    <section id="deploy" aria-labelledby="dh">
+      <div class="split">
+        <div>
+          <h2 id="dh">Deploy with wrangler</h2>
+          <p class="sub" style="margin-bottom:12px">All you need is a Cloudflare account and a domain on it. No server to patch.</p>
+          <ol class="steps">
+            <li><b>Clone and install</b><span><code>git clone {repo}</code>, then <code>npm ci</code> in the folder.</span></li>
+            <li><b>Create the database and stores</b><span>One D1 database and two KV namespaces, with <code>wrangler</code>. Turn on Analytics Engine (free) for click analytics.</span></li>
+            <li><b>Write the instance config</b><span>Copy <code>wrangler.instance.example.jsonc</code> to <code>wrangler.instance.jsonc</code>: your ids, your hosts and routes, and your <code>EMAIL_FROM</code> sender. No Analytics Engine? Remove its binding.</span></li>
+            <li><b>Create the tables</b><span><code>npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc</code></span></li>
+            <li><b>Set the two secrets</b><span><code>OWNER_EMAIL</code> (before the first sign-in) and <code>RESEND_API_KEY</code>, with <code>npx wrangler secret put</code>.</span></li>
+            <li><b>Deploy the Worker</b><span><code>npm run build:web</code> and <code>npx wrangler deploy -c wrangler.instance.jsonc</code></span></li>
+            <li><b>Finish the setup wizard</b><span>Sign in as the owner, add a domain, and import your old links if you have them.</span></li>
+          </ol>
+          <p style="margin-top:22px"><a href="/docs/getting-started/">Full deploy guide</a></p>
+        </div>
+        <div class="free">
+          <h3>Cloudflare free plan</h3>
+          <p style="margin:0 0 14px">What the free plan allows each day, for the whole account.</p>
+          <table>
+            <tr><th scope="col">Resource</th><th scope="col">Free allowance</th></tr>
+            <tr><td>Worker requests</td><td>100,000 / day</td></tr>
+            <tr><td>D1 rows read</td><td>5 million / day</td></tr>
+            <tr><td>D1 rows written</td><td>100,000 / day</td></tr>
+            <tr><td>KV reads</td><td>100,000 / day</td></tr>
+            <tr><td>KV writes</td><td>1,000 / day</td></tr>
+            <tr><td>Analytics Engine points</td><td>100,000 / day</td></tr>
+          </table>
+          <p>Redirects are served from the KV cache, so most clicks never touch the database. Figures checked against Cloudflare's pricing pages on 2026-11-23; see <a href="/docs/self-hosting-costs/">self-hosting costs</a>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="agents" aria-labelledby="ah" style="border-top:0;padding-top:0">
+      <div class="agents">
+        <div>
+          <h2 id="ah">Built for your AI agents too</h2>
+          <p>Connect Claude or any MCP client to <code>example.com/mcp</code> with OAuth. Agents act as the person who connected them, with that person's rights and no more, and the owner can switch agent access off in one place.</p>
+        </div>
+        <pre><span class="d"># ask your agent</span>
+Make a short link for the spring menu
+on example.com, slug "spring".
+
+<span class="k">create_link</span> example.com/spring
+  <span class="d">to</span> https://example.org/menus/spring
+<span class="d">done, 1 link created</span></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>linkwarren is open source under the AGPL-3.0. The name and logo are trademarks of Hody LLC.</span>
+    <span><a href="/docs/getting-started/">Docs</a> &nbsp; <a href={repo}>GitHub</a> &nbsp; <a href={`${repo}/releases`}>Releases</a> &nbsp; <a href="/docs/privacy/">Privacy</a></span>
+  </footer>
+</div>
+</body>
+</html>
