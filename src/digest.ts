@@ -1,4 +1,5 @@
 import { buildReport, loadRows, localParts, parseTz, resolveRange, resolveScope, type AnalyticsReport, type Tz } from "./analytics";
+import { rolledThrough } from "./cron";
 import { dash } from "./dash";
 import { displayName, emailConfigured, escapeHtml, sendEmail, type SendResult } from "./email";
 import type { Env } from "./env";
@@ -83,28 +84,37 @@ export function digestEmail(o: { instanceName: string | null; week: string; repo
   return { subject: `Your week in ${name}: ${fmt(t.clicks)} clicks`, text, html };
 }
 
-type Pref = { user_id: string; tz: string; secret: string; last_week: string | null; try_week: string | null; tries: number; email: string };
+type Pref = {
+  user_id: string; tz: string; secret: string; last_week: string | null; try_week: string | null;
+  tries: number; attempts: number; claimed_at: number | null; email: string;
+};
 
-/** Delivery attempts per person and week before that week is given up (last_error `gave_up`). */
+/** Delivery attempts per person and week (every claim counts, network failures too) before that week is given up (`gave_up`). */
 export const MAX_TRIES = 6;
+/** A claim older than this with no outcome written (the run died, or its release failed) is unfinished: a later run resumes it. */
+export const CLAIM_STALE_SEC = 3600;
 
 /** What one attempt's outcome does to the claimed week. */
 type Outcome = { keep: boolean; nextTry: boolean; error: string | null };
 
 /**
- * - Sent, or 409 (this key already reached Resend: an earlier attempt whose answer was lost): keep the week.
+ * - Sent: keep the week.
+ * - 409 invalid_idempotent_request: this key already reached Resend with another body, so an earlier attempt (whose answer
+ *   was lost) was accepted: keep the week. Any other 409 (concurrent_idempotent_requests: the first request is still
+ *   running and may yet fail): release with the same key, so the retry either matches it or recovers.
  * - Any other 4xx except 401, 403 and 429: a permanent refusal (bad or suppressed address): keep the week, no retry, error recorded.
  * - 401, 403, 429 or 5xx: Resend answered and did not send: release, and the next attempt uses a new key (`nextTry`), so a payload
  *   rebuilt from newer clicks is never refused for reusing a key with a different body.
  * - Network, settings, or report data not loadable: maybe sent (network) or never tried: release with the same key, so an
  *   accepted send whose answer was lost is not delivered again inside Resend's 24-hour key window.
+ * Every attempt counts toward MAX_TRIES whatever the outcome.
  */
 export function outcomeOf(res: SendResult | null): Outcome {
   if (!res) return { keep: false, nextTry: false, error: "data_unavailable" };
   if (res.ok) return { keep: true, nextTry: false, error: null };
   if (res.reason !== "rejected") return { keep: false, nextTry: false, error: res.reason };
   const st = res.status ?? 0;
-  if (st === 409) return { keep: true, nextTry: false, error: "duplicate" };
+  if (st === 409) return res.name === "invalid_idempotent_request" ? { keep: true, nextTry: false, error: "duplicate" } : { keep: false, nextTry: false, error: "in_progress" };
   // 401 and 403 are the instance's key or sender account, not the address: retried like a 5xx, still bounded by MAX_TRIES.
   if (st >= 400 && st < 500 && st !== 429 && st !== 401 && st !== 403) return { keep: true, nextTry: false, error: `refused_${st}` };
   return { keep: false, nextTry: true, error: `rejected_${st}` };
@@ -119,9 +129,15 @@ export async function sendDigests(env: Env, nowSec: number): Promise<number> {
   const d = dash(env);
   if (!d || !(await emailConfigured(env))) return 0;
   const now = nowSec * 1000;
+  const stale = nowSec - CLAIM_STALE_SEC;
+  // No zone is more than 14 hours ahead of UTC, so last_week at or past the week there is done for everyone: filtered in SQL,
+  // done rows never fill the candidate limit ahead of someone still due. Unfinished (stale) claims stay in.
+  const doneWeek = weekOf(now, { offset: 840 }).week;
   const prefs = (await env.DB.prepare(
-    "SELECT p.user_id, p.tz, p.secret, p.last_week, p.try_week, p.tries, u.email FROM digest_prefs p JOIN users u ON u.id = p.user_id WHERE p.enabled = 1 AND u.status = 'active' ORDER BY p.last_attempt_at IS NOT NULL, p.last_attempt_at, p.user_id LIMIT 500",
-  ).all<Pref>()).results;
+    `SELECT p.user_id, p.tz, p.secret, p.last_week, p.try_week, p.tries, p.attempts, p.claimed_at, u.email FROM digest_prefs p JOIN users u ON u.id = p.user_id
+     WHERE p.enabled = 1 AND u.status = 'active' AND (p.last_week IS NULL OR p.last_week < ?1 OR p.claimed_at < ?2)
+     ORDER BY p.last_attempt_at IS NOT NULL, p.last_attempt_at, p.user_id LIMIT 500`,
+  ).bind(doneWeek, stale).all<Pref>()).results;
   let settings: Awaited<ReturnType<typeof getSettings>> | null = null;
   let sent = 0, tried = 0;
   for (const p of prefs) {
@@ -129,13 +145,20 @@ export async function sendDigests(env: Env, nowSec: number): Promise<number> {
     const tz = parseTz(p.tz);
     if (!tz) continue;
     const w = weekOf(now, tz);
-    if (!w.due || (p.last_week !== null && p.last_week >= w.week)) continue;
-    const tries = p.try_week === w.week ? p.tries : 0;
-    const give = tries >= MAX_TRIES;
-    // Claim first: two overlapping runs cannot both pass this guard for the same week. A week out of tries is claimed for good.
+    if (!w.due) continue;
+    // A claim with no outcome written after CLAIM_STALE_SEC is unfinished, not delivered: resume it with the same key.
+    const resume = p.last_week === w.week && p.claimed_at !== null && p.claimed_at < stale;
+    if (p.last_week !== null && p.last_week >= w.week && !resume) continue;
+    const prev = resume ? addDays(w.week, -7) : p.last_week; // what a release puts back
+    const mine = p.try_week === w.week;
+    const tries = mine ? p.tries : 0;
+    const give = (mine ? p.attempts : 0) >= MAX_TRIES;
+    // Claim first: two overlapping runs cannot both pass this guard for the same week. A week out of attempts is claimed for good.
     const claim = await env.DB.prepare(
-      "UPDATE digest_prefs SET last_week = ?1, last_attempt_at = ?3, try_week = ?1, tries = ?4, last_error = CASE WHEN ?5 = 1 THEN 'gave_up' ELSE last_error END WHERE user_id = ?2 AND enabled = 1 AND (last_week IS NULL OR last_week < ?1)",
-    ).bind(w.week, p.user_id, nowSec, tries, give ? 1 : 0).run();
+      `UPDATE digest_prefs SET last_week = ?1, last_attempt_at = ?3, try_week = ?1, tries = ?4, attempts = ?5,
+         claimed_at = CASE WHEN ?6 = 1 THEN NULL ELSE ?3 END, last_error = CASE WHEN ?6 = 1 THEN 'gave_up' ELSE last_error END
+       WHERE user_id = ?2 AND enabled = 1 AND (last_week IS NULL OR last_week < ?1 OR (last_week = ?1 AND claimed_at < ?7))`,
+    ).bind(w.week, p.user_id, nowSec, tries, (mine ? p.attempts : 0) + (give ? 0 : 1), give ? 1 : 0, stale).run();
     if (!claim.meta.changes || give) continue;
     tried++;
     let res: SendResult | null = null;
@@ -153,10 +176,11 @@ export async function sendDigests(env: Env, nowSec: number): Promise<number> {
     if (o.error) console.warn("weekly email not sent", o.error); // a code only, never the address
     if (res?.ok) sent++;
     const done = o.keep
-      ? env.DB.prepare("UPDATE digest_prefs SET last_error = ?3 WHERE user_id = ?1 AND last_week = ?2").bind(p.user_id, w.week, o.error)
-      : env.DB.prepare("UPDATE digest_prefs SET last_week = ?4, last_error = ?3, tries = tries + ?5 WHERE user_id = ?1 AND last_week = ?2")
-        .bind(p.user_id, w.week, o.error, p.last_week, o.nextTry ? 1 : 0);
-    await done.run().catch(() => undefined);
+      ? env.DB.prepare("UPDATE digest_prefs SET last_error = ?3, claimed_at = NULL WHERE user_id = ?1 AND last_week = ?2").bind(p.user_id, w.week, o.error)
+      : env.DB.prepare("UPDATE digest_prefs SET last_week = ?4, last_error = ?3, tries = tries + ?5, claimed_at = NULL WHERE user_id = ?1 AND last_week = ?2")
+        .bind(p.user_id, w.week, o.error, prev, o.nextTry ? 1 : 0);
+    // A failed write leaves claimed_at set: after CLAIM_STALE_SEC a later run resumes the week with the same key.
+    await done.run().catch(() => console.error("weekly email state not saved"));
   }
   return sent;
 }
@@ -172,6 +196,12 @@ async function buildFor(env: Env, p: Pref, week: string, nowSec: number, base: s
   if ("error" in s) return null;
   const rows = await loadRows(env, range, s.scope, nowSec);
   if (rows.live === "unavailable") return null; // recent days missing: released, the next run tries again
+  // Live reads off but clicks recorded: only the D1 rollups answer, so the whole week must be rolled up before it is sent.
+  // (Without the CLICKS binding nothing is recorded at all, so the zeros are complete.)
+  if (rows.live === "off" && env.CLICKS) {
+    const w = await rolledThrough(env);
+    if (!w || w < addDays(week, -1)) return null;
+  }
   const hosts = new Map((await env.DB.prepare("SELECT id, host FROM domains").all<{ id: string; host: string }>()).results.map((x) => [x.id, x.host]));
   const report = buildReport(range, rows, hosts, { truncated: false, visitors: false });
   const unsubUrl = `${base}/unsubscribe?u=${encodeURIComponent(p.user_id)}&t=${await unsubToken(p.secret, p.user_id)}`;

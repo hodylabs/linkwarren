@@ -28,8 +28,8 @@ export type Mail = {
   /** Extra mail headers (List-Unsubscribe); values are built by us, never from input. */
   headers?: Record<string, string>;
 };
-/** `status`: Resend's HTTP status on a rejection, for callers that decide on a retry (never shown to people). */
-export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings"; status?: number };
+/** `status` and (on a 409) `name`: Resend's HTTP status and error name on a rejection, for callers that decide on a retry (never shown to people). */
+export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings"; status?: number; name?: string };
 
 /** One POST to Resend. Never throws; logs the status code only (Resend's error body can echo the request, link included). */
 export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Promise<SendResult> {
@@ -52,10 +52,11 @@ export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Pro
       body: JSON.stringify({ from: `"${name}" <${from}>`, to: [m.to], subject: m.subject, text: m.text, html: m.html, ...(m.headers ? { headers: m.headers } : {}) }),
       signal: AbortSignal.timeout(10_000),
     });
-    await r.body?.cancel();
+    // A 409 carries Resend's error name (idempotency conflicts); only that short name is kept, never the body or message.
+    const errName: unknown = r.status === 409 ? await r.json().then((b) => (b as { name?: unknown })?.name, () => undefined) : await r.body?.cancel();
     if (!r.ok) {
       console.warn("resend_rejected", r.status);
-      return { ok: false, reason: "rejected", status: r.status };
+      return { ok: false, reason: "rejected", status: r.status, ...(typeof errName === "string" && /^[a-z_]{1,64}$/.test(errName) ? { name: errName } : {}) };
     }
     return { ok: true };
   } catch {

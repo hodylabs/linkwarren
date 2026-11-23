@@ -114,8 +114,12 @@ export function AnalyticsScreen() {
   useEffect(() => cancelSearch, []);
 
   // A link page has no picker: one left open (Back onto a link page) would be hidden yet still hold the shortcuts and Escape.
+  // A search still waiting for its debounce is dropped too, or it would land on the link page's URL.
   useEffect(() => {
-    if (isLink) setPicker(false);
+    if (!isLink) return;
+    setPicker(false);
+    cancelSearch();
+    setQInput("");
   }, [isLink]);
 
   // `?pick=1` (palette "af") opens the picker once, then leaves the URL.

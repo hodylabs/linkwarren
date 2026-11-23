@@ -69,6 +69,13 @@ describe("sendEmail", () => {
       await env.DB.batch(["settings", "audit_log"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
     }
   });
+  it("a 409 keeps only Resend's short error name", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const f = vi.fn(async () => Response.json({ name: "concurrent_idempotent_requests", message: "to a@example.com" }, { status: 409 }));
+    expect(await sendEmail(cfg(), mail, f as unknown as typeof fetch)).toEqual({ ok: false, reason: "rejected", status: 409, name: "concurrent_idempotent_requests" });
+    const g = vi.fn(async () => Response.json({ name: "Bad Name <x>" }, { status: 409 }));
+    expect(await sendEmail(cfg(), mail, g as unknown as typeof fetch)).toEqual({ ok: false, reason: "rejected", status: 409 });
+  });
   it("returns rejected on 422 and logs the status only", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const f = vi.fn(async () => Response.json({ message: "bad re_test a@example.com" }, { status: 422 }));

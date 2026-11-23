@@ -141,6 +141,29 @@ describe("Per-link page edge cases", () => {
   });
 });
 
+describe("Per-link page and a pending search", () => {
+  it("a search still waiting for its debounce is dropped when a link page opens", async () => {
+    history.replaceState(null, "", "/analytics");
+    fakeApi({
+      "GET /api/me": () => ({ body: owner }),
+      "GET /api/domains": () => ({ body: [] }),
+      "GET /api/users": () => ({ body: { items: [] } }),
+      "GET /api/analytics": () => ({ body: report() }),
+      "GET /api/analytics/detail": () => ({ body: detail() }),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Clicks", { selector: ".tile2 small" });
+    await user.type(screen.getByRole("textbox", { name: "Search links" }), "spr");
+    act(() => navigate("/analytics/link/lM"));
+    await screen.findByRole("heading", { name: "Link analytics" });
+    await act(() => new Promise((r) => setTimeout(r, 400))); // past the 250 ms debounce
+    expect(location.search).not.toContain("q=");
+    act(() => navigate("/analytics"));
+    expect(((await screen.findByRole("textbox", { name: "Search links" })) as HTMLInputElement).value).toBe("");
+  });
+});
+
 describe("WeeklyEmail", () => {
   it("turning it on sends this browser's zone", async () => {
     const api = fakeApi({ "PUT /api/account/digest": (r) => ({ body: { ...(r.body as object), emailReady: true } }) });
