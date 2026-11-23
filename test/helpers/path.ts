@@ -7,8 +7,7 @@ export const testCtx = (): ExecutionContext =>
   ({ waitUntil() {}, passThroughOnException() {}, props: {} }) as unknown as ExecutionContext;
 
 export const pathEnv = (over: Partial<Env> = {}): Env =>
-  // OAUTH_PROVIDER: the library caches its helpers on the shared test env; a copy must not inherit the host-mode ones.
-  ({ ...env, OAUTH_PROVIDER: undefined, DASHBOARD_HOST: "short.test", DASHBOARD_PATH: "/dashboard", AUTH_MODE: "app", ...over }) as Env;
+  ({ ...env, DASHBOARD_HOST: "short.test", DASHBOARD_PATH: "/dashboard", AUTH_MODE: "app", ...over }) as Env;
 
 /** `path` on short.test, or a full URL for another host. */
 export const call = (path: string, init?: RequestInit, e: Env = pathEnv()): Promise<Response> =>

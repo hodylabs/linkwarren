@@ -80,6 +80,11 @@ export async function checkConnection(o: TokenExchangeCallbackOptions<Env>): Pro
 }
 
 let cached: { key: string; p: OAuthProvider<Env> } | undefined;
+// The library keeps its helpers on env.OAUTH_PROVIDER and makes them only when unset. Each set is tagged with the base it was
+// made for, and helpers of another base (left on an env, or copied with it) are dropped, never reused: they would issue grants
+// for the old resource, which the current provider refuses. Untagged ones are kept; production never changes base in an isolate.
+const helpersBase = new WeakMap<object, string>();
+const tag = (e: Env, key: string) => { if (e.OAUTH_PROVIDER && !helpersBase.has(e.OAUTH_PROVIDER)) helpersBase.set(e.OAUTH_PROVIDER, key); };
 
 /**
  * One provider per dashboard base (host + prefix; the resource URL is derived from it, so a token is bound to one base and
@@ -91,17 +96,21 @@ export function provider(env: Env): OAuthProvider<Env> {
   const host = d?.host ?? normalizeHost(env.DASHBOARD_HOST);
   const P = d?.prefix ?? "";
   const key = host + P;
+  const h = env.OAUTH_PROVIDER;
+  if (h && helpersBase.has(h) && helpersBase.get(h) !== key) env.OAUTH_PROVIDER = undefined;
   if (cached?.key !== key)
     cached = {
       key,
       p: new OAuthProvider<Env>({
         apiRoute: `${P}/mcp`,
-        apiHandler: mcpHandler,
+        // The library has just set the helpers when it calls either handler.
+        apiHandler: { fetch: (req, e, ctx) => (tag(e, key), mcpHandler.fetch(req, e, ctx)) },
         // Path mode: the app only ever sees inner (root) paths (R3); the wrapper sends nothing outside the prefix here.
         defaultHandler: {
           fetch: (req, e, ctx) => {
-            const d = dash(e);
-            const inner = d ? innerRequest(req, d) : req;
+            tag(e, key);
+            const cur = dash(e);
+            const inner = cur ? innerRequest(req, cur) : req;
             return inner ? app.fetch(inner, e, ctx) : Response.json({ error: "not_found" }, { status: 404 });
           },
         },
