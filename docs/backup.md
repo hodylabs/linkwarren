@@ -51,4 +51,4 @@ Shape:
 
 ### Restoring from an export
 
-Not in this version. The export is a readable copy for safekeeping and for moving your data elsewhere; to undo a mistake on the same instance, use D1 Time Travel. A restore written by hand from the file must insert `roles` before `users`, since `users.role_id` refers to a role: then every person keeps their custom role.
+Not in this version. The export is a readable copy for safekeeping and for moving your data elsewhere; to undo a mistake on the same instance, use D1 Time Travel. A restore written by hand from the file must insert `roles` before `users`, since `users.role_id` refers to a role: then every person keeps their custom role. A migrated database already holds the two built-in rows (`builtin = 1`, ids `owner` and `member`), so upsert those (`INSERT ... ON CONFLICT(id) DO UPDATE SET name = excluded.name, perms = excluded.perms, updated_at = excluded.updated_at, updated_by = excluded.updated_by`) to keep the exported Member permissions, and insert the custom rows as written.
