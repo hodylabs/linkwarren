@@ -1,5 +1,4 @@
 import { buildReport, loadRows, localParts, parseTz, resolveRange, resolveScope, type AnalyticsReport, type Tz } from "./analytics";
-import { rolledThrough } from "./cron";
 import { dash } from "./dash";
 import { displayName, emailConfigured, escapeHtml, sendEmail, type SendResult } from "./email";
 import type { Env } from "./env";
@@ -157,8 +156,11 @@ export async function sendDigests(env: Env, nowSec: number): Promise<number> {
     const claim = await env.DB.prepare(
       `UPDATE digest_prefs SET last_week = ?1, last_attempt_at = ?3, try_week = ?1, tries = ?4, attempts = ?5,
          claimed_at = CASE WHEN ?6 = 1 THEN NULL ELSE ?3 END, last_error = CASE WHEN ?6 = 1 THEN 'gave_up' ELSE last_error END
-       WHERE user_id = ?2 AND enabled = 1 AND (last_week IS NULL OR last_week < ?1 OR (last_week = ?1 AND claimed_at < ?7))`,
-    ).bind(w.week, p.user_id, nowSec, tries, (mine ? p.attempts : 0) + (give ? 0 : 1), give ? 1 : 0, stale).run();
+       WHERE user_id = ?2 AND enabled = 1 AND (last_week IS NULL OR last_week < ?1 OR (last_week = ?1 AND claimed_at < ?7))
+         AND attempts = ?8 AND tries = ?9 AND try_week IS ?10`,
+      // Compare-and-set on the attempt state read above: a row another run changed meanwhile matches nothing and is skipped,
+      // so attempts never go back and a key is never reused.
+    ).bind(w.week, p.user_id, nowSec, tries, (mine ? p.attempts : 0) + (give ? 0 : 1), give ? 1 : 0, stale, p.attempts, p.tries, p.try_week).run();
     if (!claim.meta.changes || give) continue;
     tried++;
     let res: SendResult | null = null;
@@ -197,11 +199,9 @@ async function buildFor(env: Env, p: Pref, week: string, nowSec: number, base: s
   const rows = await loadRows(env, range, s.scope, nowSec);
   if (rows.live === "unavailable") return null; // recent days missing: released, the next run tries again
   // Live reads off but clicks recorded: only the D1 rollups answer, so the whole week must be rolled up before it is sent.
-  // (Without the CLICKS binding nothing is recorded at all, so the zeros are complete.)
-  if (rows.live === "off" && env.CLICKS) {
-    const w = await rolledThrough(env);
-    if (!w || w < addDays(week, -1)) return null;
-  }
+  // (Without the CLICKS binding nothing is recorded at all, so the zeros are complete.) The mark checked is the one loadRows
+  // capped its read at, never a second read that a rollup could have moved in between.
+  if (rows.live === "off" && env.CLICKS && (!rows.rolled || rows.rolled < addDays(week, -1))) return null;
   const hosts = new Map((await env.DB.prepare("SELECT id, host FROM domains").all<{ id: string; host: string }>()).results.map((x) => [x.id, x.host]));
   const report = buildReport(range, rows, hosts, { truncated: false, visitors: false });
   const unsubUrl = `${base}/unsubscribe?u=${encodeURIComponent(p.user_id)}&t=${await unsubToken(p.secret, p.user_id)}`;

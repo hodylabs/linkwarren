@@ -115,7 +115,8 @@ function scopeSql(scope: Scope, binds: unknown[]): string {
 }
 
 export type { DayRow, DimCount, LinkRow } from "./ae";
-export type ReportRows = { days: DayRow[]; links: LinkRow[]; dims: DimCount[]; live: Live };
+/** `rolled`: the rollup mark this load capped its D1 read at (daily reports; null when none), so a caller checks the same mark. */
+export type ReportRows = { days: DayRow[]; links: LinkRow[]; dims: DimCount[]; live: Live; rolled?: string | null };
 
 /**
  * D1 rollups, summed in SQL so the Worker gets at most (days + links + dim values) rows, never days x links.
@@ -179,11 +180,12 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
     c.clicks += r.clicks;
     dims.set(k, c);
   };
-  const out = (live: Live): ReportRows => ({ days: [...days.values()], links: [...links.values()], dims: [...dims.values()], live });
+  let rolled: string | null = null;
+  const out = (live: Live): ReportRows => ({ days: [...days.values()], links: [...links.values()], dims: [...dims.values()], live, rolled });
 
   let aeFrom = start;
   if (unit === "day") {
-    const w = await rolledThrough(env);
+    const w = (rolled = await rolledThrough(env));
     const first = bucketKey(start, "day");
     const last = bucketKey(addMs(range.to, -DAY_MS), "day");
     if (w && w >= first) {
