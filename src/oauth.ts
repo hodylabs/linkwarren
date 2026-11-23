@@ -2,6 +2,7 @@ import { OAuthError, OAuthProvider, type TokenExchangeCallbackOptions } from "@c
 import type { Env } from "./env";
 import { normalizeHost } from "./host";
 import { app } from "./app";
+import { dash, innerRequest } from "./dash";
 import { mcpHandler } from "./mcp/server";
 
 /** Every path the OAuth provider answers; all of them are JSON 404 while agent connections are off (mcpState). */
@@ -89,7 +90,14 @@ export function provider(env: Env): OAuthProvider<Env> {
       p: new OAuthProvider<Env>({
         apiRoute: "/mcp",
         apiHandler: mcpHandler,
-        defaultHandler: { fetch: (req, e, ctx) => app.fetch(req, e, ctx) },
+        // Path mode: the app only ever sees inner (root) paths (R3); the wrapper sends nothing outside the prefix here.
+        defaultHandler: {
+          fetch: (req, e, ctx) => {
+            const d = dash(e);
+            const inner = d ? innerRequest(req, d) : req;
+            return inner ? app.fetch(inner, e, ctx) : Response.json({ error: "not_found" }, { status: 404 });
+          },
+        },
         authorizeEndpoint: "/authorize",
         tokenEndpoint: "/token",
         clientRegistrationEndpoint: "/register",

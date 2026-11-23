@@ -5,6 +5,7 @@ import { authMode, requireUser } from "./auth";
 import type { Env } from "./env";
 import type { SessionRef, UserRow } from "./types";
 import type { Grant } from "./principal";
+import { dash } from "./dash";
 import { normalizeHost } from "./host";
 import { handleRedirect } from "./redirect";
 import { links, locks } from "./api/links";
@@ -30,7 +31,7 @@ export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session
 
 // Missing config fails closed with a clear error instead of a throw.
 app.use("*", async (c, next) => {
-  if (!c.env.DASHBOARD_HOST?.trim()) return c.json({ error: "misconfigured" }, 500);
+  if (!dash(c.env)) return c.json({ error: "misconfigured" }, 500);
   await next();
 });
 

@@ -69,6 +69,8 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 
 One Worker serves everything. The request **host** decides the path:
 - `DASHBOARD_HOST` → dashboard SPA, JSON API under `/api`, MCP under `/mcp`, OAuth endpoints, machine API under `/api/v1`. Signed in by the app or by Cloudflare Access (`AUTH_MODE`).
+- Path mode (`DASHBOARD_PATH`, for example `/dashboard`): `DASHBOARD_HOST` is the main short domain. The front door (`src/index.ts`, configured by `src/dash.ts`) decides with string compares only, before any D1 or KV work: the prefix and its subpaths are the dashboard (prefix stripped, so the app keeps its root routes), root OAuth discovery paths answer JSON, everything else goes straight to the redirect handler.
+- `LEGACY_DASHBOARD_HOST` (optional) → `301` for `GET`/`HEAD` to the same path under the dashboard, `410` for everything else.
 - Any other host → the redirect handler, looking up `(domain for host, slug)`.
 
 Storage: **D1** is the source of truth (users, domains, members, links, slug locks, audit log, daily click totals, and a small `settings` table; forwarders are rows in `links` with `forward_to` set, and the agents on/off switch is the `settings` row `mcp.enabled`). **KV** caches host→domain and `(domain, slug)`→link for the hot path, invalidated on every write. **Analytics Engine** receives one data point per redirect. A daily **cron** rolls Analytics Engine into D1 totals and purges audit entries older than 3 years.

@@ -20,9 +20,28 @@ Required secrets:
 
 Set `OWNER_EMAIL` only with `npx wrangler secret put OWNER_EMAIL -c wrangler.instance.jsonc`. Do not add it (or `RESEND_API_KEY`) to `vars`: a var with the same name replaces the secret on the next deploy.
 
+Optional vars (see [Dashboard at a path](#dashboard-at-a-path)):
+
+- `DASHBOARD_PATH`: unset or blank (the default) is **host mode**. A value such as `/dashboard` is **path mode**.
+- `LEGACY_DASHBOARD_HOST`: an old dashboard host that now only redirects to the dashboard.
+
 `ACCESS_JWKS_JSON` is **test-only**. It replaces the real Access signing keys with a local key set. Never set it in production; the app logs a warning if it is set.
 
 `workers_dev` is `false` in the example config so the Worker is reachable only through your routes.
+
+## Dashboard at a path
+
+**Host mode** (default, `DASHBOARD_PATH` unset): the dashboard owns `DASHBOARD_HOST` entirely, for example `https://dash.example.com`. Route that host to the Worker as well as every short domain.
+
+**Path mode** (`DASHBOARD_PATH` set, for example `/dashboard`): `DASHBOARD_HOST` is your main short domain, for example `example.com`, and the dashboard, API and health check live at `https://example.com/dashboard`. Every other path on that host is a short link, exactly as on any other short domain. The rules:
+
+- `DASHBOARD_PATH` is one lowercase segment: a slash, then 1 to 32 of `a-z`, `0-9` and `-`, not starting or ending with `-`, no trailing slash. Anything else answers every request with `500 {"error":"misconfigured"}` and logs `dashboard config invalid: DASHBOARD_PATH` (the name, never the value).
+- Path mode needs `AUTH_MODE` `app` (or unset). `access` is refused as misconfigured: an Access application cannot cover the prefix while leaving the short links and the OAuth discovery documents open.
+- Only the prefix and its subpaths belong to the dashboard (`/dashboard`, `/dashboard/...`), matched exactly and case-sensitively: `/dashboardx`, `/Dashboard` and `/%64ashboard` are short-link paths. Paths starting with `/.well-known/oauth-` or `/.well-known/openid-configuration` are never short links (they answer JSON).
+- The health check is `https://<DASHBOARD_HOST><DASHBOARD_PATH>/healthz`; `/healthz` on the main domain is an ordinary short-link path.
+- Use path mode only on a domain whose subdomains you all control: the session cookie is limited to the prefix, but a sibling host under the same registrable domain could set a cookie with the same name.
+
+`LEGACY_DASHBOARD_HOST` (optional, either mode) is the dashboard host you used before. Keep it routed to the Worker: `GET` and `HEAD` there answer `301` to the same path and query under the dashboard (`https://old.example.com/links?x=1` to `https://example.com/dashboard/links?x=1`), so bookmarks and recent sign-in links keep working. Every other method, and every `/.well-known/` path, answers `410 {"error":"moved","to":"<dashboard>/"}`: API scripts and agent connections must be pointed at the new address. The old host never serves short links or the dashboard. It must be a valid host name and differ from `DASHBOARD_HOST`, or every request answers `500 misconfigured`.
 
 ## Local development
 
@@ -153,7 +172,7 @@ A pasted value is encrypted with AES-GCM (256-bit key from `SECRETS_KEY`, a fres
 linkwarren signs people in itself, with an email link or a passkey. No Access application is needed.
 
 - Set the var `EMAIL_FROM` (e.g. `links@example.com`) and the secret `RESEND_API_KEY`. Without both, `POST /auth/email` answers `503 {"error":"email_not_configured"}`.
-- `/healthz` is public on the dashboard host; no bypass is needed.
+- `/healthz` is public on the dashboard host (in path mode `<DASHBOARD_PATH>/healthz`); no bypass is needed.
 - `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are not used.
 
 #### Email sign-in links (Resend)
