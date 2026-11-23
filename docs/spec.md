@@ -32,6 +32,12 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - Rules: schedule (starts at), expiry, password, country and device routing (form factor, phone OS iOS/Android, computer OS Windows/macOS/Linux/ChromeOS; an iPad in desktop mode counts as macOS and desktop), campaign (UTM) builder, pass query string through.
 - QR codes always encode the short link, never the destination.
 
+**QR codes** (S9)
+- A **QR codes** screen (`G Q`) for codes that are not short links: Wi-Fi, a static web address (not tracked), plain text (at most 300 characters, so it stays easy to scan), email (`mailto:` with an optional subject and body), phone (`tel:`), SMS (`SMSTO:<number>:<message>`), and a **short link** (any link the person can use, stored by id so a slug change follows; it encodes the link's own QR text, so scans count as QR scans; a deleted link shows the code as broken). Wi-Fi encodes `WIFI:T:<WPA|WEP|nopass>;S:<ssid>;P:<password>;H:true;;` with `\ ; , : "` escaped, `P` left out for an open network and `H` only for a hidden one.
+- Codes are saved with a name, colors (`#RRGGBB`; a light code on a dark background or a contrast ratio under 4.5 is refused) and an error correction level (L, M, Q or H, default M). No logos or frames. Download as SVG or PNG; a live preview follows the form.
+- The **Wi-Fi password** is stored encrypted (AES-GCM 256 with `SECRETS_KEY`, a fresh IV per save, the code id as additional data). It is never in the list, the export, logs, errors or the audit log; only the single-code read returns it, to someone who may edit the code. Without `SECRETS_KEY` a code with a password is refused with `409 secrets_key_missing`. On edit, a left-out password keeps the stored one and an empty one clears it.
+- **Rights:** anyone with `links.create` makes codes and sees and edits their own; `links.editAny` (owners have it) manages everyone's. No new permission. Dashboard only (`/api/qr-codes`): the `/api/v1` API and MCP have no QR endpoints. Each create, update and delete is audited (`qr.create`, `qr.update`, `qr.delete`) with the name and kind, never the password.
+
 **People and access**
 - Sign-in by **email link or passkey** (app mode, the default) or through **Cloudflare Access** (`AUTH_MODE=access`). Sign-in proves the email; the app's own `users` table decides who gets in. People are invited from the dashboard.
 - The **owner** sees and manages every user, domain and link.

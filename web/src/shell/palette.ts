@@ -44,6 +44,7 @@ export function buildCommands(ctx: Ctx, me: Pick<Me, "role" | "perms">, appMode 
     mayOpen(me, o) ? [{ keys, section: "Create", label, run: () => ctx.open(o) }] : [];
   return [
     go("gl", "Links", "/links"),
+    ...(canSee(me, "qr") ? [go("gq", "QR codes", "/qr")] : []),
     go("gd", "Domains", "/domains"),
     go("ga", "Analytics", "/analytics"),
     go("af", "Filter analytics by domain", "/analytics?pick=1"),

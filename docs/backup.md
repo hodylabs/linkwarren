@@ -37,11 +37,12 @@ Shape:
 
 ### What it holds
 
-`roles` (custom and built-in roles with their permissions), `users` (with `role_id`, the custom role of a member, or empty), `domains`, `domain_cf`, `domain_members`, `links` (with `routes` and `forward_to`), `slug_locks`, `audit_log` (only with the `audit` permission), `settings`, `clicks_daily` and `clicks_daily_dim` (only with "Include analytics"), `api_keys` (name, prefix, permissions, domains and dates only), `agent_connections`, `tool_calls`.
+`roles` (custom and built-in roles with their permissions), `users` (with `role_id`, the custom role of a member, or empty), `domains`, `domain_cf`, `domain_members`, `links` (with `routes` and `forward_to`), `qr_codes` (name, kind, content, colors and `hasPassword`, never the Wi-Fi password), `slug_locks`, `audit_log` (only with the `audit` permission), `settings`, `clicks_daily` and `clicks_daily_dim` (only with "Include analytics"), `api_keys` (name, prefix, permissions, domains and dates only), `agent_connections`, `tool_calls`.
 
 ### What it leaves out
 
 - Link passwords: a protected link has `"protected": true` and no password hash. After a restore from the export its password must be set again.
+- Wi-Fi passwords of saved QR codes: a code with one has `"hasPassword": true`. After a restore enter the password again.
 - API key secrets and hashes: keys in the file cannot be used. Create new keys after a restore.
 - Secrets pasted in the dashboard (the `secret.*` settings rows, stored encrypted) and the Worker secrets.
 - Sign-in data: sessions, sign-in links, passkeys, sign-in challenges and rate-limit counters.

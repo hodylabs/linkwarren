@@ -31,7 +31,7 @@ import { Sheet } from "./Sheet";
 export const GLOBAL_KEYS = { "mod+k": "Search and go", "?": "All keyboard shortcuts" } as const;
 
 /** "G then letter" chords (bound in App). */
-export const GO_KEYS = { l: "links", d: "domains", a: "analytics", p: "people", i: "agents", s: "settings" } as const satisfies Record<string, Screen>;
+export const GO_KEYS = { l: "links", q: "qr", d: "domains", a: "analytics", p: "people", i: "agents", s: "settings" } as const satisfies Record<string, Screen>;
 
 type Need = (me: Me) => boolean;
 /** Keys, text, and the role it needs (none: everyone). */

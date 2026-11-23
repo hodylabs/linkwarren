@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EXPORT_TABLES } from "../src/api/export";
 import { hashKey } from "../src/keys";
 import { hashPassword } from "../src/password";
-import { putSecretStmts } from "../src/secrets";
+import { encryptValue, putSecretStmts } from "../src/secrets";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
 import { beforeBatch } from "./helpers/race";
 import { signedIn } from "./helpers/session";
@@ -32,7 +32,8 @@ const page = (table: string, after: number | null, who = "owner", run = runId) =
 
 const PLAIN = "cfPLAINTEXT_token_123456";
 const KEY_SECRET = "lw_secretKEYsecretKEYsecretKEYsecretKEYsecretK";
-let keyHash = "", pwHash = "", cipher = "";
+let keyHash = "", pwHash = "", cipher = "", qrCipher = "";
+const WIFI = "wifiPLAINpass";
 
 /** Counts D1 calls (each first/all/run/raw and each batch is one query), as test/binding-calls.test.ts does. */
 const realDB = env.DB;
@@ -63,8 +64,8 @@ function countD1() {
 const restoreDB = () => { (env as unknown as Record<string, unknown>).DB = realDB; };
 
 // roles first: a restore needs them before users.role_id refers to them. Never deleted here: the built-in rows stay.
-const BASE_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
-const ALL_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "api_keys", "agent_connections", "tool_calls"];
+const BASE_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "qr_codes", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
+const ALL_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "qr_codes", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "api_keys", "agent_connections", "tool_calls"];
 const NEVER = ["sessions", "login_tokens", "passkeys", "auth_challenges", "auth_limits", "locks", "analytics_state"];
 
 beforeAll(setupAccess);
@@ -86,6 +87,8 @@ beforeEach(async () => {
   e.SECRETS_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
   await env.DB.batch(await putSecretStmts(env, "uo", "CF_API_TOKEN", PLAIN));
   cipher = (await env.DB.prepare("SELECT value FROM settings WHERE key = 'secret.CF_API_TOKEN'").first<{ value: string }>())!.value;
+  qrCipher = await encryptValue(env, "qr.q1", WIFI);
+  await run("INSERT INTO qr_codes (id,name,kind,data,secret,style,created_by,updated_by,created_at,updated_at) VALUES ('q1','Office','wifi','{}',?,'{}','uo','uo',1,1)", qrCipher);
   await run("INSERT INTO clicks_daily (day,link_id,domain_id,slug,qr,typed,bots,visitors) VALUES ('2026-01-01','l1','d1','open',1,2,0,3)");
   await run("INSERT INTO clicks_daily_dim (day,link_id,domain_id,dim,value,clicks) VALUES ('2026-01-01','l1','d1','device','ios',3)");
   keyHash = await hashKey(KEY_SECRET);
@@ -190,7 +193,8 @@ describe("POST /api/export/page", () => {
     expect(Object.keys(out.api_keys![0]!).sort()).toEqual(["can_delete", "can_write", "created_at", "domain_ids", "expires_at", "id", "last_used_at", "name", "prefix", "revoked_at", "user_id"]);
     expect(out.settings!.map((s) => s.key)).toEqual(["instance.name"]);
     for (const rows of Object.values(out)) for (const r of rows) expect(Object.keys(r)).not.toContain("_r");
-    for (const bad of ['"hash"', "password_hash", "pbkdf2", pwHash, keyHash, KEY_SECRET, PLAIN, cipher, '"v1.', "secret.CF_API_TOKEN\",\"value",
+    expect(out.qr_codes!.map((q) => [q.id, q.hasPassword, "secret" in q])).toEqual([["q1", true, false]]);
+    for (const bad of ['"hash"', "password_hash", "pbkdf2", pwHash, keyHash, KEY_SECRET, PLAIN, cipher, WIFI, qrCipher, '"v1.', "secret.CF_API_TOKEN\",\"value",
       "sessHASHabc", "loginHASHabc", "credIDabc", "pubKEYabc", "chalABC", "limKEYabc", "lockTOKENabc", "watermarkV"])
       expect([bad, text.includes(bad)]).toEqual([bad, false]);
   });
