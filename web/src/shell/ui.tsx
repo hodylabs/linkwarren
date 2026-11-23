@@ -35,7 +35,7 @@ export type IconName = keyof typeof PATHS;
 
 /** A decorative stroke icon; the control around it carries the name. */
 export const Icon = ({ name }: { name: IconName }) => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
+  <svg className="i" viewBox="0 0 24 24" aria-hidden="true">
     <path d={PATHS[name]} />
   </svg>
 );
