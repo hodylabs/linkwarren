@@ -95,13 +95,13 @@ qrCodes.get("/:id", async (c) => {
 
 type Input = { kind: QrKind; data: QrData[QrKind] };
 /** The kind's data, checked by shape then content; a link must exist on a domain the person can use. */
-async function content(c: Context<E>, kind: QrKind, raw: unknown, password: string): Promise<Input | { error: string }> {
+async function content(c: Context<E>, kind: QrKind, raw: unknown, password: string, checkLink = true): Promise<Input | { error: string }> {
   const d = DATA[kind].safeParse(raw);
   if (!d.success) return { error: "invalid_body" };
   const data = (kind === "url" ? { url: (d.data as QrData["url"]).url.trim() } : d.data) as QrData[QrKind];
   const p = qrProblem(kind, data, password);
   if (p) return { error: p };
-  if (kind === "link") {
+  if (kind === "link" && checkLink) {
     const user = c.var.user;
     const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind((data as QrData["link"]).linkId).first();
     const domain = row ? await getDomain(c.env, rowToLink(row).domainId) : null;
@@ -179,8 +179,9 @@ qrCodes.patch("/:id", async (c) => {
   const kind = b.kind ?? row.kind;
   // The password the code will carry: the new one, or the stored one (only to size the payload).
   const kept = b.password === undefined && row.secret !== null ? ((await decryptValue(c.env, aad(row.id), row.secret)) ?? "") : "";
-  // Unchanged content is checked again too: a new password must still fit, and a link code's link must still be usable.
-  const input = await content(c, kind, b.data ?? parse(row.data, {}), b.password ?? kept);
+  // Unchanged content is checked again (a new password must still fit); the link's domain is re-checked only when the content
+  // changes, so someone allowed to manage the code can rename it without access to the link's domain.
+  const input = await content(c, kind, b.data ?? parse(row.data, {}), b.password ?? kept, b.kind !== undefined || b.data !== undefined);
   if ("error" in input) return c.json(input, 400);
   let secret = row.secret;
   if (!takesPassword(input) || b.password === "") secret = null;

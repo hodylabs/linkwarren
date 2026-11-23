@@ -227,6 +227,7 @@ users.delete("/:id", async (c) => {
     auditStmt(env, { actorId: me.id, action: "user.remove", targetType: "user", targetId: id,
       detail: { email: p.email, role: p.role, transferTo: to, links: ln?.n ?? 0, domains: hosts } }, g),
     q("UPDATE links SET created_by = ? WHERE created_by = ?", to, id),
+    q("UPDATE qr_codes SET created_by = ? WHERE created_by = ?", to, id),
     q("UPDATE domains SET owner_id = ? WHERE owner_id = ?", to, id),
     q("DELETE FROM domain_members WHERE user_id = ?", id),
     q("DELETE FROM api_keys WHERE user_id = ?", id),

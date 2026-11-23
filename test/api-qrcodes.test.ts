@@ -140,6 +140,12 @@ describe("kinds", () => {
   it("link: refuses a link on a domain the person cannot use, or an unknown one", async () => {
     expect(await answer(await call("a", "POST", "/api/qr-codes", { name: "x", kind: "link", data: { linkId: "l2" } }))).toEqual([400, { error: "qr_link" }]);
     expect(await answer(await call("a", "POST", "/api/qr-codes", { name: "x", kind: "link", data: { linkId: "nope" } }))).toEqual([400, { error: "qr_link" }]);
+  });
+
+  it("someone who may manage a link code renames it without access to the link's domain, but cannot repoint it there", async () => {
+    const q = await make("owner", { name: "Private", kind: "link", data: { linkId: "l2" } });
+    expect((await call("e", "PATCH", `/api/qr-codes/${q.id}`, { name: "Renamed" })).status).toBe(200);
+    expect(await answer(await call("e", "PATCH", `/api/qr-codes/${q.id}`, { data: { linkId: "l2" } }))).toEqual([400, { error: "qr_link" }]);
     expect((await call("owner", "POST", "/api/qr-codes", { name: "x", kind: "link", data: { linkId: "l2" } })).status).toBe(201);
   });
 });
