@@ -10,9 +10,13 @@ export type InstanceSettings = {
   linkRedirectCode: 301 | 302;
   linkPassQuery: boolean;
   setupCompletedAt: number | null;
+  updatesCheck: boolean;
+  updatesLatest: LatestRelease | null;
 };
+/** The newest published release the daily check saw (src/update.ts). */
+export type LatestRelease = { version: string; url: string; publishedAt: string | null; checkedAt: number };
 
-const DEFAULTS: InstanceSettings = { name: null, mainDomainId: null, logoVersion: null, linkRedirectCode: 302, linkPassQuery: true, setupCompletedAt: null };
+const DEFAULTS: InstanceSettings = { name: null, mainDomainId: null, logoVersion: null, linkRedirectCode: 302, linkPassQuery: true, setupCompletedAt: null, updatesCheck: true, updatesLatest: null };
 
 // Values are JSON-encoded. Only these keys are ever read here (never secret.*, see src/secrets.ts).
 const FIELDS: { [K in keyof InstanceSettings]: { key: string; schema: z.ZodType } } = {
@@ -22,6 +26,12 @@ const FIELDS: { [K in keyof InstanceSettings]: { key: string; schema: z.ZodType 
   linkRedirectCode: { key: "links.defaultRedirectCode", schema: z.union([z.literal(301), z.literal(302)]) },
   linkPassQuery: { key: "links.defaultPassQuery", schema: z.boolean() },
   setupCompletedAt: { key: "setup.completedAt", schema: z.number().int() },
+  updatesCheck: { key: "updates.check", schema: z.boolean() },
+  // Written by the cron only; the URL is re-checked (releaseUrl) wherever it is shown.
+  updatesLatest: {
+    key: "updates.latest",
+    schema: z.strictObject({ version: z.string().max(40), url: z.string().max(300), publishedAt: z.string().max(40).nullable(), checkedAt: z.number().int() }),
+  },
 };
 const NAMES = Object.keys(FIELDS) as (keyof InstanceSettings)[];
 const KEYS = NAMES.map((n) => FIELDS[n].key);

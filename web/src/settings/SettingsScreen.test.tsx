@@ -17,7 +17,7 @@ const DOMAINS = [
 ];
 const SETTINGS = {
   name: "Northwind", mainDomainId: "d0", dashboardHost: "links.example.com", authMode: "app", emailFrom: "links@example.com", emailConfigured: true,
-  secrets: { pasteAvailable: true, cf: "secret", resend: "missing" }, linkRedirectCode: 302, linkPassQuery: true, retention: { auditDays: 1096, clickDetailDays: 90 },
+  secrets: { pasteAvailable: true, cf: "secret", resend: "missing" }, linkRedirectCode: 302, linkPassQuery: true, updatesCheck: true, retention: { auditDays: 1096, clickDetailDays: 90 },
 };
 const INSTANCE = { name: "Northwind", logoVersion: null, configured: true, dashboardHost: "links.example.com", mainDomainId: "d0", linkDefaults: { redirectCode: 302, passQuery: true } };
 
@@ -254,6 +254,19 @@ describe("Settings sections", () => {
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(writes(api)).toHaveLength(1));
     expect(writes(api)[0]!.body).toEqual({ linkRedirectCode: 301, linkPassQuery: false });
+  });
+
+  it("This instance: Check for updates defaults on; turning it off saves updatesCheck false and reloads the instance", async () => {
+    const { api, user } = boot("/settings/instance");
+    const sw = await screen.findByRole("switch", { name: "Check for updates" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    sw.focus();
+    await user.keyboard(" ");
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    expect(writes(api)[0]!.body).toEqual({ updatesCheck: false });
+    await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/instance").length).toBeGreaterThan(1));
   });
 
   it("a failed settings load offers Retry", async () => {

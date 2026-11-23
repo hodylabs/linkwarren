@@ -73,7 +73,13 @@ The instance name is shown to signed-out visitors on the sign-in page and on the
 - The audit log of dashboard changes (including changes by agents and keys) is kept for 3 years.
 - MCP tool calls are kept 90 days.
 
-Everything linkwarren stores stays in the Cloudflare account that runs the instance. The one thing it sends elsewhere is email: sign-in links, invites and test mails go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself). See "People and email" below.
+Everything linkwarren stores stays in the Cloudflare account that runs the instance. It sends two things elsewhere: the daily update check (see "Update check" below, off with one switch) and email: sign-in links, invites and test mails go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself). See "People and email" below.
+
+## Update check
+
+Once a day (the 00:15 UTC run of the scheduled job) the instance asks GitHub for the latest linkwarren release: one `GET https://api.github.com/repos/hodylabs/linkwarren/releases/latest`. The request carries only a fixed `User-Agent: linkwarren-update-check` and `Accept: application/vnd.github+json`: no instance name, dashboard address, email, token or other data about the instance or its people. GitHub sees the request come from the IP address Cloudflare sends it from, as with any web request. The answer's version, release-notes link and date are stored in the `settings` table (key `updates.latest`); nothing installs by itself.
+
+Owners and people with the Settings permission then see "vX.Y.Z available" next to the dashboard version when a newer release exists. To turn the check off, switch off **Check for updates** in Settings, This instance: the daily request stops and the notice is hidden.
 
 ## Platform logs
 

@@ -41,6 +41,7 @@ kbd{font-family:var(--mono);font-size:11px;padding:1px 5px;border:1px solid var(
 .rail .me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:8px;border-top:1px solid #2A2F37}
 .avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
 .ver{border:1px solid #30363F;border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:11px;color:#8A929E}
+.ver a{margin-left:8px;color:var(--signal);text-decoration:underline}
 .rail .me .avatar{background:var(--signal);color:var(--graphite)}
 .rail .me div{line-height:1.25}.rail .me small{color:var(--rail-dim)}
 
@@ -500,7 +501,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
   .drawer .sheet-x:hover{background:var(--rail-hi)}
   .drawer .nav{margin-top:40px}
   .drawer .nav a{min-height:44px}
-  .rail .me a,.linkbtn{display:inline-flex;align-items:center;min-height:44px;font-size:14px}
+  .rail .me a,.linkbtn,.ver a{display:inline-flex;align-items:center;min-height:44px;font-size:14px}
 }
 @media (max-width:400px){.brand span{display:none}}
 

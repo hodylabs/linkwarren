@@ -185,6 +185,10 @@ Inviting people in access mode: the invite creates the person and emails them th
 
 Health checks: `/healthz` sits behind Access on the dashboard host. Add an Access bypass policy for the path `/healthz`, or give the monitor a service token, otherwise the check gets a login redirect.
 
+### Updating to a new release
+
+linkwarren never updates itself. Once a day it checks GitHub for the latest release (see [privacy.md](privacy.md#update-check)), and owners and people with the Settings permission see "vX.Y.Z available" next to the dashboard version, linking to the release notes. To update, read the notes, pull the release, apply any new migrations and deploy it by hand as in Steps above. The check can be turned off in Settings, This instance (**Check for updates**).
+
 ### Upgrading an existing instance
 
 Instances deployed before the sign-in modes used Access. The default is now app mode, so an upgrade without a setting switches the dashboard to app mode and ignores the Access token.

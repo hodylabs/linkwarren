@@ -7,6 +7,7 @@ import { AE_DAYS } from "../analytics";
 import { AUDIT_KEEP_DAYS } from "../cron";
 import { checkLogo, LOGO_HEADERS, LOGO_KEY, LOGO_MAX_BYTES, LOGO_TYPES, type LogoType } from "../logo";
 import { getSettings, settingStmts, type InstanceSettings } from "../settings";
+import { updateInfo } from "../update";
 import { emailConfigured, sendEmail, UNSAFE } from "../email";
 import { LIMITS, hit, hitAll, limitKey } from "../limits";
 import { CfError, cfConfig, cfConfigFor, cnameTarget, createDns, getFallbackOrigin, hostnameCount, listDns, setFallbackOrigin } from "../cf/api";
@@ -52,6 +53,8 @@ instance.get("/", async (c) => {
   return c.json({
     name: s.name, logoVersion: s.logoVersion, configured: s.setupCompletedAt !== null, dashboardHost: normalizeHost(c.env.DASHBOARD_HOST),
     mainDomainId: s.mainDomainId, linkDefaults: { redirectCode: s.linkRedirectCode, passQuery: s.linkPassQuery },
+    // From the same settings read: no extra query. Only those who can act on it (owners and `settings`) see it.
+    update: can(c.var.user, "settings") ? updateInfo(s) : null,
   });
 });
 instance.get("/logo", async (c) => {
@@ -81,7 +84,7 @@ async function settingsBody(env: Env) {
     name: s.name, mainDomainId: s.mainDomainId, dashboardHost: normalizeHost(env.DASHBOARD_HOST), authMode: mode,
     ...(mode === "access" ? { teamDomain: env.ACCESS_TEAM_DOMAIN ?? "" } : {}),
     emailFrom: env.EMAIL_FROM?.trim() || null, emailConfigured: emailOk, secrets,
-    linkRedirectCode: s.linkRedirectCode, linkPassQuery: s.linkPassQuery, retention: { auditDays: AUDIT_KEEP_DAYS, clickDetailDays: AE_DAYS },
+    linkRedirectCode: s.linkRedirectCode, linkPassQuery: s.linkPassQuery, updatesCheck: s.updatesCheck, retention: { auditDays: AUDIT_KEEP_DAYS, clickDetailDays: AE_DAYS },
   };
 }
 settings.get("/", async (c) => c.json(await settingsBody(c.env)));
@@ -92,6 +95,7 @@ const settingsPatch = z.strictObject({
   mainDomainId: z.string().min(1).max(64).optional(),
   linkRedirectCode: z.union([z.literal(301), z.literal(302)]).optional(),
   linkPassQuery: z.boolean().optional(),
+  updatesCheck: z.boolean().optional(),
 });
 settings.patch("/", async (c) => {
   const body = settingsPatch.safeParse(await c.req.json().catch(() => null));
