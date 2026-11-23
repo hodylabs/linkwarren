@@ -1,0 +1,59 @@
+/* Starlight in the app's tokens (web/src/styles.css): graphite, warm paper, signal orange, Unbounded, IBM Plex Sans and Mono.
+   Dark is Starlight's default (:root); light is [data-theme="light"]. Link text uses a deeper orange in light mode for contrast. */
+:root {
+  --sl-font: "IBM Plex Sans", system-ui, sans-serif;
+  --sl-font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --lw-display: "Unbounded", sans-serif;
+
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e6e8ec;
+  --sl-color-gray-2: #c9ced6;
+  --sl-color-gray-3: #9aa0a8;
+  --sl-color-gray-4: #7d8591;
+  --sl-color-gray-5: #30363f;
+  --sl-color-gray-6: #1c2026;
+  --sl-color-black: #15181d;
+
+  --sl-color-accent-low: #3d2410;
+  --sl-color-accent: #fd8d27;
+  --sl-color-accent-high: #ffc48f;
+}
+
+:root[data-theme="light"] {
+  --sl-color-white: #15181d;
+  --sl-color-gray-1: #1b1e23;
+  --sl-color-gray-2: #2a2f37;
+  --sl-color-gray-3: #4f555e;
+  --sl-color-gray-4: #646b75;
+  --sl-color-gray-5: #d3d5cf;
+  --sl-color-gray-6: #e4e5e0;
+  --sl-color-gray-7: #eeefeb;
+  --sl-color-black: #f6f6f3;
+
+  --sl-color-accent-low: #fff3e6;
+  --sl-color-accent: #a84b10;
+  --sl-color-accent-high: #6b2e07;
+  --sl-color-bg-nav: #ffffff;
+  --sl-color-bg-sidebar: #f6f6f3;
+}
+
+/* Titles in the display face, like the app and the landing page. */
+.site-title,
+.sl-markdown-content :is(h2, h3),
+h1#_top {
+  font-family: var(--lw-display);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+.site-title { font-size: 1.15rem; color: var(--sl-color-white); }
+.site-title img { height: 1.75rem; width: auto; }
+/* Unbounded is wide: keep it at the landing page's section sizes. */
+h1#_top { letter-spacing: -0.025em; font-size: clamp(1.75rem, 3.2vw, 2.4rem); }
+.sl-markdown-content h2 { font-size: clamp(1.3rem, 2.2vw, 1.6rem); }
+.sl-markdown-content h3 { font-size: 1.15rem; }
+
+:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+
+/* Tables are frequent in these docs: keep them compact and readable. */
+.sl-markdown-content table { font-size: 0.9375rem; }
+.sl-markdown-content :is(th, td) { vertical-align: top; }
