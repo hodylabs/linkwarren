@@ -60,7 +60,7 @@ Every Workers-native shortener checked on 2026-11-20 keys slugs globally, so `a.
 - First-run setup: name, sign-in, Cloudflare token (permissions checked one by one), main domain, email, bring your links.
 
 **Instance and release**
-- Each instance chooses its own dashboard host; it is never a short-link domain and never appears in the repo. Example: dashboard `dash.example.com`.
+- Each instance chooses its own dashboard host, which never appears in the repo. In host mode it is a dashboard-only host, never a short-link domain (example: `dash.example.com`); in path mode it is the main short domain and the dashboard lives under its path (example: `example.com/dashboard`).
 - Email from the instance via Resend.
 - No auto-update (decided 2026-11-22): a daily check of GitHub's latest release shows "vX.Y.Z available" in the sidebar to owners and Settings holders; turned off in Settings, This instance.
 - License: **AGPL-3.0** (open source; decided 2026-11-20 over AGPL + Commons Clause, which would have made it source-available). Anyone may host and modify it; anyone who changes it, including to run it as a service, must publish their changes; closed products cannot embed it. Plus `TRADEMARK.md` (forks and hosted services may not use the name or logo) and a contributor agreement so the maintainers can grant commercial license exceptions.

@@ -160,7 +160,7 @@ Unset `DASHBOARD_PATH`, set `DASHBOARD_HOST` back to the old dashboard host, rem
 
 ## Moving a host-mode dashboard
 
-To move a host-mode dashboard from `dash.example.com` to another dashboard-only host (`admin.example.com`), keep `DASHBOARD_PATH` unset and do not use the path-mode steps above (they need a main short domain and set `DASHBOARD_PATH`). Give the new host a custom domain or route to the Worker, then in `wrangler.instance.jsonc` set `DASHBOARD_HOST` to the new host and `LEGACY_DASHBOARD_HOST` to the old one (keep it routed), and deploy. People sign in again on the new host (the cookie is host-only), and passkeys must be added again. Point API scripts and agent connections at the new host: the old host answers `410` for `/api/v1` and `/mcp`.
+To move a host-mode dashboard from `dash.example.com` to another dashboard-only host (`admin.example.com`), keep `DASHBOARD_PATH` unset and do not use the path-mode steps above (they need a main short domain and set `DASHBOARD_PATH`). Give the new host a custom domain or route to the Worker, then in `wrangler.instance.jsonc` set `DASHBOARD_HOST` to the new host and `LEGACY_DASHBOARD_HOST` to the old one (keep it routed), and deploy. People sign in again on the new host (the cookie is host-only), and passkeys must be added again. Point API scripts and agent connections at the new host: the old host answers `410` for `/api/v1` and `/mcp`. With `AUTH_MODE=access`, first add the new host to the Cloudflare Access application (or create one for it) and update `ACCESS_AUD` if the application changes; until then sign-in on the new host fails.
 
 ## Local development
 
