@@ -36,11 +36,13 @@ export const purgeMany = (env: Env, domainId: string, keys: string[]) =>
 
 /**
  * Validates the destination and returns the normalized href, or an error code. `also`: more hosts that count as short hosts.
- * `hosts`: the allHosts list already read in this request (saves one D1 read per call).
+ * `hosts`: the allHosts list already read in this request (saves one D1 read per call). `webOnly`: http(s) only, no tel: or mailto:.
  */
-export async function destination(env: Env, raw: string, also: string[] = [], hosts?: string[]): Promise<{ href: string } | { error: string }> {
+export async function destination(
+  env: Env, raw: string, also: string[] = [], hosts?: string[], opts: { webOnly?: boolean } = {},
+): Promise<{ href: string } | { error: string }> {
   const target = cnameTarget(env);
-  const r = checkDestination(raw, [...(hosts ?? (await allHosts(env))), env.DASHBOARD_HOST, ...(target ? [target] : []), ...also]);
+  const r = checkDestination(raw, [...(hosts ?? (await allHosts(env))), env.DASHBOARD_HOST, ...(target ? [target] : []), ...also], opts);
   if (!r.ok) return { error: r.reason === "too_long" ? "url_too_long" : r.reason };
   if (r.url.href.length > 2048) return { error: "url_too_long" };
   return { href: r.url.href };

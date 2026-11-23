@@ -93,8 +93,9 @@ importApi.post("/", async (c) => {
 
   // Destinations may not point at any short host, existing or about to be created.
   const shortHosts = [...existing.keys(), ...[...doms.values()].filter((d) => d.isNew).map((d) => d.host), dashboard];
-  const dest = (raw: string): string | null => {
-    const r = checkDestination(raw, shortHosts);
+  // Domain redirects are web-only, as in the domain settings; links may also be tel: or mailto:.
+  const dest = (raw: string, webOnly = false): string | null => {
+    const r = checkDestination(raw, shortHosts, { webOnly });
     return r.ok && r.url.href.length <= 2048 ? r.url.href : null;
   };
   const ignored: { host: string; field: string }[] = [];
@@ -103,7 +104,7 @@ importApi.post("/", async (c) => {
     if (!dom) continue;
     for (const [field, raw, cur] of [["customIndexUrl", d.customIndexUrl, "bare"], ["customNotFoundUrl", d.customNotFoundUrl, "nf"]] as const) {
       if (!raw) continue;
-      const href = dest(raw);
+      const href = dest(raw, true);
       if (!href) { ignored.push({ host: dom.host, field }); continue; }
       if (dom[cur] !== null) continue; // never overwrite a redirect that is already set
       dom[cur] = href;

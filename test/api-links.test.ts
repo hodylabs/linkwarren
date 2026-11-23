@@ -105,6 +105,33 @@ describe("create", () => {
       expect(await one("SELECT 1 FROM links")).toBeNull();
     });
 
+  it("accepts tel: and mailto: destinations, as the main url and in routes", async () => {
+    const t = await post("a", { domainId: "dm", slug: "call", url: "tel:+1-555-123-4567" });
+    expect([t.status, ((await t.json()) as { url: string }).url]).toEqual([201, "tel:+1-555-123-4567"]);
+    const m = await post("a", {
+      domainId: "dm", slug: "mail", url: "mailto:hi@example.com?subject=Hello%20there",
+      routes: [{ countries: ["CA"], url: "tel:+15551234" }],
+    });
+    expect(m.status).toBe(201);
+    expect(await m.json()).toMatchObject({ url: "mailto:hi@example.com?subject=Hello%20there", routes: [{ countries: ["CA"], devices: [], url: "tel:+15551234" }] });
+    const list = (await (await call("a", "GET", "/api/links")).json()) as { items: { slug: string; routes: unknown[] }[] };
+    expect(list.items.find((i) => i.slug === "mail")!.routes).toHaveLength(1);
+  });
+
+  it("refuses tel: with parameters and mailto: with header injection, on create, PATCH and routes", async () => {
+    for (const [url, error] of [["tel:+1555;ext=2", "bad_tel"], ["mailto:a@example.com?bcc=x@example.com", "bad_mailto"],
+      ["mailto:a@example.com?subject=x%0D%0Abcc:y@example.com", "bad_mailto"]] as const) {
+      const r = await post("a", { domainId: "dm", slug: "h", url });
+      expect([r.status, await r.json()]).toEqual([400, { error }]);
+    }
+    const { id } = await mk("a", "p");
+    const r = await call("a", "PATCH", `/api/links/${id}`, { url: "tel:+1 555" });
+    expect([r.status, await r.json()]).toEqual([400, { error: "bad_tel" }]);
+    const ro = await post("a", { domainId: "dm", slug: "r", url: "https://x.com/", routes: [{ countries: ["CA"], url: "mailto:x" }] });
+    expect(await ro.json()).toMatchObject({ error: "bad_route", reason: "bad_mailto" });
+    expect(await one("SELECT 1 FROM links WHERE slug <> 'p'")).toBeNull();
+  });
+
   it("rejects an href that grows past 2048 after normalization", async () => {
     const r = await post("a", { domainId: "dm", slug: "g", url: `https://x.com/${"é".repeat(1100)}` });
     expect([r.status, await r.json()]).toEqual([400, { error: "url_too_long" }]);

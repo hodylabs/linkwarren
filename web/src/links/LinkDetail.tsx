@@ -6,6 +6,7 @@ import { useUnsaved } from "../unsaved";
 import { CloseButton, Seg, Switch, Tag } from "../shell/ui";
 import { useApp } from "../state";
 import { clock, fromLocalInput, shortDate, toLocalInput } from "../time";
+import { DestText } from "./DestText";
 import { QrPanel } from "./QrPanel";
 import { readUtm } from "./compose";
 import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from "./linkView";
@@ -204,7 +205,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
             <span>&rarr;</span>
             <span className="arr">{link.redirectCode}</span>
             <span>&rarr;</span>
-            <span>{link.url}</span>
+            <span><DestText url={link.url} /></span>
           </div>
         </div>
         {stats && (
@@ -225,6 +226,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
               <label htmlFor="ld-url">URL</label>
               <input id="ld-url" className="input" ref={urlRef} value={draft.url} readOnly={!canEdit} spellCheck={false} onChange={(e) => set({ url: e.target.value })} />
             </div>
+            {canEdit && <p className="hint">An http or https address, a tel: number or a mailto: address.</p>}
             {tags && (
               <p className="hint" data-testid="campaign-tags">
                 Campaign tags: {tags}

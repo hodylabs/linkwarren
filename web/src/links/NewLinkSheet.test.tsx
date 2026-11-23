@@ -107,6 +107,21 @@ describe("New link sheet", () => {
     expect(location.search).toBe("?sel=new1");
   });
 
+  it("says which schemes are allowed, sends a tel: destination and shows bad_mailto at the destination", async () => {
+    const { api, user } = boot();
+    const sheet = await open(user);
+    expect(within(sheet).getByText(/tel:/)).toBeTruthy();
+    await user.type(slugBox(), "call");
+    setVal(dest(), "mailto:a@example.com?bcc=x@example.com");
+    await screen.findByText(/Available/);
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(await within(sheet).findByText(errorText("bad_mailto"))).toBeTruthy();
+    expect(posts(api)).toEqual([]);
+    setVal(dest(), "tel:+1-555-123-4567");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toEqual([{ domainId: "dm", slug: "call", url: "tel:+1-555-123-4567", redirectCode: 302 }]));
+  });
+
   it("Ctrl+Shift+Enter also copies the short URL", async () => {
     const { api, user } = boot();
     await open(user);

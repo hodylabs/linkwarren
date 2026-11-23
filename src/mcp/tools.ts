@@ -38,7 +38,7 @@ async function domainOf(api: Api, hostOrId: string): Promise<Domain> {
 
 // Bounds mirror the API caps, so oversize input is refused by the SDK before any limiter write.
 const time = z.number().int().nonnegative().nullable().optional();
-const url = z.string().min(1).max(2048);
+const url = z.string().min(1).max(2048).describe("Destination: an http(s) URL, a tel: number (tel:+15551234567) or a mailto: address (optional subject and body only)");
 const slug = z.string().min(1).max(64);
 const hostOrId = z.string().min(1).max(253).describe("Host (go.example.com) or domain id");
 const ROUTES =

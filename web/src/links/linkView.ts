@@ -16,6 +16,10 @@ export function linkState(l: Link, d: Domain | undefined, now: number): { label:
 /** "host/slug" of the short link a forwarder sends visitors to (its url is always https://<host>/<slug>, built by the server). */
 export const forwardTarget = (l: Link): string => l.url.replace(/^https:\/\//, "");
 
+/** "Phone" or "Email" for a tel: or mailto: destination (shown as a plain label, never a live link), null for a web one. */
+export const destKind = (url: string): "Phone" | "Email" | null =>
+  /^tel:/i.test(url) ? "Phone" : /^mailto:/i.test(url) ? "Email" : null;
+
 export const shortUrl = (host: string, slug: string): string => `https://${host}/${slug}`;
 
 /** "You"; an owner, a links.editAny or a people.manage holder sees a name or email; anyone else only ever sees "Teammate". */

@@ -33,16 +33,56 @@ export function checkSlug(
   return { ok: true };
 }
 
+export type DestinationError = "not_url" | "scheme" | "userinfo" | "too_long" | "loop" | "bad_tel" | "bad_mailto";
+
+// tel: an optional +, digits and visual separators only (RFC 3966 without parameters), at most 32 after the scheme.
+const TEL = /^tel:(?=[^]{1,32}$)\+?[0-9().-]*[0-9][0-9().-]*$/i;
+// mailto: comma-separated plain addresses (no characters that need escaping), then an optional subject/body query.
+const ADDR = "[A-Za-z0-9!$'*+_.-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+";
+const MAILTO = new RegExp(`^mailto:${ADDR}(?:,${ADDR})*(?:\\?([^#]*))?$`, "i");
+const FIELD = /^(subject|body)=((?:[A-Za-z0-9._~!$'()*+,;:@/-]|%[0-9A-Fa-f]{2})*)$/i;
+
+/** The query of a mailto: subject and body only, each once, no control character even percent-encoded (header injection). */
+function mailtoQueryOk(q: string | undefined): boolean {
+  if (q === undefined) return true;
+  const seen = new Set<string>();
+  for (const pair of q.split("&")) {
+    const m = FIELD.exec(pair);
+    if (!m) return false;
+    const key = m[1]!.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    let v: string;
+    try {
+      v = decodeURIComponent(m[2]!);
+    } catch {
+      return false;
+    }
+    if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(v)) return false;
+  }
+  return true;
+}
+
+/**
+ * http(s) destinations, plus tel: and mailto: unless `webOnly`. tel and mailto are matched strictly on the raw text (no
+ * whitespace, controls or parser leniency), and the loop check only applies to http(s): they have no host to loop to.
+ */
 export function checkDestination(
   raw: string,
   shortHosts: string[],
-): { ok: true; url: URL } | { ok: false; reason: "not_url" | "scheme" | "userinfo" | "too_long" | "loop" } {
+  opts: { webOnly?: boolean } = {},
+): { ok: true; url: URL } | { ok: false; reason: DestinationError } {
   if (raw.length > 2048) return { ok: false, reason: "too_long" };
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     return { ok: false, reason: "not_url" };
+  }
+  if (!opts.webOnly && url.protocol === "tel:") return TEL.test(raw) ? { ok: true, url } : { ok: false, reason: "bad_tel" };
+  if (!opts.webOnly && url.protocol === "mailto:") {
+    const m = MAILTO.exec(raw);
+    return m && mailtoQueryOk(m[1]) ? { ok: true, url } : { ok: false, reason: "bad_mailto" };
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return { ok: false, reason: "scheme" };
   if (url.username || url.password) return { ok: false, reason: "userinfo" };

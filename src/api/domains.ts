@@ -339,7 +339,8 @@ domains.patch("/:id", async (c) => {
     if (raw === undefined) return { v: cur };
     if (raw === null) return { v: null };
     // Its own host counts even while pending or disabled: approval does not re-check, and a redirect to itself would loop.
-    const r = await destination(c.env, raw, [d.host]);
+    // Web-only: a domain's front page or missing-link fallback opening the dialer or the mail app would surprise visitors.
+    const r = await destination(c.env, raw, [d.host], undefined, { webOnly: true });
     return "error" in r ? { err: r.error } : { v: r.href };
   };
   const bare = await target(b.bareRedirect, d.bareRedirect), nf = await target(b.notfoundRedirect, d.notfoundRedirect);

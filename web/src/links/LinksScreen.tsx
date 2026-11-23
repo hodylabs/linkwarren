@@ -13,6 +13,7 @@ import { BULK_KEYS, BulkBar, type BulkAction } from "./BulkBar";
 import { csvName, downloadCsv, shortUrls, toCsv } from "./bulk";
 import { BulkSheet, type BulkMode, type BulkRun } from "./BulkSheet";
 import { LinkDetail, type DetailHandle } from "./LinkDetail";
+import { DestText } from "./DestText";
 import { Sparkline } from "./Sparkline";
 import { creatorLabel, linkState, linksQuery, type LinksFilter, type StatsLive } from "./linkView";
 import { all, EMPTY_SEL, extend, keepOnly, range, toggle, type Sel } from "./selection";
@@ -454,7 +455,7 @@ export function LinksScreen() {
                         <span className="slug">{l.slug}</span>
                       </span>
                     </td>
-                    <td className="dest">{l.url}</td>
+                    <td className="dest"><DestText url={l.url} /></td>
                     <td>
                       {(l.forwardTo || l.startsAt !== null || l.expiresAt !== null || l.hasPassword || l.routes.length > 0) && (
                         <span className="icons">

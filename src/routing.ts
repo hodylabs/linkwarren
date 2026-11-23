@@ -51,7 +51,8 @@ export function pickDestination(link: { url: string; routes: Route[] }, country:
 
 /** Pass the visitor's raw query through to the destination (raw bytes, no re-encoding). */
 export function withQuery(dest: string, passQuery: boolean, search: string): string {
-  if (!passQuery || !search) return dest;
+  // Web destinations only: a visitor query on mailto: could add cc/bcc, on tel: it would corrupt the number.
+  if (!passQuery || !search || !/^https?:/i.test(dest)) return dest;
   const d = new URL(dest);
   d.search = d.search ? `${d.search}&${search.slice(1)}` : search;
   return d.toString();

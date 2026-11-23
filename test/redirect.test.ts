@@ -37,6 +37,16 @@ describe("redirect", () => {
     expect(r.headers.get("x-robots-tag")).toBe("noindex");
   });
 
+  it("tel: and mailto: answer 302 with that Location and never get the visitor query", async () => {
+    const d = await seed();
+    await addLink(d, "call", { url: "tel:+15551234" });
+    await addLink(d, "mail", { url: "mailto:a@example.com?subject=Hi" });
+    const t = await get(d.host, "/call?x=1", { redirect: "manual" });
+    expect([t.status, t.headers.get("location")]).toEqual([302, "tel:+15551234"]);
+    const m = await get(d.host, "/mail?bcc=evil@example.com", { redirect: "manual" });
+    expect([m.status, m.headers.get("location")]).toEqual([302, "mailto:a@example.com?subject=Hi"]);
+  });
+
   it("no X-Robots-Tag when noindex=0; 301 when link says so", async () => {
     const d = await seed({ noindex: 0 });
     await addLink(d, "s", { code: 301 });
