@@ -1,5 +1,7 @@
 ---
-title: linkwarren - Design Spec
+title: Design spec
+description: The requirements and architecture linkwarren is built to.
+slug: docs/spec
 project: linkwarren
 type: design-spec
 status: in-development

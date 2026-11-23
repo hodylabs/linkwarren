@@ -1,3 +1,9 @@
+---
+title: Privacy
+description: What linkwarren records per click, what it never stores, and what leaves your Cloudflare account.
+slug: docs/privacy
+---
+
 # Privacy
 
 This page describes what a linkwarren instance records when someone opens a short link. It applies to every instance that turns on click analytics (see [deploy.md](deploy.md), "Analytics"). Without analytics configured, nothing is recorded per click.
