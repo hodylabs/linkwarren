@@ -7,6 +7,7 @@ import { Tag } from "../shell/ui";
 import { clock, shortDate } from "../time";
 import { addPasskey, passkeysSupported } from "../signin/passkey";
 import { withBase } from "../base";
+import { WeeklyEmail } from "./WeeklyEmail";
 
 /** Sign-in and security hotkeys and their text on the shortcuts sheet. */
 export const ACCOUNT_KEYS = {
@@ -187,6 +188,7 @@ export function AccountPanel() {
       <button type="button" className="btn" disabled={busy} onClick={() => setConfirm({ kind: "all" })}>
         Sign out everywhere
       </button>
+      <WeeklyEmail />
       {confirm && (
         <Sheet label={confirm.kind === "all" ? "Sign out everywhere" : confirm.kind === "remove" ? "Remove passkey" : "End session"} onClose={() => { setConfirm(null); setError(null); }}>
           <div className="sh-head">

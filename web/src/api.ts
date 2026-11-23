@@ -44,7 +44,18 @@ export type AnalyticsReport = {
   links: { linkId: string; domainId: string; host: string; slug: string; clicks: number }[];
   domains: { domainId: string; host: string; clicks: number }[];
   countries: Count[]; devices: Count[]; referrers: Count[];
+  /** Only on a per-link report (`?link=`). */
+  link?: { linkId: string; host: string; slug: string };
 };
+/** GET /api/analytics/detail (src/analytics.ts DetailReport): from Analytics Engine only, `from`..`to` are the UTC days covered. */
+export type DetailReport = {
+  live: "ok" | "off" | "unavailable"; from: string; to: string;
+  os: Count[]; browsers: Count[]; languages: Count[]; places: Count[];
+  /** hours[weekday][hour], Monday first, in the time zone sent. */
+  hours: number[][];
+};
+/** GET and PUT /api/account/digest: the weekly email opt-in. */
+export type DigestPrefs = { enabled: boolean; tz: string | null; emailReady: boolean };
 /** One item of GET /api/analytics/links: `days` are today-6..today (UTC), oldest first. */
 export type LinkStats = { linkId: string; days: number[]; clicks: number; qr: number; topCountry: string | null };
 export type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";

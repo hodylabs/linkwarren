@@ -7,6 +7,9 @@ import type { PasskeyItem, SessionItem, SessionRef, UserRow } from "../types";
 import { MAX_PASSKEYS, PasskeyError, registrationOptions, verifyRegistration } from "../webauthn";
 import { parse } from "./signin";
 import type { Grant } from "../principal";
+import { parseTz } from "../analytics";
+import { newSecret, startWeek } from "../digest";
+import { emailConfigured } from "../email";
 
 type E = { Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } };
 /** The signed-in person's own account (app mode only, behind requireUser): passkeys, sessions, sign out. */
@@ -138,6 +141,31 @@ account.post("/sign-out", async (c) => {
   if (id) await c.env.DB.batch(endOwn(c.env, c.var.user.id, id, "auth.sign_out"));
   c.header("Set-Cookie", clearCookie(c.env));
   return c.body(null, 204);
+});
+
+/** S10 weekly email summary: the person's own opt-in and time zone. `emailReady` false shows the switch disabled. */
+account.get("/digest", async (c) => {
+  const r = await c.env.DB.prepare("SELECT enabled, tz FROM digest_prefs WHERE user_id = ?").bind(c.var.user.id).first<{ enabled: number; tz: string }>();
+  return c.json({ enabled: !!r?.enabled, tz: r?.tz ?? null, emailReady: await emailConfigured(c.env) });
+});
+
+const digestBody = z.strictObject({ enabled: z.boolean(), tz: z.string().max(64) });
+account.put("/digest", async (c) => {
+  const b = await parse(c, digestBody);
+  if (!b) return c.json({ error: "invalid_body" }, 400);
+  const tz = parseTz(b.tz);
+  if (!tz) return c.json({ error: "bad_tz" }, 400);
+  const ready = await emailConfigured(c.env);
+  if (b.enabled && !ready) return c.json({ error: "email_not_configured" }, 409); // turning it off works without email
+  const stored = "zone" in tz ? tz.zone : String(tz.offset), now = nowS();
+  // Turning it on (from off or never set) starts a new secret and week; a zone change while on keeps both.
+  await c.env.DB.prepare(
+    `INSERT INTO digest_prefs (user_id, enabled, tz, secret, last_week, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, tz = excluded.tz, updated_at = excluded.updated_at,
+       secret = CASE WHEN excluded.enabled = 1 AND digest_prefs.enabled = 0 THEN excluded.secret ELSE digest_prefs.secret END,
+       last_week = CASE WHEN excluded.enabled = 1 AND digest_prefs.enabled = 0 THEN excluded.last_week ELSE digest_prefs.last_week END`,
+  ).bind(c.var.user.id, b.enabled ? 1 : 0, stored, newSecret(), startWeek(now * 1000, tz), now).run();
+  return c.json({ enabled: b.enabled, tz: stored, emailReady: ready });
 });
 
 account.post("/sign-out-everywhere", async (c) => {

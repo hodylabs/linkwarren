@@ -21,7 +21,13 @@ const oneLine = (s: string, n = 80): string => cut(s.replace(UNSAFE, " ").replac
 
 /** name: the instance name for the sender; when undefined sendEmail reads it from the settings.
  * key: the Resend key the caller already resolved (one lookup per request); when undefined sendEmail looks it up. */
-export type Mail = { to: string; subject: string; text: string; html: string; name?: string | null; key?: string };
+export type Mail = {
+  to: string; subject: string; text: string; html: string; name?: string | null; key?: string;
+  /** Resend keeps an Idempotency-Key for 24 hours: a retried send with the same key is not delivered twice. */
+  idempotencyKey?: string;
+  /** Extra mail headers (List-Unsubscribe); values are built by us, never from input. */
+  headers?: Record<string, string>;
+};
 export type SendResult = { ok: true } | { ok: false; reason: "not_configured" | "rejected" | "network" | "settings" };
 
 /** One POST to Resend. Never throws; logs the status code only (Resend's error body can echo the request, link included). */
@@ -41,8 +47,8 @@ export async function sendEmail(env: Env, m: Mail, f: typeof fetch = fetch): Pro
   try {
     const r = await f("https://api.resend.com/emails", {
       method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: `"${name}" <${from}>`, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", ...(m.idempotencyKey ? { "idempotency-key": m.idempotencyKey } : {}) },
+      body: JSON.stringify({ from: `"${name}" <${from}>`, to: [m.to], subject: m.subject, text: m.text, html: m.html, ...(m.headers ? { headers: m.headers } : {}) }),
       signal: AbortSignal.timeout(10_000),
     });
     await r.body?.cancel();

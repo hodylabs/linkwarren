@@ -254,6 +254,53 @@ export async function aeDay(env: Env, day: string): Promise<{ tot: RollTot[]; di
   };
 }
 
+/** S10 per-click detail, appended after blob9 (older points have them empty): os, browser, language, place. */
+export type DetailDim = "os" | "browser" | "language" | "place";
+const DETAIL = [["os", "blob10"], ["browser", "blob11"], ["language", "blob12"], ["place", "blob13"]] as const;
+// shortcut: UTC hour buckets, so a half-hour zone (+05:30) files a click at 00:45Z under 05:00 local, not 06:00; use 15-minute buckets (more queries) if that matters.
+/** Hourly buckets per query: 80 days of hours (1920 rows) stays under ROW_CAP, so a 90-day window is two queries. */
+const HOUR_SPAN_MS = 80 * 86_400_000;
+
+/**
+ * Detail for `from`..`to` from Analytics Engine only (D1 rollups keep totals and country, device, referrer, not these):
+ * human clicks per detail value, and per UTC hour for the busiest-times grid. Per id chunk: 4 dim queries plus 1 or 2 hour
+ * queries, so MAX_CHUNKS keeps a request at 36 at most.
+ */
+export async function aeDetail(env: Env, from: Date, to: Date, scope: Scope): Promise<{ dims: { dim: DetailDim; value: string; clicks: number }[]; hours: { bucket: string; clicks: number }[] }> {
+  if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0 || from >= to) return { dims: [], hours: [] };
+  const spans: [Date, Date][] = [];
+  for (let s = from; s < to; s = new Date(s.getTime() + HOUR_SPAN_MS)) spans.push([s, new Date(Math.min(to.getTime(), s.getTime() + HOUR_SPAN_MS))]);
+  const runChunk = (c: Chunk) => {
+    const p = baseParams(env, from, to);
+    const where = WINDOW + HUMAN + chunkClause(c, p);
+    return Promise.all([
+      ...DETAIL.map(([, col]) => aeQuery(env, `SELECT ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where} GROUP BY ${col}`, p)),
+      ...spans.map(([a, b]) => {
+        const q = { ...p, from: iso(a), to: iso(b) };
+        return aeQuery(env, `SELECT toStartOfHour(timestamp) AS bucket, COUNT(*) AS n FROM ${ds(env)} ${where} GROUP BY toStartOfHour(timestamp)`, q);
+      }),
+    ]);
+  };
+  const parts = await Promise.all(scopeChunks(scope).map(runChunk));
+  const dims = new Map<string, { dim: DetailDim; value: string; clicks: number }>();
+  const hours = new Map<string, number>();
+  for (const rows of parts) {
+    rows.forEach((rs, i) => {
+      for (const r of rs) {
+        if (i >= DETAIL.length) {
+          const b = bucketOf(r.bucket, "hour");
+          hours.set(b, (hours.get(b) ?? 0) + num(r.n));
+          continue;
+        }
+        const dim = DETAIL[i]![0], k = `${dim}|${str(r.value)}`;
+        const c = dims.get(k) ?? dims.set(k, { dim, value: str(r.value), clicks: 0 }).get(k)!;
+        c.clicks += num(r.n);
+      }
+    });
+  }
+  return { dims: [...dims.values()], hours: [...hours].map(([bucket, clicks]) => ({ bucket, clicks })) };
+}
+
 /**
  * Human clicks per link and UTC day for the Links sparkline: one query per id chunk (see scopeChunks), ids validated and
  * bound. `domainIds` (null: any) keeps only points recorded on a domain the caller may use.

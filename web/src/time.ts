@@ -28,3 +28,14 @@ export function clock(sec: number, nowMs = Date.now()): string {
   }
   return days === 1 ? "Yesterday" : shortDate(sec);
 }
+
+/** The viewer's zone for busiest times: the IANA name, or the current offset in minutes when the browser gives none. */
+export function viewerZone(): string {
+  try {
+    const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (z) return z;
+  } catch {
+    // fall through to the offset
+  }
+  return String(-new Date().getTimezoneOffset());
+}

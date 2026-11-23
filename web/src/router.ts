@@ -27,17 +27,21 @@ const screenOf = (path: string): Screen | null => {
 };
 
 /**
- * The current screen, the path segment after it (a Settings section) and query. "/" and unknown paths resolve to links and rewrite the URL to /links;
+ * The current screen, the path segment after it (a Settings section), the one after that (an id) and query. "/" and unknown paths resolve to links and rewrite the URL to /links;
  * /setup (the first-run wizard, which renders outside the router) lands on /settings/instance once the instance is set up.
  */
-export function useRoute(): { screen: Screen; sub: string; query: URLSearchParams } {
+export function useRoute(): { screen: Screen; sub: string; id: string; query: URLSearchParams } {
   const loc = useSyncExternalStore(subscribe, snapshot);
   const screen = screenOf(loc);
   useEffect(() => {
     if (!screen) navigate(loc.split("?")[0] === "/setup" ? "/settings/instance" : "/links", { replace: true });
   }, [screen, loc]);
   return useMemo(
-    () => ({ screen: screen ?? "links", sub: loc.split("?")[0]!.split("/")[2] ?? "", query: new URLSearchParams(loc.split("?")[1] ?? "") }),
+    () => {
+      const seg = loc.split("?")[0]!.split("/");
+      // `id`: the segment after `sub`, for example the link of /analytics/link/<id>.
+      return { screen: screen ?? "links", sub: seg[2] ?? "", id: seg[3] ?? "", query: new URLSearchParams(loc.split("?")[1] ?? "") };
+    },
     [screen, loc],
   );
 }

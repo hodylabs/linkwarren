@@ -30,6 +30,39 @@ export function classifyAgent(ua: string | null, verifiedBot?: string): { kind: 
   return { kind: "human", device };
 }
 
+// Buckets only (S10): a closed set plus "Other", never the raw agent. Order matters (iPad agents say "like Mac OS X", Android says Linux).
+const OS: readonly (readonly [string, RegExp])[] = [
+  ["iOS", /iPhone|iPad|iPod/], ["Android", /Android/], ["ChromeOS", /CrOS/], ["Windows", /Windows/],
+  ["macOS", /Macintosh|Mac OS X/], ["Linux", /Linux|X11/],
+];
+// Edge, Opera and Samsung also say Chrome; Chrome also says Safari; so the specific ones go first.
+const BROWSERS: readonly (readonly [string, RegExp])[] = [
+  ["Edge", /Edg(?:e|A|iOS)?\//], ["Opera", /OPR\/|Opera/], ["Samsung Internet", /SamsungBrowser\//],
+  ["Firefox", /Firefox\/|FxiOS\//], ["Chrome", /Chrome\/|CriOS\//], ["Safari", /Safari\//],
+];
+const bucket = (ua: string, table: typeof OS) => table.find(([, re]) => re.test(ua))?.[0] ?? "Other";
+export const osOf = (ua: string): string => bucket(ua, OS);
+export const browserOf = (ua: string): string => bucket(ua, BROWSERS);
+
+/** The first Accept-Language tag, lowercased, its first two subtags only ("zh-Hant-TW" is "zh-hant"); "" when there is none. */
+export function languageOf(h: string | null): string {
+  const tag = (h ?? "").slice(0, 200).split(",")[0]!.split(";")[0]!.trim().toLowerCase();
+  return /^[a-z]{2,3}(?:-[a-z0-9]{1,8})*$/.test(tag) ? tag.split("-").slice(0, 2).join("-") : "";
+}
+
+// The same set as email.ts UNSAFE (controls, zero-width, bidi), built from code points so the dashboard bundle (qr.ts imports this file) never pulls email.ts.
+const UNSAFE = new RegExp(
+  `[${[[0x0, 0x1f], [0x7f, 0x9f], [0x200b, 0x200f], [0x2028, 0x202e], [0x2060, 0x2069], [0xfeff, 0xfeff]].map(([a, b]) => `${String.fromCharCode(a!)}-${String.fromCharCode(b!)}`).join("")}]`,
+  "g",
+);
+
+/** City as Cloudflare gives it (region when there is no city) with the country, so two Springfields stay apart; "" when cf has neither. */
+export function placeOf(cf: { city?: unknown; region?: unknown } | undefined, country: string): string {
+  const pick = (v: unknown) => (typeof v === "string" ? v.replace(UNSAFE, "").trim().slice(0, 64) : "");
+  const p = pick(cf?.city) || pick(cf?.region);
+  return p ? `${p}, ${country}` : "";
+}
+
 export function referrerHost(ref: string | null): string {
   if (!ref) return "";
   try {

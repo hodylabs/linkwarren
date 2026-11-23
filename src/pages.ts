@@ -42,3 +42,14 @@ export const passwordPage = (state: keyof typeof MESSAGES): string =>
       `<input id="pw" name="password" type="password" autocomplete="current-password" required autofocus>` +
       `<button type="submit">Open link</button></form>`,
   );
+
+/**
+ * S10 weekly email unsubscribe. GET only asks (mail scanners follow links), the button POSTs to the same URL, as does a mail
+ * app's one-click List-Unsubscribe-Post. Fixed text only: nothing from the request is reflected.
+ */
+export const unsubscribePage = (state: "ask" | "done" | "bad"): string =>
+  state === "ask"
+    ? doc("Weekly email", FORM_CSS, `<h1>Weekly email</h1><p>Stop the weekly clicks summary?</p><form method="post"><button type="submit">Unsubscribe</button></form>`)
+    : state === "done"
+      ? page("Unsubscribed", "You will not get the weekly email any more. You can turn it on again in your account.")
+      : page("Link not valid", "This unsubscribe link is not valid any more. Turn the weekly email off in your account.");

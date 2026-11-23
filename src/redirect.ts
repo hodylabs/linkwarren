@@ -1,5 +1,5 @@
 import { type Ctx, getDomainByHost, getLink } from "./cache";
-import { classifyAgent, referrerHost, splitQrMarker, UA_MAX, utcDay, visitorHash } from "./clicks";
+import { browserOf, classifyAgent, languageOf, osOf, placeOf, referrerHost, splitQrMarker, UA_MAX, utcDay, visitorHash } from "./clicks";
 import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, PAGE_HEADERS, pendingPage } from "./pages";
@@ -65,7 +65,7 @@ export async function recordClick(env: Env, req: Request, link: LinkRow, domain:
     await new Promise((r) => setTimeout(r, 0));
     // Capped: the agent regexes cost grows faster than linear on crafted long agents (Free plan: 10 ms CPU).
     const ua = req.headers.get("user-agent")?.slice(0, UA_MAX) ?? null;
-    const cf = req.cf as { country?: unknown; verifiedBotCategory?: unknown } | undefined;
+    const cf = req.cf as { country?: unknown; city?: unknown; region?: unknown; verifiedBotCategory?: unknown } | undefined;
     const vb = typeof cf?.verifiedBotCategory === "string" ? cf.verifiedBotCategory : undefined;
     const { kind, device } = classifyAgent(ua, vb);
     const country = typeof cf?.country === "string" && cf.country ? cf.country.toUpperCase() : "XX";
@@ -73,9 +73,12 @@ export async function recordClick(env: Env, req: Request, link: LinkRow, domain:
     const visitor = await visitorHash(env.VISITOR_SALT, utcDay(now), ip, ua ?? "");
     // An own-host referrer is the protected link's form page (same-origin policy), never where the visitor came from.
     const ref = referrerHost(req.headers.get("referer"));
+    const s = ua ?? "";
     env.CLICKS?.writeDataPoint({
       indexes: [domain.id],
-      blobs: [domain.id, link.id, link.slug, country, device, ref === referrerHost(req.url) ? "" : ref, qr ? "qr" : "typed", kind, visitor],
+      // S10 appended blob10-13 (os, browser, language, place): older points simply have them empty.
+      blobs: [domain.id, link.id, link.slug, country, device, ref === referrerHost(req.url) ? "" : ref, qr ? "qr" : "typed", kind, visitor,
+        osOf(s), browserOf(s), languageOf(req.headers.get("accept-language")), placeOf(cf, country)],
       doubles: [1],
     });
   } catch (e) {
