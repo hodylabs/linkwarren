@@ -69,6 +69,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
     const [changePw, setChangePw] = useState(false); // the new-password input of a link that already has one
     const [cardField, setCardField] = useState<string | null>(null); // the bad_vcard field of a contact card
     const [photoBusy, setPhotoBusy] = useState(false); // a picked photo is still being resized: Save waits
+    const [cardReset, setCardReset] = useState(0); // bumped by Escape to remount the card form
     const urlRef = useRef<HTMLInputElement>(null);
     const qrRef = useRef<HTMLButtonElement>(null);
     const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
@@ -151,6 +152,8 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
         setRouteErrors({});
         setChangePw(false);
         setCardField(null);
+        // Only during a resize (a remount moves focus): a fresh card form drops it and ends the Save wait (its unmount cleanup).
+        if (photoBusy) setCardReset((n) => n + 1);
       }
     };
 
@@ -242,7 +245,7 @@ export const LinkDetail = forwardRef<DetailHandle, { link: Link; stats: LinkStat
           {isCard && (
             <div className="sect">
               <h3>Contact card</h3>
-              <VcardForm id="ld-vc" value={draft.vcard ?? emptyVcard()} field={cardField} readOnly={!canEdit} onBusy={setPhotoBusy} onChange={(vcard) => {
+              <VcardForm key={cardReset} id="ld-vc" value={draft.vcard ?? emptyVcard()} field={cardField} readOnly={!canEdit} onBusy={setPhotoBusy} onChange={(vcard) => {
                   set({ vcard });
                   setCardField(null);
                 }} />
