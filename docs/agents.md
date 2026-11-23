@@ -58,7 +58,7 @@ Agents follow the person's current role. When an owner turns off **Connect AI ag
 | `delete_link` | delete | Delete a link, remove its forwarders and lock their slugs (needs `confirm: true`) |
 | `bulk_links` | write (delete also needs delete) | Change up to 50 links in one call: `delete`, `schedule`, `move`, `redirect` or `password` |
 
-`bulk_links` takes `action`, `ids` (1 to 50), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
+`bulk_links` takes `action`, `ids` (1 to 50), `confirm`, and the fields of the action (`startsAt`, `expiresAt`, `endNow` (only `true`; leave it out otherwise), `redirectCode`, `passQuery`, `password`, or `domain` and `oldAddress` for a move). It answers `{ results, pending }`: one entry per link, `{ id, ok: true, link: { id, shortUrl, url, kind, hasPassword, forwardTo } }` or `{ id, ok: false, error }`, and `pending`, the ids still waiting for a password (see below). When it needs a confirmation it answers `{ refused: true, summary }` and changes nothing.
 ### Routing
 
 Every link has a `kind`: `url` (a redirect) or `vcard` (a contact card: the short link downloads the card, see `docs/spec.md`). `get_link` and `search_links` show the kind and, for a card, its fields with `hasPhoto` in place of the photo. Contact cards are created and edited in the dashboard or through `/api/v1`, not through MCP; `update_link` on a card answers `vcard_url` for a new `url` and `vcard_rule` for a password or routes.
@@ -147,7 +147,7 @@ curl -s -X DELETE -H "Authorization: Bearer $LW_KEY" "$LW/links/<link id>"
 curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<link id>"
 ```
 
-A card that fails its checks answers `400 {"error":"bad_vcard","field":"<field>"}` (`name`, `photo`, `phones.0`, `emails.1`, `websites.2`, `address.city`, `note`, ...). A contact card refuses `url` (`vcard_url`), a password or routes (`vcard_rule`) and a type change (`kind_change`); a plain link refuses `vcard` (`not_vcard`).
+Reading one link (`GET /links/<id>` or `/links/by-slug`) returns the card with its `photo`. Lists and searches (`GET /links`) return each card with `hasPhoto` (true or false) instead of the photo, to keep pages small. A card that fails its checks answers `400 {"error":"bad_vcard","field":"<field>"}` (`name`, `photo`, `phones.0`, `emails.1`, `websites.2`, `address.city`, `note`, ...). A contact card refuses `url` (`vcard_url`), a password or routes (`vcard_rule`) and a type change (`kind_change`); a plain link refuses `vcard` (`not_vcard`).
 
 ### Bulk changes
 

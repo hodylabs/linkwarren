@@ -65,7 +65,8 @@ type Card = { photo?: unknown } & Record<string, unknown>;
 /** A link as an agent sees it: a card's photo (up to 64 KB of base64) becomes `hasPhoto`, never the image itself. */
 const slim = (l: Record<string, unknown>): Record<string, unknown> => {
   const v = l.vcard as Card | undefined;
-  if (!v) return l;
+  // A list answer already has hasPhoto instead of the photo.
+  if (!v || !("photo" in v)) return l;
   const { photo, ...rest } = v;
   return { ...l, vcard: { ...rest, hasPhoto: typeof photo === "string" } };
 };
@@ -218,9 +219,9 @@ export const TOOLS: Record<string, ToolDef> = {
       // Only what the agent needs per link: never the full row (smaller output, no rules or routes echoed back).
       const results = r.results.map((x) => {
         if (!x.ok || !x.link) return x;
-        const { id: linkId, domainId, slug: s, url: u, hasPassword, forwardTo } = x.link;
+        const { id: linkId, domainId, slug: s, url: u, kind, hasPassword, forwardTo } = x.link;
         const host = hosts.get(domainId);
-        return { id: x.id, ok: true, link: { id: linkId, shortUrl: host ? `https://${host}/${s}` : null, url: u, hasPassword, forwardTo: forwardTo ?? null } };
+        return { id: x.id, ok: true, link: { id: linkId, shortUrl: host ? `https://${host}/${s}` : null, url: u, kind: kind ?? "url", hasPassword, forwardTo: forwardTo ?? null } };
       });
       return { results, pending: r.pending };
     },

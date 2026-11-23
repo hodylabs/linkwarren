@@ -1181,4 +1181,35 @@ describe("contact card links (S9)", () => {
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toEqual({ vcard: { ...card, lastName: "Byron" } });
   });
+
+  // The list sends hasPhoto instead of the photo.
+  const { photo: _, ...listCard } = card;
+  it("a list card without a photo opens at once and saves without hasPhoto", async () => {
+    const calls: unknown[] = [];
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: false } });
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "PATCH /api/links/l1": ({ body }) => (calls.push(body), { body: { ...C1, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    expect(api.calls.some((c) => c.method === "GET" && c.path === "/api/links/l1")).toBe(false);
+    await user.type(within(detail()).getByLabelText("Organization"), "X");
+    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ vcard: { ...card, org: "X" } });
+  });
+
+  it("a list card with a photo loads the single read, then the form shows the photo", async () => {
+    const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: true } });
+    const { api } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [L], next: null } }),
+      routes: { "GET /api/links/l1": () => ({ body: { ...C1, vcard: { ...card, photo: "/9j/AAAA" } } }) },
+    });
+    const img = (await screen.findByRole("img", { name: "Contact photo" })) as HTMLImageElement;
+    expect(detail().contains(img)).toBe(true);
+    expect(img.src).toBe("data:image/jpeg;base64,/9j/AAAA");
+    expect(api.calls.filter((c) => c.method === "GET" && c.path === "/api/links/l1")).toHaveLength(1);
+  });
 });
