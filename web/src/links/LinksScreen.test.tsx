@@ -1347,23 +1347,22 @@ describe("contact card links (S9)", () => {
     expect(location.search).toContain("qr=1");
   });
 
-  it("Escape during a photo resize drops the late result and ends the Save wait", async () => {
+  it("Escape during a photo resize closes the edit sheet and drops the late result", async () => {
     let finish: (b64: string) => void = () => undefined;
     vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
     const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
     const { api, user } = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [L], next: null } }) });
     await ready();
-    const save = () => within(detail()).getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
-    fireEvent.change(within(detail()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
-    await waitFor(() => expect(save().disabled).toBe(true));
-    within(detail()).getByLabelText("First name").focus();
+    await openEdit(user);
+    fireEvent.change(within(editSheet()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    within(editSheet()).getByLabelText("First name").focus();
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(save().disabled).toBe(false));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit link" })).toBeNull());
     finish("/9j/LATE");
     await new Promise((r) => setTimeout(r, 0));
-    expect(within(detail()).queryByRole("img", { name: "Contact photo" })).toBeNull();
-    await user.click(save());
-    expect(api.calls.some((c) => c.method === "PATCH")).toBe(false); // nothing changed, so nothing is sent
+    await openEdit(user);
+    expect(within(editSheet()).queryByRole("img", { name: "Contact photo" })).toBeNull();
+    expect(api.calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
   it("a server bad_vcard on emails.0 marks the second shown row when the first is blank", async () => {
