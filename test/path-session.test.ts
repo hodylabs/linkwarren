@@ -111,6 +111,14 @@ describe("path mode return paths (R9)", () => {
     expect(safeNext("/dashboard/agents", "https://dash.test")).toBe("/dashboard/agents");
   });
 
+  it("a stored next is checked again on verify but never stripped a second time", async () => {
+    const fake = fakeResend();
+    // Stored as "/dashboard/x" (one strip of the doubled prefix); a second strip on verify would turn it into "/x".
+    await post("/dashboard/auth/email", { email: "path-owner@example.com", next: "/dashboard/dashboard/x" });
+    const r = await post("/dashboard/auth/email/verify", { token: fake.tokenFrom() });
+    expect(await r.json()).toEqual({ next: "/dashboard/x" });
+  });
+
   it("a sign-in link carrying /../hello returns to the dashboard root", async () => {
     const fake = fakeResend();
     await post("/dashboard/auth/email", { email: "path-owner@example.com", next: "/../hello" });

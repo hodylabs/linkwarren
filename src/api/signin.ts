@@ -19,7 +19,7 @@ const TOKEN_TTL = 900;
 const MAX_BODY = 8192;
 const origin = (env: Env) => `https://${normalizeHost(env.DASHBOARD_HOST)}`; // = dash(env).origin, past the misconfigured gate
 /** R9: a return path kept inside the dashboard (under the prefix in path mode). */
-const next = (env: Env, raw: unknown) => safeNext(raw, origin(env), dash(env)?.prefix ?? "");
+const next = (env: Env, raw: unknown, strip = true) => safeNext(raw, origin(env), dash(env)?.prefix ?? "", strip);
 const nowS = () => Math.floor(Date.now() / 1000);
 
 // R3 guard: POST only (anything else is the JSON 404, never the SPA shell), the exact dashboard Origin is required
@@ -154,7 +154,7 @@ signin.post("/email/verify", async (c) => {
   const s = await createSession(env, c.req.raw, r.user, "email");
   if (!s.started(await env.DB.batch(s.stmts))) return c.json({ error: "disabled" }, 403); // disabled after the check above
   c.header("Set-Cookie", s.setCookie);
-  return c.json({ next: next(env, t.next) });
+  return c.json({ next: next(env, t.next, false) }); // stored by mailLink after next(): already inner
 });
 
 signin.post("/passkey/options", async (c) => {

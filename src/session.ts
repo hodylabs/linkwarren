@@ -155,8 +155,9 @@ export function unPrefix(raw: unknown, prefix: string): unknown {
  * R9: `next` is an inner path; with a prefix it must also stay under it once prefixed ("/../slug" would land on a short link).
  * A value that already carries the prefix ("/dashboard/agents") is stripped once first, so it is never doubled.
  */
-export function safeNext(raw: unknown, origin: string, prefix = ""): string {
-  raw = unPrefix(raw, prefix);
+export function safeNext(raw: unknown, origin: string, prefix = "", strip = true): string {
+  // A value stored after an earlier safeNext is already an inner path: checked again, never stripped twice.
+  if (strip) raw = unPrefix(raw, prefix);
   if (typeof raw !== "string" || raw.length > 2048 || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/";
   if (/[\u0000-\u001f\u007f]/.test(raw)) return "/";
   try {
