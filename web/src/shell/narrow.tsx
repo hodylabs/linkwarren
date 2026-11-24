@@ -72,7 +72,12 @@ export function useDetailView(path: string) {
     was.current = open;
   }, [open, sel, path]);
 
-  return { open, show, back };
+  // A selection rejected by the server (gone or hidden): never restore it when the detail closes.
+  const forget = () => {
+    shown.current = null;
+  };
+
+  return { open, show, back, forget };
 }
 
 /** The pushed detail's Back control. Takes focus when the detail opens. */

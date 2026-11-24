@@ -1070,6 +1070,15 @@ describe("Links selection", () => {
       vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("760px") || q.includes("1080px"), media: q, addEventListener() {}, removeEventListener() {} }));
     afterEach(() => vi.useRealTimers());
 
+    it("a link that is gone (404) closes the detail and is not restored", async () => {
+      phone();
+      boot({ path: "/links?sel=l9&view=detail" });
+      await ready();
+      await waitFor(() => expect(location.search).toBe(""));
+      await new Promise((r) => setTimeout(r, 50)); // the close transition must not put sel=l9 back
+      expect(location.search).toBe("");
+    });
+
     it("the pick column is hidden until a long-press starts selection mode, then a tap toggles", async () => {
       phone();
       boot();

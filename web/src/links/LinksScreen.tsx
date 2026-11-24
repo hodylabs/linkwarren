@@ -59,7 +59,7 @@ export function LinksScreen() {
   const { query } = useRoute();
   const q = query.get("q") ?? "";
   const sel = query.get("sel");
-  const { open, show, back } = useDetailView("/links");
+  const { open, show, back, forget } = useDetailView("/links");
   const [status, setStatus] = useState<LinksFilter["status"]>("all");
   const [mine, setMine] = useState(false);
   const [items, setItems] = useState<Link[]>([]);
@@ -233,7 +233,10 @@ export function LinksScreen() {
         if (!gone || g !== generation.current || extraId.current !== sel) return;
         extraId.current = null;
         setItems((cur) => cur.filter((x) => x.id !== sel));
-        if (selRef.current === sel) select(null); // no row left to show: close the detail view too (a newer selection stays)
+        if (selRef.current === sel) {
+          forget();
+          select(null);
+        } // no row left to show: close the detail view too (a newer selection stays)
       },
     );
   }, [loaded, sel, items, listGen, loadStats]);
