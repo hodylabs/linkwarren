@@ -8,6 +8,9 @@ import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import mark from "../../../design/logo/linkwarren-mark.svg?url";
+import shotLinks from "../../../docs/img/links.webp?url";
+import shotAnalytics from "../../../docs/img/analytics.webp?url";
+import shotQr from "../../../docs/img/qr-prints.webp?url";
 import markOnDark from "../../../design/logo/linkwarren-mark-on-dark.svg?url";
 import pkg from "../../../package.json";
 
@@ -105,10 +108,7 @@ h2{font:500 clamp(24px,2.6vw,32px)/1.2 var(--display);letter-spacing:-.015em;mar
 .shot .bar{height:34px;display:flex;align-items:center;gap:6px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--bg)}
 .shot .bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
 .shot .bar span{margin-left:10px;font:400 12px var(--mono);color:var(--faint)}
-.shot .ph{aspect-ratio:16/10;display:grid;grid-template-columns:64px 1fr}
-.shot .ph .r{background:var(--rail)}
-.shot .ph .c{display:grid;place-items:center;color:var(--faint);font:400 13px var(--mono);background:
-  repeating-linear-gradient(0deg,transparent 0 39px,var(--line-soft) 39px 40px)}
+.shot img{display:block;width:100%;height:auto}
 .shots{display:grid;grid-template-columns:1.4fr 1fr;gap:24px}
 .shots .stack{display:grid;gap:24px}
 .shots figure{margin:0}
@@ -215,17 +215,17 @@ footer a{color:var(--text)}
       <p class="sub">Links, domains, analytics and people in one place. It works with a keyboard, on a phone, and in path mode at <code class="inline-code">example.com/dashboard</code> if you would rather not spend a hostname on it.</p>
       <div class="shots">
         <figure>
-          <div class="shot"><div class="bar"><i></i><i></i><i></i><span>example.com/dashboard/links</span></div><div class="ph"><div class="r"></div><div class="c">screenshot: Links</div></div></div>
+          <div class="shot"><div class="bar"><i></i><i></i><i></i><span>example.com/dashboard/links</span></div><img src={shotLinks} alt="The Links screen: every link across three example domains, with the Autumn menu link open in the side panel" width="2880" height="1800" loading="lazy" decoding="async"></div>
           <figcaption>Every link across every domain, with bulk edit and moves that keep the old address working.</figcaption>
         </figure>
         <div class="stack">
           <figure>
-            <div class="shot"><div class="bar"><i></i><i></i><i></i><span>analytics</span></div><div class="ph"><div class="r"></div><div class="c">screenshot: Analytics</div></div></div>
+            <div class="shot"><div class="bar"><i></i><i></i><i></i><span>example.com/dashboard/analytics</span></div><img src={shotAnalytics} alt="The Analytics screen: 30 days of clicks and QR scans as a line chart, with countries, cities and languages below" width="2880" height="1800" loading="lazy" decoding="async"></div>
             <figcaption>Clicks, QR scans, where they came from and when.</figcaption>
           </figure>
           <figure>
-            <div class="shot"><div class="bar"><i></i><i></i><i></i><span>qr codes</span></div><div class="ph"><div class="r"></div><div class="c">screenshot: QR codes</div></div></div>
-            <figcaption>QR codes for links, Wi-Fi and contact cards.</figcaption>
+            <div class="shot"><div class="bar"><i></i><i></i><i></i><span>example.com/dashboard/links</span></div><img src={shotQr} alt="A link's QR code sheet with three labelled prints: table tents, window poster and takeaway flyers" width="2880" height="1800" loading="lazy" decoding="async"></div>
+            <figcaption>A QR code per print, each counted on its own, plus codes for Wi-Fi and contact cards.</figcaption>
           </figure>
         </div>
       </div>
@@ -238,8 +238,8 @@ footer a{color:var(--text)}
         <div><h3>Many domains</h3><p>Add as many domains as you like. Each keeps its own slugs, so <code>a.com/x</code> and <code>b.com/x</code> can go to different places.</p></div>
         <div><h3>Link rules</h3><p>Start and end dates, passwords, and routing by device or operating system. Plus <code>tel:</code> and <code>mailto:</code> links.</p></div>
         <div><h3>Safe moves</h3><p>Move links between domains and the old address keeps forwarding, so printed QR codes never break.</p></div>
-        <div><h3>Analytics</h3><p>Clicks over time, QR scans apart from typed visits, countries, cities, devices and busiest hours, a page per link and a weekly email. Bots filtered out, no cookies.</p></div>
-        <div><h3>Contact cards and QR</h3><p>vCard links that save a contact in one tap, and a QR generator for Wi-Fi, web addresses, text, email, phone, SMS and short links.</p></div>
+        <div><h3>Analytics</h3><p>Clicks over time, QR scans apart from typed visits, countries, cities, devices, campaigns and busiest hours. Click any row to filter, watch recent clicks come in, and share a read-only page with a client. Bots filtered out, no cookies.</p></div>
+        <div><h3>Contact cards and QR</h3><p>vCard links that save a contact in one tap, a QR code per print (flyer, poster, card) counted on its own, and a QR generator for Wi-Fi, web addresses, text, email, phone and SMS.</p></div>
         <div><h3>People and roles</h3><p>Invite people, give them their own domains, and shape custom roles. Sign in with passkeys.</p></div>
         <div><h3>Import and export</h3><p>Bring links in from JSON or CSV, and take a full JSON backup out at any time.</p></div>
         <div><h3>API and MCP</h3><p>A REST API with personal keys, and an MCP server so AI agents can manage links with your permissions.</p></div>

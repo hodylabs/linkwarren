@@ -31,7 +31,7 @@ Open the release on the [releases page](https://github.com/hodylabs/linkwarren/r
 
 ```sh
 git fetch --tags
-git checkout v0.6.0   # the release you are moving to
+git checkout v0.8.0   # the release you are moving to
 npm ci
 ```
 
