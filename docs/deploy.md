@@ -302,7 +302,7 @@ A pasted value is encrypted with AES-GCM (256-bit key from `SECRETS_KEY`, a fres
 
 ### App mode (default)
 
-linkwarren signs people in itself, with an email link or a passkey. No Access application is needed.
+linkwarren signs people in itself, with an email link or a passkey. No Access application is needed. Google, GitHub and single sign-on (OIDC) can be added on top, from Settings, Sign-in, with no config change: see [sso.md](sso.md).
 
 - Set the var `EMAIL_FROM` (e.g. `links@example.com`) and the secret `RESEND_API_KEY`. Without both, `POST /auth/email` answers `503 {"error":"email_not_configured"}`.
 - `/healthz` is public on the dashboard host (in path mode `<DASHBOARD_PATH>/healthz`); no bypass is needed.
@@ -372,6 +372,12 @@ Write costs: the index adds one D1 row written per link created and per change o
 This version adds migration `0010_clicks_per_domain.sql`. It rebuilds `clicks_daily` and `clicks_daily_dim` so a link moved to another domain during a day keeps that day's clicks under each domain they happened on, instead of all under its newest domain. **Apply it before you deploy the Worker** (same commands as above). Until it is applied, the new rollup fails for a day on which a link was clicked on two domains and retries that day on every run, so nothing is lost as long as the migration lands within Analytics Engine's 90-day retention.
 
 Write costs: the rebuild copies every existing row of both tables once, so an instance with years of totals can use a large share of the Free plan's 100,000 rows written per day. Apply it early in the UTC day. Days already rolled up before the upgrade keep their old totals (all under the newest domain of that day).
+
+### Upgrading to Google, GitHub and single sign-on (v0.9.0, migration 0018)
+
+This version adds migration `0018_sso.sql`. **Apply it before you deploy the Worker** (same commands as above). It adds the tables `sso_states`, `sso_identities` and `email_domains`, and rebuilds `sessions` so a session can record the new sign-in methods. The rebuild copies every session row once, so nobody is signed out. Without it, Google, GitHub and single sign-on do not work; email links and passkeys keep working.
+
+Nothing changes until an owner turns a provider on in Settings, Sign-in (see [sso.md](sso.md)). The client secrets can be pasted there (needs `SECRETS_KEY`) or set as the Worker secrets `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET` and `OIDC_CLIENT_SECRET`.
 
 ## Password-protected links
 
