@@ -138,6 +138,21 @@ describe("Settings > Sign-in single sign-on (S14)", () => {
     await card("Google");
     expect(document.querySelector("input[type=password]")).toBeNull();
     expect(screen.getAllByText("Only an owner can change the client secret.")).toHaveLength(3);
+    const gh = await card("GitHub");
+    expect(within(gh).getByText("Set")).toBeTruthy();
+    expect(within(gh).queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(within(await card("Google")).getByText("Not set")).toBeTruthy();
+  });
+
+  it("removing a secret keeps an unsaved client ID edit", async () => {
+    const { user } = boot();
+    const gh = await card("GitHub");
+    const id = within(gh).getByLabelText("Client ID") as HTMLInputElement;
+    await user.type(id, "-new");
+    await user.click(within(gh).getByRole("button", { name: "Remove" }));
+    await user.keyboard("{Enter}");
+    await within(gh).findByText("Not set");
+    expect(id.value).toBe("gh-id-new");
   });
 
   it("without SECRETS_KEY the secret field says what is needed", async () => {

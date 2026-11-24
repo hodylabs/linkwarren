@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { api, ApiError, SSO_PROVIDERS, type EmailDomain, type RoleItem, type SsoPatch, type SsoProvider, type SsoSettings } from "../api";
 import { errorText, ssoSettingsErrorText } from "../copy";
 import { useRoles } from "../people/RolePicker";
@@ -22,44 +22,45 @@ const ON_HINT: Record<SsoProvider, string> = {
 
 type Draft = { enabled: boolean; clientId: string; issuer: string; label: string };
 type DraftKey = keyof Draft;
+/** One write at a time for the whole section, so answers cannot land out of order. True when `fn` finished; a throw passes through. */
+type Serial = (fn: () => Promise<void>) => Promise<boolean>;
 const draftOf = (s: SsoSettings, p: SsoProvider): Draft => {
   const c = s[p];
   return { enabled: c.enabled, clientId: c.clientId, issuer: "issuer" in c ? c.issuer : "", label: "label" in c ? c.label : "" };
 };
 
 /** One provider: on/off, client ID, the write-only client secret, the OIDC issuer and button label, and its redirect URI. */
-function ProviderCard({ p, s, owner, onSaved }: { p: SsoProvider; s: SsoSettings; owner: boolean; onSaved: (n: SsoSettings) => void }) {
+function ProviderCard({ p, s, owner, onSaved, serial, busy }: {
+  p: SsoProvider; s: SsoSettings; owner: boolean; onSaved: (p: SsoProvider, n: SsoSettings) => void; serial: Serial; busy: boolean;
+}) {
   const { announce } = useApp();
   const id = useId();
-  const [draft, setDraft] = useState(() => draftOf(s, p));
+  // Only the fields the person edited: the rest always follow the saved settings, so a newer server value is never sent back as an edit.
+  const [edits, setEdits] = useState<Partial<Draft>>({});
   const [typed, setTyped] = useState(false); // a secret is in the field; its value never enters React state
   const secret = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<Msg>(null);
-  const [busy, setBusy] = useState(false);
-  const working = useRef(false);
   const [asking, setAsking] = useState(false);
   const base = draftOf(s, p);
+  const draft: Draft = { ...base, ...edits };
   const keys: DraftKey[] = p === "oidc" ? ["enabled", "clientId", "issuer", "label"] : ["enabled", "clientId"];
-  const changed = keys.filter((k) => draft[k] !== base[k]);
+  const changed = keys.filter((k) => edits[k] !== undefined && edits[k] !== base[k]);
   useUnsaved(changed.length > 0 || typed);
 
-  const put = async (body: SsoPatch, done: string) => {
-    if (working.current) return;
-    working.current = true;
-    setBusy(true);
+  // `keepEdits`: removing the secret leaves the other unsaved fields as they are.
+  const put = async (body: SsoPatch, done: string, keepEdits = false) => {
     setMsg(null);
     try {
-      const n = await api<SsoSettings>("PUT", `/api/settings/sso/${p}`, body);
-      if (secret.current) secret.current.value = "";
-      setTyped(false);
-      setDraft(draftOf(n, p));
-      onSaved(n);
-      setMsg({ text: done, error: false });
+      await serial(async () => {
+        const n = await api<SsoSettings>("PUT", `/api/settings/sso/${p}`, body);
+        if (secret.current) secret.current.value = "";
+        setTyped(false);
+        if (!keepEdits) setEdits({});
+        onSaved(p, n);
+        setMsg({ text: done, error: false });
+      });
     } catch (e) {
       setMsg({ text: ssoSettingsErrorText(code(e)), error: true });
-    } finally {
-      working.current = false;
-      setBusy(false);
     }
   };
   const save = () => {
@@ -70,7 +71,7 @@ function ProviderCard({ p, s, owner, onSaved }: { p: SsoProvider; s: SsoSettings
     void put(body, "Saved.");
   };
   const revert = () => {
-    setDraft(base);
+    setEdits({});
     if (secret.current) secret.current.value = "";
     setTyped(false);
     setMsg(null);
@@ -79,13 +80,13 @@ function ProviderCard({ p, s, owner, onSaved }: { p: SsoProvider; s: SsoSettings
     if (e.nativeEvent.isComposing || e.defaultPrevented) return;
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      save();
+      if (!busy) save();
     } else if (e.key === "Escape" && (changed.length > 0 || typed)) {
       e.preventDefault();
       revert();
     }
   };
-  const set = (v: Partial<Draft>) => setDraft((d) => ({ ...d, ...v }));
+  const set = (v: Partial<Draft>) => setEdits((d) => ({ ...d, ...v }));
   const uri = s.redirectUris[p];
   const copy = () =>
     Promise.resolve().then(() => navigator.clipboard.writeText(uri)).then(() => announce("Copied"), () => announce("Could not copy. Select the address and copy it."));
@@ -95,7 +96,7 @@ function ProviderCard({ p, s, owner, onSaved }: { p: SsoProvider; s: SsoSettings
     <div className="sso-card" role="group" aria-labelledby={`${id}-h`} onKeyDown={onKeyDown}>
       <h3 id={`${id}-h`}>
         {TITLE[p]}
-        <Switch checked={draft.enabled} onChange={(v) => set({ enabled: v })} label={`Turn on ${TITLE[p]} sign-in`} describedBy={`${id}-on`} />
+        <Switch checked={draft.enabled} onChange={(v) => set({ enabled: v })} label={`Turn on ${TITLE[p]} sign-in`} disabled={busy} describedBy={`${id}-on`} />
       </h3>
       <small className="hint" id={`${id}-on`}>{ON_HINT[p]}</small>
       <div className="sfield">
@@ -112,17 +113,17 @@ function ProviderCard({ p, s, owner, onSaved }: { p: SsoProvider; s: SsoSettings
         <>
           <div className="sfield">
             <div><b><label htmlFor={`${id}-iss`}>Issuer</label></b><small>The https address your identity provider publishes</small></div>
-            <div><input id={`${id}-iss`} className="input" type="url" inputMode="url" placeholder="https://login.example.com" spellCheck={false} autoComplete="off" value={draft.issuer} onChange={(e) => set({ issuer: e.target.value })} /></div>
+            <div><input id={`${id}-iss`} className="input" type="url" inputMode="url" placeholder="https://login.example.com" spellCheck={false} autoComplete="off" disabled={busy} value={draft.issuer} onChange={(e) => set({ issuer: e.target.value })} /></div>
           </div>
           <div className="sfield">
             <div><b><label htmlFor={`${id}-lbl`}>Button label</label></b><small>The button text on the sign-in page</small></div>
-            <div><input id={`${id}-lbl`} className="input sans" placeholder="Single sign-on" maxLength={40} autoComplete="off" value={draft.label} onChange={(e) => set({ label: e.target.value })} /></div>
+            <div><input id={`${id}-lbl`} className="input sans" placeholder="Single sign-on" maxLength={40} autoComplete="off" disabled={busy} value={draft.label} onChange={(e) => set({ label: e.target.value })} /></div>
           </div>
         </>
       )}
       <div className="sfield">
         <div><b><label htmlFor={`${id}-cid`}>Client ID</label></b></div>
-        <div><input id={`${id}-cid`} className="input" spellCheck={false} autoComplete="off" value={draft.clientId} onChange={(e) => set({ clientId: e.target.value })} /></div>
+        <div><input id={`${id}-cid`} className="input" spellCheck={false} autoComplete="off" disabled={busy} value={draft.clientId} onChange={(e) => set({ clientId: e.target.value })} /></div>
       </div>
       <div className="sfield">
         <div>
@@ -148,11 +149,13 @@ function ProviderCard({ p, s, owner, onSaved }: { p: SsoProvider; s: SsoSettings
       <Note msg={msg} />
       {asking && (
         <Confirm title={`Remove the ${TITLE[p]} client secret`} ok="Remove"
-          text={`${TITLE[p]} sign-in stops working until a new secret is saved. People can still use email links and passkeys.`}
+          text={p === "oidc"
+            ? "Single sign-on (OIDC) stops working until a new secret is saved. People at an enforced email domain cannot sign in until then, except owners; everyone else can still use email links and passkeys."
+            : `${TITLE[p]} sign-in stops working until a new secret is saved. People can still use email links and passkeys, unless their email domain enforces single sign-on.`}
           onCancel={() => setAsking(false)}
           onOk={() => {
             setAsking(false);
-            void put({ clientSecret: "" }, "Removed the client secret.");
+            void put({ clientSecret: "" }, "Removed the client secret.", true);
           }} />
       )}
     </div>
@@ -178,40 +181,30 @@ function RoleSelect({ value, onChange, options, label, disabled, id }: {
 }
 
 /** Email domains: auto-join on first sign-in with a role, and enforce single sign-on (R7, R8). Each change saves at once. */
-function EmailDomains({ s, onChange }: { s: SsoSettings; onChange: (rows: EmailDomain[]) => void }) {
+function EmailDomains({ s, onChange, serial, busy }: { s: SsoSettings; onChange: (f: (rows: EmailDomain[]) => EmailDomain[]) => void; serial: Serial; busy: boolean }) {
   const { roles } = useRoles();
   const options = joinRoles(roles, s.emailDomains);
   const [domain, setDomain] = useState("");
   const [role, setRole] = useState<string | null>(null);
   const [enforce, setEnforce] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
-  const [busy, setBusy] = useState(false);
-  const working = useRef(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const addId = useId();
 
   /** True when `fn` finished. */
   const run = async (fn: () => Promise<void>): Promise<boolean> => {
-    if (working.current) return false;
-    working.current = true;
-    setBusy(true);
     setMsg(null);
     try {
-      await fn();
-      return true;
+      return await serial(fn);
     } catch (e) {
       setMsg({ text: ssoSettingsErrorText(code(e)), error: true });
       return false;
-    } finally {
-      working.current = false;
-      setBusy(false);
     }
   };
   const put = (row: EmailDomain) =>
     run(async () => {
       await api("PUT", `/api/settings/email-domains/${encodeURIComponent(row.domain)}`, { joinRoleId: row.joinRoleId, enforceSso: row.enforceSso });
-      const rest = s.emailDomains.filter((r) => r.domain !== row.domain);
-      onChange(s.emailDomains.some((r) => r.domain === row.domain) ? s.emailDomains.map((r) => (r.domain === row.domain ? row : r)) : [...rest, row]);
+      onChange((rows) => (rows.some((r) => r.domain === row.domain) ? rows.map((r) => (r.domain === row.domain ? row : r)) : [...rows, row]));
     });
   const add = (e: FormEvent) => {
     e.preventDefault();
@@ -227,7 +220,7 @@ function EmailDomains({ s, onChange }: { s: SsoSettings; onChange: (rows: EmailD
   const remove = (d: string) =>
     run(async () => {
       await api("DELETE", `/api/settings/email-domains/${encodeURIComponent(d)}`);
-      onChange(s.emailDomains.filter((r) => r.domain !== d));
+      onChange((rows) => rows.filter((r) => r.domain !== d));
     });
   const unguarded = !s.oidc.enabled && s.emailDomains.some((r) => r.enforceSso);
 
@@ -253,12 +246,12 @@ function EmailDomains({ s, onChange }: { s: SsoSettings; onChange: (rows: EmailD
             <tr>
               <td>
                 <form id={addId} onSubmit={add}>
-                  <input className="input" aria-label="New email domain" placeholder="example.com" spellCheck={false} autoComplete="off" autoCapitalize="none" maxLength={253}
+                  <input className="input" aria-label="New email domain" placeholder="example.com" spellCheck={false} autoComplete="off" autoCapitalize="none" maxLength={253} disabled={busy}
                     value={domain} onChange={(e) => setDomain(e.target.value)} />
                 </form>
               </td>
-              <td><RoleSelect value={role} options={options} label="Auto-join role for the new domain" onChange={setRole} /></td>
-              <td><Switch checked={enforce} label="Enforce single sign-on for the new domain" onChange={setEnforce} /></td>
+              <td><RoleSelect value={role} options={options} disabled={busy} label="Auto-join role for the new domain" onChange={setRole} /></td>
+              <td><Switch checked={enforce} disabled={busy} label="Enforce single sign-on for the new domain" onChange={setEnforce} /></td>
               <td><button type="submit" form={addId} className="btn" disabled={busy || !domain.trim()}>Add domain</button></td>
             </tr>
           </tbody>
@@ -284,6 +277,20 @@ export function SsoSettingsBlock() {
   const [s, setS] = useState<SsoSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tries, setTries] = useState(0);
+  const lock = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const serial = useCallback<Serial>(async (fn) => {
+    if (lock.current) return false;
+    lock.current = true;
+    setBusy(true);
+    try {
+      await fn();
+      return true;
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }, []);
   useEffect(() => {
     const ac = new AbortController();
     setError(null);
@@ -301,8 +308,9 @@ export function SsoSettingsBlock() {
   return (
     <div className="sso">
       <h3 className="sso-sub">Single sign-on</h3>
-      {SSO_PROVIDERS.map((p) => <ProviderCard key={p} p={p} s={s} owner={isOwner(me)} onSaved={setS} />)}
-      <EmailDomains s={s} onChange={(emailDomains) => setS((cur) => cur && { ...cur, emailDomains })} />
+      {SSO_PROVIDERS.map((p) => <ProviderCard key={p} p={p} s={s} owner={isOwner(me)} serial={serial} busy={busy}
+        onSaved={(q, n) => setS((cur) => cur && { ...cur, [q]: n[q], redirectUris: n.redirectUris, secretsReady: n.secretsReady })} />)}
+      <EmailDomains s={s} serial={serial} busy={busy} onChange={(f) => setS((cur) => cur && { ...cur, emailDomains: f(cur.emailDomains) })} />
     </div>
   );
 }
