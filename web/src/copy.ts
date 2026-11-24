@@ -144,7 +144,8 @@ const ERRORS: Record<string, string> = {
   inverted_colors: "Use a darker color for the code than for the background. Many scanners cannot read light on dark.",
   low_contrast: "These colors are too close. Pick a darker code or a lighter background.",
   too_many_qr_codes: "You can have at most 500 QR codes. Delete one first.",
-  secrets_key_missing: "Saving a Wi-Fi password needs the SECRETS_KEY Worker secret. Ask the owner to set it, or make an open network code.",  sso_failed: "Sign-in with that provider did not finish. Try again, or use an email link.",
+  secrets_key_missing: "Saving a Wi-Fi password needs the SECRETS_KEY Worker secret. Ask the owner to set it, or make an open network code.",
+  sso_failed: "Sign-in with that provider did not finish. Try again, or sign in another way if your account allows it.",
   sso_required: "Your email domain signs in with single sign-on only. Use the single sign-on button.",
   email_unverified: "The provider has not verified this account's email address. Verify it there, then try again.",
   bad_client_id: "Enter the client ID exactly as the provider shows it.",
@@ -163,6 +164,7 @@ const SSO_SETTINGS: Record<string, string> = {
   bad_domain: "Enter an email domain like example.com, without @ or a path.",
   bad_role: "That role no longer exists. Reload and pick another.",
   too_many: "You can list at most 50 email domains. Remove one first.",
+  domain_listed: "This domain is already listed. Change its role or enforcement in its row.",
 };
 /** The codes R13 may put in /sign-in?error=. Anything else in the URL shows the sso_failed text, never the raw value. */
 export const SIGNIN_ERRORS = ["sso_failed", "not_invited", "disabled", "sso_required", "email_unverified", "too_many"] as const;

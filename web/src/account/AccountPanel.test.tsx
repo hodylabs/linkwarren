@@ -43,9 +43,85 @@ describe("AccountPanel connected sign-ins (S14)", () => {
     expect(within(list).getAllByText("a@example.com")).toHaveLength(2);
   });
 
-  it("no identities: no Connected sign-ins section", async () => {
-    await boot();
+  it.each([
+    ["an empty list", () => ({ body: { items: [] } })],
+    ["an older server (404)", () => ({ status: 404, body: { error: "not_found" } })],
+  ])("no identities from %s: no Connected sign-ins section", async (_, answer) => {
+    const { api } = await boot({ "GET /api/account/identities": answer });
+    await waitFor(() => expect(api.calls.some((c) => c.path === "/api/account/identities")).toBe(true));
+    await new Promise((r) => setTimeout(r, 20)); // let the answer settle before checking that nothing appeared
     expect(screen.queryByText("Connected sign-ins")).toBeNull();
+  });
+
+  it("an unlink that succeeds removes the row even when the refresh fails, and keeps focus in the panel", async () => {
+    let gets = 0;
+    const { user } = await boot({
+      "GET /api/account/identities": () => (++gets === 1 ? { body: IDS } : { status: 500, body: { error: "internal" } }),
+      "DELETE /api/account/identities/google": () => ({ status: 204 }),
+    });
+    await user.click(await screen.findByRole("button", { name: "Unlink Google" }));
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Unlink Google" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Unlink Single sign-on" })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Unlink Single sign-on" })));
+  });
+
+  it("an unlink cancelled while pending does not move focus when it finishes", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let gone = false;
+    const { user } = await boot({
+      "GET /api/account/identities": () => ({ body: gone ? { items: IDS.items.filter((i) => i.provider !== "google") } : IDS }),
+      "DELETE /api/account/identities/google": async () => {
+        await gate;
+        gone = true;
+        return { status: 204 };
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Unlink Google" }));
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Escape}");
+    const other = screen.getByText("Laptop").closest("li")!; // a row stays focusable while the write is pending
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    release();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Unlink Google" })).toBeNull());
+    expect(document.activeElement).toBe(other);
+  });
+
+  it("a 404 unlink (already gone) removes the row", async () => {
+    let gone = false;
+    const { user } = await boot({
+      "GET /api/account/identities": () => ({ body: gone ? { items: IDS.items.filter((i) => i.provider !== "google") } : IDS }),
+      "DELETE /api/account/identities/google": () => {
+        gone = true; // unlinked in another tab before this one asked
+        return { status: 404, body: { error: "not_found" } };
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Unlink Google" }));
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Unlink Google" })).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("while an unlink is pending, no other dialog opens", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { user } = await boot({
+      "GET /api/account/identities": () => ({ body: IDS }),
+      "DELETE /api/account/identities/google": async () => {
+        await gate;
+        return { status: 403, body: { error: "sso_required" } };
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Unlink Google" }));
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByText("Laptop"));
+    await user.keyboard("{Shift>}d{/Shift}");
+    expect(screen.queryByRole("heading", { name: "Remove passkey" })).toBeNull();
+    release();
+    await screen.findByRole("alert");
   });
 
   it("Unlink asks, then deletes and reloads the list", async () => {

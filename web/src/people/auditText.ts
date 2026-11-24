@@ -112,7 +112,11 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     }
     case "user.bootstrap": return done("set up this linkwarren");
     case "user.activate": return done("signed in for the first time");
-    case "auth.sign_in": return done(a.detail.method === "passkey" ? "signed in with a passkey" : "signed in with an email link");
+    case "auth.sign_in": {
+      const m = a.detail.method;
+      // S14: provider sign-ins also write signin.sso; both rows name the same method.
+      return done(m === "passkey" ? "signed in with a passkey" : m === "google" || m === "github" || m === "oidc" ? `signed in with ${ssoName(m)}` : "signed in with an email link");
+    }
     // S14 (R12): single sign-on. Field names are mapped to words; unknown ones are dropped, values are never in the detail.
     case "signin.sso": {
       const p = ssoName(a.detail.provider);

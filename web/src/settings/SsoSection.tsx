@@ -210,6 +210,8 @@ function EmailDomains({ s, onChange, serial, busy }: { s: SsoSettings; onChange:
     e.preventDefault();
     const d = domain.trim().toLowerCase().replace(/^@/, "");
     if (!d) return;
+    // Add never overwrites: an existing row keeps its role and enforcement until changed in that row.
+    if (s.emailDomains.some((r) => r.domain === d)) return setMsg({ text: ssoSettingsErrorText("domain_listed"), error: true });
     void put({ domain: d, joinRoleId: role, enforceSso: enforce }).then((ok) => {
       if (!ok) return;
       setDomain("");
@@ -222,13 +224,15 @@ function EmailDomains({ s, onChange, serial, busy }: { s: SsoSettings; onChange:
       await api("DELETE", `/api/settings/email-domains/${encodeURIComponent(d)}`);
       onChange((rows) => rows.filter((r) => r.domain !== d));
     });
-  const unguarded = !s.oidc.enabled && s.emailDomains.some((r) => r.enforceSso);
+  // OIDC can start only when it is on and has its issuer, client ID and secret (the server's ready check).
+  const oidcReady = s.oidc.enabled && s.oidc.secretSet && s.oidc.clientId !== "" && s.oidc.issuer !== "";
+  const unguarded = !oidcReady && s.emailDomains.some((r) => r.enforceSso);
 
   return (
     <>
       <h3 className="sso-sub">Email domains</h3>
       <p className="hint">People with an address at these domains can join on their first sign-in with the role you pick. Enforcing single sign-on stops email links, passkeys, Google and GitHub for them; owners can always sign in.</p>
-      {unguarded && <p className="callout wait" role="status">Single sign-on (OIDC) is off, so people at an enforced domain cannot sign in, except owners.</p>}
+      {unguarded && <p className="callout wait" role="status">Single sign-on (OIDC) is not ready: it is off, or its issuer, client ID or secret is missing. People at an enforced domain cannot sign in until it is, except owners.</p>}
       <div className="sso-doms">
         <table aria-label="Email domains">
           <thead>
