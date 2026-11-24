@@ -41,24 +41,28 @@ export function startWeek(ms: number, tz: Tz): string {
 }
 
 const b64url = (b: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-async function mac(secret: string, msg: string): Promise<ArrayBuffer> {
+/** S13: the alert emails use the same unsubscribe link with their own table and purpose, so a weekly email token never turns alerts off (or the reverse). */
+export type UnsubKind = "digest" | "alerts";
+const UNSUB = { digest: { table: "digest_prefs", purpose: "digest-unsub" }, alerts: { table: "alert_prefs", purpose: "alert-unsub" } } as const;
+async function mac(secret: string, msg: string, kind: UnsubKind): Promise<ArrayBuffer> {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return crypto.subtle.sign("HMAC", key, enc.encode(`digest-unsub|${msg}`));
+  return crypto.subtle.sign("HMAC", key, enc.encode(`${UNSUB[kind].purpose}|${msg}`));
 }
 /** A new per-person secret (32 random bytes, hex): a new one on each opt-in, so older unsubscribe links stop working. */
 export const newSecret = (): string => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
-export const unsubToken = async (secret: string, userId: string): Promise<string> => b64url(await mac(secret, userId));
+export const unsubToken = async (secret: string, userId: string, kind: UnsubKind = "digest"): Promise<string> => b64url(await mac(secret, userId, kind));
 
-/** Turns the summary off when `token` is the person's current signature. Constant-time compare; true when it matched. */
-export async function unsubscribe(env: Env, userId: string, token: string): Promise<boolean> {
+/** Turns the summary (or the alerts) off when `token` is the person's current signature. Constant-time compare; true when it matched. */
+export async function unsubscribe(env: Env, userId: string, token: string, kind: UnsubKind = "digest"): Promise<boolean> {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(userId) || !/^[A-Za-z0-9_-]{43}$/.test(token)) return false;
-  const row = await env.DB.prepare("SELECT secret FROM digest_prefs WHERE user_id = ?").bind(userId).first<{ secret: string }>();
+  const { table } = UNSUB[kind]; // a constant table name, never input
+  const row = await env.DB.prepare(`SELECT secret FROM ${table} WHERE user_id = ?`).bind(userId).first<{ secret: string }>();
   if (!row) return false;
-  const want = new Uint8Array(await mac(row.secret, userId));
+  const want = new Uint8Array(await mac(row.secret, userId, kind));
   const got = Uint8Array.from(atob(token.replace(/-/g, "+").replace(/_/g, "/") + "="), (c) => c.charCodeAt(0));
   if (got.byteLength !== want.byteLength || !crypto.subtle.timingSafeEqual(got, want)) return false;
-  await env.DB.prepare("UPDATE digest_prefs SET enabled = 0, updated_at = ? WHERE user_id = ?").bind(Math.floor(Date.now() / 1000), userId).run();
+  await env.DB.prepare(`UPDATE ${table} SET enabled = 0, updated_at = ? WHERE user_id = ?`).bind(Math.floor(Date.now() / 1000), userId).run();
   return true;
 }
 

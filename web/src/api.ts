@@ -120,3 +120,12 @@ export async function api<T>(method: Method, path: string, body?: unknown, signa
   if (data === undefined) fail(0, "network");
   return data as T;
 }
+
+/** S13: GET and PUT /api/account/alerts, the link alert emails opt-in (src/api/account.ts). */
+export type AlertPrefs = { enabled: boolean; quiet: boolean; spike: boolean; emailReady: boolean };
+/** S13: one active share page (GET /api/shares, src/api/shares.ts). Never carries the token. */
+export type ShareItem = { id: string; scope: "link" | "domain"; scopeId: string; createdAt: number; createdBy: string };
+/** POST /api/shares: the only answer that carries the page URL. */
+export type NewShare = ShareItem & { url: string };
+/** S13: one labelled QR print of a link (GET /api/links/:id/qr-labels). Its QR content is `<shortUrl>?lw=qr.<code>`. */
+export type QrLabel = { id: string; code: string; label: string; createdAt: number };

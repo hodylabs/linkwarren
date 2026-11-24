@@ -713,6 +713,17 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .qr-edit .qr{min-height:60px}
 .qr-style{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
 .qr-style input[type=color]{display:block;width:56px;height:36px;border:1px solid var(--line);border-radius:var(--r-ctl);background:var(--inset);padding:3px;cursor:pointer}
+/* S13: share pages and labelled QR prints, compact rows (title, count and action on one line) */
+.rows li .end{margin-left:auto}
+.share-url,.qrl-add{display:flex;gap:8px;align-items:center}
+.share-url .input,.qrl-add .input{flex:1;min-width:0}
+.qrl{margin-top:14px;display:grid;gap:8px}
+.qrl h3{margin:0;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.qrl ul{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.qrl li{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:36px;border-top:1px solid var(--line-soft);padding-top:4px}
+.qrl li .name{flex:1;min-width:0;overflow-wrap:anywhere}
+.qrl li .code{color:var(--faint);font-family:var(--mono);font-size:12px}
+.qrl li .input{flex:1;min-width:120px}
 
 /* ---------- responsive: keep the widths in step with NARROW and PHONE in shell/narrow.tsx ---------- */
 /* Tablets and phones: list and detail share one column; the detail is a full-screen pushed view with a Back bar. */

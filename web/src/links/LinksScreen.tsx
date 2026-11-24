@@ -667,7 +667,7 @@ export function LinksScreen() {
             </span>
           </div>
           <div className="sh-body">
-            <QrPanel host={domainOf(selected.domainId)!.host} slug={selected.slug} />
+            <QrPanel host={domainOf(selected.domainId)!.host} slug={selected.slug} linkId={selected.id} canEdit={canEdit(selected)} />
           </div>
         </Sheet>
       )}

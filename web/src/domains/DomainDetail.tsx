@@ -13,6 +13,7 @@ import { DEFAULT_RESERVED } from "../../../src/validate";
 import { shortDate } from "../time";
 import { CfControls } from "./CfControls";
 import { CfStatus } from "./CfStatus";
+import { SharePanel } from "../links/SharePanel";
 import { MembersEditor } from "./MembersEditor";
 import { canManage, domainDiff, draftOf, needsFinish, ownerLabel, statusTag, type Draft } from "./domainView";
 import { cfSettled, useCfPoll } from "./useCfPoll";
@@ -319,6 +320,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
           </div>
         </fieldset>
         <MembersEditor domain={domain} />
+        {canEdit && <SharePanel scope="domain" id={domain.id} />}
         {(formError || actionError) && (
           <p className="err" role="alert">
             {formError ?? actionError}
