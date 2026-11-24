@@ -20,19 +20,24 @@ describe("chartGeometry", () => {
     expect(g.ticks).toEqual([]);
   });
 
-  it("gap is 1 above 60 buckets and 2 otherwise", () => {
-    const bw90 = (1100 - 44 - 10) / 90;
-    expect(chartGeometry(s(90)).bars[0]!.x).toBeCloseTo(44 + 1);
-    expect(chartGeometry(s(90)).bars[0]!.w).toBeCloseTo(bw90 - 2);
-    expect(chartGeometry(s(30)).bars[0]!.x).toBeCloseTo(44 + 2);
+  it("each point sits mid-column and the hover columns tile the plot", () => {
+    const bw = (1100 - 44 - 10) / 30;
+    const g = chartGeometry(s(30));
+    expect(g.bars[0]!.cx).toBeCloseTo(44 + bw / 2);
+    expect(g.bars[29]!.hx + g.bars[29]!.hw).toBeCloseTo(1090);
   });
 
-  it("qr 0 and typed 5 gives no QR height and a typed path; typed 0 gives no path", () => {
-    const g = chartGeometry([{ label: "a", qr: 0, typed: 5 }, { label: "b", qr: 5, typed: 0 }]);
-    expect(g.bars[0]!.qrH).toBe(0);
-    expect(g.bars[0]!.typedPath).toMatch(/^M/);
-    expect(g.bars[1]!.typedPath).toBeNull();
-    expect(g.bars[1]!.qrH).toBeGreaterThan(0);
+  it("the lines: all clicks over QR, the area closes on the baseline, QR 0 sits on the baseline", () => {
+    const g = chartGeometry([{ label: "a", qr: 0, typed: 5 }, { label: "b", qr: 5, typed: 3 }]);
+    expect(g.bars[0]!.yQr).toBe(164); // no QR: on the baseline
+    expect(g.bars[1]!.yAll).toBeLessThan(g.bars[1]!.yQr); // the total is above its QR part
+    expect(g.lines.all).toMatch(/^M[\d.]+ [\d.]+ L[\d.]+ [\d.]+$/);
+    expect(g.lines.qr.split("L")).toHaveLength(2);
+    expect(g.lines.area).toMatch(/ L[\d.]+ 164 L[\d.]+ 164 Z$/);
+  });
+
+  it("an empty series draws no lines", () => {
+    expect(chartGeometry([]).lines).toEqual({ all: "", qr: "", area: "" });
   });
 
   it("tip text is exact", () => {
@@ -57,8 +62,7 @@ describe("chartGeometry", () => {
     expect(g.grid[0]!.y).toBe(198); // 220 - 22
     expect(g.grid[4]!.y).toBe(8);
     const bw = (360 - 34 - 10) / 30;
-    expect(g.bars[0]!.x).toBeCloseTo(34 + 2);
-    expect(g.bars[0]!.w).toBeCloseTo(bw - 4);
+    expect(g.bars[0]!.cx).toBeCloseTo(34 + bw / 2);
     expect(g.bars[29]!.hx + g.bars[29]!.hw).toBeCloseTo(350);
     expect(g.tickY).toBe(214);
     expect(g.gridX).toEqual({ x1: 34, x2: 354, label: 26 });
