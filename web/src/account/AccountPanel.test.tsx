@@ -32,6 +32,54 @@ async function boot(routes: FakeRoutes = {}) {
 const shiftD = "{Shift>}d{/Shift}";
 const writes = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.method !== "GET");
 
+describe("AccountPanel connected sign-ins (S14)", () => {
+  const IDS = { items: [{ provider: "google", email: "a@example.com", createdAt: 1_700_000_000, lastUsedAt: null }, { provider: "oidc", email: "a@example.com", createdAt: 1_700_000_000, lastUsedAt: 1_700_000_050 }] };
+
+  it("lists linked providers; none (or an older server) shows no section", async () => {
+    await boot({ "GET /api/account/identities": () => ({ body: IDS }) });
+    const list = await screen.findByRole("list", { name: "Connected sign-ins" });
+    expect(within(list).getByText("Google")).toBeTruthy();
+    expect(within(list).getByText("Single sign-on")).toBeTruthy();
+    expect(within(list).getAllByText("a@example.com")).toHaveLength(2);
+  });
+
+  it("no identities: no Connected sign-ins section", async () => {
+    await boot();
+    expect(screen.queryByText("Connected sign-ins")).toBeNull();
+  });
+
+  it("Unlink asks, then deletes and reloads the list", async () => {
+    let items = IDS.items;
+    const { api, user } = await boot({
+      "GET /api/account/identities": () => ({ body: { items } }),
+      "DELETE /api/account/identities/google": () => {
+        items = items.filter((i) => i.provider !== "google");
+        return { status: 204 };
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Unlink Google" }));
+    expect(screen.getByText(/Unlink Google \(a@example.com\)\?/)).toBeTruthy();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Unlink Google" })).toBeNull());
+    expect(writes(api)).toEqual([{ method: "DELETE", path: "/api/account/identities/google", body: undefined }]);
+  });
+
+  it("an unlink refused with sso_required says why", async () => {
+    const { user } = await boot({
+      "GET /api/account/identities": () => ({ body: IDS }),
+      "DELETE /api/account/identities/oidc": () => ({ status: 409, body: { error: "sso_required" } }),
+    });
+    await user.click(await screen.findByRole("button", { name: "Unlink Single sign-on" }));
+    await user.keyboard("{Enter}");
+    expect((await screen.findByRole("alert")).textContent).toBe("Your email domain requires single sign-on, so this sign-in cannot be unlinked.");
+  });
+
+  it("a session started with Google says so", async () => {
+    await boot({ "GET /api/account": () => ({ body: { passkeys: account.passkeys, sessions: [ses("s9", { method: "google" as SessionItem["method"] })] } }) });
+    expect(screen.getByText(/with Google/)).toBeTruthy();
+  });
+});
+
 describe("AccountPanel", () => {
   it("lists passkeys and sessions with one This device tag", async () => {
     await boot();

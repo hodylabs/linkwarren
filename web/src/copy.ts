@@ -144,8 +144,32 @@ const ERRORS: Record<string, string> = {
   inverted_colors: "Use a darker color for the code than for the background. Many scanners cannot read light on dark.",
   low_contrast: "These colors are too close. Pick a darker code or a lighter background.",
   too_many_qr_codes: "You can have at most 500 QR codes. Delete one first.",
-  secrets_key_missing: "Saving a Wi-Fi password needs the SECRETS_KEY Worker secret. Ask the owner to set it, or make an open network code.",
+  secrets_key_missing: "Saving a Wi-Fi password needs the SECRETS_KEY Worker secret. Ask the owner to set it, or make an open network code.",  sso_failed: "Sign-in with that provider did not finish. Try again, or use an email link.",
+  sso_required: "Your email domain signs in with single sign-on only. Use the single sign-on button.",
+  email_unverified: "The provider has not verified this account's email address. Verify it there, then try again.",
+  bad_client_id: "Enter the client ID exactly as the provider shows it.",
+  bad_issuer: "Enter the issuer as an https address without a query or fragment, like https://login.example.com.",
+  sso_discovery_failed: "Could not read the issuer's OpenID configuration. Check the issuer address and that it is reachable.",
+  owner_role: "Auto-join cannot give the owner role. Pick another role.",
 };
+
+// S14: codes that ERRORS already uses with another meaning get their own text where single sign-on uses them.
+const SIGNIN: Record<string, string> = {
+  not_invited: "This account is not invited to this linkwarren. Ask the owner to invite you.",
+  too_many: "Too many sign-in attempts. Wait a few minutes and try again.",
+};
+const SSO_SETTINGS: Record<string, string> = {
+  secrets_key_missing: "Saving a client secret needs the SECRETS_KEY Worker secret. Set it, then paste the secret again.",
+  bad_domain: "Enter an email domain like example.com, without @ or a path.",
+  bad_role: "That role no longer exists. Reload and pick another.",
+  too_many: "You can list at most 50 email domains. Remove one first.",
+};
+/** The codes R13 may put in /sign-in?error=. Anything else in the URL shows the sso_failed text, never the raw value. */
+export const SIGNIN_ERRORS = ["sso_failed", "not_invited", "disabled", "sso_required", "email_unverified", "too_many"] as const;
+/** Sign-in page text for an error code (S14). */
+export const signInErrorText = (code: string): string => (Object.hasOwn(SIGNIN, code) ? SIGNIN[code]! : errorText(code));
+/** Single sign-on settings text for an error code (S14). */
+export const ssoSettingsErrorText = (code: string): string => (Object.hasOwn(SSO_SETTINGS, code) ? SSO_SETTINGS[code]! : errorText(code));
 
 /** "1 link", "2 links"; pass `many` for irregular plurals. */
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
