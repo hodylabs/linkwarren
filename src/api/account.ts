@@ -168,6 +168,31 @@ account.put("/digest", async (c) => {
   return c.json({ enabled: b.enabled, tz: stored, emailReady: ready });
 });
 
+/** S13 link alerts: the person's own opt-in and which kinds. `emailReady` false shows the switch disabled. */
+type AlertPrefs = { enabled: boolean; quiet: boolean; spike: boolean; emailReady: boolean };
+account.get("/alerts", async (c) => {
+  const r = await c.env.DB.prepare("SELECT enabled, quiet, spike FROM alert_prefs WHERE user_id = ?").bind(c.var.user.id).first<{ enabled: number; quiet: number; spike: number }>();
+  const out: AlertPrefs = { enabled: !!r?.enabled, quiet: r ? !!r.quiet : true, spike: r ? !!r.spike : true, emailReady: await emailConfigured(c.env) };
+  return c.json(out);
+});
+
+const alertBody = z.strictObject({ enabled: z.boolean(), quiet: z.boolean(), spike: z.boolean() });
+account.put("/alerts", async (c) => {
+  const b = await parse(c, alertBody);
+  if (!b) return c.json({ error: "invalid_body" }, 400);
+  const ready = await emailConfigured(c.env);
+  if (b.enabled && !ready) return c.json({ error: "email_not_configured" }, 409); // turning it off works without email
+  // Turning it on (from off or never set) starts a new secret, so older unsubscribe links stop working. The day state is kept:
+  // off and on again the same day never sends a second email that day (R6).
+  await c.env.DB.prepare(
+    `INSERT INTO alert_prefs (user_id, enabled, quiet, spike, secret, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, quiet = excluded.quiet, spike = excluded.spike, updated_at = excluded.updated_at,
+       secret = CASE WHEN excluded.enabled = 1 AND alert_prefs.enabled = 0 THEN excluded.secret ELSE alert_prefs.secret END`,
+  ).bind(c.var.user.id, b.enabled ? 1 : 0, b.quiet ? 1 : 0, b.spike ? 1 : 0, newSecret(), nowS()).run();
+  const out: AlertPrefs = { ...b, emailReady: ready };
+  return c.json(out);
+});
+
 account.post("/sign-out-everywhere", async (c) => {
   const uid = c.var.user.id;
   await c.env.DB.batch([

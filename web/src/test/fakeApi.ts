@@ -9,12 +9,14 @@ export type FakeRoutes = Record<string, (req: FakeReq) => FakeRes | Promise<Fake
  * Test only. Stubs `fetch` with handlers keyed "METHOD /path" (no query). Unknown routes answer 404 not_found.
  * A handler that throws makes fetch reject, which is how a dropped connection looks; `{ signIn: true }` is a login redirect.
  * "GET /api/instance" defaults to a set-up instance with no name, so an owner lands in the shell unless a test says otherwise;
- * "GET /api/account/digest" defaults to the weekly email off.
+ * "GET /api/account/digest" defaults to the weekly email off, "GET /api/account/alerts" to alerts off and "GET /api/shares" to none.
  */
 const INSTANCE = { name: "", logoVersion: null, configured: true, dashboardHost: "links.example.com", mainDomainId: null, linkDefaults: { redirectCode: 302, passQuery: true } };
 const DIGEST = { enabled: false, tz: null, emailReady: true };
+const ALERTS = { enabled: false, quiet: true, spike: true, emailReady: true };
 export function fakeApi(given: FakeRoutes): { calls: { method: string; path: string; body: unknown }[] } {
-  const routes: FakeRoutes = { "GET /api/instance": () => ({ body: INSTANCE }), "GET /api/account/digest": () => ({ body: DIGEST }), ...given };
+  const routes: FakeRoutes = { "GET /api/instance": () => ({ body: INSTANCE }), "GET /api/account/digest": () => ({ body: DIGEST }),
+    "GET /api/account/alerts": () => ({ body: ALERTS }), "GET /api/shares": () => ({ body: { items: [] } }), ...given };
   const calls: { method: string; path: string; body: unknown }[] = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(String(input), location.origin);

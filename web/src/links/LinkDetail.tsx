@@ -11,6 +11,7 @@ import { readUtm } from "./compose";
 import { creatorLabel, forwardTarget, linkState, shortUrl, type StatsLive } from "./linkView";
 import { routeSummary } from "./rules";
 import { photoSrc } from "./photo";
+import { SharePanel } from "./SharePanel";
 
 export type DetailHandle = { copy(): void };
 
@@ -182,6 +183,7 @@ export const LinkDetail = forwardRef<DetailHandle, {
               )}
             </dl>
           </div>
+          {canEdit && <SharePanel scope="link" id={link.id} />}
         </>
       )}
       {canEdit && (

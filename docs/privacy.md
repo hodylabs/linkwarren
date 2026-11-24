@@ -79,6 +79,17 @@ The people who use the dashboard are stored in the instance's D1 database:
 
 - **Weekly email** (opt-in, off by default): whether the person turned it on, their time zone, the last week sent and a random per-person secret that signs the unsubscribe link (a new one each time it is turned on). Removing the person deletes it. The secret is never in the export.
 
+- **Link alerts** (opt-in, off by default): whether the person turned them on and which kinds, the last UTC day handled, a random per-person secret that signs the unsubscribe link, and which links they were already told about (link id, kind and day). Removing the person or the link deletes those rows.
+
+## Share pages
+
+A share page shows one link's or one domain's click totals to anyone who has its URL, without signing in (see [analytics.md](analytics.md#share-page)).
+
+- **What it shows**: totals for the last 30 days, a daily table and the top countries, referrers and devices. Never a list of links, recent clicks, IP addresses, visitor codes or anything else about one visitor. Referrers are visitor-supplied text, shown escaped.
+- **What is stored**: the SHA-256 of the page's token (never the token or the URL), the link or domain it covers, who made it, when, and when it was revoked. Making and revoking it are audit-logged without the token.
+- **Reach**: it is the person who makes it who decides to share; the page stops when revoked, when the link or domain is deleted, when the link moves to another domain, or when its maker is disabled or removed. Search engines are told not to index it, and it sends no referrer.
+- **Rate limit**: views count against the viewer's IP range (the /24 or /48, never the full address) for one minute, in the same table as the sign-in limits, cleaned up the same way.
+
 The instance name is shown to signed-out visitors on the sign-in page and on the `/join` page an invite opens, so anyone who opens the dashboard address can see it.
 
 ## How long data is kept
@@ -88,7 +99,7 @@ The instance name is shown to signed-out visitors on the sign-in page and on the
 - The audit log of dashboard changes (including changes by agents and keys) is kept for 3 years.
 - MCP tool calls are kept 90 days.
 
-Everything linkwarren stores stays in the Cloudflare account that runs the instance. It sends two things elsewhere: the daily update check (see "Update check" below, off with one switch) and email: sign-in links, invites, test mails and the weekly summary go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself; for the weekly summary: click totals and the addresses of the person's top 5 links). See "People and email" below.
+Everything linkwarren stores stays in the Cloudflare account that runs the instance. It sends two things elsewhere: the daily update check (see "Update check" below, off with one switch) and email: sign-in links, invites, test mails, the weekly summary and link alerts go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself; for the weekly summary: click totals and the addresses of the person's top 5 links; for an alert: the addresses and names of the links it lists and their click counts). See "People and email" below.
 
 ## Update check
 

@@ -25,7 +25,8 @@
   // fails with code 10089; keep this line commented out until then. The dataset is created on the first write; leave this out to record nothing.
   "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "linkwarren_clicks" }],
   // Hourly at :15: rolls finished days of clicks into D1; the 00:15 UTC run also removes audit rows older than 3 years (see docs/deploy.md "Scheduled job").
-  "triggers": { "crons": ["15 * * * *"] },
+  // Hourly at :45: link alert emails (S13), in their own run so they never share the rollup's budget.
+  "triggers": { "crons": ["15 * * * *", "45 * * * *"] },
   "vars": {
     "DASHBOARD_HOST": "dash.example.com",
     // Optional path mode (see docs/deploy.md "Dashboard at a path"): DASHBOARD_HOST is then your main short domain and the

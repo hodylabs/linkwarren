@@ -4,6 +4,10 @@ import type { Env } from "./env";
 import { DAY_KEYS_SQL } from "./limits";
 import { sendDigests } from "./digest";
 import { checkUpdate } from "./update";
+import { ALERT_CRON, sendAlerts } from "./alerts";
+
+const runAlerts = (env: Env, now: number) =>
+  sendAlerts(env, now).then((n) => console.log(`alert emails sent: ${n}`), (e: unknown) => console.error("alert emails failed", e instanceof Error ? e.name : "unknown"));
 
 const DAY_MS = 86_400_000;
 export const MAX_DAYS = 3; // per hourly run: 3 x 5 AE queries and a few D1 calls; a 90-day backlog clears in about 30 hours
@@ -179,6 +183,7 @@ const errName = (e: unknown) => (e instanceof Error ? e.name : "unknown"); // na
 /** Hourly at :15. Every run rolls up, prunes expired rows with what is left of the run budget and sends due weekly emails; only the 00:15 UTC run purges the audit log and checks for a new release. */
 export async function scheduled(c: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
   const now = Math.floor(c.scheduledTime / 1000);
+  if (c.cron === ALERT_CRON) return runAlerts(env, now); // S13 R6: its own trigger and invocation budget; every other cron is the rollup run
   const spent = { writes: 0 };
   try {
     const days = await rollup(env, now, spent);

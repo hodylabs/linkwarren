@@ -6,13 +6,13 @@ export const PAGE_HEADERS = {
 } as const;
 
 // S12: the dashboard's tokens, dark by default and light when the OS asks. System fonts only: default-src 'none' loads no font.
-const CSS =
+export const CSS =
   `:root{color-scheme:dark light;--bg:#181A1D;--card:#1E2023;--line:#2B2F33;--inset:#1C1E21;--text:#F4F6F7;--muted:#A3ADB5;--accent:#FD8D27;--ring:#FD8D27;--bad:#F2746D}` +
   `@media (prefers-color-scheme:light){:root{--bg:#FCFCFC;--card:#FFFFFF;--line:#E2E2E2;--inset:#FFFFFF;--text:#1A1A1A;--muted:#5C636B;--ring:#C8501A;--bad:#C23A34}}` +
   `*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}` +
   `main{width:100%;max-width:400px;padding:22px;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:12px}` +
   `h1{margin:0 0 8px;font-size:20px;font-weight:600}p{margin:0;color:var(--muted)}`;
-const doc = (title: string, css: string, main: string) =>
+export const doc = (title: string, css: string, main: string) =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>` +
   `<style>${css}</style></head><body><main>${main}</main></body></html>`;
 const page = (title: string, msg: string) => doc(title, CSS, `<h1>${title}</h1><p>${msg}</p>`);
@@ -52,9 +52,11 @@ export const passwordPage = (state: keyof typeof MESSAGES): string =>
  * S10 weekly email unsubscribe. GET only asks (mail scanners follow links), the button POSTs to the same URL, as does a mail
  * app's one-click List-Unsubscribe-Post. Fixed text only: nothing from the request is reflected.
  */
-export const unsubscribePage = (state: "ask" | "done" | "bad"): string =>
-  state === "ask"
-    ? doc("Weekly email", FORM_CSS, `<h1>Weekly email</h1><p>Stop the weekly clicks summary?</p><form method="post"><button type="submit">Unsubscribe</button></form>`)
+export const unsubscribePage = (state: "ask" | "done" | "bad", kind: "digest" | "alerts" = "digest"): string => {
+  const t = kind === "alerts" ? { title: "Alert emails", ask: "Stop the link alert emails?", what: "link alert emails" } : { title: "Weekly email", ask: "Stop the weekly clicks summary?", what: "weekly email" };
+  return state === "ask"
+    ? doc(t.title, FORM_CSS, `<h1>${t.title}</h1><p>${t.ask}</p><form method="post"><button type="submit">Unsubscribe</button></form>`)
     : state === "done"
-      ? page("Unsubscribed", "You will not get the weekly email any more. You can turn it on again in your account.")
-      : page("Link not valid", "This unsubscribe link is not valid any more. Turn the weekly email off in your account.");
+      ? page("Unsubscribed", `You will not get the ${t.what} any more. You can turn ${kind === "alerts" ? "them" : "it"} on again in your account.`)
+      : page("Link not valid", `This unsubscribe link is not valid any more. Turn the ${t.what} off in your account.`);
+};

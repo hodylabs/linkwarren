@@ -27,12 +27,16 @@ export const LIMITS = {
   logoDay: { n: 20, s: 86400, utc: true },
   /** KV deletes spent by bulk edits per UTC day: half the account's 1,000, the rest stays for single edits and OAuth. */
   bulkKvDay: { n: 500, s: 86400, utc: true },
+  /** S13 R6: alert emails per UTC day, instance wide, so most of Resend's free 100 stay for sign-in links and invites. */
+  alertDay: { n: 20, s: 86400, utc: true },
+  /** S13 R7: share page views per IP range (each view is a report read). */
+  share: { n: 60, s: 60 },
 } as const;
 /** utc: the window is aligned to multiples of s since the epoch (s = 86400 is the UTC day) instead of starting at the first event. */
 export type Limit = { n: number; s: number; utc?: boolean };
 
 /** Windows longer than an hour: the hourly prunes keep these keys for a day (SQL on auth_limits.key). */
-export const DAY_KEYS_SQL = "(key IN ('reg:day', 'api:day', 'bulk:kv', 'logo:day', 'invite:day') OR key LIKE 'api:ud:%')";
+export const DAY_KEYS_SQL = "(key IN ('reg:day', 'api:day', 'bulk:kv', 'logo:day', 'invite:day', 'alert:day') OR key LIKE 'api:ud:%')";
 
 /** A window_start at or below this is outside the current window. */
 const since = (l: Limit, now: number) => (l.utc ? now - (now % l.s) - 1 : now - l.s);
@@ -61,6 +65,8 @@ export const limitKey = {
   /** Instance KV deletes spent by bulk edits, per UTC day (LIMITS.bulkKvDay). */
   bulkKv: "bulk:kv",
   logoDay: "logo:day",
+  alertDay: "alert:day",
+  share: (prefix: string | null) => `share:${prefix ?? "none"}`,
 } as const;
 
 /** Counts one event in one atomic upsert (a window older than s restarts at 1); true when still within the limit. */
