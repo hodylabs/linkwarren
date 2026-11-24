@@ -35,7 +35,10 @@ export const getDomainByHost = (env: Env, host: string, ctx?: Ctx): Promise<Doma
 export const getLink = (env: Env, domainId: string, key: string, ctx?: Ctx): Promise<LinkRow | null> =>
   cached(env, linkKey(domainId, key), async () => {
     const r = await env.DB.prepare(`${LINK_SELECT} WHERE domain_id = ? AND slug_key = ?`).bind(domainId, key).first();
-    return r ? rowToLink(r) : null;
+    if (!r) return null;
+    // The redirect never reads the name (S12), so it stays out of KV: a cached row has no `name`.
+    const { name: _, ...cachedRow } = rowToLink(r);
+    return cachedRow;
   }, ctx);
 
 export const invalidateHost = (env: Env, host: string) => env.CACHE.delete(hostKey(host));

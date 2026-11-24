@@ -14,7 +14,8 @@ export type Overlay =
   | { kind: "newKey" }
   | { kind: "invite" }
   | { kind: "person"; id: string }
-  | { kind: "menu" }; // the phone nav drawer
+  | { kind: "menu" } // the phone nav drawer
+  | { kind: "userMenu" }; // the avatar's account menu
 
 export type AppState = {
   me: Me;

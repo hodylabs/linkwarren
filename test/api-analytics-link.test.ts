@@ -51,7 +51,7 @@ describe("GET /api/analytics?link=: one link's report", () => {
   it("totals cover that link only and name it", async () => {
     const r = await json("?range=7&link=lM");
     expect(r.totals.clicks).toBe(3);
-    expect(r.link).toEqual({ linkId: "lM", host: "main.test", slug: "lM" });
+    expect(r.link).toEqual({ linkId: "lM", host: "main.test", slug: "lM", name: null });
     expect(r.links.map((l: any) => l.linkId)).toEqual(["lM"]);
   });
   it("a member cannot open another member's private link: 404, the same as an unknown one", async () => {
@@ -65,6 +65,18 @@ describe("GET /api/analytics?link=: one link's report", () => {
     expect((await get("?link=lM&q=x")).status).toBe(400);
     expect((await get("?link=lM&domains=dM")).status).toBe(400);
     expect((await get("?link=a%27b")).status).toBe(400);
+  });
+});
+
+describe("top links names (S12)", () => {
+  it("the overview names a top link only while its current domain is one the reader can use", async () => {
+    await run("UPDATE links SET name = 'Main poster' WHERE id = 'lM'");
+    expect((await json("?range=7", "a@example.com")).links).toEqual([expect.objectContaining({ linkId: "lM", name: "Main poster" })]);
+    // Moved to a private domain the member cannot use: its past clicks still show under the old address, never the name.
+    await run("UPDATE links SET domain_id = 'dB' WHERE id = 'lM'");
+    const after = (await json("?range=7", "a@example.com")).links;
+    expect(after.map((l: any) => [l.linkId, l.slug])).toEqual([["lM", "lM"]]);
+    expect(after[0]).not.toHaveProperty("name");
   });
 });
 

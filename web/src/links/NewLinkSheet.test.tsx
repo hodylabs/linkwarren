@@ -33,6 +33,7 @@ function boot(o: Opts = {}) {
     "GET /api/links": () => ({ body: { items: [], next: null } }),
     "GET /api/links/check": (r) => (o.check ?? (() => ({ body: { status: "available" } })))(r.url.searchParams.get("slug")!, r.url.searchParams.get("domain")!),
     "POST /api/links": () => ({ status: 201, body: created }),
+    "GET /api/links/new1": () => ({ body: created }), // the server reads the new link back by id
     ...o.routes,
   });
   const user = userEvent.setup();
@@ -419,7 +420,9 @@ describe("New link sheet", () => {
     expect(within(sheet).getByText("Opens after creating")).toBeTruthy();
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(posts(api)).toHaveLength(1));
-    await waitFor(() => expect(location.search).toBe("?sel=new1&view=detail&qr=1"));
+    // The new link loads, the QR sheet opens once and the one-shot qr flag leaves the URL.
+    expect(await screen.findByRole("dialog", { name: "QR code" })).toBeTruthy();
+    await waitFor(() => expect(location.search).toBe("?sel=new1&view=detail"));
   });
 
   it("rule rows follow the mockup order and the footer names their keys", async () => {

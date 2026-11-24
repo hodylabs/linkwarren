@@ -66,6 +66,7 @@ Every endpoint that returns a link returns this shape:
   "domainId": "a1b2...",
   "slug": "spring",
   "slugKey": "spring",
+  "name": "Spring sale",
   "url": "https://example.org/spring-sale",
   "redirectCode": 302,
   "startsAt": null,
@@ -82,6 +83,7 @@ Every endpoint that returns a link returns this shape:
 }
 ```
 
+- `name` is the optional name people find the link by, or `null`.
 - `slugKey` is the slug as it is matched: lowercased on a domain that is not case-sensitive.
 - `routes` are tried in order; see [links.md](links.md#routing-r).
 - `forwardTo` is `null` for a normal link, and the id of the moved link for a forwarder (an old address left by a move).
@@ -118,7 +120,7 @@ Search the links this key can see, newest first, 50 per page. Any key.
 
 | Query | Meaning |
 | --- | --- |
-| `q` | Matches the slug or the destination (substring). At most about 48 characters (`400 q_too_long`). |
+| `q` | Matches the name, the slug or the destination (substring). At most about 48 characters (`400 q_too_long`). |
 | `domain` | A domain id. `404 not_found` if it does not exist, `403 forbidden` if the key cannot use it. |
 | `status` | `active`, `scheduled` (starts in the future) or `expired`. Anything else is `400 bad_status`. |
 | `mine` | `1`: only links the key's person created. |
@@ -172,6 +174,7 @@ Create a link. Needs a write key and **Create links** in the role.
 | --- | --- | --- |
 | `domainId` | yes | The domain id. |
 | `slug` | yes | 1 to 64 of letters, digits, `.`, `_`, `~`, `-`; not starting with a dot. |
+| `name` | no | A name to find the link by: at most 100 characters on one line, no control characters. Empty or `null` means no name. A refused name answers `400 bad_link_name`. |
 | `url` | yes, except for a card | The destination: `http(s)`, `tel:` or `mailto:` (see [links.md](links.md#destinations)). Leave it out for a contact card. |
 | `kind` | no | `url` (the default) or `vcard`. |
 | `vcard` | for a card | The card's fields (see [Contact cards](#contact-cards)). Only with `kind: "vcard"`. |

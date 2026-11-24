@@ -1,31 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type Domain, type Link, type Route } from "../api";
 import { errorText } from "../copy";
+import { rebase } from "../draft";
+import { useUnsaved } from "../unsaved";
 import { useHotkeys, type Bindings } from "../keys";
 import { navigate } from "../router";
 import { Sheet } from "../shell/Sheet";
-import { Seg } from "../shell/ui";
+import { Icon, Seg, Switch } from "../shell/ui";
 import { can, canUseDomain, mayOpen } from "../perms";
 import { useApp } from "../state";
-import { fromLocalInput } from "../time";
-import { checkDestination, checkSlugShape } from "../../../src/validate";
+import { fromLocalInput, toLocalInput } from "../time";
+import { checkDestination, checkLinkName, checkSlugShape } from "../../../src/validate";
 import { checkVcard, emptyVcard, type VCard } from "../../../src/vcard";
-import { cleanVcard, formField, VcardForm } from "./VcardForm";
+import { cleanVcard, formField, fullCard, VcardForm } from "./VcardForm";
 import { readUtm, suggestSlugs, withUtm, type Utm } from "./compose";
 import { shortUrl } from "./linkView";
 import { parseCountries, passwordProblem, routeSummary } from "./rules";
 import { RoutesEditor } from "./RoutesEditor";
 
 type Check = { status: "available" | "taken" | "locked" | "reserved" } | { status: "invalid"; reason: string };
-type Field = "url" | "slug" | "schedule" | "password" | "form";
+type Field = "name" | "url" | "slug" | "schedule" | "password" | "form";
 const SLUG_CODES = new Set(["taken", "locked", "reserved", "empty", "slug_too_long", "charset", "leading_dot", "too_long"]);
 const URL_CODES = new Set(["not_url", "scheme", "userinfo", "url_too_long", "loop", "too_long", "bad_tel", "bad_mailto"]);
-const fieldOf = (code: string): Field => (code === "bad_window" ? "schedule" : code.startsWith("password_") ? "password" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
+const fieldOf = (code: string): Field => (code === "bad_link_name" ? "name" : code === "bad_window" ? "schedule" : code.startsWith("password_") ? "password" : SLUG_CODES.has(code) ? "slug" : URL_CODES.has(code) ? "url" : "form");
 const DEBOUNCE_MS = 250;
 
-/** New link sheet hotkeys and their text on the shortcuts sheet (the rule keys T S P R Q only outside text boxes). */
+/** New and edit link sheet hotkeys and their text on the shortcuts sheet (the rule keys T S P R Q only outside text boxes). */
 export const NEW_LINK_KEYS = {
-  "mod+enter": "Create the link",
+  "mod+enter": "Create the link, or save the edit",
   "mod+shift+enter": "Create and copy the short link",
   "alt+d": "Change the domain",
   t: "Campaign tags",
@@ -35,6 +37,7 @@ export const NEW_LINK_KEYS = {
   q: "QR code after creating",
 } as const;
 const blank = (r: Route) => !r.countries.length && !r.devices.length && !r.url.trim();
+const NEW_ROUTE: Route = { countries: [], devices: [], url: "" };
 
 const isUrl = (s: string) => {
   try {
@@ -43,6 +46,32 @@ const isUrl = (s: string) => {
     return false;
   }
 };
+
+/** Everything the form edits. `passwordOn` is the open Password rule; `routes` are the editor rows (none = routing off). */
+type Draft = { name: string; url: string; starts: string; ends: string; code: 301 | 302; pass: boolean; password: string; passwordOn: boolean; routes: Route[]; vcard: VCard };
+const NEW_DRAFT: Draft = { name: "", url: "", starts: "", ends: "", code: 302, pass: true, password: "", passwordOn: false, routes: [], vcard: emptyVcard() };
+const draftOf = (l: Link): Draft => ({
+  name: l.name ?? "", url: l.url, starts: toLocalInput(l.startsAt), ends: toLocalInput(l.expiresAt), code: l.redirectCode, pass: l.passQuery,
+  password: "", passwordOn: l.hasPassword, routes: l.routes, vcard: l.kind === "vcard" ? fullCard(l) : emptyVcard(),
+});
+
+/** Edit: only the fields that differ from the loaded link. `routes` are the rows to send (blank ones dropped, countries upper-cased). */
+function diff(l: Link, d: Draft, routes: Route[]): Record<string, unknown> {
+  const base = draftOf(l);
+  const out: Record<string, unknown> = {};
+  if (d.url !== base.url) out.url = d.url;
+  if (d.name !== base.name) out.name = d.name.trim() || null;
+  if (d.code !== base.code) out.redirectCode = d.code;
+  if (d.pass !== base.pass) out.passQuery = d.pass;
+  if (d.starts !== base.starts) out.startsAt = fromLocalInput(d.starts);
+  if (d.ends !== base.ends) out.expiresAt = fromLocalInput(d.ends);
+  if (d.passwordOn && d.password) out.password = d.password;
+  else if (!d.passwordOn && l.hasPassword) out.password = null;
+  if (JSON.stringify(routes) !== JSON.stringify(l.routes)) out.routes = routes;
+  // A card is sent whole when it differs (blank rows never count as a change).
+  if (l.kind === "vcard" && JSON.stringify(cleanVcard(d.vcard)) !== JSON.stringify(base.vcard)) out.vcard = cleanVcard(d.vcard);
+  return out;
+}
 
 /** A rule row. `toggle` rows (QR) are on/off buttons (aria-pressed); the others expand a panel (aria-expanded). */
 function Rule({ icon, label, note, keyName, open, onClick, toggle }: { icon: string; label: string; note: string; keyName: string; open: boolean; onClick(): void; toggle?: boolean }) {
@@ -60,35 +89,47 @@ function Rule({ icon, label, note, keyName, open, onClick, toggle }: { icon: str
   );
 }
 
-export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
+/**
+ * One form for a new link and for editing one (S12): `link` set means edit. Create picks the type, domain and slug; edit keeps
+ * them and sends only what changed (PATCH), with the conflict, password, routing and card rules of the old detail panel.
+ * A save that lands while the person kept typing rebases: the fields typed since stay, the rest take the saved revision.
+ */
+export function NewLinkSheet({ slug: initialSlug, link, onSaved, onClose }: { slug?: string; link?: Link; onSaved?(l: Link): void; onClose?(): void }) {
   const app = useApp();
   const { me, domains, currentDomainId } = app;
+  const editing = link !== undefined;
+  const close = onClose ?? app.close;
   const usable = useMemo(
     () => domains.filter((d) => canUseDomain(me, d)),
     [domains, me],
   );
-  const [domainId, setDomainId] = useState(() => (usable.some((d) => d.id === currentDomainId) ? currentDomainId! : (usable.find((d) => d.type === "main") ?? usable[0])?.id ?? ""));
-  const [url, setUrl] = useState("");
-  const [slug, setSlug] = useState(initialSlug ?? "");
-  const [code, setCode] = useState<301 | 302>(302);
-  const [starts, setStarts] = useState("");
-  const [ends, setEnds] = useState("");
+  const [domainId, setDomainId] = useState(() =>
+    link ? link.domainId : usable.some((d) => d.id === currentDomainId) ? currentDomainId! : (usable.find((d) => d.type === "main") ?? usable[0])?.id ?? "",
+  );
+  const [slug, setSlug] = useState(link?.slug ?? initialSlug ?? "");
+  const [d, setDraft] = useState<Draft>(() => (link ? draftOf(link) : NEW_DRAFT));
+  const set = (p: Partial<Draft>) => setDraft((x) => ({ ...x, ...p }));
+  const latest = useRef(d);
+  latest.current = d;
   const [tagsOpen, setTagsOpen] = useState(false);
-  const [schedOpen, setSchedOpen] = useState(false);
-  const [pwOpen, setPwOpen] = useState(false);
-  const [password, setPassword] = useState(""); // never logged, announced or echoed; cleared after a save
+  const [schedOpen, setSchedOpen] = useState(() => !!link && (link.startsAt !== null || link.expiresAt !== null));
   const [showPw, setShowPw] = useState(false);
-  const [routesOpen, setRoutesOpen] = useState(false);
-  const [routes, setRoutes] = useState<Route[]>([]);
+  const [changePw, setChangePw] = useState(false); // the new-password input of a link that already has one
   const [routeErrors, setRouteErrors] = useState<Record<number, string>>({});
   const [qr, setQr] = useState(false);
-  // S9: a plain link, or a contact card the short link downloads.
-  const [kind, setKind] = useState<"url" | "vcard">("url");
-  const [card, setCard] = useState<VCard>(emptyVcard);
+  // S9: a plain link, or a contact card the short link downloads. An edit keeps the link's kind.
+  const [kind, setKind] = useState<"url" | "vcard">(link?.kind === "vcard" ? "vcard" : "url");
   const [cardField, setCardField] = useState<string | null>(null);
-  const [photoBusy, setPhotoBusy] = useState(false); // a picked photo is still being resized
-  const cardWait = kind === "vcard" && photoBusy;
+  const [photoBusy, setPhotoBusy] = useState(false); // a picked photo is still being resized: Create and Save wait
   const isCard = kind === "vcard";
+  const cardWait = isCard && photoBusy;
+  const photoBusyNow = useRef(photoBusy);
+  photoBusyNow.current = photoBusy;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
   const pwRef = useRef<HTMLInputElement>(null);
   const routesRef = useRef<HTMLDivElement>(null);
   const [check, setCheck] = useState<Check | null>(null);
@@ -102,12 +143,48 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const wasReleasing = useRef(false);
   const releaseBusy = useRef(false); // double Enter sends one DELETE
+  const sent = useRef<{ id: string; draft: Draft } | null>(null); // the draft a finished save sent
+  const vcId = editing ? "ld-vc" : "nl-vc";
+  // An edit with changes holds the Links keys that would change the selection under it (S2 ruling), as the panel form did.
+  // A photo still resizing counts too: moving the selection would unmount the sheet and drop the pick.
+  useUnsaved(editing && (photoBusy || JSON.stringify(d) !== JSON.stringify(draftOf(link))));
 
-  const domain: Domain | undefined = usable.find((d) => d.id === domainId);
+  const domain: Domain | undefined = editing ? domains.find((x) => x.id === link.domainId) : usable.find((x) => x.id === domainId);
   const host = domain?.host ?? "";
 
-  // Availability: debounced, one request in flight (the old one is aborted), and an answer from an older request is dropped.
+  // Edit: a new revision (after a save or a reload) replaces the form; typing never triggers this. After this form's own save,
+  // fields edited while it was pending keep what was typed. The first render already took the current revision.
+  const revision = useRef(link ? `${link.id}:${link.updatedAt}` : "");
+  const base = useRef(link ? draftOf(link) : NEW_DRAFT); // the revision the form last took
+  const discard = useRef(false); // Reload: the next revision replaces the form
   useEffect(() => {
+    if (!link) return;
+    const rev = `${link.id}:${link.updatedAt}`;
+    if (revision.current === rev) return;
+    revision.current = rev;
+    const s = sent.current;
+    sent.current = null;
+    // Fields changed since the draft this form last took (or since its own save went out) keep what was typed, so a save from
+    // an earlier sheet of the same link never wipes this one's edits. Reload (after a conflict) takes the new revision whole.
+    const from = s?.id === link.id ? s.draft : base.current;
+    const next = discard.current ? draftOf(link) : rebase(draftOf(link), from, latest.current);
+    discard.current = false;
+    base.current = draftOf(link);
+    setDraft(next);
+    setError(null);
+    setRouteErrors({});
+    setChangePw(false);
+    setCardField(null);
+  }, [link?.id, link?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Edit of a contact card: focus goes to its first field (E on a card used to do the same in the panel).
+  useEffect(() => {
+    if (editing && isCard) document.getElementById(`${vcId}-firstName`)?.focus();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Availability (create only): debounced, one request in flight (the old one is aborted), and an older answer is dropped.
+  useEffect(() => {
+    if (editing) return;
     const n = ++seq.current;
     setError((e) => (e?.field === "slug" ? null : e));
     if (!slug || !domainId) return setCheck(null);
@@ -125,50 +202,75 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       clearTimeout(t);
       ctl.abort();
     };
-  }, [slug, domainId, recheck]);
+  }, [slug, domainId, recheck, editing]);
 
-  const suggestions = useMemo(() => suggestSlugs(url), [url]);
-  const utm = readUtm(url);
-  const urlOk = isUrl(url);
-  const startSec = fromLocalInput(starts);
-  const endSec = fromLocalInput(ends);
-
-  const filled = routes.filter((r) => !blank(r));
+  const suggestions = useMemo(() => (editing ? [] : suggestSlugs(d.url)), [d.url, editing]);
+  const utm = readUtm(d.url);
+  const urlOk = isUrl(d.url);
+  const startSec = fromLocalInput(d.starts);
+  const endSec = fromLocalInput(d.ends);
+  const filled = d.routes.filter((r) => !blank(r));
 
   const blocked = (): { field: Field; code: string } | null => {
-    if (check && check.status !== "available") return { field: "slug", code: check.status === "invalid" ? check.reason : check.status };
-    if (!slug) return { field: "slug", code: "empty" };
-    const dest = isCard ? null : checkDestination(url, usable.map((d) => d.host));
-    if (dest && !dest.ok) return { field: "url", code: dest.reason === "too_long" ? "url_too_long" : dest.reason };
-    if (startSec !== null && endSec !== null && endSec <= startSec) return { field: "schedule", code: "bad_window" };
-    if (pwOpen && !isCard) {
-      const p = passwordProblem(password);
-      if (p) return { field: "password", code: p };
-      if (code === 301) return { field: "password", code: "password_301" };
+    if (!checkLinkName(d.name).ok) return { field: "name", code: "bad_link_name" };
+    if (!editing) {
+      if (check && check.status !== "available") return { field: "slug", code: check.status === "invalid" ? check.reason : check.status };
+      if (!slug) return { field: "slug", code: "empty" };
+      const dest = isCard ? null : checkDestination(d.url, usable.map((x) => x.host));
+      if (dest && !dest.ok) return { field: "url", code: dest.reason === "too_long" ? "url_too_long" : dest.reason };
+    }
+    // Edit: only a changed schedule is checked; a stored window shown to the minute can look empty and is the server's to judge.
+    const scheduleEdited = !link || d.starts !== base.current.starts || d.ends !== base.current.ends;
+    if (scheduleEdited && startSec !== null && endSec !== null && endSec <= startSec) return { field: "schedule", code: "bad_window" };
+    if (d.passwordOn && !isCard) {
+      // Edit: a link that already has a password keeps it when nothing is typed.
+      if (!(editing && link.hasPassword && d.password === "")) {
+        const p = passwordProblem(d.password);
+        if (p) return { field: "password", code: p };
+      }
+      if (d.code === 301) return { field: "password", code: "password_301" };
     }
     return null;
   };
 
-  /** Countries normalized for the API, or the error text under each bad row (keyed by its index in `routes`). */
+  /** Countries normalized for the API, or the error text under each bad row (keyed by its index in the editor). */
   const routeBody = (): { ok: true; routes: Route[] } | { ok: false; errors: Record<number, string> } => {
+    if (isCard) return { ok: true, routes: [] }; // a card has no routing
     const errors: Record<number, string> = {};
     const out = filled.map((r) => {
       const c = parseCountries(r.countries.join(" "));
-      if (!c.ok) errors[routes.indexOf(r)] = errorText("route_country");
+      if (!c.ok) errors[d.routes.indexOf(r)] = errorText("route_country");
       return { ...r, countries: c.ok ? c.list : [] };
     });
     return Object.keys(errors).length ? { ok: false, errors } : { ok: true, routes: out };
   };
 
-  const submit = async (copy: boolean) => {
+  /** A failed create or save: the field the server names, the route row or card field it points at, else the form. */
+  const fail = (e: unknown) => {
+    const c = e instanceof ApiError ? e.code : "internal";
+    const data = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown; field?: unknown } | undefined) : undefined;
+    const row = c === "bad_route" && typeof data?.index === "number" ? filled[data.index] : undefined;
+    const rowField = c === "bad_vcard" && typeof data?.field === "string" && /^(phones|emails|websites)\.\d+$/.test(data.field);
+    const cardRows = (v: typeof d.vcard) => JSON.stringify([v.phones, v.emails, v.websites]);
+    if (c === "bad_vcard" && rowField && cardRows(latest.current.vcard) !== cardRows(d.vcard))
+      setError({ field: "form", code: "bad_vcard" }); // the card rows changed while it saved: the index no longer names a row on screen
+    else if (c === "bad_vcard") setCardField(typeof data?.field === "string" ? formField(d.vcard, data.field) : "vcard");
+    // the server's index counts the rows sent (the non-blank ones), so map it back to the editor row
+    else if (row && JSON.stringify(latest.current.routes) === JSON.stringify(d.routes))
+      setRouteErrors({ [d.routes.indexOf(row)]: errorText(typeof data?.reason === "string" ? data.reason : "bad_route") });
+    // The rows changed while it saved: the index no longer names a row on screen, so say it for the form.
+    else if (row) setError({ field: "form", code: typeof data?.reason === "string" ? data.reason : "bad_route" });
+    else setError({ field: fieldOf(c), code: c }); // typed values stay in the form
+    if (c === "taken" || c === "locked" || c === "reserved") setCheck({ status: c }); // the availability line agrees with the error
+  };
+
+  const create = async (copy: boolean) => {
     if (busy || releasing || !domainId || cardWait) return;
     const stop = blocked();
-    // A card has no routing: its rules are never sent or checked.
-    const rb = isCard ? ({ ok: true, routes: [] } as const) : routeBody();
+    const rb = routeBody();
     setRouteErrors(rb.ok ? {} : rb.errors);
-    if (!rb.ok) setRoutesOpen(true);
-    const cv = isCard ? checkVcard(cleanVcard(card)) : null;
-    setCardField(cv && !cv.ok ? formField(card, cv.field) : null);
+    const cv = isCard ? checkVcard(cleanVcard(d.vcard)) : null;
+    setCardField(cv && !cv.ok ? formField(d.vcard, cv.field) : null);
     if (stop || !rb.ok || (cv && !cv.ok)) {
       setError(stop);
       return;
@@ -176,32 +278,57 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
     setBusy(true);
     setError(null);
     try {
-      const body: Record<string, unknown> = cv?.ok ? { domainId, slug, kind: "vcard", vcard: cv.vcard } : { domainId, slug, url, redirectCode: code };
+      const body: Record<string, unknown> = cv?.ok ? { domainId, slug, kind: "vcard", vcard: cv.vcard } : { domainId, slug, url: d.url, redirectCode: d.code };
+      if (d.name.trim()) body.name = d.name.trim();
       if (startSec !== null) body.startsAt = startSec;
       if (endSec !== null) body.expiresAt = endSec;
-      if (pwOpen && !isCard) body.password = password;
+      if (d.passwordOn && !isCard) body.password = d.password;
       if (rb.routes.length) body.routes = rb.routes;
-      const link = await api<Link>("POST", "/api/links", body);
-      setPassword("");
-      const short = shortUrl(host, link.slug);
+      const created = await api<Link>("POST", "/api/links", body);
+      set({ password: "" });
+      const short = shortUrl(host, created.slug);
       let copied = false;
       if (copy) copied = await navigator.clipboard.writeText(short).then(() => true, () => false);
       app.close();
       app.bumpLinks();
       app.reloadDomains().catch(() => undefined); // link counts
-      navigate(`/links?sel=${encodeURIComponent(link.id)}${qr ? "&view=detail&qr=1" : ""}`);
-      app.announce(`Created ${host}/${link.slug}${copy ? (copied ? " and copied" : ", could not copy") : ""}`);
+      navigate(`/links?sel=${encodeURIComponent(created.id)}${qr ? "&view=detail&qr=1" : ""}`);
+      app.announce(`Created ${host}/${created.slug}${copy ? (copied ? " and copied" : ", could not copy") : ""}`);
     } catch (e) {
-      const c = e instanceof ApiError ? e.code : "internal";
-      const d = e instanceof ApiError ? (e.data as { index?: unknown; reason?: unknown } | undefined) : undefined;
-      const row = c === "bad_route" && typeof d?.index === "number" ? filled[d.index] : undefined;
-      if (c === "bad_vcard") setCardField(typeof (d as { field?: unknown } | undefined)?.field === "string" ? formField(card, (d as { field: string }).field) : "vcard");
-      else if (row) {
-        // the server's index counts the rows sent (the non-blank ones), so map it back to the editor row
-        setRouteErrors({ [routes.indexOf(row)]: errorText(typeof d?.reason === "string" ? d.reason : "bad_route") });
-        setRoutesOpen(true);
-      } else setError({ field: fieldOf(c), code: c }); // typed values stay in the form
-      if (c === "taken" || c === "locked" || c === "reserved") setCheck({ status: c }); // the availability line agrees with the error
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    if (!link || busy || cardWait) return;
+    // Password switched on with nothing stored and nothing typed: refuse, never save the link as if it were protected.
+    if (d.passwordOn && !isCard && !link.hasPassword && d.password === "") return setError({ field: "password", code: "password_short" });
+    // Route errors first: a bad country in a device-only rule would otherwise leave nothing to save, silently.
+    const rb = routeBody();
+    setRouteErrors(rb.ok ? {} : rb.errors);
+    if (!rb.ok) return;
+    const body = diff(link, d, rb.routes);
+    const cv = body.vcard ? checkVcard(body.vcard as VCard) : null;
+    setCardField(cv && !cv.ok ? formField(d.vcard, cv.field) : null);
+    if (cv && !cv.ok) return;
+    const stop = blocked();
+    setError(stop);
+    if (stop) return;
+    if (Object.keys(body).length === 0) return close(); // nothing changed
+    discard.current = false; // a Reload that never brought a revision must not replace edits made during this save
+    setBusy(true);
+    try {
+      const saved = await api<Link>("PATCH", `/api/links/${encodeURIComponent(link.id)}`, body);
+      sent.current = { id: link.id, draft: d };
+      onSaved?.(saved);
+      app.announce("Saved");
+      // Typed on while it saved: stay open, and the new revision keeps those fields. Otherwise the sheet is done.
+      // A photo still resizing is a newer edit too; a sheet closed (and maybe reopened) meanwhile is not this one to close.
+      if (mounted.current && !photoBusyNow.current && JSON.stringify(latest.current) === JSON.stringify(d)) close();
+    } catch (e) {
+      fail(e);
     } finally {
       setBusy(false);
     }
@@ -230,37 +357,44 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
 
   const focusPw = useRef(false);
   const focusRoutes = useRef(false);
+  const routesOpen = d.routes.length > 0;
+  // Opening or closing a rule starts it over: the password is cleared, routing gets one empty row (closed: none).
   const togglePw = () => {
-    focusPw.current = !pwOpen;
-    setPwOpen(!pwOpen);
+    focusPw.current = !d.passwordOn;
+    set({ passwordOn: !d.passwordOn, password: "" });
+    setChangePw(false);
+    setError((e) => (e?.field === "password" ? null : e));
   };
   const toggleRoutes = () => {
     focusRoutes.current = !routesOpen;
-    if (!routesOpen && !routes.length) setRoutes([{ countries: [], devices: [], url: "" }]);
-    setRoutesOpen(!routesOpen);
+    set({ routes: routesOpen ? [] : [NEW_ROUTE] });
+    setRouteErrors({});
   };
   // Opening a row from its key or button moves focus into it.
   useEffect(() => {
-    if (pwOpen && focusPw.current) pwRef.current?.focus();
+    if (d.passwordOn && focusPw.current) pwRef.current?.focus();
     focusPw.current = false;
-  }, [pwOpen]);
+  }, [d.passwordOn]);
   useEffect(() => {
     if (routesOpen && focusRoutes.current) routesRef.current?.querySelector("input")?.focus();
     focusRoutes.current = false;
   }, [routesOpen]);
+  useEffect(() => {
+    if (changePw) pwRef.current?.focus();
+  }, [changePw]);
 
   useHotkeys({
-    "mod+enter": () => void submit(false),
-    "mod+shift+enter": () => void submit(true),
-    "alt+d": () => domainRef.current?.focus(),
+    "mod+enter": () => void (editing ? save() : create(false)),
+    "mod+shift+enter": () => void (editing ? save() : create(true)),
+    "alt+d": () => !editing && domainRef.current?.focus(),
     t: () => !isCard && setTagsOpen((v) => !v),
     s: () => setSchedOpen((v) => !v),
     p: () => !isCard && togglePw(),
     r: () => !isCard && toggleRoutes(),
-    q: () => setQr((v) => !v),
+    q: () => !editing && setQr((v) => !v),
   } satisfies Bindings<typeof NEW_LINK_KEYS>, !releasing);
 
-  const setTag = (k: keyof Utm, v: string) => setUrl((u) => withUtm(u, { ...readUtm(u), [k]: v }));
+  const setTag = (k: keyof Utm, v: string) => setDraft((x) => ({ ...x, url: withUtm(x.url, { ...readUtm(x.url), [k]: v }) }));
   const err = (f: Field) => (error?.field === f ? error.code : null);
   const line = (() => {
     if (!check) return null;
@@ -272,10 +406,14 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       default: return <span className="bad-t">{errorText(check.reason)}</span>;
     }
   })();
-  const finalUrl = url.replace(/^https?:\/\//, "");
+  const finalUrl = d.url.replace(/^https?:\/\//, "");
+  const title = editing ? "Edit link" : "New link";
+  const keysHint = editing ? (isCard ? "Rule key S works outside text boxes" : "Rule keys T S P R work outside text boxes") : isCard ? "Rule keys S Q work outside text boxes" : "Rule keys T S P R Q work outside text boxes";
+  // Edit: a stored password is kept until Change password is picked.
+  const keepPw = editing && link.hasPassword && !changePw && d.password === "";
 
   return (
-    <Sheet label={releasing ? "Release lock" : "New link"} onClose={() => (releasing ? setReleasing(false) : app.close())}>
+    <Sheet label={releasing ? "Release lock" : title} onClose={() => (releasing ? setReleasing(false) : close())}>
       {releasing ? (
         <>
           <div className="sh-head">
@@ -294,7 +432,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
               <button type="button" className="btn primary" autoFocus onClick={() => void release()}>
                 Release lock <span className="k">Enter</span>
               </button>
-              <button type="button" className="btn" onClick={() => setReleasing(false)}>
+              <button type="button" className="btn ghost" onClick={() => setReleasing(false)}>
                 Cancel <kbd>Esc</kbd>
               </button>
             </div>
@@ -303,100 +441,121 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
       ) : (
         <>
       <div className="sh-head">
-        <h2>New link</h2>
+        <h2>{title}</h2>
         <span className="x">
           <kbd>Esc</kbd> cancel
         </span>
       </div>
       <div className="sh-body">
-        <div className="redir">
-          <span id="nl-kind">Type</span>
-          <Seg
-            label="Type"
-            value={kind}
-            onChange={(k) => {
-              if (busy) return; // the answer of a pending create belongs to the type it was sent as
-              setKind(k);
-              setError(null);
-              setCardField(null);
-            }}
-            options={[
-              { value: "url", label: "Link" },
-              { value: "vcard", label: "Contact card" },
-            ]}
-          />
+        <div className="f">
+          <label htmlFor="nl-name">
+            Name <span>optional, to find it by</span>
+          </label>
+          <input id="nl-name" className={err("name") ? "input sans bad" : "input sans"} value={d.name} autoComplete="off" aria-invalid={err("name") ? true : undefined} onChange={(e) => set({ name: e.target.value })} />
+          {err("name") && (
+            <p className="err" role="alert">
+              {errorText(err("name")!)}
+            </p>
+          )}
         </div>
-        {isCard ? (
+        {!editing && (
           <div className="f">
-            <p className="lbl">Contact card: opening or scanning the short link downloads it to the phone's contacts.</p>
-            <VcardForm id="nl-vc" value={card} field={cardField} onBusy={setPhotoBusy} onChange={(v) => {
-                setCard(v);
+            <span className="lbl" id="nl-kind">Type</span>
+            <Seg
+              label="Type"
+              value={kind}
+              onChange={(k) => {
+                if (busy) return; // the answer of a pending create belongs to the type it was sent as
+                setKind(k);
+                setError(null);
                 setCardField(null);
-              }} />
+              }}
+              options={[
+                { value: "url", label: "Web address" },
+                { value: "vcard", label: "Contact card" },
+              ]}
+            />
+            {isCard && <p className="hint">Opening or scanning the short link saves this card to the phone's contacts.</p>}
+          </div>
+        )}
+        {!isCard && (
+          <div className="f">
+            <label htmlFor="nl-dest">
+              Goes to <span>a URL, tel: or mailto:</span>
+            </label>
+            <div className={err("url") ? "ctl bad" : "ctl"}>
+              <input id="nl-dest" autoFocus value={d.url} spellCheck={false} autoComplete="off" aria-invalid={err("url") ? true : undefined} onChange={(e) => set({ url: e.target.value })} />
+            </div>
+            {err("url") && (
+              <p className="err" role="alert">
+                {errorText(err("url")!)}
+              </p>
+            )}
+          </div>
+        )}
+        {editing ? (
+          <div className="f">
+            <span className="lbl">Short link</span>
+            <div className="fixed-slug">
+              {host}/<b>{slug}</b>
+            </div>
           </div>
         ) : (
-        <div className="f">
-          <label htmlFor="nl-dest">
-            Goes to <span>a URL, tel: or mailto:</span>
-          </label>
-          <div className={err("url") ? "ctl bad" : "ctl"}>
-            <input id="nl-dest" autoFocus value={url} spellCheck={false} autoComplete="off" aria-invalid={err("url") ? true : undefined} onChange={(e) => setUrl(e.target.value)} />
-          </div>
-          {err("url") && (
-            <p className="err" role="alert">
-              {errorText(err("url")!)}
-            </p>
-          )}
-        </div>
-        )}
-        <div className="f">
-          <label htmlFor="nl-slug">
-            Short link{" "}
-            <span className="kh">
-              <kbd>Alt</kbd> <kbd>D</kbd> change domain
-            </span>
-          </label>
-          <div className={err("slug") ? "ctl bad" : "ctl"}>
-            <select ref={domainRef} aria-label="Domain" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
-              {usable.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.host}
-                </option>
-              ))}
-            </select>
-            <span className="pre">/</span>
-            <input id="nl-slug" ref={slugRef} className="slug" value={slug} spellCheck={false} autoComplete="off" aria-invalid={err("slug") ? true : undefined} onChange={(e) => setSlug(e.target.value)} />
-            <span aria-live="polite">{line}</span>
-          </div>
-          {err("slug") && (
-            <p className="err" role="alert">
-              {errorText(err("slug")!)}
-            </p>
-          )}
-          {check?.status === "locked" && can(me, "links.editAny") && (
-            <p className="err">
-              <button type="button" className="btn" onClick={() => {
-                  setReleaseError(null);
-                  setReleasing(true);
-                }}>
-                Release lock
-              </button>
-            </p>
-          )}
-          {!isCard && suggestions.length > 0 && (
-            <div className="sugs">
-              <span>Suggestions</span>
-              {suggestions.map((s) => (
-                <button key={s} type="button" className="sug" onClick={() => setSlug(s)}>
-                  {s}
-                </button>
-              ))}
+          <div className="f">
+            <label htmlFor="nl-slug">
+              Short link{" "}
               <span className="kh">
-                <kbd>Tab</kbd> to pick
+                <kbd>Alt</kbd> <kbd>D</kbd> change domain
               </span>
+            </label>
+            <div className={err("slug") ? "ctl bad" : "ctl"}>
+              <select ref={domainRef} aria-label="Domain" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
+                {usable.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.host}
+                  </option>
+                ))}
+              </select>
+              <span className="pre">/</span>
+              <input id="nl-slug" ref={slugRef} className="slug" value={slug} spellCheck={false} autoComplete="off" aria-invalid={err("slug") ? true : undefined} onChange={(e) => setSlug(e.target.value)} />
+              <span aria-live="polite">{line}</span>
             </div>
-          )}
-        </div>
+            {err("slug") && (
+              <p className="err" role="alert">
+                {errorText(err("slug")!)}
+              </p>
+            )}
+            {check?.status === "locked" && can(me, "links.editAny") && (
+              <p className="err">
+                <button type="button" className="btn sm" onClick={() => {
+                    setReleaseError(null);
+                    setReleasing(true);
+                  }}>
+                  Release lock
+                </button>
+              </p>
+            )}
+            {!isCard && suggestions.length > 0 && (
+              <div className="sugs">
+                <span>Suggestions</span>
+                {suggestions.map((s) => (
+                  <button key={s} type="button" className="sug" onClick={() => setSlug(s)}>
+                    {s}
+                  </button>
+                ))}
+                <span className="kh">
+                  <kbd>Tab</kbd> to pick
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+        {isCard && (
+          <VcardForm id={vcId} value={d.vcard} field={cardField} onBusy={setPhotoBusy} onChange={(vcard) => {
+              set({ vcard });
+              setCardField(null);
+            }} />
+        )}
         <div className="rules" aria-label="Rules">
           {!isCard && (
           <Rule
@@ -424,7 +583,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           <Rule
             icon="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2"
             label="Schedule and expiry"
-            note={starts || ends ? "Set" : "Off"}
+            note={d.starts || d.ends ? "Set" : "Off"}
             keyName="S"
             open={schedOpen}
             onClick={() => setSchedOpen((v) => !v)}
@@ -434,13 +593,13 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
               <div>
                 <label htmlFor="nl-starts">Starts</label>
                 <div className="ctl">
-                  <input id="nl-starts" type="datetime-local" value={starts} onChange={(e) => setStarts(e.target.value)} />
+                  <input id="nl-starts" type="datetime-local" value={d.starts} onChange={(e) => set({ starts: e.target.value })} />
                 </div>
               </div>
               <div>
                 <label htmlFor="nl-ends">Ends</label>
                 <div className={err("schedule") ? "ctl bad" : "ctl"}>
-                  <input id="nl-ends" type="datetime-local" value={ends} aria-invalid={err("schedule") ? true : undefined} onChange={(e) => setEnds(e.target.value)} />
+                  <input id="nl-ends" type="datetime-local" value={d.ends} aria-invalid={err("schedule") ? true : undefined} onChange={(e) => set({ ends: e.target.value })} />
                 </div>
               </div>
             </div>
@@ -449,37 +608,49 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           <Rule
             icon="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z"
             label="Password"
-            note={pwOpen && password ? "On" : "Off"}
+            note={d.passwordOn && (d.password || (editing && link.hasPassword)) ? "On" : "Off"}
             keyName="P"
-            open={pwOpen}
+            open={d.passwordOn}
             onClick={togglePw}
           />
           )}
-          {!isCard && pwOpen && (
+          {!isCard && d.passwordOn && (
             <div className="pw">
-              <label htmlFor="nl-pw">Password</label>
-              <div className={err("password") ? "ctl bad" : "ctl"}>
-                <input
-                  id="nl-pw"
-                  ref={pwRef}
-                  type={showPw ? "text" : "password"}
-                  value={password}
-                  autoComplete="new-password"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  aria-describedby="nl-pw-hint"
-                  aria-invalid={err("password") ? true : undefined}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <button type="button" className="btn ghost" aria-label={showPw ? "Hide password" : "Show password"} onClick={() => setShowPw((v) => !v)}>
-                  {showPw ? "Hide" : "Show"}
-                </button>
-              </div>
+              {keepPw ? (
+                <div className="row-actions">
+                  <span className="muted">Password set</span>
+                  <button type="button" className="btn sm" onClick={() => setChangePw(true)}>
+                    Change password
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <label htmlFor="nl-pw">{editing && link.hasPassword ? "New password" : "Password"}</label>
+                  <div className={err("password") ? "ctl bad" : "ctl"}>
+                    <input
+                      id="nl-pw"
+                      ref={pwRef}
+                      type={showPw ? "text" : "password"}
+                      value={d.password}
+                      autoComplete="new-password"
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      aria-describedby={err("password") ? "nl-pw-hint nl-pw-err" : "nl-pw-hint"}
+                      aria-invalid={err("password") ? true : undefined}
+                      onChange={(e) => set({ password: e.target.value })}
+                    />
+                    <button type="button" className="btn sm ghost icon" aria-label={showPw ? "Hide password" : "Show password"} onClick={() => setShowPw((v) => !v)}>
+                      <Icon name="eye" />
+                    </button>
+                  </div>
+                </>
+              )}
               <p id="nl-pw-hint" className="utm-note">
-                At least 8 characters. Visitors type it before the link opens.
+                At least 8 characters. Visitors type it before the link opens.{editing ? " Applies everywhere within a few minutes." : ""}
               </p>
+              {d.code === 301 && editing && <p className="utm-note">{errorText("password_301")}</p>}
               {err("password") && (
-                <p className="err" role="alert">
+                <p className="err" role="alert" id="nl-pw-err">
                   {errorText(err("password")!)}
                 </p>
               )}
@@ -498,15 +669,16 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           {!isCard && routesOpen && (
             <div ref={routesRef}>
               <RoutesEditor
-                value={routes}
+                value={d.routes}
                 errors={routeErrors}
-                onChange={(r) => {
-                  setRoutes(r);
+                onChange={(routes) => {
+                  set({ routes });
                   setRouteErrors({});
                 }}
               />
             </div>
           )}
+          {!editing && (
           <Rule
             icon="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h3v3M21 14v7h-4M14 21v-3"
             label="QR code"
@@ -516,6 +688,7 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
             toggle
             onClick={() => setQr((v) => !v)}
           />
+          )}
         </div>
         {err("schedule") && (
           <p className="err" role="alert">
@@ -527,8 +700,8 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           <span>Redirect</span>
           <Seg
             label="Redirect"
-            value={code}
-            onChange={setCode}
+            value={d.code}
+            onChange={(code) => set({ code })}
             options={[
               { value: 302, label: "302 editable" },
               { value: 301, label: "301 fixed" },
@@ -536,32 +709,56 @@ export function NewLinkSheet({ slug: initialSlug }: { slug?: string }) {
           />
         </div>
         )}
+        {!isCard && editing && (
+          <div className="toggle">
+            <div>
+              Pass query string through<small>Extra parameters reach the destination</small>
+            </div>
+            <Switch checked={d.pass} onChange={(pass) => set({ pass })} label="Pass query string through" />
+          </div>
+        )}
         <div className="route">
           <span>
             {host}/<b>{slug}</b>
           </span>
-          <span className="arr">{isCard ? "200" : code}</span>
+          <span className="arr">{isCard ? "200" : d.code}</span>
           <span>{isCard ? "downloads the contact card" : finalUrl || "..."}</span>
         </div>
         {err("form") && (
           <p className="err" role="alert">
             {errorText(err("form")!)}
+            {err("form") === "conflict" && (
+              <button type="button" className="btn sm" onClick={() => ((discard.current = true), app.bumpLinks())}>
+                Reload
+              </button>
+            )}
           </p>
         )}
-        {usable.length === 0 && (
+        {!editing && usable.length === 0 && (
           <p className="err" role="alert">
             {mayOpen(app.me, { kind: "addDomain" }) ? "No domain yet. Add one in Domains first." : "No domain is available to you yet. Ask the owner to give you access to one."}
           </p>
         )}
       </div>
       <div className="sh-foot">
-        <span className="left kh">{isCard ? "Rule keys S Q work outside text boxes" : "Rule keys T S P R Q work outside text boxes"}</span>
-        <button type="button" className="btn" disabled={busy || !domainId || cardWait} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void submit(true)}>
-          Create and copy <span className="k2">Ctrl ⇧ Enter</span>
+        <span className="left kh">{keysHint}</span>
+        <button type="button" className="btn ghost" onClick={close}>
+          Cancel
         </button>
-        <button type="button" className="btn primary" disabled={busy || !domainId || cardWait} aria-keyshortcuts="Control+Enter" onClick={() => void submit(false)}>
-          Create link<span className="k2">Ctrl Enter</span>
-        </button>
+        {editing ? (
+          <button type="button" className="btn primary" disabled={busy || cardWait} aria-keyshortcuts="Control+Enter" onClick={() => void save()}>
+            Save<span className="k2">Ctrl Enter</span>
+          </button>
+        ) : (
+          <>
+            <button type="button" className="btn" disabled={busy || !domainId || cardWait} aria-keyshortcuts="Control+Shift+Enter" onClick={() => void create(true)}>
+              Create and copy <span className="k2">Ctrl ⇧ Enter</span>
+            </button>
+            <button type="button" className="btn primary" disabled={busy || !domainId || cardWait} aria-keyshortcuts="Control+Enter" onClick={() => void create(false)}>
+              Create link<span className="k2">Ctrl Enter</span>
+            </button>
+          </>
+        )}
       </div>
         </>
       )}

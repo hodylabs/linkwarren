@@ -31,10 +31,11 @@ describe("Breakdowns with detail", () => {
     render(<Breakdowns report={report({ devices: [{ value: "mobile", clicks: 5 }, { value: "desktop", clicks: 2 }] })} detail={detail({
       os: [{ value: "iOS", clicks: 4 }, { value: "", clicks: 1 }], languages: [{ value: "en-us", clicks: 3 }], places: [{ value: "Toronto, CA", clicks: 2 }],
     })} />);
+    expect(labels("Languages")).toEqual(["American English"]); // Places, the first tab
+    expect(labels("Cities and regions")).toEqual(["Toronto, CA"]);
+    act(() => screen.getByRole("tab", { name: "Devices" }).click());
     expect(labels("Devices")).toEqual(["Phone", "Computer"]);
     expect(labels("Operating systems")).toEqual(["iOS", "Not recorded"]);
-    expect(labels("Languages")).toEqual(["American English"]);
-    expect(labels("Cities and regions")).toEqual(["Toronto, CA"]);
   });
   it("top links open their own page; a per-link page leaves out Top links and Domains", () => {
     const links = [{ linkId: "l 1", domainId: "d1", host: "go.example.com", slug: "s", clicks: 3 }];
@@ -47,6 +48,7 @@ describe("Breakdowns with detail", () => {
   });
   it("detail that failed says so in the cards", () => {
     render(<Breakdowns report={report()} detail={null} />);
+    act(() => screen.getByRole("tab", { name: "Devices" }).click());
     expect(within(card("Browsers")).getByText("Not available for this range")).toBeTruthy();
   });
 });

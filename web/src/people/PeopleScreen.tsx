@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type AuditItem, type Page, type UserItem } from "../api";
 import { errorText, plural } from "../copy";
 import { isTypingTarget, useHotkeys, type Bindings } from "../keys";
-import { navigate, useRoute } from "../router";
-import { Chip, Empty, PrimaryButton, ScreenHeader, SearchButton, Tag } from "../shell/ui";
+import { navigate, useRoute, withoutQ } from "../router";
+import { Chip, Empty, PrimaryButton, ScreenHeader, SearchChip, Tag } from "../shell/ui";
 import { can, seesRoles } from "../perms";
 import { useApp } from "../state";
 import { BackBar, useDetailView } from "../shell/narrow";
@@ -194,10 +194,10 @@ function PeopleView() {
       <ScreenHeader
         title={manage ? "People & audit log" : "Audit log"}
         count={manage ? `${plural(all.length - pending, "person", "people")}, ${plural(pending, "invite")} pending` : undefined}
-        text={manage ? "Who can sign in, what they can reach, and every change made by a person or an agent." : "Every change made by a person or an agent, across every domain."}
+        action={manage && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
       >
         {seesRoles(me) && <PeopleTabs at="people" />}
-        <SearchButton q={q} placeholder={manage ? "Search people and activity" : "Search and go"} onOpen={() => app.open({ kind: "palette" })} />
+        <SearchChip q={query.get("q") ?? ""} onClear={() => navigate(withoutQ("/people"), { replace: true })} />
         {manage && <div className="chips" role="group" aria-label="Filter people">
           {FILTERS.map((f) => (
             <Chip key={f} pressed={filter === f} onClick={() => setFilter(f)}>
@@ -205,7 +205,6 @@ function PeopleView() {
             </Chip>
           ))}
         </div>}
-        {manage && <PrimaryButton label="Invite person" shortcut="N" onClick={() => app.open({ kind: "invite" })} />}
       </ScreenHeader>
       {/* An audit-only role (no people.manage) gets the audit log alone: no people list to open a person from. */}
       <div className={!manage ? "body people solo" : open ? "body people open" : "body people"}>

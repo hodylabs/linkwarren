@@ -24,7 +24,7 @@ const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:n
  * The one dialog primitive. Focus moves inside on open and back to the opener on close; Tab cycles inside; Esc (capture phase,
  * any focus) closes the topmost sheet only; a mousedown on the scrim itself closes, one that starts inside the panel never does (so a drag that ends outside is safe).
  */
-export function Sheet({ label, onClose, children, cls = "sheet" }: { label: string; onClose: () => void; children: ReactNode; cls?: string }) {
+export function Sheet({ label, onClose, children, cls = "sheet", scrimCls }: { label: string; onClose: () => void; children: ReactNode; cls?: string; scrimCls?: string }) {
   const panel = useRef<HTMLDivElement>(null);
   const phone = useMedia(PHONE);
   const closeRef = useRef(onClose);
@@ -83,7 +83,7 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
   }, []);
 
   return (
-    <div className="scrim on" onMouseDown={(e) => e.target === e.currentTarget && closeRef.current()}>
+    <div className={scrimCls ? `scrim on ${scrimCls}` : "scrim on"} onMouseDown={(e) => e.target === e.currentTarget && closeRef.current()}>
       <div ref={panel} className={cls} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
         {children}
         {/* Phones have no Esc key and the panel can cover the scrim: a close button, last so first focus and autoFocus are unchanged. */}
@@ -98,9 +98,9 @@ export function Sheet({ label, onClose, children, cls = "sheet" }: { label: stri
     </div>
   );
 }
-
-/** A yes or no question over the current sheet: Enter (the focused primary button) confirms, Esc cancels. `children` go above the buttons. */
-export function Confirm({ title, text, ok, onOk, onCancel, children }: { title: string; text: string; ok: string; onOk(): void; onCancel(): void; children?: ReactNode }) {
+/** A yes or no question over the current sheet: Enter (the focused button) confirms, Esc cancels. `children` go above the buttons.
+ * `tone`: the confirm step of a destructive action is solid red (the default); "primary" for one that is not. */
+export function Confirm({ title, text, ok, onOk, onCancel, children, tone = "danger" }: { title: string; text: string; ok: string; onOk(): void; onCancel(): void; children?: ReactNode; tone?: "danger" | "primary" }) {
   return (
     <Sheet label={title} onClose={onCancel}>
       <div className="sh-head">
@@ -111,7 +111,7 @@ export function Confirm({ title, text, ok, onOk, onCancel, children }: { title: 
         <p>{text}</p>
         <div className="actions">
           {/* Key autorepeat never confirms, as in the domain detail. */}
-          <button type="button" className="btn primary" autoFocus onClick={onOk} onKeyDown={(e) => e.repeat && e.preventDefault()}>
+          <button type="button" className={tone === "danger" ? "btn danger solid" : "btn primary"} autoFocus onClick={onOk} onKeyDown={(e) => e.repeat && e.preventDefault()}>
             {ok} <span className="k">Enter</span>
           </button>
           <button type="button" className="btn" onClick={onCancel}>

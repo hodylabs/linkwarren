@@ -77,7 +77,7 @@ export function SecretField({ name, status, pasteAvailable, onSaved, hint, readO
     );
   const paste = status !== "secret" && pasteAvailable;
   // A dashboard value is the only one in use (no Worker secret), so removing it always asks first.
-  const removeBtn = status === "dashboard" && <button type="button" className="btn ghost" onClick={() => setAsking(true)} disabled={busy}>Remove</button>;
+  const removeBtn = status === "dashboard" && <button type="button" className="btn ghost danger" onClick={() => setAsking(true)} disabled={busy}>Remove</button>;
   return (
     <div className="secret" onKeyDown={onKeyDown}>
       <div className="sfield">

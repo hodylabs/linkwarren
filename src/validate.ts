@@ -90,3 +90,13 @@ export function checkDestination(
   if (shortHosts.some((h) => normalizeHost(h) === host)) return { ok: false, reason: "loop" };
   return { ok: true, url };
 }
+
+/** S12: a link's optional name. Trimmed; empty (or null) stores no name; at most 100 characters; no control characters. */
+export const LINK_NAME_MAX = 100;
+const NAME_CTRL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+export function checkLinkName(raw: string | null): { ok: true; name: string | null } | { ok: false } {
+  const name = (raw ?? "").trim();
+  if (!name) return { ok: true, name: null };
+  if ([...name].length > LINK_NAME_MAX || NAME_CTRL.test(name)) return { ok: false };
+  return { ok: true, name };
+}

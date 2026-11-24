@@ -16,8 +16,8 @@ describe("ClicksChart", () => {
     render(<ClicksChart series={series} unit="day" table={false} onToggle={() => {}} />);
     expect(screen.getByRole("heading", { name: "Clicks per day, Nov 18 to Nov 20" })).toBeTruthy();
     expect(screen.getByText("From QR codes")).toBeTruthy();
-    expect(screen.getByText("Typed or clicked")).toBeTruthy();
-    expect(screen.getByRole("img", { name: "Clicks over time split into QR scans and typed or clicked visits" })).toBeTruthy();
+    expect(screen.getByText("All clicks")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Clicks over time, with the share from QR scans" })).toBeTruthy();
   });
 
   it("hourly title", () => {

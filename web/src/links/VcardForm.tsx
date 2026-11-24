@@ -3,6 +3,7 @@ import type { Link } from "../api";
 import type { ListVCard } from "../../../src/types";
 import { emptyVcard, PHONE_TYPES, VCARD_MAX, type PhoneType, type VCard } from "../../../src/vcard";
 import { photoSrc, resizePhoto } from "./photo";
+import { Icon } from "../shell/ui";
 
 const PHONE_LABEL: Record<PhoneType, string> = { cell: "Mobile", work: "Work", home: "Home", other: "Other" };
 
@@ -137,8 +138,8 @@ export function VcardForm({ id, value, onChange, field, readOnly, onBusy }: {
           <div className="vc-row">
             {row(i, i + 1)}
             {!readOnly && (
-              <button type="button" className="btn" aria-label={`Remove ${one} ${i + 1}`} onClick={() => remove(key, i)}>
-                Remove
+              <button type="button" className="btn ghost icon" aria-label={`Remove ${one} ${i + 1}`} onClick={() => remove(key, i)}>
+                <Icon name="x" />
               </button>
             )}
           </div>
@@ -146,8 +147,8 @@ export function VcardForm({ id, value, onChange, field, readOnly, onBusy }: {
         </div>
       ))}
       {!readOnly && value[key].length < VCARD_MAX.rows && (
-        <button type="button" className="btn" data-add={key} onClick={() => add(key)}>
-          Add {one}
+        <button type="button" className="btn sm ghost" data-add={key} onClick={() => add(key)}>
+          <Icon name="plus" />Add {one}
         </button>
       )}
     </div>
@@ -175,11 +176,11 @@ export function VcardForm({ id, value, onChange, field, readOnly, onBusy }: {
         {value.photo ? <img className="vc-img" src={photoSrc(value.photo)} alt="Contact photo" width={64} height={64} /> : <span className="vc-img" aria-hidden="true" />}
         {!readOnly && (
           <>
-            <button type="button" className="btn" ref={pickRef} disabled={reading} {...inv("photo")} onClick={() => fileRef.current?.click()}>
+            <button type="button" className="btn sm" ref={pickRef} disabled={reading} {...inv("photo")} onClick={() => fileRef.current?.click()}>
               {reading ? "Reading photo..." : value.photo ? "Change photo" : "Add photo"}
             </button>
             {value.photo && (
-              <button type="button" className="btn" onClick={() => {
+              <button type="button" className="btn sm ghost danger" onClick={() => {
                   pickSeq.current++; // a resize still running is dropped, so it cannot bring a photo back
                   busy(false);
                   set({ photo: null });

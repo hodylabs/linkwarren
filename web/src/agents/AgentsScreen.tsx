@@ -427,9 +427,10 @@ export function AgentsScreen() {
   const selected = selConn ?? selKey;
   return (
     <>
-      <ScreenHeader title="API & agents" text="connect Claude, ChatGPT, Claude Code, Codex, Gemini or your own scripts">
-        {can(me, "keys") && <PrimaryButton label="New API key" shortcut="N" onClick={() => app.open({ kind: "newKey" })} />}
-      </ScreenHeader>
+      <ScreenHeader
+        title="API & agents"
+        action={can(me, "keys") && <PrimaryButton label="New API key" shortcut="N" onClick={() => app.open({ kind: "newKey" })} />}
+      />
       <div className={`body agents${open ? " open" : ""}${selected ? "" : " solo"}`}>
         <section className="list" aria-label="Agents and API keys">
           <div className="connect">

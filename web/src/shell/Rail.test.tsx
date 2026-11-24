@@ -1,10 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { AppProvider, useApp } from "../state";
 import { fakeApi } from "../test/fakeApi";
-import { Rail } from "./Rail";
+import { Rail, TopBar } from "./Rail";
 import { customRole, MEMBER_ROLE, OWNER_ROLE } from "../test/roles";
 
 const base: Me = { id: "uo", email: "owner@example.com", name: "Olive", role: "owner", ...OWNER_ROLE };
@@ -20,27 +20,35 @@ function boot(me: Me, signOut: () => { status: number; body?: unknown } = () => 
   const assign = vi.fn();
   vi.stubGlobal("location", { ...window.location, assign });
   const Probe = () => <span>overlay:{useApp().overlay?.kind ?? "none"}</span>;
-  render(<AppProvider me={me}><Rail /><Probe /></AppProvider>);
+  render(<AppProvider me={me}><TopBar mini={false} onMini={() => {}} /><Rail /><Probe /></AppProvider>);
   return { api, assign, user: userEvent.setup() };
 }
 
-describe("Rail footer", () => {
+// S12: who is signed in, sign-in and security and sign out moved from the rail footer to the avatar's account menu.
+const menu = () => act(() => screen.getByRole("button", { name: "Account menu" }).click());
+
+describe("Account menu", () => {
   it("access mode keeps the Access link and has no account button", () => {
     boot({ ...base, authMode: "access" });
+    menu();
     expect(screen.getByText("Signed in with Cloudflare Access")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Sign out" }).getAttribute("href")).toBe("/cdn-cgi/access/logout");
     expect(screen.queryByRole("button", { name: "Sign-in and security" })).toBeNull();
   });
   it("a Me without a mode reads as access mode", () => {
     boot(base);
+    menu();
     expect(screen.getByRole("link", { name: "Sign out" })).toBeTruthy();
   });
   it("app mode shows both buttons; the first opens the sheet, Sign out posts once", async () => {
     const { api, assign, user } = boot({ ...base, authMode: "app" });
+    menu();
     expect(screen.getByText("Signed in to linkwarren")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Sign out" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Sign-in and security" }));
     expect(screen.getByText("overlay:account")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Account menu" })).toBeNull(); // the sheet replaces the menu
+    menu();
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
     expect(api.calls.filter((c) => c.method === "POST" && c.path === "/api/account/sign-out")).toHaveLength(1);
@@ -48,6 +56,7 @@ describe("Rail footer", () => {
   it("a failed sign-out is announced inline and does not reload; a retry can succeed", async () => {
     let fail = true;
     const { api, assign, user } = boot({ ...base, authMode: "app" }, () => (fail ? { status: 500, body: { error: "internal" } } : { status: 204 }));
+    menu();
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Something went wrong (internal)");
     expect(assign).not.toHaveBeenCalled();
@@ -67,13 +76,13 @@ describe("Rail update notice", () => {
     expect(a.getAttribute("href")).toBe(URL_);
     expect(a.getAttribute("target")).toBe("_blank");
     expect(a.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(a.closest(".ver")?.textContent).toContain(`Dashboard v${__APP_VERSION__}`);
+    expect(a.closest(".ver")?.textContent).toContain(`Version ${__APP_VERSION__}`);
     for (let i = 0; i < 30 && document.activeElement !== a; i++) await user.tab();
     expect(document.activeElement).toBe(a);
   });
   it("nothing when update is null or missing", async () => {
     boot(base, undefined, { ...INST, update: null });
-    await screen.findByText(`Dashboard v${__APP_VERSION__}`, { exact: false });
+    await screen.findByText(__APP_VERSION__, { selector: ".ver b" });
     await waitFor(() => expect(screen.queryByRole("link", { name: /available/ })).toBeNull());
   });
 });
@@ -84,6 +93,7 @@ describe("Rail follows the role", () => {
   it("a Member gets today's rail and the role name", () => {
     boot({ ...base, id: "um", role: "member", ...MEMBER_ROLE });
     expect(items()).toEqual(["LinksG L", "QR codesG Q", "DomainsG D", "AnalyticsG A", "API & agentsG I"]);
+    menu();
     expect(screen.getByText("Member")).toBeTruthy();
   });
   it("the owner keeps the Owner group", () => {
@@ -93,6 +103,7 @@ describe("Rail follows the role", () => {
   it("a custom role shows its name and only the screens it may open", () => {
     boot({ ...base, id: "uh", ...customRole(["settings"], "Site admin") });
     expect(items()).toEqual(["LinksG L", "DomainsG D", "AnalyticsG A", "Manage", "API & agentsG I", "SettingsG S"]);
+    menu();
     expect(screen.getByText("Site admin")).toBeTruthy();
   });
 });

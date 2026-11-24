@@ -63,7 +63,7 @@ describe("Shortcuts sheet", () => {
     expect(domains).toContain("Shift D = Disable the selected domain");
     expect(dlg.textContent).not.toContain("Open the first setup step");
     expect(sheetRows(dlg, "New link")).toEqual(
-      expect.arrayContaining(["T = Campaign tags", "S = Schedule and expiry", "Alt D = Change the domain", "Ctrl Enter = Create the link", "Ctrl Shift Enter = Create and copy the short link"]),
+      expect.arrayContaining(["T = Campaign tags", "S = Schedule and expiry", "Alt D = Change the domain", "Ctrl Enter = Create the link, or save the edit", "Ctrl Shift Enter = Create and copy the short link"]),
     );
     expect(sheetRows(dlg, "Everywhere")).toEqual(expect.arrayContaining(["G L = Go to Links", "G P = Go to People & audit log"]));
     expect(sheetRows(dlg, "In search and go (Ctrl K)")).toEqual(expect.arrayContaining(["S D = Switch domain", "C D = Add a domain", "C L = New link"]));

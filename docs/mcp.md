@@ -32,7 +32,7 @@ Search the links the person can see, newest first, 50 at a time.
 
 | Input | Meaning |
 | --- | --- |
-| `query` | Optional. Matches the slug or the destination, 1 to 48 characters. |
+| `query` | Optional. Matches the name, the slug or the destination, 1 to 48 characters. |
 | `domain` | Optional. Only this domain. |
 | `status` | Optional. `active`, `scheduled` or `expired`. |
 | `cursor` | Optional. The `next` value of the previous answer. |
@@ -79,6 +79,7 @@ Create a short link.
 | --- | --- |
 | `domain` | The domain. |
 | `slug` | 1 to 64 characters. |
+| `name` | Optional. A name to find the link by, at most 100 characters. |
 | `url` | The destination: `http(s)`, `tel:` or `mailto:`. |
 | `redirectCode` | Optional. `301` or `302`. |
 | `startsAt`, `expiresAt` | Optional. Unix seconds or `null`. |
@@ -90,7 +91,7 @@ Returns the new link. `create_link` always makes a redirect: [contact cards](vca
 
 ### `update_link`
 
-Change a link. Input: `id`, plus any of `url`, `redirectCode`, `startsAt`, `expiresAt`, `passQuery`, `password` (a string sets it, `null` removes it) and `routes` (replaces the whole list; `[]` clears it). Returns the changed link. Changing a link changes a live redirect that printed QR codes may use, so the tool tells the agent to confirm with the person first. A contact card's fields cannot be changed here: on a card, a new `url` answers `vcard_url` and a password or routes answer `vcard_rule`.
+Change a link. Input: `id`, plus any of `name` (an empty string or `null` clears it), `url`, `redirectCode`, `startsAt`, `expiresAt`, `passQuery`, `password` (a string sets it, `null` removes it) and `routes` (replaces the whole list; `[]` clears it). Returns the changed link. Changing a link changes a live redirect that printed QR codes may use, so the tool tells the agent to confirm with the person first. A contact card's fields cannot be changed here: on a card, a new `url` answers `vcard_url` and a password or routes answer `vcard_rule`.
 
 ### `bulk_links`
 

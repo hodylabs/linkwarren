@@ -238,7 +238,7 @@ describe("bulk_links", () => {
     expect(r.isError).toBeFalsy();
     expect(ids(r)).toEqual([["lgo", "ok"], ["la", "ok"]]);
     expect(r.structuredContent.pending).toEqual([]);
-    expect(r.structuredContent.results[0].link).toEqual({ id: "lgo", shortUrl: "https://go.test/spring", url: "https://x.com/", kind: "url", hasPassword: false, forwardTo: null });
+    expect(r.structuredContent.results[0].link).toEqual({ id: "lgo", shortUrl: "https://go.test/spring", url: "https://x.com/", name: null, kind: "url", hasPassword: false, forwardTo: null });
     const audit = await all<Row>("SELECT target_id, via FROM audit_log WHERE action = 'link.update' ORDER BY target_id");
     expect(audit).toEqual([{ target_id: "la", via: "Claude" }, { target_id: "lgo", via: "Claude" }]);
     // runTool charges one unit, the route the other: a bulk of N costs N in total.
@@ -358,7 +358,7 @@ describe("bulk_links", () => {
     const p = { grant: { write: true, del: false } } as Parameters<NonNullable<typeof TOOLS.bulk_links>["run"]>[2];
     const out = await TOOLS.bulk_links!.run(api as never, { action: "redirect", ids: ["lgo", "la", "l3"], passQuery: false }, p, env);
     expect(out).toEqual({
-      results: [{ id: "lgo", ok: true, link: { id: "lgo", shortUrl: null, url: "https://x.com/", kind: "url", hasPassword: false, forwardTo: null } }, { id: "la", ok: false, error: "conflict" }],
+      results: [{ id: "lgo", ok: true, link: { id: "lgo", shortUrl: null, url: "https://x.com/", name: null, kind: "url", hasPassword: false, forwardTo: null } }, { id: "la", ok: false, error: "conflict" }],
       pending: ["l3"],
     });
   });

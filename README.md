@@ -12,6 +12,7 @@ linkwarren is a self-hosted link shortener for people with more than one domain.
 ## Features
 
 - **Many domains.** Main, shared and private domains, each with its own slugs. With a Cloudflare API token, linkwarren attaches domains in your account itself and connects outside domains with one CNAME (Cloudflare for SaaS).
+- **Names and one search.** Give any link an optional name; one search finds links by name, slug or destination.
 - **Link rules.** Start and end dates, passwords, routing by country, device or operating system, `301` or `302`, query pass-through, campaign tags, and `tel:` and `mailto:` links.
 - **Contact card links.** A short link that downloads a vCard (name, phones, emails, websites, address, note and photo) straight into the phone's contacts.
 - **QR codes.** Every link has one, and scans are counted apart from typed visits. A QR code generator makes codes for Wi-Fi, web addresses, text, email, phone, SMS and short links, with your colors.

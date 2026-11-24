@@ -61,7 +61,7 @@ export function SettingsScreen() {
 
   return (
     <>
-      <ScreenHeader title="Settings" text="This instance, for everyone on it" />
+      <ScreenHeader title="Settings" />
       <div className="setwrap">
         <nav className="subnav" aria-label="Settings sections" ref={nav} onKeyDown={onNavKey}>
           {sections.map((x) => (

@@ -228,7 +228,7 @@ export function BulkSheet({ mode, links, onRun, onClose }: { mode: BulkMode; lin
             {/* The password's rule error already shows under its field. */}
             {"hint" in built && !(mode === "password" && password !== "") && <p className="hint">{built.hint}</p>}
             <div className="actions">
-              <button type="button" className="btn primary" autoFocus={mode === "delete"} disabled={!("op" in built)} onClick={submit} aria-keyshortcuts={mode === "delete" ? "Enter" : "Control+Enter"}>
+              <button type="button" className={mode === "delete" ? "btn danger solid" : "btn primary"} autoFocus={mode === "delete"} disabled={!("op" in built)} onClick={submit} aria-keyshortcuts={mode === "delete" ? "Enter" : "Control+Enter"}>
                 {RUN[mode]} <span className="k">{mode === "delete" ? "Enter" : "Ctrl Enter"}</span>
               </button>
               <button type="button" className="btn" onClick={onClose}>

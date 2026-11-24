@@ -68,7 +68,7 @@ export function linksFromCsv(rows: string[][], mainHost: string, lines?: number[
   const errors: LineError[] = [];
   const head = (rows[0] ?? []).map((h) => h.trim().toLowerCase());
   const col = (...names: string[]) => head.findIndex((h) => names.includes(h));
-  const at = { slug: col("slug"), dest: col("destination", "url"), host: col("host"), enabled: col("enabled"), start: col("start_date"), end: col("end_date"), kind: col("kind") };
+  const at = { slug: col("slug"), dest: col("destination", "url"), host: col("host"), enabled: col("enabled"), start: col("start_date"), end: col("end_date"), kind: col("kind"), name: col("name") };
   if (at.slug < 0 || at.dest < 0) {
     errors.push({ line: lines?.[0] ?? 1, reason: "The first row must name the columns, with at least slug and destination (or url)" });
     return { body, errors };
@@ -77,7 +77,9 @@ export function linksFromCsv(rows: string[][], mainHost: string, lines?: number[
     const line = lines?.[i + 1] ?? i + 2;
     const cell = (k: number) => (k < 0 ? "" : (r[k] ?? "").trim());
     const slug = cell(at.slug), destination = cell(at.dest), host = cell(at.host), enabled = cell(at.enabled).toLowerCase();
-    const start = cell(at.start), end = cell(at.end);
+    // The export guards a formula-like name with a leading apostrophe (and doubles a real one): undo exactly one.
+    const start = cell(at.start), end = cell(at.end), rawName = cell(at.name);
+    const name = /^'(\s*[=+\-@]|')/.test(rawName) ? rawName.slice(1) : rawName;
     if (!slug) return errors.push({ line, reason: "slug is empty" });
     // A CSV row has no card fields: a contact card comes back only through a JSON import with its vcard.
     if (cell(at.kind).toLowerCase() === "vcard") return errors.push({ line, reason: "contact cards cannot be imported from CSV; use a JSON import with the card's vcard fields" });
@@ -85,7 +87,7 @@ export function linksFromCsv(rows: string[][], mainHost: string, lines?: number[
     if (enabled && !Object.hasOwn(BOOL, enabled)) return errors.push({ line, reason: "enabled must be true, false, 1, 0, yes or no" });
     for (const [name, v] of [["start_date", start], ["end_date", end]] as const)
       if (v && !validDate(v)) return errors.push({ line, reason: `${name} must be YYYY-MM-DD HH:MM:SS (UTC)` });
-    body.links.push({ host: host ? normHost(host) : null, slug, destination, enabled: enabled ? BOOL[enabled]! : true, startDate: start || null, endDate: end || null });
+    body.links.push({ host: host ? normHost(host) : null, slug, destination, enabled: enabled ? BOOL[enabled]! : true, startDate: start || null, endDate: end || null, ...(name ? { name } : {}) });
   });
   return { body, errors };
 }

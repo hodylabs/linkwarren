@@ -150,7 +150,7 @@ export function AccountPanel() {
                 <button type="button" className="btn" aria-keyshortcuts="R" onClick={startRename}>
                   Rename <span className="k">R</span>
                 </button>
-                <button type="button" className="btn" aria-keyshortcuts="Shift+D" onClick={ask}>
+                <button type="button" className="btn danger" aria-keyshortcuts="Shift+D" onClick={ask}>
                   Remove <span className="k">Shift D</span>
                 </button>
               </div>
@@ -202,7 +202,7 @@ export function AccountPanel() {
             </p>
             {error && <p className="err" role="alert">{errorText(error)}</p>}
             <div className="actions">
-              <button type="button" className="btn primary" autoFocus disabled={busy} onClick={() => void doConfirm()}>
+              <button type="button" className="btn danger solid" autoFocus disabled={busy} onClick={() => void doConfirm()}>
                 {confirm.kind === "remove" ? "Remove" : confirm.kind === "end" ? "Sign out" : "Sign out everywhere"} <span className="k">Enter</span>
               </button>
               <button type="button" className="btn" onClick={() => { setConfirm(null); setError(null); }}>

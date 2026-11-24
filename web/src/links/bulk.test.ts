@@ -124,7 +124,7 @@ describe("shortUrls and toCsv", () => {
     const csv = toCsv(links, host, (id) => (id === "uo" ? "You" : "Teammate"));
     expect(csv.startsWith("﻿")).toBe(true);
     const lines = csv.slice(1).split("\r\n");
-    expect(lines[0]).toBe("short_url,destination,kind,domain,slug,status,redirect_code,pass_query,has_password,starts_at,expires_at,routes,forwards_to,created_by,created_at");
+    expect(lines[0]).toBe("short_url,destination,kind,domain,slug,status,redirect_code,pass_query,has_password,starts_at,expires_at,routes,forwards_to,created_by,created_at,name");
     expect(csv).not.toMatch(/password_hash|,password,/);
     expect(csv.slice(1).replace(/\r\n/g, "").includes("\n")).toBe(true); // the only bare LF is inside the quoted cell
     expect(lines[1]).toContain('"https://example.com/a,b ""c""\nd"'.split("\n")[0]);

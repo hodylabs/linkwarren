@@ -207,7 +207,7 @@ export function PersonSheet({ id }: { id: string }) {
         <Confirm title="Sign out everywhere" text={`Sign ${email} out on every device?`} ok="Sign out" onOk={() => void act.signout()} onCancel={() => setAsk(null)} />
       )}
       {ask === "role" && (
-        <Confirm title={roleAsk.title} ok={roleAsk.ok} onOk={() => void act.role(pick, roleAsk.msg)} onCancel={() => setAsk(null)}
+        <Confirm tone="primary" title={roleAsk.title} ok={roleAsk.ok} onOk={() => void act.role(pick, roleAsk.msg)} onCancel={() => setAsk(null)}
           text={pick === "owner" ? roleAsk.text : `${roleAsk.title}? ${roleAsk.text}`} />
       )}
       {ask === "remove" && (

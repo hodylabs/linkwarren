@@ -44,7 +44,7 @@ describe("Analytics screen", () => {
     await ready();
     expect(reports()).toEqual(["/api/analytics"]);
     expect(screen.getByRole("heading", { name: "Analytics" })).toBeTruthy();
-    expect(screen.getByText("all domains you can see")).toBeTruthy();
+    expect(within(screen.getByRole("toolbar", { name: "Filters" })).getByRole("button", { name: /All domains/ })).toBeTruthy(); // the scope reads on the domain chip
     expect(screen.getByText("Bots and link previews are left out")).toBeTruthy();
   });
 
@@ -80,7 +80,7 @@ describe("Analytics screen", () => {
     await user.keyboard("{ArrowDown} ");
     await waitFor(() => expect(reports().at(-1)).toBe("/api/analytics?domains=d2"));
     expect(within(list).getAllByRole("option")[1]!.getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByText("on team.example.com")).toBeTruthy();
+    expect(within(screen.getByRole("toolbar", { name: "Filters" })).getByRole("button", { name: /team\.example\.com/ })).toBeTruthy();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /team\.example\.com/, expanded: false }));
@@ -344,10 +344,26 @@ describe("Analytics screen", () => {
     vi.useRealTimers();
   });
 
-  it("shows the breakdown cards under the chart", async () => {
+  it("shows the breakdown card under the chart, Top links beside it and the other columns behind their tabs", async () => {
     boot();
     await ready();
-    for (const t of ["Top links", "Domains", "Countries", "Where clicks came from"]) expect(screen.getByRole("heading", { name: t })).toBeTruthy();
+    for (const t of ["Breakdown", "Top links", "Countries"]) expect(screen.getByRole("heading", { name: t })).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Sources" }));
+    for (const t of ["Domains", "Where clicks came from"]) expect(screen.getByRole("heading", { name: t })).toBeTruthy();
+  });
+
+  it("no clicks: one message with Show 90 days and Clear filters instead of empty cards", async () => {
+    const { user, reports } = boot("/analytics?range=7&q=spring", () => ({ body: report(0) }));
+    expect(await screen.findByText("No clicks match these filters")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Breakdown" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Top links" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show 90 days" }));
+    await waitFor(() => expect(location.search).toContain("range=90"));
+    expect(location.search).toContain("q=spring");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Show 90 days" })).toBeNull()); // already 90 days
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    await waitFor(() => expect(location.search).toBe(""));
+    await waitFor(() => expect(reports().at(-1)).toBe("/api/analytics"));
   });
 });
 

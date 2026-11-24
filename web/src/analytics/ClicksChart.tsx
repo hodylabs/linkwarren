@@ -62,7 +62,7 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
     const w = wrapRef.current?.getBoundingClientRect();
     const sx = s ? s.width / W : 0, sy = s ? s.height / H : 0;
     const ox = s && w ? s.left - w.left : 0, oy = s && w ? s.top - w.top : 0;
-    return { i, x: ox + (b.x + b.w / 2) * sx, y: oy + b.yTop * sy };
+    return { i, x: ox + b.cx * sx, y: oy + b.yTop * sy };
   };
   const onKey = (e: KeyboardEvent) => {
     const last = g.bars.length - 1;
@@ -114,18 +114,26 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
         }}
         onBlur={() => setActive(null)}
       >
-        <svg ref={svgRef} className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Clicks over time split into QR scans and typed or clicked visits">
+        <svg ref={svgRef} className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Clicks over time, with the share from QR scans">
           {g.grid.map((l, k) => (
             <g key={k}>
-              <line x1={g.gridX.x1} x2={g.gridX.x2} y1={l.y} y2={l.y} stroke="#EEEFEB" />
+              <line className="grid" x1={g.gridX.x1} x2={g.gridX.x2} y1={l.y} y2={l.y} />
               <text x={g.gridX.label} y={l.y + 4} textAnchor="end">{l.label}</text>
             </g>
           ))}
+          <path className="l-area" d={g.lines.area} />
+          <path className="l-all" d={g.lines.all} />
+          <path className="l-qr" d={g.lines.qr} />
           {g.bars.map((b, i) => (
             <g key={i} className={active?.i === i ? "bar on" : "bar"} onMouseMove={onMove(i)} onMouseLeave={() => setActive(null)}>
               <rect x={b.hx} y={g.plot.top} width={b.hw} height={g.plot.height} fill="transparent" />
-              {b.qrH > 0 && <rect x={b.x} y={b.qrY} width={b.w} height={b.qrH} fill="#E07418" />}
-              {b.typedPath && <path d={b.typedPath} fill="#3F6FB5" />}
+              {(active?.i === i || g.bars.length === 1) && ( // one day has no line to draw: show its points
+                <>
+                  <line className="l-guide" x1={b.cx} x2={b.cx} y1={g.plot.top} y2={g.plot.top + g.plot.height} />
+                  <circle className="d-qr" cx={b.cx} cy={b.yQr} r={3} />
+                  <circle className="d-all" cx={b.cx} cy={b.yAll} r={3.5} />
+                </>
+              )}
             </g>
           ))}
           {g.ticks.map((t) => (
@@ -141,7 +149,7 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
 
   return (
     <section
-      className="card2"
+      className="chart-sec"
       ref={cardRef}
       onFocus={() => (focusIn.current = true)}
       // A blur with no new target (the focused node was removed) keeps the flag, so the effect above can restore focus.
@@ -152,10 +160,10 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
       <div className="card2-h">
         <h3>{title}</h3>
         <div className="legend">
+          <span><i className="lg-ty" />All clicks</span>
           <span><i className="lg-qr" />From QR codes</span>
-          <span><i className="lg-ty" />Typed or clicked</span>
         </div>
-        <button type="button" className="btn ghost tv" ref={toggleRef} onClick={onToggle} aria-keyshortcuts="V">
+        <button type="button" className="btn sm tv" ref={toggleRef} onClick={onToggle} aria-keyshortcuts="V">
           {table ? "Chart view" : "Table view"}<span className="k2">V</span>
         </button>
       </div>

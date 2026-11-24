@@ -36,7 +36,14 @@ function boot(opts: { me?: Me; routes?: FakeRoutes; page?: () => FakeRes | Promi
   return { api, user };
 }
 const rows = () => screen.getAllByRole("row").slice(1);
-const urlInput = () => screen.getByLabelText("URL") as HTMLInputElement;
+// S12: the panel is a summary; E opens the edit sheet (the New link sheet, prefilled), whose URL field is "Goes to".
+const urlInput = () => screen.getByLabelText(/^Goes to/) as HTMLInputElement;
+const editSheet = () => screen.getByRole("dialog", { name: "Edit link" });
+const openEdit = async (user: ReturnType<typeof userEvent.setup>) => {
+  (document.activeElement as HTMLElement | null)?.blur();
+  await user.keyboard("e");
+  return editSheet();
+};
 const ready = () => waitFor(() => expect(rows().length).toBeGreaterThan(0));
 const detail = () => screen.getByRole("complementary", { name: "Selected link" });
 afterEach(() => vi.unstubAllGlobals());
@@ -144,6 +151,13 @@ describe("Links screen list", () => {
     await waitFor(() => expect(api.calls.filter((c) => c.path.startsWith("/api/links")).at(-1)!.path).toContain("status=expired&mine=1"));
   });
 
+  it("?sel naming a link that is gone (404) clears the selection and the detail view", async () => {
+    boot({ path: "/links?sel=l9&view=detail" }); // l9 is off the page and the fake answers 404 for it
+    await ready();
+    await waitFor(() => expect(location.search).toBe(""));
+    expect(rows().every((r) => r.getAttribute("aria-selected") !== "true")).toBe(true);
+  });
+
   it("count shows the scope total with no filter", async () => {
     boot();
     expect(await screen.findByText("3 links")).toBeTruthy();
@@ -158,10 +172,21 @@ describe("Link detail", () => {
     },
   });
 
-  it("J typed in the URL input types j and moves nothing", async () => {
+  it("the panel is a summary: no inputs, the destination as text, and Copy, Edit and QR code under the slug", async () => {
+    boot({ path: "/links?sel=l1" });
+    await ready();
+    const p = detail();
+    expect(p.querySelector("input, textarea, select")).toBeNull();
+    expect(within(p).getByText("https://example.com/spring")).toBeTruthy();
+    for (const k of ["C", "E", "Q"]) expect(within(p).getByRole("button", { name: new RegExp(`${k}$`) }).getAttribute("aria-keyshortcuts")).toBe(k);
+    expect(within(p).getByRole("link", { name: /Link analytics/ }).getAttribute("href")).toBe("/analytics/link/l1");
+    expect(within(p).getAllByText(/^You, /)).toHaveLength(2); // Created and Updated
+  });
+
+  it("J typed in the edit sheet's URL types j and moves nothing", async () => {
     const { user } = boot({ path: "/links?sel=l1" });
     await ready();
-    await user.click(urlInput());
+    await openEdit(user);
     await user.keyboard("j");
     expect(urlInput().value.endsWith("j")).toBe(true);
     expect(rows()[0]!.getAttribute("aria-selected")).toBe("true");
@@ -176,33 +201,43 @@ describe("Link detail", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://go.test/spring"));
   });
 
-  it("E focuses the URL field", async () => {
+  it("E opens the same sheet as New link, prefilled, with the URL field focused; the Edit button does the same", async () => {
     const { user } = boot({ path: "/links?sel=l1" });
     await ready();
     await user.keyboard("e");
+    const sheet = editSheet();
     expect(document.activeElement).toBe(urlInput());
+    expect(urlInput().value).toBe("https://example.com/spring");
+    expect(sheet.querySelector(".fixed-slug")!.textContent).toBe("go.test/spring"); // the short link is fixed
+    expect(within(sheet).queryByRole("radiogroup", { name: "Type" })).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(within(detail()).getByRole("button", { name: /^Edit/ }));
+    expect(editSheet()).toBeTruthy();
   });
 
-  it("editing only the URL then Ctrl+Enter sends exactly { url }", async () => {
+  it("editing only the URL then Ctrl+Enter sends exactly { url } and closes the sheet", async () => {
     const bodies: unknown[] = [];
     const { user } = boot({ path: "/links?sel=l1", routes: patchOk(bodies) });
     await ready();
+    await openEdit(user);
     fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
-    await user.click(urlInput());
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(within(detail()).getByText("https://example.com/new")).toBeTruthy();
   });
 
   it("a URL typed while the save is pending is kept, not replaced by the saved revision", async () => {
     // The save answer is held until the test releases it; every step waits on UI state or the recorded call, never on time.
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
-    const { api } = boot({
+    const { api, user } = boot({
       path: "/links?sel=l1",
       routes: { "PATCH /api/links/l1": async ({ body }) => (await held, { body: { ...L1, ...(body as object), updatedAt: 101 } }) },
     });
-    await waitFor(() => expect(urlInput().value).toBe("https://example.com/spring"));
-    urlInput().focus();
+    await ready();
+    await openEdit(user);
     fireEvent.change(urlInput(), { target: { value: "https://example.com/b" } });
     fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
@@ -210,6 +245,7 @@ describe("Link detail", () => {
     expect(urlInput().value).toBe("https://example.com/c");
     release();
     expect(await within(detail()).findByText("https://example.com/b")).toBeTruthy();
+    // Typed on while it saved: the sheet stays open and keeps the newer text.
     expect(urlInput().value).toBe("https://example.com/c");
     expect(document.activeElement).toBe(urlInput());
   });
@@ -223,6 +259,7 @@ describe("Link detail", () => {
       routes: patchOk(bodies),
     });
     await ready();
+    await openEdit(user);
     fireEvent.change(screen.getByLabelText("Ends"), { target: { value: "" } });
     await user.click(urlInput());
     await user.keyboard("{Control>}{Enter}{/Control}");
@@ -241,21 +278,26 @@ describe("Link detail", () => {
     expect(api.calls.filter((c) => c.method === "DELETE").length).toBe(1);
   });
 
-  it("nothing changed sends no request", async () => {
+  it("nothing changed sends no request and closes the sheet", async () => {
     const bodies: unknown[] = [];
     const { user } = boot({ path: "/links?sel=l1", routes: patchOk(bodies) });
     await ready();
-    await user.click(urlInput());
+    await openEdit(user);
     await user.keyboard("{Control>}{Enter}{/Control}");
     expect(bodies).toEqual([]);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("Esc in the form restores the saved URL with no request", async () => {
+  it("Esc in the sheet discards the edit with no request; Edit again starts from the saved URL", async () => {
     const bodies: unknown[] = [];
     const { api, user } = boot({ path: "/links?sel=l1", routes: patchOk(bodies) });
     await ready();
+    await openEdit(user);
     await user.type(urlInput(), "zzz");
     await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(location.search).toContain("sel=l1"); // the Esc closed only the sheet
+    await openEdit(user);
     expect(urlInput().value).toBe("https://example.com/spring");
     expect(api.calls.some((c) => c.method === "PATCH")).toBe(false);
   });
@@ -263,19 +305,29 @@ describe("Link detail", () => {
   it("PATCH 400 loop shows its text next to the URL", async () => {
     const { user } = boot({ path: "/links?sel=l1", routes: { "PATCH /api/links/l1": () => ({ status: 400, body: { error: "loop" } }) } });
     await ready();
+    await openEdit(user);
     await user.type(urlInput(), "x");
     await user.keyboard("{Control>}{Enter}{/Control}");
-    expect(await within(detail()).findByText(errorText("loop"))).toBeTruthy();
+    expect(await within(editSheet()).findByText(errorText("loop"))).toBeTruthy();
     expect(urlInput().value).toBe("https://example.com/springx");
   });
 
-  it("409 conflict says to reload", async () => {
-    const { user } = boot({ path: "/links?sel=l1", routes: { "PATCH /api/links/l1": () => ({ status: 409, body: { error: "conflict" } }) } });
+  it("409 conflict says to reload, and Reload loads the new revision into the sheet", async () => {
+    let rev = L1;
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [rev, L2, L3], next: null } }),
+      routes: { "PATCH /api/links/l1": () => ({ status: 409, body: { error: "conflict" } }) },
+    });
     await ready();
+    await openEdit(user);
     await user.type(urlInput(), "x");
     await user.keyboard("{Control>}{Enter}{/Control}");
-    expect(await within(detail()).findByText(errorText("conflict"))).toBeTruthy();
-    expect(within(detail()).getByRole("button", { name: "Reload" })).toBeTruthy();
+    expect(await within(editSheet()).findByText(errorText("conflict"))).toBeTruthy();
+    rev = { ...L1, url: "https://example.com/theirs", updatedAt: 200 };
+    await user.click(within(editSheet()).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(urlInput().value).toBe("https://example.com/theirs"));
+    expect(within(editSheet()).queryByText(errorText("conflict"))).toBeNull();
   });
 
   it("a login redirect shows the signed-out banner and keeps the typed URL", async () => {
@@ -284,38 +336,51 @@ describe("Link detail", () => {
       routes: { "PATCH /api/links/l1": () => ({ signIn: true }) },
     });
     await ready();
+    await openEdit(user);
     await user.type(urlInput(), "x");
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(screen.getAllByText(errorText("network")).length).toBeGreaterThan(0));
     expect(urlInput().value).toBe("https://example.com/springx");
   });
 
-  it("Q focuses Download SVG, but not while typing in the URL field", async () => {
+  it("Q opens the QR code sheet on Download SVG; q typed in the edit sheet stays text", async () => {
     const { user } = boot({ path: "/links?sel=l1" });
     await ready();
-    await user.click(urlInput());
+    await openEdit(user);
     await user.keyboard("q");
     expect(urlInput().value).toBe("https://example.com/springq");
-    await user.tab({ shift: true });
-    (document.activeElement as HTMLElement).blur();
+    await user.keyboard("{Escape}");
     await user.keyboard("q");
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ }));
+    const qr = screen.getByRole("dialog", { name: "QR code" });
+    expect(document.activeElement).toBe(within(qr).getByRole("button", { name: /Download SVG/ }));
+    expect(within(qr).getByRole("img", { name: "QR code for go.test/spring" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("?qr=1 with a selection focuses Download SVG on load", async () => {
+  it("A opens the link's analytics page", async () => {
+    const { user } = boot({ path: "/links?sel=l1", routes: { "GET /api/analytics": () => ({ status: 500, body: { error: "internal_error" } }) } });
+    await ready();
+    await user.keyboard("a");
+    expect(location.pathname).toBe("/analytics/link/l1");
+  });
+
+  it("?qr=1 with a selection opens the QR code sheet on Download SVG", async () => {
     boot({ path: "/links?sel=l1&qr=1" });
     await ready();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ })));
   });
 
-  it("?qr=1 focuses once: it leaves the URL, and J after it focuses row 2", async () => {
+  it("?qr=1 opens once: it leaves the URL, and J after closing it focuses row 2", async () => {
     const { user } = boot({ path: "/links?sel=l1&qr=1" });
     await ready();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Download SVG/ })));
     await waitFor(() => expect(location.search).not.toContain("qr="));
+    await user.keyboard("{Escape}");
     await user.keyboard("j");
     await waitFor(() => expect(document.activeElement).toBe(rows()[1]));
     expect(rows()[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("Shift+D opens the confirm, Esc cancels without DELETE", async () => {
@@ -347,10 +412,10 @@ describe("Link detail", () => {
     expect(location.search).toContain("sel=l1");
   });
 
-  it("Esc outside a field clears the selection; Esc in the URL field only reverts", async () => {
+  it("Esc with the edit sheet open closes only the sheet; Esc outside it clears the selection", async () => {
     const { user } = boot({ path: "/links?sel=l1" });
     await ready();
-    await user.click(urlInput());
+    await openEdit(user);
     await user.keyboard("{Escape}");
     expect(location.search).toContain("sel=l1");
     await user.click(rows()[0]!);
@@ -370,13 +435,14 @@ describe("Link detail", () => {
     expect(screen.queryByText("spring")).toBeNull();
   });
 
-  it("a member viewing a teammate's link is read-only with no Save or Delete", async () => {
-    boot({ me: member, path: "/links?sel=l1" });
+  it("a member viewing a teammate's link gets no Edit or Delete, and E opens nothing", async () => {
+    const { user } = boot({ me: member, path: "/links?sel=l1" });
     await ready();
-    expect(urlInput().readOnly).toBe(true);
-    expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
-    expect(within(detail()).getByText(/Created by Teammate/)).toBeTruthy();
+    expect(within(detail()).queryByRole("button", { name: /^Edit/ })).toBeNull();
+    expect(within(detail()).queryByRole("button", { name: /^Delete/ })).toBeNull();
+    expect(within(detail()).getAllByText(/^Teammate, /)).toHaveLength(2); // Created and Updated
+    await user.keyboard("e");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 
@@ -410,8 +476,9 @@ describe("Links screen stats", () => {
     boot({ routes: statsRoute(seen), page: () => ({ body: { items: [L1, old], next: null } }) });
     await ready();
     await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(2));
-    const strokes = [...document.querySelectorAll("svg.spark polyline")].map((p) => p.getAttribute("stroke"));
-    expect(strokes).toEqual(["#FD8D27", "#B9BEC5"]);
+    // S12: colored by class (the accent or the grey of the active theme), not a fixed stroke.
+    const strokes = [...document.querySelectorAll("svg.spark polyline")].map((p) => p.getAttribute("class"));
+    expect(strokes).toEqual(["ln", "ln off"]);
     expect(within(rows()[0]!).getByText("1,284 clicks in 7 days")).toBeTruthy();
   });
 
@@ -443,7 +510,7 @@ describe("Links screen stats", () => {
     const { user } = boot({ routes: statsRoute([], live) });
     await ready();
     await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
-    expect(rows()[0]!.querySelector("svg.spark line[stroke-dasharray]")).not.toBeNull();
+    expect(rows()[0]!.querySelector("svg.spark line.gap")).not.toBeNull();
     expect(within(rows()[0]!).getByText(/Recent days not available/)).toBeTruthy();
     await user.click(rows()[0]!);
     expect(within(detail()).getByText(`${hint} These counts leave out yesterday and today.`)).toBeTruthy();
@@ -453,7 +520,7 @@ describe("Links screen stats", () => {
     boot({ routes: statsRoute([], "off") });
     await ready();
     await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
-    expect(document.querySelector("svg.spark line[stroke-dasharray]")).not.toBeNull();
+    expect(document.querySelector("svg.spark line.gap")).not.toBeNull();
     expect(within(rows()[0]!).getByText(/Recent days not available/)).toBeTruthy();
   });
 
@@ -473,7 +540,7 @@ describe("Links screen stats", () => {
     await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(2));
     await user.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
-    expect(rows().map((r) => r.querySelector("svg.spark line[stroke-dasharray]") !== null)).toEqual([false, false, true]);
+    expect(rows().map((r) => r.querySelector("svg.spark line.gap") !== null)).toEqual([false, false, true]);
     await user.click(rows()[0]!);
     expect(within(detail()).queryByText(new RegExp(hint))).toBeNull();
   });
@@ -490,9 +557,10 @@ describe("Links screen stats", () => {
     });
     await ready();
     await waitFor(() => expect(document.querySelectorAll("svg.spark")).toHaveLength(3));
+    await openEdit(user);
     await user.type(urlInput(), "x");
     await user.keyboard("{Control>}{Enter}{/Control}");
-    await user.click(await within(detail()).findByRole("button", { name: "Reload" }));
+    await user.click(await within(editSheet()).findByRole("button", { name: "Reload" }));
     await waitFor(() => expect(n).toBe(2));
     expect(document.querySelectorAll("svg.spark")).toHaveLength(0);
     release({ body: { items: [stat("l1")], live: "ok" } });
@@ -507,7 +575,7 @@ describe("Links screen stats", () => {
     const pts = svg.querySelector("polyline")!.getAttribute("points")!.split(" ");
     expect(pts).toHaveLength(5);
     const [lx, ly] = pts.at(-1)!.split(",");
-    const dash = svg.querySelector("line[stroke-dasharray]")!;
+    const dash = svg.querySelector("line.gap")!;
     expect([dash.getAttribute("x1"), dash.getAttribute("y1"), dash.getAttribute("x2"), dash.getAttribute("y2")]).toEqual([lx, ly, "72", ly]);
   });
 
@@ -558,22 +626,30 @@ describe("Link detail rules", () => {
     },
   });
   const bootP = (bodies: unknown[], me?: Me) => boot({ me, path: "/links?sel=l1", page: () => ({ body: { items: [protectedLink], next: null } }), routes: patch(bodies) });
+  // In the sheet each rule is a row button that turns it on (expanded, its note On) or off; the old panel used switches.
+  const rule = (name: RegExp) => within(editSheet()).getByRole("button", { name });
 
   it("editing only the URL on a protected link sends exactly { url }", async () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
+    await openEdit(user);
     fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
     await save(user);
     await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
   });
 
-  it("switching Password off sends { password: null }", async () => {
+  it("turning Password off sends { password: null }", async () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
-    expect(within(detail()).getByText("Password set")).toBeTruthy();
-    await user.click(within(detail()).getByRole("switch", { name: "Password" }));
+    await openEdit(user);
+    expect(within(editSheet()).getByText("Password set")).toBeTruthy();
+    expect(rule(/^Password/).getAttribute("aria-expanded")).toBe("true");
+    expect(rule(/^Password/).textContent).toContain("On");
+    await user.click(rule(/^Password/));
+    expect(rule(/^Password/).getAttribute("aria-expanded")).toBe("false");
+    expect(rule(/^Password/).textContent).toContain("Off");
     await save(user);
     await waitFor(() => expect(bodies).toEqual([{ password: null }]));
   });
@@ -582,7 +658,9 @@ describe("Link detail rules", () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
-    await user.click(within(detail()).getByRole("button", { name: "Change password" }));
+    await openEdit(user);
+    await user.click(within(editSheet()).getByRole("button", { name: "Change password" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("New password"));
     fireEvent.change(screen.getByLabelText("New password"), { target: { value: "short" } });
     await save(user);
     expect(await screen.findByText(errorText("password_short"))).toBeTruthy();
@@ -590,39 +668,42 @@ describe("Link detail rules", () => {
     fireEvent.change(screen.getByLabelText("New password"), { target: { value: "longenough1" } });
     await save(user);
     await waitFor(() => expect(bodies).toEqual([{ password: "longenough1" }]));
-    await waitFor(() => expect((screen.queryByLabelText("New password") as HTMLInputElement | null)?.value ?? "").toBe(""));
+    await waitFor(() => expect(screen.queryByLabelText("New password")).toBeNull()); // saved: the sheet closed
+    expect(document.body.textContent).not.toContain("longenough1");
   });
 
   it("Password on with nothing stored and nothing typed blocks the save, next to the password field", async () => {
     const bodies: unknown[] = [];
     const { user } = boot({ path: "/links?sel=l1", routes: patch(bodies) });
     await ready();
-    await user.click(within(detail()).getByRole("switch", { name: "Password" }));
+    await openEdit(user);
+    await user.click(rule(/^Password/));
     fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
     await save(user);
-    const alert = await within(detail()).findByText(errorText("password_short"));
+    const alert = await within(editSheet()).findByText(errorText("password_short"));
     expect(alert.closest(".pw")).toBeTruthy();
-    expect(urlInput().closest(".field")!.parentElement!.querySelector(".err")).toBeNull();
-    const input = screen.getByLabelText("New password");
+    expect(urlInput().closest(".f")!.querySelector(".err")).toBeNull();
+    const input = screen.getByLabelText("Password");
     expect(input.getAttribute("aria-invalid")).toBe("true");
-    expect(input.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(input.getAttribute("aria-describedby")!.split(" ")).toContain(alert.id);
     // With no other change, it still says why instead of doing nothing.
     fireEvent.change(urlInput(), { target: { value: L1.url } });
     await save(user);
-    expect(within(detail()).getByText(errorText("password_short"))).toBeTruthy();
+    expect(within(editSheet()).getByText(errorText("password_short"))).toBeTruthy();
     expect(bodies).toEqual([]);
   });
 
   it("a password and a route typed while the save is pending are kept", async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
-    const { api } = boot({
+    const { api, user } = boot({
       path: "/links?sel=l1",
       page: () => ({ body: { items: [protectedLink], next: null } }),
       routes: { "PATCH /api/links/l1": async ({ body }) => (await held, { body: { ...protectedLink, url: "https://example.com/saved", updatedAt: 101 } }) },
     });
     await ready();
-    fireEvent.click(within(detail()).getByRole("button", { name: "Change password" }));
+    await openEdit(user);
+    fireEvent.click(within(editSheet()).getByRole("button", { name: "Change password" }));
     const pw = () => screen.getByLabelText("New password") as HTMLInputElement;
     fireEvent.change(pw(), { target: { value: "first-pass" } });
     fireEvent.keyDown(pw(), { key: "Enter", ctrlKey: true });
@@ -641,8 +722,9 @@ describe("Link detail rules", () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
-    await user.click(within(detail()).getByRole("radio", { name: /301/ }));
-    expect(within(detail()).getByText(errorText("password_301"))).toBeTruthy();
+    await openEdit(user);
+    await user.click(within(editSheet()).getByRole("radio", { name: /301/ }));
+    expect(within(editSheet()).getByText(errorText("password_301"))).toBeTruthy();
     await save(user);
     expect(bodies).toEqual([]);
   });
@@ -651,7 +733,8 @@ describe("Link detail rules", () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
-    await user.click(within(detail()).getByRole("button", { name: "Add rule" }));
+    await openEdit(user);
+    await user.click(within(editSheet()).getByRole("button", { name: "Add rule" }));
     fireEvent.change(screen.getByLabelText("Rule 2 countries"), { target: { value: "us" } });
     fireEvent.change(screen.getByLabelText("Rule 2 goes to"), { target: { value: "https://example.com/us" } });
     await save(user);
@@ -664,6 +747,7 @@ describe("Link detail rules", () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
+    await openEdit(user);
     fireEvent.change(screen.getByLabelText("Rule 1 countries"), { target: { value: "ZZZ" } });
     await save(user);
     expect(await screen.findByText(errorText("route_country"))).toBeTruthy();
@@ -675,31 +759,37 @@ describe("Link detail rules", () => {
     const deviceOnly = { ...protectedLink, routes: [{ countries: [], devices: ["mobile" as const], url: "https://example.com/m" }] };
     const user = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [deviceOnly], next: null } }), routes: patch(bodies) }).user;
     await ready();
+    await openEdit(user);
     fireEvent.change(screen.getByLabelText("Rule 1 countries"), { target: { value: "ZZZ" } });
     await save(user);
     expect(await screen.findByText(errorText("route_country"))).toBeTruthy();
     expect(bodies).toEqual([]);
   });
 
-  it("switching routing off sends routes: []", async () => {
+  it("turning routing off sends routes: []", async () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
-    await user.click(within(detail()).getByRole("switch", { name: "Country and device routing" }));
+    await openEdit(user);
+    await user.click(rule(/^Country and device routing/));
+    expect(screen.queryByLabelText("Rule 1 countries")).toBeNull();
     await save(user);
     await waitFor(() => expect(bodies).toEqual([{ routes: [] }]));
   });
 
-  it("Esc after toggling routing restores the saved summary with no request", async () => {
+  it("Esc after turning routing off discards it with no request; the panel and a new edit keep the saved routes", async () => {
     const bodies: unknown[] = [];
     const { user } = bootP(bodies);
     await ready();
     const summary = routeSummaryText();
-    await user.click(within(detail()).getByRole("switch", { name: "Country and device routing" }));
+    await openEdit(user);
+    await user.click(rule(/^Country and device routing/));
     expect(screen.queryByLabelText("Rule 1 countries")).toBeNull();
     await user.keyboard("{Escape}");
-    expect(screen.getByLabelText("Rule 1 countries")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(within(detail()).getByText(summary)).toBeTruthy();
+    await openEdit(user);
+    expect(screen.getByLabelText("Rule 1 countries")).toBeTruthy();
     expect(bodies).toEqual([]);
   });
 
@@ -707,7 +797,7 @@ describe("Link detail rules", () => {
     const tagged = mk("l1", "spring", { url: "https://example.com/p?utm_source=flyer&utm_campaign=spring" });
     boot({ path: "/links?sel=l1", page: () => ({ body: { items: [tagged], next: null } }) });
     await ready();
-    expect(within(detail()).getByTestId("campaign-tags").textContent).toBe("Campaign tags: utm_source=flyer \u00b7 utm_campaign=spring");
+    expect(within(detail()).getByTestId("campaign-tags").textContent).toBe("Campaign tags: utm_source=flyer · utm_campaign=spring");
   });
 
   it("no Campaign tags line without utm params", async () => {
@@ -716,24 +806,27 @@ describe("Link detail rules", () => {
     expect(within(detail()).queryByTestId("campaign-tags")).toBeNull();
   });
 
-  it("table row shows the lock and geo icons; a plain row has an empty rules cell", async () => {
+  it("the table row names its rules; a plain row has an empty rules cell", async () => {
     boot({ page: () => ({ body: { items: [protectedLink, L2], next: null } }) });
     await ready();
-    expect(within(rows()[0]!).getByLabelText("Password")).toBeTruthy();
-    expect(within(rows()[0]!).getByLabelText("Country and device routing")).toBeTruthy();
-    expect(within(rows()[1]!).queryByLabelText("Password")).toBeNull();
-    // The Rules column is the fourth cell (after the pick checkbox): empty on the plain row, holding the icons on the protected one.
+    expect(within(rows()[0]!).getByText("Password")).toBeTruthy();
+    expect(within(rows()[0]!).getByText("1 route")).toBeTruthy();
+    expect(within(rows()[1]!).queryByText("Password")).toBeNull();
+    // The Rules column is the fourth cell (after the pick checkbox): empty on the plain row, holding the facts on the protected one.
     const rulesCell = (r: HTMLElement) => r.querySelectorAll("td")[3]!;
     expect(rulesCell(rows()[1]!).childNodes.length).toBe(0);
-    expect(rulesCell(rows()[0]!).querySelector("svg[aria-label='Password']")).toBeTruthy();
+    expect(rulesCell(rows()[0]!).textContent).toBe("Password1 route");
   });
 
-  it("a member viewing a teammate's link sees the rules read-only", async () => {
-    bootP([], member);
+  it("a member viewing a teammate's link sees the rules as text and cannot edit them", async () => {
+    const { user } = bootP([], member);
     await ready();
-    const sw = within(detail()).getByRole("switch", { name: "Password" }) as HTMLButtonElement;
-    expect(sw.matches(":disabled")).toBe(true);
-    expect((within(detail()).getByRole("switch", { name: "Country and device routing" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
+    const facts = within(detail()).getByText("Rules").closest(".sect") as HTMLElement;
+    expect(within(facts).getByText("Set")).toBeTruthy(); // the password
+    expect(within(facts).getByText(routeSummaryText())).toBeTruthy();
+    expect(detail().querySelector("input, button[role=switch]")).toBeNull();
+    await user.keyboard("e");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 
@@ -841,6 +934,7 @@ describe("Links selection", () => {
     await user.click(box("menu"));
     await user.click(box("app"));
     expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    await openEdit(user);
     await user.clear(urlInput());
     await user.type(urlInput(), "https://example.com/new");
     await user.keyboard("{Control>}{Enter}{/Control}");
@@ -873,9 +967,10 @@ describe("Links selection", () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
-  it("X and Ctrl+A typed in the detail's URL field type, select nothing", async () => {
+  it("X and Ctrl+A typed in the edit sheet's URL field type, select nothing", async () => {
     const { user } = boot({ path: "/links?sel=l1" });
     await ready();
+    await openEdit(user);
     await user.click(urlInput());
     await user.keyboard("x{Control>}a{/Control}");
     expect(urlInput().value.endsWith("x")).toBe(true);
@@ -975,6 +1070,15 @@ describe("Links selection", () => {
       vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("760px") || q.includes("1080px"), media: q, addEventListener() {}, removeEventListener() {} }));
     afterEach(() => vi.useRealTimers());
 
+    it("a link that is gone (404) closes the detail and is not restored", async () => {
+      phone();
+      boot({ path: "/links?sel=l9&view=detail" });
+      await ready();
+      await waitFor(() => expect(location.search).toBe(""));
+      await new Promise((r) => setTimeout(r, 50)); // the close transition must not put sel=l9 back
+      expect(location.search).toBe("");
+    });
+
     it("the pick column is hidden until a long-press starts selection mode, then a tap toggles", async () => {
       phone();
       boot();
@@ -1065,23 +1169,23 @@ describe("Links selection", () => {
 
 describe("unsaved draft guard (S2 ruling)", () => {
   const UNSAVED = "Unsaved changes: save with Ctrl+Enter or discard with Esc in the form first.";
-  it("J, K and Esc outside a dirty detail panel do nothing and say why; the typed URL stays", async () => {
+  it("J and K with the edit sheet open never move the selection under it; the typed URL stays", async () => {
     const { api, user } = boot({ path: "/links?sel=l2" });
     await ready();
+    await openEdit(user);
     await user.clear(urlInput());
     await user.type(urlInput(), "https://changed.test/");
-    rows()[1]!.focus();
-    for (const k of ["j", "k", "{Escape}"]) {
+    editSheet().focus(); // outside the text box, so J and K are not typing
+    for (const k of ["j", "k"]) {
       await user.keyboard(k);
       expect(rows()[1]!.getAttribute("aria-selected")).toBe("true");
       expect(location.search).toContain("sel=l2");
       expect(urlInput().value).toBe("https://changed.test/");
     }
-    expect(screen.getAllByText(UNSAVED).length).toBeGreaterThan(0);
     expect(api.calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 
-  it("J that loads the next page stays put when the form became dirty while the page loaded", async () => {
+  it("J that loads the next page stays put when an edit became dirty while the page loaded", async () => {
     let n = 0, release: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const { user } = boot({
@@ -1095,6 +1199,7 @@ describe("unsaved draft guard (S2 ruling)", () => {
     await ready();
     rows()[0]!.focus();
     await user.keyboard("j");
+    await openEdit(user);
     await user.type(urlInput(), "x");
     release!();
     await waitFor(() => expect(rows()).toHaveLength(2));
@@ -1104,11 +1209,13 @@ describe("unsaved draft guard (S2 ruling)", () => {
     expect(screen.getAllByText(UNSAVED).length).toBeGreaterThan(0);
   });
 
-  it("after Esc in the form discards the draft, J moves again", async () => {
+  it("after Esc in the sheet discards the draft, J moves again", async () => {
     const { user } = boot({ path: "/links?sel=l2" });
     await ready();
+    await openEdit(user);
     await user.type(urlInput(), "x");
     await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
     rows()[1]!.focus();
     await user.keyboard("j");
     expect(rows()[2]!.getAttribute("aria-selected")).toBe("true");
@@ -1165,7 +1272,7 @@ describe("contact card links (S9)", () => {
     expect(rows()[0]!.textContent).not.toContain("vcard.invalid");
   });
 
-  it("the detail edits the card (no URL, password or routing) and saves only the card", async () => {
+  it("the panel shows the card read-only; Edit opens the sheet on the card (no URL, password or routing) and saves only the card", async () => {
     const calls: unknown[] = [];
     const { user } = boot({
       path: "/links?sel=l1",
@@ -1173,14 +1280,19 @@ describe("contact card links (S9)", () => {
       routes: { "PATCH /api/links/l1": ({ body }) => (calls.push(body), { body: { ...C1, ...(body as object), updatedAt: 101 } }) },
     });
     await ready();
-    expect(within(detail()).queryByLabelText("URL")).toBeNull();
-    expect(within(detail()).queryByRole("switch", { name: "Password" })).toBeNull();
+    expect(within(detail()).getByText("Ada Lovelace")).toBeTruthy();
+    expect(within(detail()).getByText("Downloads Ada Lovelace's contact card")).toBeTruthy();
+    expect(detail().querySelector("input")).toBeNull();
     await user.keyboard("e");
-    expect(document.activeElement).toBe(within(detail()).getByLabelText("First name"));
-    const last = within(detail()).getByLabelText("Last name");
+    const sheet = editSheet();
+    expect(within(sheet).queryByLabelText(/^Goes to/)).toBeNull();
+    expect(within(sheet).queryByRole("button", { name: /^Password/ })).toBeNull();
+    expect(within(sheet).queryByRole("button", { name: /^Country and device routing/ })).toBeNull();
+    expect(document.activeElement).toBe(within(sheet).getByLabelText("First name"));
+    const last = within(sheet).getByLabelText("Last name");
     await user.clear(last);
     await user.type(last, "Byron");
-    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await user.click(within(sheet).getByRole("button", { name: /^Save/ }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toEqual({ vcard: { ...card, lastName: "Byron" } });
   });
@@ -1197,23 +1309,32 @@ describe("contact card links (S9)", () => {
     });
     await ready();
     expect(api.calls.some((c) => c.method === "GET" && c.path === "/api/links/l1")).toBe(false);
-    await user.type(within(detail()).getByLabelText("Organization"), "X");
-    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    await openEdit(user);
+    await user.type(within(editSheet()).getByLabelText("Organization"), "X");
+    await user.click(within(editSheet()).getByRole("button", { name: /^Save/ }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toEqual({ vcard: { ...card, org: "X" } });
   });
 
-  it("a list card with a photo loads the single read, then the form shows the photo", async () => {
+  it("a list card with a photo loads the single read, then the panel and the edit sheet show the photo", async () => {
     const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...listCard, hasPhoto: true } });
-    const { api } = boot({
+    let release: (r: FakeRes) => void = () => undefined;
+    const { api, user } = boot({
       path: "/links?sel=l1",
       page: () => ({ body: { items: [L], next: null } }),
-      routes: { "GET /api/links/l1": () => ({ body: { ...C1, vcard: { ...card, photo: "/9j/AAAA" } } }) },
+      routes: { "GET /api/links/l1": () => new Promise<FakeRes>((r) => (release = r)) },
     });
+    await screen.findByText("Loading the contact card...");
+    // Not editable until the photo is in, or a save would send the card without it.
+    await user.keyboard("e");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    release({ body: { ...C1, vcard: { ...card, photo: "/9j/AAAA" } } });
     const img = (await screen.findByRole("img", { name: "Contact photo" })) as HTMLImageElement;
     expect(detail().contains(img)).toBe(true);
     expect(img.src).toBe("data:image/jpeg;base64,/9j/AAAA");
     expect(api.calls.filter((c) => c.method === "GET" && c.path === "/api/links/l1")).toHaveLength(1);
+    await openEdit(user);
+    expect((within(editSheet()).getByRole("img", { name: "Contact photo" }) as HTMLImageElement).src).toBe("data:image/jpeg;base64,/9j/AAAA");
   });
 
   it("?qr=1 on a card with a photo waits for the single read, then focuses the QR download and leaves the URL", async () => {
@@ -1242,23 +1363,22 @@ describe("contact card links (S9)", () => {
     expect(location.search).toContain("qr=1");
   });
 
-  it("Escape during a photo resize drops the late result and ends the Save wait", async () => {
+  it("Escape during a photo resize closes the edit sheet and drops the late result", async () => {
     let finish: (b64: string) => void = () => undefined;
     vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
     const L = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card });
     const { api, user } = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [L], next: null } }) });
     await ready();
-    const save = () => within(detail()).getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
-    fireEvent.change(within(detail()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
-    await waitFor(() => expect(save().disabled).toBe(true));
-    within(detail()).getByLabelText("First name").focus();
+    await openEdit(user);
+    fireEvent.change(within(editSheet()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    within(editSheet()).getByLabelText("First name").focus();
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(save().disabled).toBe(false));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit link" })).toBeNull());
     finish("/9j/LATE");
     await new Promise((r) => setTimeout(r, 0));
-    expect(within(detail()).queryByRole("img", { name: "Contact photo" })).toBeNull();
-    await user.click(save());
-    expect(api.calls.some((c) => c.method === "PATCH")).toBe(false); // nothing changed, so nothing is sent
+    await openEdit(user);
+    expect(within(editSheet()).queryByRole("img", { name: "Contact photo" })).toBeNull();
+    expect(api.calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
   it("a server bad_vcard on emails.0 marks the second shown row when the first is blank", async () => {
@@ -1269,11 +1389,177 @@ describe("contact card links (S9)", () => {
       routes: { "PATCH /api/links/l1": () => ({ status: 400, body: { error: "bad_vcard", field: "emails.0" } }) },
     });
     await ready();
-    await user.click(within(detail()).getByRole("button", { name: "Add email" }));
-    await user.click(within(detail()).getByRole("button", { name: "Add email" }));
-    await user.type(within(detail()).getByLabelText("Email 2"), "ada@example.com");
-    await user.click(within(detail()).getByRole("button", { name: /^Save/ }));
-    await waitFor(() => expect(within(detail()).getByLabelText("Email 2").getAttribute("aria-invalid")).toBe("true"));
-    expect(within(detail()).getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
+    await openEdit(user);
+    await user.click(within(editSheet()).getByRole("button", { name: "Add email" }));
+    await user.click(within(editSheet()).getByRole("button", { name: "Add email" }));
+    await user.type(within(editSheet()).getByLabelText("Email 2"), "ada@example.com");
+    await user.click(within(editSheet()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(within(editSheet()).getByLabelText("Email 2").getAttribute("aria-invalid")).toBe("true"));
+    expect(within(editSheet()).getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
+  });
+});
+
+describe("PR #8 review fixes", () => {
+  const card = { firstName: "Ada", lastName: "Lovelace", org: "", title: "", phones: [], emails: [], websites: [],
+    address: { street: "", city: "", region: "", postalCode: "", country: "" }, note: "Met at the\nspring partner day", photo: null };
+  const held = () => {
+    let release!: () => void;
+    return { gate: new Promise<void>((r) => (release = r)), release: () => release() };
+  };
+
+  it("a save from a closed sheet that lands after the link is reopened keeps the reopened sheet's edits", async () => {
+    const h = held();
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      routes: { "PATCH /api/links/l1": async ({ body }) => (await h.gate, { body: { ...L1, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/b" } });
+    fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/c" } });
+    h.release();
+    expect(await within(detail()).findByText("https://example.com/b")).toBeTruthy(); // the summary takes the saved revision
+    expect(urlInput().value).toBe("https://example.com/c"); // the open editor keeps what was typed in it
+  });
+
+  it("a Reload that failed does not make a later save drop what was typed while it saved", async () => {
+    const h = held();
+    let pages = 0, patches = 0;
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => (++pages === 1 ? { body: { items: [L1, L2, L3], next: null } } : { status: 500, body: { error: "internal" } }),
+      routes: {
+        "PATCH /api/links/l1": async ({ body }) =>
+          ++patches === 1 ? { status: 409, body: { error: "conflict" } } : (await h.gate, { body: { ...L1, ...(body as object), updatedAt: 101 } }),
+      },
+    });
+    await ready();
+    await openEdit(user);
+    await user.type(urlInput(), "x");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.click(await within(editSheet()).findByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(pages).toBe(2));
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/b" } });
+    fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/c" } });
+    h.release();
+    expect(await within(detail()).findByText("https://example.com/b")).toBeTruthy();
+    expect(urlInput().value).toBe("https://example.com/c");
+  });
+
+  it("a stored window that shows as one minute does not block a URL-only edit", async () => {
+    const bodies: unknown[] = [];
+    const minute = 4102444800; // a whole minute
+    const tight = mk("l1", "spring", { startsAt: minute + 10, expiresAt: minute + 40 });
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [tight], next: null } }),
+      routes: { "PATCH /api/links/l1": ({ body }) => (bodies.push(body), { body: { ...tight, ...(body as object), updatedAt: 101 } }) },
+    });
+    await ready();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(bodies).toEqual([{ url: "https://example.com/new" }]));
+  });
+
+  it("a route error for rows that changed while saving shows for the form, not on the wrong row", async () => {
+    const h = held();
+    const two = mk("l1", "spring", { routes: [{ countries: ["CA"], devices: [], url: "https://example.com/ca" }, { countries: ["US"], devices: [], url: "https://example.com/us" }] });
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [two], next: null } }),
+      routes: { "PATCH /api/links/l1": async () => (await h.gate, { status: 400, body: { error: "bad_route", index: 1 } }) },
+    });
+    await ready();
+    await openEdit(user);
+    fireEvent.change(urlInput(), { target: { value: "https://example.com/new" } });
+    fireEvent.keyDown(urlInput(), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    fireEvent.click(within(editSheet()).getByRole("button", { name: "Remove rule 1" }));
+    h.release();
+    const msg = await within(editSheet()).findByText(errorText("bad_route"));
+    expect(msg.closest(".routes")).toBeNull();
+  });
+
+  it("a card row error for rows that changed while saving shows for the form, not on the wrong row", async () => {
+    const h = held();
+    const two = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...card, emails: ["a@example.com", "b@example.com"] } });
+    const { api, user } = boot({
+      path: "/links?sel=l1",
+      page: () => ({ body: { items: [two], next: null } }),
+      routes: { "PATCH /api/links/l1": async () => (await h.gate, { status: 400, body: { error: "bad_vcard", field: "emails.1" } }) },
+    });
+    await ready();
+    await openEdit(user);
+    await user.type(within(editSheet()).getByLabelText("Organization"), "Example Co");
+    await user.click(within(editSheet()).getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    await user.click(within(editSheet()).getByRole("button", { name: "Remove email 1" }));
+    h.release();
+    expect(await within(editSheet()).findByText(errorText("bad_vcard"))).toBeTruthy();
+    expect(within(editSheet()).getByLabelText("Email 1").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("Change password keeps the Password rule On until protection is turned off", async () => {
+    const { user } = boot({ path: "/links?sel=l1", page: () => ({ body: { items: [mk("l1", "spring", { hasPassword: true })], next: null } }) });
+    await ready();
+    await openEdit(user);
+    const rule = () => within(editSheet()).getByRole("button", { name: /^Password/ });
+    expect(rule().textContent).toContain("On");
+    await user.click(within(editSheet()).getByRole("button", { name: "Change password" }));
+    expect(rule().textContent).toContain("On");
+    await user.click(rule());
+    expect(rule().textContent).toContain("Off");
+  });
+
+  it("the read-only card summary shows the card's note", async () => {
+    boot({ path: "/links?sel=l1", page: () => ({ body: { items: [mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: card })], next: null } }) });
+    await ready();
+    expect(within(detail()).getByText(/Met at the\s+spring partner day/)).toBeTruthy();
+  });
+
+  it("?qr=1 waits for the row's domain when the links load first", async () => {
+    const h = held();
+    boot({ path: "/links?sel=l1&qr=1", routes: { "GET /api/domains": async () => (await h.gate, { body: [domain] }) } });
+    await ready();
+    expect(location.search).toContain("qr=1");
+    expect(screen.queryByRole("dialog", { name: "QR code" })).toBeNull();
+    h.release();
+    expect(await screen.findByRole("dialog", { name: "QR code" })).toBeTruthy();
+    await waitFor(() => expect(location.search).not.toContain("qr="));
+  });
+
+  it("a photo still resizing holds a J that was loading the next page", async () => {
+    let finish: (b64: string) => void = () => undefined;
+    vi.mocked(resizePhoto).mockImplementationOnce(() => new Promise<string>((r) => (finish = r)));
+    const C = mk("l1", "ada", { kind: "vcard", url: "https://vcard.invalid/", vcard: { ...card, note: "" } });
+    let n = 0;
+    const h = held();
+    const { user } = boot({
+      path: "/links?sel=l1",
+      page: async () => {
+        if (++n === 1) return { body: { items: [C], next: "100.l1" } };
+        await h.gate;
+        return { body: { items: [L2], next: null } };
+      },
+    });
+    await ready();
+    rows()[0]!.focus();
+    await user.keyboard("j");
+    await openEdit(user);
+    fireEvent.change(within(editSheet()).getByTestId("vc-file"), { target: { files: [new File(["x"], "me.png", { type: "image/png" })] } });
+    h.release();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(location.search).toContain("sel=l1");
+    expect(editSheet()).toBeTruthy();
+    finish("/9j/DONE");
+    expect(await within(editSheet()).findByRole("img", { name: "Contact photo" })).toBeTruthy();
   });
 });

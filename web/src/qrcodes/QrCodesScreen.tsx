@@ -301,13 +301,14 @@ function QrSheet({ id, onClose, onSaved, onDeleted }: { id: string | null; onClo
             </>
           )}
           {error && <p className="err" role="alert">{error}</p>}
-          <div className="actions">
+          <div className="actions qr-acts">
+            {id !== null && loaded && <button type="button" className="btn ghost danger" onClick={() => setConfirm(true)}>Delete</button>}
+            <span className="grow" />
+            <button type="button" className="btn" disabled={!m || !!sp} onClick={svg}>Download SVG</button>
+            <button type="button" className="btn" disabled={!m || !!sp} onClick={() => void png()}>Download PNG</button>
             <button type="button" className="btn primary" disabled={!loaded} onClick={() => void save()} aria-keyshortcuts="Control+Enter">
               {id === null ? "Create" : "Save"} <span className="k">Ctrl Enter</span>
             </button>
-            <button type="button" className="btn" disabled={!m || !!sp} onClick={svg}>Download SVG</button>
-            <button type="button" className="btn" disabled={!m || !!sp} onClick={() => void png()}>Download PNG</button>
-            {id !== null && loaded && <button type="button" className="btn bad" onClick={() => setConfirm(true)}>Delete</button>}
           </div>
         </div>
       </Sheet>
@@ -347,10 +348,12 @@ export function QrCodesScreen() {
 
   return (
     <>
-      <ScreenHeader title="QR codes" count={items ? String(items.length) : undefined} text="codes for Wi-Fi, web addresses, text, email, phone, SMS and short links">
-        {/* Only once the list is in, so a late first load never drops a code just made. */}
-        {creator && items !== null && <PrimaryButton label="New QR code" onClick={() => edit(null)} />}
-      </ScreenHeader>
+      {/* New QR code only once the list is in, so a late first load never drops a code just made. */}
+      <ScreenHeader
+        title="QR codes"
+        count={items ? String(items.length) : undefined}
+        action={creator && items !== null && <PrimaryButton label="New QR code" onClick={() => edit(null)} />}
+      />
       <div className="body solo">
         <section className="list" aria-label="QR codes">
           {error && <p className="err pad" role="alert">{error}</p>}

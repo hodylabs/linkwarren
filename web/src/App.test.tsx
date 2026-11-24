@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { Domain, Me } from "./api";
 import { errorText } from "./copy";
@@ -35,6 +35,7 @@ describe("App shell", () => {
     expect(within(nav).getByText("Owner")).toBeTruthy();
     expect(within(nav).getByRole("link", { name: /People & audit log/ })).toBeTruthy();
     expect(within(nav).getByRole("link", { name: /Settings/ })).toBeTruthy();
+    screen.getByRole("button", { name: "Account menu" }).click(); // S12: sign-in and sign-out live in the avatar's menu
     expect(await screen.findByText("Signed in with Cloudflare Access")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Sign out" }).getAttribute("href")).toBe("/cdn-cgi/access/logout");
   });
@@ -111,7 +112,7 @@ describe("App shell", () => {
     home.click();
     expect(location.pathname).toBe("/links");
     expect(await screen.findByRole("heading", { name: "Links" })).toBeTruthy();
-    expect(screen.getByText(/^Dashboard v\d+\.\d+\.\d+/)).toBeTruthy();
+    expect(screen.getByText(/^\d+\.\d+\.\d+/, { selector: ".ver b" })).toBeTruthy();
   });
 
   it("an empty links list offers to create the first link", async () => {
@@ -188,6 +189,46 @@ describe("App shell", () => {
   it("shows the avatar initials and role", async () => {
     boot(member);
     expect(await screen.findByText("ME")).toBeTruthy();
-    expect(screen.getByText("Member")).toBeTruthy();
+    screen.getByRole("button", { name: "Account menu" }).click();
+    expect(await screen.findByText("Member")).toBeTruthy();
+  });
+
+  it("the theme switch in the account menu sets Light or Dark on <html> and remembers it; System follows the OS again", async () => {
+    boot(member);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Account menu" }));
+    const theme = screen.getByRole("radiogroup", { name: "Theme" });
+    expect(within(theme).getByRole("radio", { name: "System" }).getAttribute("aria-checked")).toBe("true");
+    await user.click(within(theme).getByRole("radio", { name: "Light" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("lw.theme")).toBe("light");
+    await user.keyboard("{ArrowRight}"); // the radio group moves with the arrow keys
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("lw.theme")).toBe("dark");
+    await user.click(within(theme).getByRole("radio", { name: "System" }));
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(localStorage.getItem("lw.theme")).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Account menu" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Account menu" }));
+  });
+
+  it("with storage blocked, a picked theme still shows as picked when the menu reopens", async () => {
+    boot(member);
+    const user = userEvent.setup();
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      await user.click(await screen.findByRole("button", { name: "Account menu" }));
+      await user.click(screen.getByRole("radio", { name: "Dark" }));
+      expect(document.documentElement.dataset.theme).toBe("dark");
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: "Account menu" }));
+      expect(screen.getByRole("radio", { name: "Dark" }).getAttribute("aria-checked")).toBe("true");
+    } finally {
+      set.mockRestore();
+      delete document.documentElement.dataset.theme;
+    }
   });
 });

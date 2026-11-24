@@ -222,13 +222,13 @@ describe("People screen", () => {
     await waitFor(() => expect(auditPaths(api).length).toBeGreaterThan(0));
   });
 
-  it("an audit-only header is about the audit log: no people search, no sign-in wording", async () => {
+  it("an audit-only header is about the audit log: no people wording or sign-in wording", async () => {
     boot({ me: { ...member, ...customRole(["audit"]) } });
     await screen.findByRole("complementary", { name: "Audit log" });
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Audit log");
     const top = document.querySelector("header.top")!.textContent!;
-    expect(top).not.toMatch(/Search people|Who can sign in/);
-    expect(top).toContain("Every change made by a person or an agent");
+    expect(top).not.toMatch(/Search people|Who can sign in|Invite person/);
+    expect(top).toContain("Audit log");
   });
 
   it("a member sees the Not in your role pane and no users or audit request", async () => {
