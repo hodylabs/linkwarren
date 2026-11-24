@@ -127,7 +127,7 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
           {g.bars.map((b, i) => (
             <g key={i} className={active?.i === i ? "bar on" : "bar"} onMouseMove={onMove(i)} onMouseLeave={() => setActive(null)}>
               <rect x={b.hx} y={g.plot.top} width={b.hw} height={g.plot.height} fill="transparent" />
-              {active?.i === i && (
+              {(active?.i === i || g.bars.length === 1) && ( // one day has no line to draw: show its points
                 <>
                   <line className="l-guide" x1={b.cx} x2={b.cx} y1={g.plot.top} y2={g.plot.top + g.plot.height} />
                   <circle className="d-qr" cx={b.cx} cy={b.yQr} r={3} />
