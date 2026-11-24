@@ -21,6 +21,13 @@ describe("describeAudit single sign-on (S14)", () => {
       .toBe(": no auto-join, single sign-on not enforced");
     expect(s({ action: "email_domain.delete", targetId: "example.com", detail: {} })).toMatchObject({ text: "removed the email domain", code: "example.com" });
   });
+  it("auth.sign_in names the provider for a provider sign-in, as signin.sso does", () => {
+    expect(s({ action: "auth.sign_in", detail: { method: "google" } }).text).toBe("signed in with Google");
+    expect(s({ action: "auth.sign_in", detail: { method: "github" } }).text).toBe("signed in with GitHub");
+    expect(s({ action: "auth.sign_in", detail: { method: "oidc" } }).text).toBe("signed in with single sign-on");
+    expect(s({ action: "auth.sign_in", detail: { method: "passkey" } }).text).toBe("signed in with a passkey");
+    expect(s({ action: "auth.sign_in", detail: { method: "email" } }).text).toBe("signed in with an email link");
+  });
   it("identity.unlink", () => {
     expect(s({ action: "identity.unlink", detail: { provider: "google" } }).text).toBe("unlinked a Google sign-in");
   });

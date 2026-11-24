@@ -80,7 +80,7 @@ describe("SignIn single sign-on (S14)", () => {
       "POST /auth/sso/oidc/start": () => ({ body: { url: "javascript:alert(1)" } }),
     });
     await user.click(await screen.findByRole("button", { name: "Northwind SSO" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("Sign-in with that provider did not finish. Try again, or use an email link.");
+    expect((await screen.findByRole("alert")).textContent).toBe("Sign-in with that provider did not finish. Try again, or sign in another way if your account allows it.");
     expect(assign).not.toHaveBeenCalled();
   });
 
@@ -91,13 +91,13 @@ describe("SignIn single sign-on (S14)", () => {
   });
 
   it.each([
-    ["sso_failed", "Sign-in with that provider did not finish. Try again, or use an email link."],
+    ["sso_failed", "Sign-in with that provider did not finish. Try again, or sign in another way if your account allows it."],
     ["not_invited", "This account is not invited to this linkwarren. Ask the owner to invite you."],
     ["disabled", "Your access has been turned off. Ask the owner."],
     ["sso_required", "Your email domain signs in with single sign-on only. Use the single sign-on button."],
     ["email_unverified", "The provider has not verified this account's email address. Verify it there, then try again."],
     ["too_many", "Too many sign-in attempts. Wait a few minutes and try again."],
-    ["<b>call 555</b>", "Sign-in with that provider did not finish. Try again, or use an email link."],
+    ["<b>call 555</b>", "Sign-in with that provider did not finish. Try again, or sign in another way if your account allows it."],
   ])("?error=%s shows its text and is dropped from the URL, next kept", async (c, text) => {
     history.replaceState(null, "", `/sign-in?next=%2Flinks&error=${encodeURIComponent(c)}`);
     form();

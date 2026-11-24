@@ -69,6 +69,16 @@ export function AccountPanel() {
     void loadIdentities(ac.signal);
     return () => ac.abort();
   }, [loadIdentities]);
+  // After an unlink the focused Unlink button is gone: move focus to the next one, else to the panel, so the keyboard keeps its place.
+  const root = useRef<HTMLDivElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!refocus.current || confirm) return;
+    refocus.current = false;
+    const el = root.current;
+    if (el && (document.activeElement === document.body || !el.contains(document.activeElement)))
+      (el.querySelector<HTMLElement>("[data-unlink]") ?? el).focus();
+  }, [identities, confirm]);
 
   const ids = data ? [...data.passkeys.map((p) => p.id), ...data.sessions.map((s) => s.id)] : [];
   const passkey = data?.passkeys.find((p) => p.id === sel) ?? null;
@@ -110,7 +120,9 @@ export function AccountPanel() {
     setName(passkey.name);
     setRenaming(passkey);
   };
+  // No new dialog while a write is in flight: its answer (or error) belongs to the dialog that started it.
   const ask = () => {
+    if (working.current) return;
     if (passkey) setConfirm({ kind: "remove", passkey });
     else if (endable) setConfirm({ kind: "end", session: endable });
   };
@@ -118,11 +130,20 @@ export function AccountPanel() {
     const c = confirm;
     if (!c) return;
     if (c.kind === "all") return run(() => api("POST", "/api/account/sign-out-everywhere", {}), goHome, true);
-    if (c.kind === "unlink")
-      return run(() => api("DELETE", `/api/account/identities/${encodeURIComponent(c.identity.provider)}`), () => {
+    if (c.kind === "unlink") {
+      const p = c.identity.provider;
+      // 404: already unlinked (another tab), which is the outcome asked for.
+      const del = () => api("DELETE", `/api/account/identities/${encodeURIComponent(p)}`).catch((e: unknown) => {
+        if (!(e instanceof ApiError && e.status === 404)) throw e;
+      });
+      return run(del, () => {
         setConfirm(null);
+        idGen.current++; // a refresh already on its way must not bring the row back
+        setIdentities((cur) => cur.filter((i) => i.provider !== p));
+        refocus.current = true;
         void loadIdentities();
       });
+    }
     const path = c.kind === "remove" ? `/api/account/passkeys/${c.passkey.id}` : `/api/account/sessions/${c.session.id}`;
     return run(() => api("DELETE", path), () => {
       setConfirm(null);
@@ -156,7 +177,7 @@ export function AccountPanel() {
   // An unlink refused by an enforced domain (R7) needs words of its own; the shared text is for the sign-in page.
   const confirmError = (c: string) => (confirm?.kind === "unlink" && c === "sso_required" ? "Your email domain requires single sign-on, so this sign-in cannot be unlinked." : errorText(c));
   return (
-    <div className="acct">
+    <div className="acct" ref={root} tabIndex={-1}>
       {error && !confirm && !renaming && <p className="err" role="alert">{errorText(error)}</p>}
       <div className="p-sec">Passkeys</div>
       {data.passkeys.length === 0 && <p className="muted acct-empty">No passkeys yet. You sign in with an email link.</p>}
@@ -201,7 +222,8 @@ export function AccountPanel() {
                     Linked {shortDate(i.createdAt)}, {i.lastUsedAt === null ? "Never used" : `Last used ${shortDate(i.lastUsedAt)}`}
                   </small>
                 </div>
-                <button type="button" className="btn" disabled={busy} aria-label={`Unlink ${providerName(i.provider) ?? i.provider}`} onClick={() => setConfirm({ kind: "unlink", identity: i })}>
+                <button type="button" className="btn" data-unlink disabled={busy} aria-label={`Unlink ${providerName(i.provider) ?? i.provider}`}
+                  onClick={() => !working.current && setConfirm({ kind: "unlink", identity: i })}>
                   Unlink
                 </button>
               </li>
@@ -247,7 +269,7 @@ export function AccountPanel() {
               {confirm.kind === "remove" && `Remove ${confirm.passkey.name}? You can still sign in with an email link.`}
               {confirm.kind === "end" && `Sign out ${confirm.session.device ?? "Unknown device"}?`}
               {confirm.kind === "unlink" &&
-                `Unlink ${providerName(confirm.identity.provider) ?? confirm.identity.provider} (${confirm.identity.email})? Signing in with it again links it again while its email matches yours.`}
+                `Unlink ${providerName(confirm.identity.provider) ?? confirm.identity.provider} (${confirm.identity.email})? It links again on a later sign-in with it, if your account may still use it and its email still matches yours.`}
             </p>
             {error && <p className="err" role="alert">{confirmError(error)}</p>}
             <div className="actions">

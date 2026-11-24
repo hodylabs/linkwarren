@@ -188,7 +188,27 @@ describe("Settings > Sign-in email domains (S14)", () => {
       { method: "PUT", path: "/api/settings/email-domains/example.com", body: { joinRoleId: "hl", enforceSso: false } },
       { method: "PUT", path: "/api/settings/email-domains/example.com", body: { joinRoleId: "hl", enforceSso: true } },
     ]);
-    expect(await screen.findByText(/Single sign-on \(OIDC\) is off, so people at an enforced domain cannot sign in/)).toBeTruthy();
+    expect(await screen.findByText(/Single sign-on \(OIDC\) is not ready/)).toBeTruthy();
+  });
+
+  it("the lockout warning also shows when OIDC is on but has no secret", async () => {
+    const oidc = { enabled: true, issuer: "https://login.example.com", clientId: "c", label: "", secretSet: false };
+    const enforced = [{ domain: "example.com", joinRoleId: null, enforceSso: true }];
+    boot({ sso: { oidc, emailDomains: enforced } });
+    expect(await screen.findByText(/Single sign-on \(OIDC\) is not ready/)).toBeTruthy();
+  });
+
+  it("no lockout warning when OIDC is ready", async () => {
+    boot({ sso: { oidc: { enabled: true, issuer: "https://login.example.com", clientId: "c", label: "", secretSet: true }, emailDomains: [{ domain: "example.com", joinRoleId: null, enforceSso: true }] } });
+    await screen.findByLabelText("Auto-join role for example.com");
+    expect(screen.queryByText(/is not ready/)).toBeNull();
+  });
+
+  it("adding a domain that is already listed is refused and the row is kept", async () => {
+    const { api, user } = boot({ sso: { emailDomains: [{ domain: "example.com", joinRoleId: "member", enforceSso: true }] } });
+    await user.type(await screen.findByLabelText("New email domain"), "Example.com{Enter}");
+    expect((await screen.findByRole("alert")).textContent).toBe("This domain is already listed. Change its role or enforcement in its row.");
+    expect(writes(api)).toEqual([]);
   });
 
   it("Enter in the new domain field adds it, lowercased, with the picked role", async () => {
