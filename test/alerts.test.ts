@@ -263,9 +263,13 @@ describe("GET/PUT /api/account/alerts", () => {
     expect(await get()).toEqual({ enabled: true, quiet: false, spike: true, emailReady: true, analyticsReady: true });
     expect((await put({ enabled: true, quiet: true, spike: true, extra: 1 })).status).toBe(400);
     const s1 = (await env.DB.prepare("SELECT secret FROM alert_prefs").first<{ secret: string }>())!.secret;
+    await env.DB.prepare("UPDATE alert_prefs SET pending = '{}'").run(); // a saved email, signed with s1
     await put({ enabled: false, quiet: true, spike: true });
+    expect((await env.DB.prepare("SELECT pending FROM alert_prefs").first<{ pending: string | null }>())!.pending).toBe("{}"); // off keeps it
     await put({ enabled: true, quiet: true, spike: true });
-    expect((await env.DB.prepare("SELECT secret FROM alert_prefs").first<{ secret: string }>())!.secret).not.toBe(s1);
+    const row = (await env.DB.prepare("SELECT secret, pending FROM alert_prefs").first<{ secret: string; pending: string | null }>())!;
+    expect(row.secret).not.toBe(s1);
+    expect(row.pending).toBeNull(); // back on: the old email (old unsubscribe link) is dropped and rebuilt
     const prev = env.EMAIL_FROM;
     (env as { EMAIL_FROM?: string }).EMAIL_FROM = "";
     try {

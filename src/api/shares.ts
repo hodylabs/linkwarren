@@ -53,8 +53,18 @@ async function target(c: Context<E>, scope: "link" | "domain", id: string): Prom
   if (link.forwardTo || !canEditLink(user, link, domain, member, only)) return { status: 403 };
   // The link must still be on the same domain at write time, so a share never covers a domain the check did not see.
   const g = editGuard(user, link, domain);
-  return { scope, scopeId: link.id, domainId: domain.id, guard: { sql: `(${g.sql}) AND EXISTS (SELECT 1 FROM links WHERE id = ? AND domain_id = ?)`, binds: [...g.binds, link.id, domain.id] } };
+  const u = useGuard(user.id, domain.id);
+  return { scope, scopeId: link.id, domainId: domain.id, guard: { sql: `(${g.sql}) AND EXISTS (SELECT 1 FROM links WHERE id = ? AND domain_id = ?) AND ${u.sql}`, binds: [...g.binds, link.id, domain.id, ...u.binds] } };
 }
+
+/** SQL twin of canUseDomain (src/perm.ts) at write time; the grant's domain list was already checked and cannot change mid-request. */
+const useGuard = (userId: string, domainId: string): Guard => ({
+  sql: `EXISTS (SELECT 1 FROM users u WHERE u.id = ? AND u.status = 'active' AND (u.role = 'owner' OR EXISTS (
+          SELECT 1 FROM domains d WHERE d.id = ? AND d.status != 'disabled' AND (d.type = 'main'
+            OR (d.type IN ('shared', 'private') AND EXISTS (SELECT 1 FROM domain_members m WHERE m.domain_id = d.id AND m.user_id = u.id))
+            OR (d.type = 'private' AND d.owner_id = u.id)))))`,
+  binds: [userId, domainId],
+});
 
 /** SQL twin of canManageDomain: an active owner, the domain's active owner, or domains.manage. */
 const manageGuard = (user: UserRow, d: DomainRow): Guard => {

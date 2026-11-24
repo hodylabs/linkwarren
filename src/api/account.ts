@@ -193,7 +193,9 @@ account.put("/alerts", async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO alert_prefs (user_id, enabled, quiet, spike, secret, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
      ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, quiet = excluded.quiet, spike = excluded.spike, updated_at = excluded.updated_at,
-       secret = CASE WHEN excluded.enabled = 1 AND alert_prefs.enabled = 0 THEN excluded.secret ELSE alert_prefs.secret END`,
+       secret = CASE WHEN excluded.enabled = 1 AND alert_prefs.enabled = 0 THEN excluded.secret ELSE alert_prefs.secret END,
+       -- a saved email carries the old secret's unsubscribe link: turning alerts back on drops it so the next run rebuilds it
+       pending = CASE WHEN excluded.enabled = 1 AND alert_prefs.enabled = 0 THEN NULL ELSE alert_prefs.pending END`,
   ).bind(c.var.user.id, b.enabled ? 1 : 0, b.quiet ? 1 : 0, b.spike ? 1 : 0, newSecret(), nowS()).run();
   const out: AlertPrefs = { ...b, emailReady: ready, analyticsReady };
   return c.json(out);
