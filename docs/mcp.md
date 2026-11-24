@@ -60,7 +60,6 @@ Whether a slug is free.
 | --- | --- |
 | `domain` | The domain. |
 | `slug` | 1 to 64 characters. |
-| `name` | Optional. A name to find the link by, at most 100 characters. |
 
 Returns `{ status }`: `available`, `taken`, `locked`, `reserved`, or `invalid` with a `reason`.
 
@@ -80,6 +79,7 @@ Create a short link.
 | --- | --- |
 | `domain` | The domain. |
 | `slug` | 1 to 64 characters. |
+| `name` | Optional. A name to find the link by, at most 100 characters. |
 | `url` | The destination: `http(s)`, `tel:` or `mailto:`. |
 | `redirectCode` | Optional. `301` or `302`. |
 | `startsAt`, `expiresAt` | Optional. Unix seconds or `null`. |

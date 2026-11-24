@@ -131,10 +131,11 @@ export function LinksScreen() {
     fetchPage(null).then(
       (p) => {
         if (g !== generation.current) return;
-        // A same-scope reload keeps the row read by id while it is still selected and off the page, so its panel stays open;
-        // the read below then refreshes it (or drops it when the link is gone or no longer visible).
-        const keepId = extraId.current === selRef.current && !p.items.some((l) => l.id === extraId.current) ? extraId.current : null;
-        if (!keepId) extraId.current = null;
+        // A same-scope reload keeps the selected row when the new first page lacks it (read by id or from a later page), so its
+        // panel stays open; marking it as read by id makes the read below refresh it (or drop it when gone or no longer visible).
+        const cur0 = selRef.current;
+        const keepId = cur0 && !p.items.some((l) => l.id === cur0) ? cur0 : null;
+        extraId.current = keepId;
         setItems((cur) => {
           const kept = keepId ? cur.find((l) => l.id === keepId) : undefined;
           return kept ? [kept, ...p.items] : p.items;
@@ -232,6 +233,7 @@ export function LinksScreen() {
         if (!gone || g !== generation.current || extraId.current !== sel) return;
         extraId.current = null;
         setItems((cur) => cur.filter((x) => x.id !== sel));
+        if (selRef.current === sel) select(null); // no row left to show: close the detail view too (a newer selection stays)
       },
     );
   }, [loaded, sel, items, listGen, loadStats]);

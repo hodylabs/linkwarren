@@ -151,6 +151,13 @@ describe("Links screen list", () => {
     await waitFor(() => expect(api.calls.filter((c) => c.path.startsWith("/api/links")).at(-1)!.path).toContain("status=expired&mine=1"));
   });
 
+  it("?sel naming a link that is gone (404) clears the selection and the detail view", async () => {
+    boot({ path: "/links?sel=l9&view=detail" }); // l9 is off the page and the fake answers 404 for it
+    await ready();
+    await waitFor(() => expect(location.search).toBe(""));
+    expect(rows().every((r) => r.getAttribute("aria-selected") !== "true")).toBe(true);
+  });
+
   it("count shows the scope total with no filter", async () => {
     boot();
     expect(await screen.findByText("3 links")).toBeTruthy();
