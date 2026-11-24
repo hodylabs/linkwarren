@@ -8,7 +8,7 @@ import { download, fileName, qrMatrix, qrPath, qrPng, qrSvg, qrText } from "./qr
 const MARGIN = 4;
 /** Labels per link (the server's cap, S13 contract). */
 export const MAX_LABELS = 20;
-const LABEL_MAX = 60;
+const LABEL_MAX = 100; // the server's rule (checkLinkName)
 
 /** SVG and PNG downloads of one QR content; `suffix` tells labelled prints apart in the file name. */
 function useDownloads(host: string, slug: string, code?: string, suffix?: string) {
