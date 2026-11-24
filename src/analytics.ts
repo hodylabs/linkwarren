@@ -290,6 +290,8 @@ export type DetailReport = {
   hours: number[][];
   /** S13 R1: a filtered detail whose range starts before the Analytics Engine window covers only this day onwards. */
   filteredFrom?: string;
+  /** The scope was too big for the print and UTM breakdowns within one request's Analytics Engine budget: they are left empty. */
+  cut?: true;
 };
 
 /** Rolled detail value "(other)": the sum of a day's values past the top 20 (R3). */
@@ -336,6 +338,7 @@ export async function loadDetail(env: Env, range: Range, scope: Scope, tz: Tz, n
     return finish({ ...out, live: "unavailable" });
   }
   rows.dims.forEach(add);
+  if (rows.cut) out.cut = true;
   for (const h of rows.hours) {
     const p = localParts(Date.parse(h.bucket) - shift * 1000, tz); // the start of the local hour the bucket holds
     out.hours[p.dow]![p.hour]! += h.clicks;
@@ -348,7 +351,8 @@ const UTM = { utm_source: "utmSources", utm_medium: "utmMediums", utm_campaign: 
 
 /** Sorts the summed detail rows into the report's arrays and names each print by its own link's label. */
 async function fill(env: Env, out: DetailReport, rows: DetailRow[], scope: Scope): Promise<DetailReport> {
-  const live = rows.filter((r) => r.clicks > 0);
+  // A cut detail leaves out print and UTM whole, never only the older days the rollup holds.
+  const live = rows.filter((r) => r.clicks > 0 && (!out.cut || r.dim in NAMED));
   const labels = await printLabels(env, live.filter((r) => r.dim === "print").map((r) => ({ linkId: r.linkId ?? "", code: r.value })), scope);
   for (const r of live) {
     if (r.dim === "print") out.prints.push({ dim: "print", value: r.value, linkId: r.linkId ?? "", label: labels.get(`${r.linkId}|${r.value}`) ?? null, clicks: r.clicks });
@@ -399,7 +403,10 @@ export async function loadRecent(env: Env, scope: Scope, nowSec: number): Promis
     console.error("analytics recent read failed", errCode(e));
     return { items: [], live: "unavailable" };
   }
-  const hosts = new Map((await env.DB.prepare("SELECT id, host FROM domains").all<{ id: string; host: string }>()).results.map((d) => [d.id, d.host]));
+  if (!rows.length) return { items: [], live: "ok" };
+  const ids = JSON.stringify([...new Set(rows.map((r) => r.domainId))]);
+  const hosts = new Map((await env.DB.prepare("SELECT id, host FROM domains WHERE id IN (SELECT value FROM json_each(?))").bind(ids)
+    .all<{ id: string; host: string }>()).results.map((d) => [d.id, d.host]));
   const labels = await printLabels(env, rows.filter((r) => r.source === "qr").map((r) => ({ linkId: r.linkId, code: r.print })), scope);
   const items = rows.map(({ domainId, ...r }): RecentItem => ({
     ...r, host: hosts.get(domainId) ?? "", printLabel: r.source === "qr" ? labels.get(`${r.linkId}|${r.print}`) ?? null : null,

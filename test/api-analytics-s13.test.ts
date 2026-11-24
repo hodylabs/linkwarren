@@ -120,6 +120,12 @@ describe("filters on the report", () => {
     const r = await withAe(() => json("?range=7"));
     expect([r.live, r.unit, r.series.length, r.totals.clicks]).toEqual(["unavailable", "day", 7, 3]);
   });
+  it("the fallback follows the range the report used, also with a repeated range parameter", async () => {
+    fetchSpy.mockImplementation(async () => new Response("no", { status: 500 }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await withAe(() => json("?range=30&range=7")); // the last one wins, as in prepare
+    expect([r.live, r.unit, r.series.length, r.totals.clicks]).toEqual(["unavailable", "day", 7, 3]);
+  });
   it("R8: the hourly 7 days still count visitors per UTC day over the current window; the 24 hours per hour", async () => {
     fetchSpy.mockImplementation(async (_u: unknown, init: unknown) => {
       const b = JSON.parse(String((init as RequestInit).body)) as Body;
@@ -229,5 +235,23 @@ describe("GET /api/analytics/recent", () => {
   it("a failing read is unavailable, not 500", async () => {
     fetchSpy.mockImplementation(async () => new Response("no", { status: 502 }));
     expect(await withAe(() => json("/recent"))).toEqual({ items: [], live: "unavailable" });
+  });
+  it("ignores the report range: an incomplete custom range is not refused", async () => {
+    fetchSpy.mockImplementation(async () => Response.json({ data: [] }));
+    expect(await withAe(() => get("/recent?range=custom"))).toMatchObject({ status: 200 });
+    expect((await withAe(() => get("/recent?range=nope&from=x"))).status).toBe(200);
+    expect((await withAe(() => get("/recent?f=nope:x"))).status).toBe(400);
+  });
+  it("reads only the hosts of the domains in the answer, and none for an empty answer", async () => {
+    const prep = vi.spyOn(env.DB, "prepare");
+    fetchSpy.mockImplementation(async () => Response.json({ data: [] }));
+    await withAe(() => json("/recent"));
+    expect(prep.mock.calls.some(([q]) => String(q).includes("SELECT id, host FROM domains"))).toBe(false);
+    fetchSpy.mockImplementation(async () => Response.json({ data: [row("2026-11-20 11:00:00", "lM", "dM")] }));
+    const r = await withAe(() => json("/recent"));
+    expect(r.items[0].host).toBe("main.example.com");
+    const hostReads = prep.mock.calls.filter(([q]) => String(q).includes("SELECT id, host FROM domains"));
+    expect(hostReads.length).toBe(1);
+    expect(String(hostReads[0]![0])).toContain("WHERE id IN (SELECT value FROM json_each(?))");
   });
 });

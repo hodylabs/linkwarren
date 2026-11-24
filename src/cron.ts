@@ -155,10 +155,11 @@ export function capDetail<T extends { linkId: string; domainId: string; dim: str
  * S13 detail rollup (R2): one UTC day per run into clicks_daily_detail, with its own watermark `detail_rolled_through`, starting at
  * today-89 (days still in Analytics Engine are rolled again for the new dimensions) and stopping at today-2 like the main rollup.
  * 8 Analytics Engine queries and 3 D1 calls per run. Shares the run and daily write budgets with the main rollup (`spent`).
- * shortcut: a day whose answer is over ROW_CAP rows, or whose rows alone need more than RUN_WRITE_BUDGET writes (thousands of
- * links with many values each), is skipped, logged, and the
- * watermark moves past it, so it never blocks the days after it; that day's detail is then Analytics Engine only. Query per link
- * chunk if an instance ever reaches it.
+ * A dim whose answer for the day is over ROW_CAP rows, and when the day's rows alone could never fit RUN_WRITE_BUDGET the biggest
+ * dims (one at a time) are left out for that day and logged; the other dims are kept and the watermark moves on, so one huge day
+ * never blocks the days after it.
+ * shortcut: a left-out dim is not retried; that day's value for it is Analytics Engine only, so gone after 90 days. Query per
+ * link chunk if an instance ever reaches it.
  */
 export async function rollupDetail(env: Env, nowSec: number, spent = { writes: 0 }): Promise<string | null> {
   if (!aeConfigured(env)) return null;
@@ -167,24 +168,27 @@ export async function rollupDetail(env: Env, nowSec: number, spent = { writes: 0
   const floor = addDays(today, -89);
   const d = rt && addDays(rt, 1) > floor ? addDays(rt, 1) : floor;
   if (d > addDays(today, -2)) return null;
-  let rows: Awaited<ReturnType<typeof aeDayDetail>>;
+  let rows: Awaited<ReturnType<typeof aeDayDetail>>["rows"];
+  let cut: string[];
   try {
-    rows = capDetail(await aeDayDetail(env, d));
+    const got = await aeDayDetail(env, d);
+    rows = capDetail(got.rows);
+    cut = [...got.cut];
   } catch (e) {
-    if (!(e instanceof AeError && e.message === "ae_truncated")) {
-      console.error(`analytics detail rollup failed day=${d}`, e instanceof AeError ? e.message : errName(e));
-      throw e;
-    }
-    console.warn(`analytics detail rollup skipped day=${d}: too many rows`);
-    rows = [];
+    console.error(`analytics detail rollup failed day=${d}`, e instanceof AeError ? e.message : errName(e));
+    throw e;
   }
   const dayUsed = await writtenToday(env, today);
   const old = await env.DB.prepare("SELECT COUNT(*) AS n FROM clicks_daily_detail WHERE day = ?").bind(d).first<{ n: number }>();
   const costOf = (n: number) => (n + (old?.n ?? 0)) * WRITES_PER_ROW + STATE_WRITES;
-  if (costOf(rows.length) > RUN_WRITE_BUDGET) {
-    console.warn(`analytics detail rollup skipped day=${d}: too many rows`); // could never fit one run; same shortcut as above
-    rows = [];
+  while (rows.length && costOf(rows.length) > RUN_WRITE_BUDGET) {
+    const per = new Map<string, number>();
+    for (const r of rows) per.set(r.dim, (per.get(r.dim) ?? 0) + 1);
+    const big = [...per].sort((a, b) => b[1] - a[1])[0]![0];
+    cut.push(big);
+    rows = rows.filter((r) => r.dim !== big);
   }
+  if (cut.length) console.warn(`analytics detail rollup day=${d} left out: ${cut.join(",")} (too many rows)`);
   const cost = costOf(rows.length);
   if (spent.writes + cost > RUN_WRITE_BUDGET || dayUsed + cost > DAY_WRITE_BUDGET) {
     console.log(`analytics detail rollup paused day=${d} writes=${cost} run=${spent.writes} today=${dayUsed}`);

@@ -354,10 +354,12 @@ The detail answer has, next to `os`, `browsers`, `languages` and `places` (`{ va
 
 - `prints`: `{ dim: "print", value, linkId, label, clicks }`, one per link and print code; `label` is that link's label for the code, or `null` (no code, or a code that is not one of its labels).
 - `utmSources`, `utmMediums`, `utmCampaigns`: `{ dim, value, clicks }`.
+- `cut: true` when the scope is too big to read prints and UTM values within one request (a search matching several hundred links over many domains): those four are then empty, the rest of the detail is complete.
+- When one range has more than 2,000 link and print pairs, `prints` falls back to one row per code over all links, with `linkId` "" and `label` null.
 
 ### `GET /api/analytics/recent`
 
-The last 50 clicks by people in the last 24 hours, newest first, scoped like the report (`range` is ignored):
+The last 50 clicks by people in the last 24 hours, newest first, scoped like the report (`range`, `from` and `to` are ignored, never refused). Analytics Engine may sample clicks on a very busy instance, so these are the latest clicks it kept:
 
 ```json
 {

@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { labelCode, QR_LABELS_MAX } from "../src/api/links";
 import { MEMBER_DEFAULT } from "../src/roles";
 import { dash, setupAccess, tokenFor } from "./helpers/access";
+import { beforeBatch } from "./helpers/race";
 
 const run = (sql: string, ...a: unknown[]) => env.DB.prepare(sql).bind(...a).run();
 const count = async (t: string) => (await env.DB.prepare(`SELECT COUNT(*) n FROM ${t}`).first<{ n: number }>())!.n;
@@ -84,6 +85,30 @@ describe("QR labels", () => {
     await run("DELETE FROM audit_log");
     expect(await answer(await call("a", "POST", "la/qr-labels", { label: "one more" }))).toEqual([409, { error: "too_many_labels" }]);
     expect([await count("qr_labels"), await count("audit_log")]).toEqual([QR_LABELS_MAX, 0]);
+  });
+  it("a rename racing another rename is 409 and not audited, so an audit's `from` is always the label it replaced", async () => {
+    await run("INSERT INTO qr_labels (id,link_id,code,label,created_at) VALUES ('q1','la','abc123','A',1)");
+    const restore = beforeBatch(2, () => run("UPDATE qr_labels SET label = 'B' WHERE id = 'q1'"));
+    let r;
+    try { r = await call("a", "PATCH", "la/qr-labels/q1", { label: "C" }); } finally { restore(); }
+    expect(await answer(r)).toEqual([409, { error: "conflict" }]);
+    expect((await env.DB.prepare("SELECT label FROM qr_labels WHERE id = 'q1'").first<{ label: string }>())!.label).toBe("B");
+    expect(await count("audit_log")).toBe(0);
+  });
+  it("a label write racing a move of the link to another domain writes nothing (pinned to the domain read)", async () => {
+    await run("INSERT INTO domains (id,host,type,status,owner_id,created_at) VALUES ('dx','other.example.com','private','active','b',1)");
+    await run("INSERT INTO qr_labels (id,link_id,code,label,created_at) VALUES ('q1','la','abc123','A',1)");
+    const move = () => run("UPDATE links SET domain_id = 'dx' WHERE id = 'la'");
+    for (const [m, p, b] of [["POST", "la/qr-labels", { label: "x" }], ["PATCH", "la/qr-labels/q1", { label: "x" }], ["DELETE", "la/qr-labels/q1"]] as const) {
+      await run("UPDATE links SET domain_id = 'dm' WHERE id = 'la'");
+      const restore = beforeBatch(2, move);
+      let r;
+      try { r = await call("a", m, p, b); } finally { restore(); }
+      expect([m, r.status]).toEqual([m, 409]);
+    }
+    expect(await count("qr_labels")).toBe(1);
+    expect((await env.DB.prepare("SELECT label FROM qr_labels").first<{ label: string }>())!.label).toBe("A");
+    expect(await count("audit_log")).toBe(0);
   });
   it("a forwarder takes no labels; deleting the link deletes its labels", async () => {
     expect(await answer(await call("a", "POST", "lf/qr-labels", { label: "x" }))).toEqual([409, { error: "forwarder" }]);

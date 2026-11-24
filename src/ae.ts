@@ -299,36 +299,52 @@ const DETAIL = [
   ["print", "blob14", " AND blob7 = $qr"], ["utm_source", "blob15", " AND blob15 != $none"],
   ["utm_medium", "blob16", " AND blob16 != $none"], ["utm_campaign", "blob17", " AND blob17 != $none"],
 ] as const;
-/** One detail value's human clicks; print rows also name their link (a code belongs to one link). */
+/** One detail value's human clicks; print rows also name their link (a code belongs to one link; "" when it could not be told). */
 export type DetailCount = { dim: DetailDim; value: string; clicks: number; linkId?: string };
-/** Detail runs 8 dim queries plus 1 or 2 hour queries per chunk: 4 chunks keep it at 40, under Workers Free's 50 subrequests. */
-const DETAIL_CHUNKS = 4;
+/** The S10 dims (os, browser, language, place); the S13 ones (print, UTM) come after them in DETAIL. */
+const BASE_DIMS = 4;
+/**
+ * Analytics Engine queries one detail request may make (Workers Free: 50 subrequests). The S10 detail (4 dims plus 1 or 2 hour
+ * queries per chunk, at most MAX_CHUNKS chunks: 36) always fits; the 4 S13 dims are added only while the whole request stays
+ * within it, which leaves room for one print fallback per chunk.
+ */
+const DETAIL_BUDGET = 40;
 /** Hourly buckets per query: 80 days of hours (1920 rows) stays under ROW_CAP, so a 90-day window is two queries. */
 const HOUR_SPAN_MS = 80 * 86_400_000;
 
+const isTruncated = (e: unknown) => e instanceof AeError && e.message === "ae_truncated";
+
 /**
  * Detail for `from`..`to` from Analytics Engine (older days come from the S13 detail rollup, read in analytics.ts loadDetail):
- * human clicks per detail value, and per hour for the busiest-times grid. Per id chunk: 8 dim queries plus 1 or 2 hour
- * queries; past DETAIL_CHUNKS chunks it is refused (scope_too_big), so a request makes 40 at most.
+ * human clicks per detail value, and per hour for the busiest-times grid. Per id chunk: 4 S10 dim queries and 1 or 2 hour
+ * queries, plus the 4 S13 dims (print, UTM) when the request stays within DETAIL_BUDGET; `cut` says they were left out.
+ * The per-link print query falls back to codes over all links (linkId "", so no label) when it is over ROW_CAP, so a big
+ * print answer never hides the other breakdowns.
  * `shiftSec` (0..3540, whole minutes): the viewer zone's offset past the whole hour (1800 for +05:30). Each timestamp is moved
  * by it before the hour is cut, so a bucket is exactly one local hour; a bucket's start minus the shift is that hour's start.
  * Whole-hour zones pass 0 and keep the plain UTC hour query.
  */
 export async function aeDetail(
   env: Env, from: Date, to: Date, scope: Scope, shiftSec = 0,
-): Promise<{ dims: DetailCount[]; hours: { bucket: string; clicks: number }[] }> {
-  if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0 || from >= to) return { dims: [], hours: [] };
+): Promise<{ dims: DetailCount[]; hours: { bucket: string; clicks: number }[]; cut: boolean }> {
+  if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0 || from >= to) return { dims: [], hours: [], cut: false };
   if (!Number.isInteger(shiftSec) || shiftSec < 0 || shiftSec >= 3600) throw new AeError("bad_shift");
   const hour = shiftSec ? "toStartOfHour(toDateTime(toUnixTimestamp(timestamp) + toUInt32($shift)))" : "toStartOfHour(timestamp)";
   const spans: [Date, Date][] = [];
   for (let s = from; s < to; s = new Date(s.getTime() + HOUR_SPAN_MS)) spans.push([s, new Date(Math.min(to.getTime(), s.getTime() + HOUR_SPAN_MS))]);
+  const chunks = scopeChunks(scope);
+  const cut = chunks.length * (DETAIL.length + spans.length) > DETAIL_BUDGET;
+  const dimsAsked = cut ? DETAIL.slice(0, BASE_DIMS) : DETAIL;
   const runChunk = (c: Chunk) => {
     const p = baseParams(env, from, to);
     const where = WINDOW + HUMAN + chunkClause(c, p);
+    const byValue = (col: string, extra: string) => aeQuery(env, `SELECT ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where}${extra} GROUP BY ${col}`, p);
     return Promise.all([
-      ...DETAIL.map(([dim, col, extra]) => {
-        const g = dim === "print" ? `blob2, ${col}` : col; // print codes are per link: one link's code never names another's label
-        return aeQuery(env, `SELECT ${dim === "print" ? "blob2 AS linkId, " : ""}${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where}${extra} GROUP BY ${g}`, p);
+      ...dimsAsked.map(([dim, col, extra]) => {
+        if (dim !== "print") return byValue(col, extra);
+        // Print codes are per link, so one link's code never names another's label.
+        return aeQuery(env, `SELECT blob2 AS linkId, ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where}${extra} GROUP BY blob2, ${col}`, p)
+          .catch((e) => (isTruncated(e) ? byValue(col, extra) : Promise.reject(e)));
       }),
       ...spans.map(([a, b]) => {
         const q: Params = { ...p, from: iso(a), to: iso(b), ...(shiftSec ? { shift: String(shiftSec) } : {}) };
@@ -336,26 +352,24 @@ export async function aeDetail(
       }),
     ]);
   };
-  const chunks = scopeChunks(scope);
-  if (chunks.length > DETAIL_CHUNKS) throw new AeError("scope_too_big");
   const parts = await Promise.all(chunks.map(runChunk));
   const dims = new Map<string, DetailCount>();
   const hours = new Map<string, number>();
   for (const rows of parts) {
     rows.forEach((rs, i) => {
       for (const r of rs) {
-        if (i >= DETAIL.length) {
+        if (i >= dimsAsked.length) {
           const b = bucketOf(r.bucket, "hour");
           hours.set(b, (hours.get(b) ?? 0) + num(r.n));
           continue;
         }
-        const dim = DETAIL[i]![0], linkId = dim === "print" ? str(r.linkId) : undefined, k = `${dim}|${linkId ?? ""}|${str(r.value)}`;
+        const dim = dimsAsked[i]![0], linkId = dim === "print" ? str(r.linkId) : undefined, k = `${dim}|${linkId ?? ""}|${str(r.value)}`;
         const c = dims.get(k) ?? dims.set(k, { dim, value: str(r.value), clicks: 0, ...(linkId === undefined ? {} : { linkId }) }).get(k)!;
         c.clicks += num(r.n);
       }
     });
   }
-  return { dims: [...dims.values()], hours: [...hours].map(([bucket, clicks]) => ({ bucket, clicks })) };
+  return { dims: [...dims.values()], hours: [...hours].map(([bucket, clicks]) => ({ bucket, clicks })), cut };
 }
 
 /**
@@ -379,17 +393,24 @@ export async function aeLinkDays(env: Env, from: Date, to: Date, linkIds: string
 
 /**
  * S13 detail rollup (R2): one UTC day of detail rows per link, domain, dim and value, one query per detail dim (8). Rows with
- * no UTM value and non-QR print rows are left out by the queries, so they cost no D1 write. Each answer at most ROW_CAP rows
- * or AeError("truncated").
+ * no UTM value and non-QR print rows are left out by the queries, so they cost no D1 write. A dim whose answer is over ROW_CAP
+ * rows is named in `cut` and left out for that day.
  */
-export async function aeDayDetail(env: Env, day: string): Promise<{ linkId: string; domainId: string; dim: DetailDim; value: string; clicks: number }[]> {
+export async function aeDayDetail(
+  env: Env, day: string,
+): Promise<{ rows: { linkId: string; domainId: string; dim: DetailDim; value: string; clicks: number }[]; cut: DetailDim[] }> {
   const from = new Date(`${day}T00:00:00Z`);
   const p = baseParams(env, from, new Date(from.getTime() + 86_400_000));
+  // A dim over ROW_CAP is left out alone (`cut`), so the other dims of that day are still kept; any other failure fails the day.
   const rows = await Promise.all(
     DETAIL.map(([, col, extra]) =>
-      aeQuery(env, `SELECT blob2 AS linkId, blob1 AS domainId, ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${WINDOW}${HUMAN}${extra} GROUP BY blob2, blob1, ${col}`, p)),
+      aeQuery(env, `SELECT blob2 AS linkId, blob1 AS domainId, ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${WINDOW}${HUMAN}${extra} GROUP BY blob2, blob1, ${col}`, p)
+        .catch((e) => (isTruncated(e) ? null : Promise.reject(e)))),
   );
-  return rows.flatMap((rs, i) => rs.map((r) => ({ linkId: str(r.linkId), domainId: str(r.domainId), dim: DETAIL[i]![0], value: str(r.value), clicks: num(r.n) })));
+  return {
+    rows: rows.flatMap((rs, i) => (rs ?? []).map((r) => ({ linkId: str(r.linkId), domainId: str(r.domainId), dim: DETAIL[i]![0], value: str(r.value), clicks: num(r.n) }))),
+    cut: DETAIL.filter((_, i) => rows[i] === null).map(([d]) => d),
+  };
 }
 
 /** One recent human click (S13). No IP, visitor code or user agent: those columns are never selected. */
@@ -408,7 +429,10 @@ function instantOf(v: unknown): string {
   return `${m[1]}T${m[2]}Z`;
 }
 
-/** The newest `n` human clicks in `from`..`to`, newest first: `n` per id chunk (at most MAX_CHUNKS queries), merged and cut to `n`. */
+/**
+ * The newest `n` human clicks in `from`..`to`, newest first: `n` per id chunk (at most MAX_CHUNKS queries), merged and cut to `n`.
+ * Analytics Engine may sample points at write time on busy datasets, so these are the newest points it kept, not always every click.
+ */
 export async function aeRecent(env: Env, from: Date, to: Date, scope: Scope, n: number): Promise<RecentRow[]> {
   if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0) return [];
   const parts = await Promise.all(

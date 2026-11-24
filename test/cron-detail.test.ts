@@ -84,24 +84,32 @@ describe("rollupDetail", () => {
     expect(await rollupDetail(ae, NOW, spent)).toBe("2026-08-23");
     expect(spent.writes).toBe(107);
   });
-  it("a day over ROW_CAP is skipped and logged, the watermark moves on; any other failure writes nothing and throws", async () => {
+  it("a dim over ROW_CAP is left out for that day alone: the other dims are kept and the watermark moves on", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    stubAe((q) => (q.includes("blob13 AS value") ? Response.json({ data: [], rows_before_limit_at_least: 99999 }) : []));
+    stubAe((q) => {
+      if (q.includes("blob13 AS value")) return Response.json({ data: [], rows_before_limit_at_least: 99999 });
+      return q.includes("blob10 AS value") ? [{ linkId: "l1", domainId: "d1", value: "iOS", n: 3 }] : [];
+    });
     expect(await rollupDetail(ae, NOW)).toBe("2026-08-23");
-    expect(warn).toHaveBeenCalledWith("analytics detail rollup skipped day=2026-08-23: too many rows");
-    vi.restoreAllMocks();
+    expect(warn).toHaveBeenCalledWith("analytics detail rollup day=2026-08-23 left out: place (too many rows)");
+    expect(await rows()).toEqual([{ day: "2026-08-23", link_id: "l1", domain_id: "d1", dim: "os", value: "iOS", clicks: 3 }]);
+  });
+  it("any other failure writes nothing and throws, the watermark stays", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     stubAe(() => new Response("no", { status: 500 }));
     await expect(rollupDetail(ae, NOW)).rejects.toMatchObject({ message: "ae_500" });
-    expect(await detailRolledThrough(ae)).toBe("2026-08-23");
-  });
-  it("a day whose rows alone could never fit one run's budget is skipped the same way", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const links = Array.from({ length: 1700 }, (_, i) => ({ linkId: `k${i}`, domainId: "d1", value: "x", n: 1 })); // 2 dims x 1700 rows x 3 > 10,000
-    stubAe((q) => (q.includes("blob10 AS value") || q.includes("blob11 AS value") ? links : []));
-    expect(await rollupDetail(ae, NOW)).toBe("2026-08-23");
+    expect(await detailRolledThrough(ae)).toBeNull();
     expect(await rows()).toEqual([]);
+  });
+  it("a day whose rows alone could never fit one run's budget drops its biggest dims until it fits, keeping the rest", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const links = (n: number) => Array.from({ length: n }, (_, i) => ({ linkId: `k${i}`, domainId: "d1", value: "x", n: 1 }));
+    // (1800 + 1600 + 5) rows x 3 > 10,000; without os (the biggest) it is 1605 rows.
+    stubAe((q) => (q.includes("blob10 AS value") ? links(1800) : q.includes("blob11 AS value") ? links(1600) : q.includes("blob12 AS value") ? links(5) : []));
+    expect(await rollupDetail(ae, NOW)).toBe("2026-08-23");
+    expect(warn).toHaveBeenCalledWith("analytics detail rollup day=2026-08-23 left out: os (too many rows)");
+    const n = await env.DB.prepare("SELECT dim, COUNT(*) n FROM clicks_daily_detail GROUP BY dim ORDER BY dim").all();
+    expect(n.results).toEqual([{ dim: "browser", n: 1600 }, { dim: "language", n: 5 }]);
   });
   it("not configured: nothing read or written", async () => {
     const bodies = stubAe();

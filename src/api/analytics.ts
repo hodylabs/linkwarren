@@ -16,6 +16,7 @@ export const analytics = new Hono<E>();
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const DAY_MS = 86_400_000;
+const WEEK_MS = 7 * DAY_MS;
 const idList = (max: number, min: number) =>
   z.string().transform((s) => (s === "" ? [] : s.split(","))).pipe(z.array(z.string().regex(ID)).min(min).max(max));
 
@@ -53,12 +54,16 @@ export function parseFilters(raw: string[]): Filter[] | null {
   return out;
 }
 
-/** Shared by the report and the detail: the query checked, the range resolved and the scope cut to what the caller may see. */
-async function prepare(c: Context<E>): Promise<Prepared | Response> {
+/**
+ * Shared by the report, the detail and recent clicks: the query checked, the range resolved and the scope cut to what the caller
+ * may see. `withRange` false (recent clicks, which read their own 24 hours): `range`, `from` and `to` are ignored, never refused.
+ */
+async function prepare(c: Context<E>, withRange = true): Promise<Prepared | Response> {
   const sp = new URL(c.req.url).searchParams;
   const filters = parseFilters(sp.getAll("f"));
   if (!filters) return c.json({ error: "bad_filter" }, 400);
   sp.delete("f");
+  if (!withRange) for (const k of ["range", "from", "to"]) sp.delete(k);
   const p = query.safeParse(Object.fromEntries(sp));
   if (!p.success) return c.json({ error: "bad_query" }, 400);
   const { range: r, from, to, domains, q = "", link } = p.data;
@@ -83,7 +88,7 @@ analytics.get("/", async (c) => {
   if (p instanceof Response) return p;
   let rows = await loadRows(c.env, p.range, p.scope, p.nowSec);
   // R9 as before R8: a failed live read of the hourly 7 days falls back to the daily 7 days, whose older days D1 still answers.
-  if (rows.live === "unavailable" && p.range.unit === "hour" && new URL(c.req.url).searchParams.get("range") === "7") {
+  if (rows.live === "unavailable" && p.range.unit === "hour" && p.range.to.getTime() - p.range.from.getTime() === WEEK_MS) {
     const daily = resolveRange({ range: "7" }, p.nowSec);
     if (!("error" in daily)) {
       p.range = daily;
@@ -117,7 +122,7 @@ analytics.get("/detail", async (c) => {
 
 /** S13: the last 50 human clicks of the last 24 hours, scoped like the report (its scope params and `f`; the range is ignored). */
 analytics.get("/recent", async (c) => {
-  const p = await prepare(c);
+  const p = await prepare(c, false);
   if (p instanceof Response) return p;
   return c.json(await loadRecent(c.env, p.scope, p.nowSec));
 });
