@@ -121,8 +121,8 @@ describe("GET /api/analytics/detail", () => {
     fetchSpy.mockImplementation(async (_u: unknown, init: unknown) => {
       const q = JSON.parse(String((init as RequestInit).body)).query as string;
       if (q.includes("toStartOfHour")) return Response.json({ data: [{ bucket: "2026-11-16 14:00:00", n: 4 }] }); // Monday 14:00 UTC
-      const col = /SELECT (blob\d+) AS value/.exec(q)![1];
-      const data = { blob10: [{ value: "iOS", n: 3 }, { value: "", n: 1 }], blob11: [{ value: "Safari", n: 4 }], blob12: [{ value: "en-us", n: 4 }], blob13: [{ value: "Toronto, CA", n: 4 }] }[col!];
+      const col = /(blob\d+) AS value/.exec(q)![1];
+      const data = { blob10: [{ value: "iOS", n: 3 }, { value: "", n: 1 }], blob11: [{ value: "Safari", n: 4 }], blob12: [{ value: "en-us", n: 4 }], blob13: [{ value: "Toronto, CA", n: 4 }] }[col!] ?? [];
       return Response.json({ data });
     });
     const r = await withAe(() => json("/detail?range=7&link=lM&tz=America/Toronto"));

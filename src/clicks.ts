@@ -74,14 +74,24 @@ export function referrerHost(ref: string | null): string {
   }
 }
 
-// Works on the raw query string so pass-through keeps the visitor's exact encoding.
-export function splitQrMarker(search: string): { qr: boolean; search: string } {
+/** S13 R4: the print code of `lw=qr.<code>`; any other shape still counts as a plain QR scan with no code. */
+export const PRINT_CODE_RE = /^[a-z0-9]{3,16}$/;
+
+// Works on the raw query string so pass-through keeps the visitor's exact encoding. `lw=qr` and every `lw=qr.<anything>`
+// are QR markers and are stripped; `code` is the first well-shaped print code, "" otherwise.
+export function splitQrMarker(search: string): { qr: boolean; code: string; search: string } {
   const parts = search.replace(/^\?/, "").split("&");
-  const rest = parts.filter((p) => p !== `${QR_PARAM}=${QR_VALUE}`);
+  const mark = `${QR_PARAM}=${QR_VALUE}`;
+  const isMark = (p: string) => p === mark || p.startsWith(`${mark}.`);
+  const rest = parts.filter((p) => !isMark(p));
   const qr = rest.length !== parts.length;
+  const code = parts.filter(isMark).map((p) => p.slice(mark.length + 1)).find((c) => PRINT_CODE_RE.test(c)) ?? "";
   const joined = rest.join("&");
-  return { qr, search: joined ? `?${joined}` : "" };
+  return { qr, code, search: joined ? `?${joined}` : "" };
 }
+
+/** S13 R3: a visitor-controlled value (UTM) with controls stripped, trimmed, lowercased and cut to 64 characters; "" when absent. */
+export const utmValue = (v: string | null): string => (v ?? "").slice(0, 1000).replace(UNSAFE, "").trim().toLowerCase().slice(0, 64).trim();
 
 export async function visitorHash(salt: string | undefined, day: string, ip: string, ua: string): Promise<string> {
   if (!salt) return "";

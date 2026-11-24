@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyAgent, referrerHost, splitQrMarker, utcDay, visitorHash } from "../src/clicks";
+import { classifyAgent, referrerHost, splitQrMarker, utcDay, utmValue, visitorHash } from "../src/clicks";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const IPAD = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
@@ -53,14 +53,34 @@ describe("referrerHost", () => {
 
 describe("splitQrMarker", () => {
   it("strips exact lw=qr pairs without re-encoding", () => {
-    expect(splitQrMarker("?a=%20&lw=qr&b=1")).toEqual({ qr: true, search: "?a=%20&b=1" });
-    expect(splitQrMarker("?lw=qr")).toEqual({ qr: true, search: "" });
-    expect(splitQrMarker("?lw=qr&lw=qr")).toEqual({ qr: true, search: "" });
+    expect(splitQrMarker("?a=%20&lw=qr&b=1")).toEqual({ qr: true, code: "", search: "?a=%20&b=1" });
+    expect(splitQrMarker("?lw=qr")).toEqual({ qr: true, code: "", search: "" });
+    expect(splitQrMarker("?lw=qr&lw=qr")).toEqual({ qr: true, code: "", search: "" });
+  });
+  it("lw=qr.<code> is a QR scan with its print code, stripped like lw=qr (S13 R4)", () => {
+    expect(splitQrMarker("?lw=qr.abc123")).toEqual({ qr: true, code: "abc123", search: "" });
+    expect(splitQrMarker("?a=1&lw=qr.abc123&b=%20")).toEqual({ qr: true, code: "abc123", search: "?a=1&b=%20" });
+    expect(splitQrMarker("?lw=qr.abc&lw=qr")).toEqual({ qr: true, code: "abc", search: "" });
+  });
+  it("a malformed print code is still a QR scan, with an empty code", () => {
+    for (const bad of ["ab", "ABC123", "abc-12", "a".repeat(17), "", "abc%20", "<x>"])
+      expect(splitQrMarker(`?lw=qr.${bad}&z=1`)).toEqual({ qr: true, code: "", search: "?z=1" });
   });
   it("leaves everything else untouched", () => {
-    expect(splitQrMarker("?lw=qrx")).toEqual({ qr: false, search: "?lw=qrx" });
-    expect(splitQrMarker("?LW=QR")).toEqual({ qr: false, search: "?LW=QR" });
-    expect(splitQrMarker("")).toEqual({ qr: false, search: "" });
+    expect(splitQrMarker("?lw=qrx")).toEqual({ qr: false, code: "", search: "?lw=qrx" });
+    expect(splitQrMarker("?LW=QR")).toEqual({ qr: false, code: "", search: "?LW=QR" });
+    expect(splitQrMarker("?lw=qr2.abc")).toEqual({ qr: false, code: "", search: "?lw=qr2.abc" });
+    expect(splitQrMarker("")).toEqual({ qr: false, code: "", search: "" });
+  });
+});
+
+describe("utmValue (S13 R3)", () => {
+  it("lowercases, trims, strips control and invisible characters, cuts to 64", () => {
+    expect(utmValue("  NewsLetter ")).toBe("newsletter");
+    expect(utmValue("spr\u0000ing\u200b\u202e_SALE\n")).toBe("spring_sale");
+    expect(utmValue("x".repeat(100))).toBe("x".repeat(64));
+    expect(utmValue(null)).toBe("");
+    expect(utmValue("\t \u0007")).toBe("");
   });
 });
 

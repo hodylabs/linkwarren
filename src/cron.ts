@@ -1,4 +1,4 @@
-import { AeError, aeConfigured, aeDay } from "./ae";
+import { AeError, aeConfigured, aeDay, aeDayDetail } from "./ae";
 import { utcDay } from "./clicks";
 import type { Env } from "./env";
 import { DAY_KEYS_SQL } from "./limits";
@@ -118,6 +118,87 @@ export async function rollup(env: Env, nowSec: number, spent = { writes: 0 }): P
   return written;
 }
 
+/** R3: values kept per link, domain, dimension and day; the rest is summed into "(other)". */
+export const DETAIL_TOP = 20;
+const OTHER = "(other)";
+
+export async function detailRolledThrough(env: Env): Promise<string | null> {
+  const r = await env.DB.prepare("SELECT v FROM analytics_state WHERE k = 'detail_rolled_through'").first<{ v: string }>();
+  return r && /^\d{4}-\d{2}-\d{2}$/.test(r.v) ? r.v : null;
+}
+
+/** The top DETAIL_TOP values of each (link, domain, dim) and one "(other)" row for the rest (R3). */
+export function capDetail<T extends { linkId: string; domainId: string; dim: string; value: string; clicks: number }>(rows: T[]): T[] {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    if (r.clicks <= 0) continue;
+    const k = `${r.linkId}|${r.domainId}|${r.dim}`;
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
+  }
+  const out: T[] = [];
+  for (const g of groups.values()) {
+    // Ties break on the value, so a re-run keeps the same rows. A real "(other)" value (a UTM can say anything) joins the rest.
+    g.sort((a, b) => b.clicks - a.clicks || (a.value < b.value ? -1 : 1));
+    const top = g.filter((r) => r.value !== OTHER).slice(0, DETAIL_TOP);
+    const rest = g.filter((r) => !top.includes(r)).reduce((n, r) => n + r.clicks, 0);
+    out.push(...top);
+    if (rest > 0) out.push({ ...g[0]!, value: OTHER, clicks: rest });
+  }
+  return out;
+}
+
+/**
+ * S13 detail rollup (R2): one UTC day per run into clicks_daily_detail, with its own watermark `detail_rolled_through`, starting at
+ * today-89 (days still in Analytics Engine are rolled again for the new dimensions) and stopping at today-2 like the main rollup.
+ * 8 Analytics Engine queries and 3 D1 calls per run. Shares the run and daily write budgets with the main rollup (`spent`).
+ * shortcut: a day whose answer is over ROW_CAP rows, or whose rows alone need more than RUN_WRITE_BUDGET writes (thousands of
+ * links with many values each), is skipped, logged, and the
+ * watermark moves past it, so it never blocks the days after it; that day's detail is then Analytics Engine only. Query per link
+ * chunk if an instance ever reaches it.
+ */
+export async function rollupDetail(env: Env, nowSec: number, spent = { writes: 0 }): Promise<string | null> {
+  if (!aeConfigured(env)) return null;
+  const today = utcDay(nowSec);
+  const rt = await detailRolledThrough(env);
+  const floor = addDays(today, -89);
+  const d = rt && addDays(rt, 1) > floor ? addDays(rt, 1) : floor;
+  if (d > addDays(today, -2)) return null;
+  let rows: Awaited<ReturnType<typeof aeDayDetail>>;
+  try {
+    rows = capDetail(await aeDayDetail(env, d));
+  } catch (e) {
+    if (!(e instanceof AeError && e.message === "ae_truncated")) {
+      console.error(`analytics detail rollup failed day=${d}`, e instanceof AeError ? e.message : errName(e));
+      throw e;
+    }
+    console.warn(`analytics detail rollup skipped day=${d}: too many rows`);
+    rows = [];
+  }
+  const dayUsed = await writtenToday(env, today);
+  const old = await env.DB.prepare("SELECT COUNT(*) AS n FROM clicks_daily_detail WHERE day = ?").bind(d).first<{ n: number }>();
+  const costOf = (n: number) => (n + (old?.n ?? 0)) * WRITES_PER_ROW + STATE_WRITES;
+  if (costOf(rows.length) > RUN_WRITE_BUDGET) {
+    console.warn(`analytics detail rollup skipped day=${d}: too many rows`); // could never fit one run; same shortcut as above
+    rows = [];
+  }
+  const cost = costOf(rows.length);
+  if (spent.writes + cost > RUN_WRITE_BUDGET || dayUsed + cost > DAY_WRITE_BUDGET) {
+    console.log(`analytics detail rollup paused day=${d} writes=${cost} run=${spent.writes} today=${dayUsed}`);
+    return null;
+  }
+  // Delete-then-insert in one batch with the watermark and the write counter: a re-run replaces the day, never adds to it.
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM clicks_daily_detail WHERE day = ?").bind(d),
+    ...inserts(env, "INSERT INTO clicks_daily_detail (day, link_id, domain_id, dim, value, clicks)", rows.map((r) => [d, r.linkId, r.domainId, r.dim, r.value, r.clicks])),
+    env.DB.prepare(
+      "INSERT INTO analytics_state (k, v) VALUES ('detail_rolled_through', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v WHERE excluded.v > analytics_state.v",
+    ).bind(d),
+    env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', ?)").bind(`${today}|${dayUsed + cost}`),
+  ]);
+  spent.writes += cost;
+  return d;
+}
+
 /** Deletes up to PURGE_MAX audit rows older than 3 years (oldest first by id), audited in the same batch as actor "system". */
 export async function purgeAudit(env: Env, nowSec: number): Promise<number> {
   const cutoff = nowSec - AUDIT_KEEP_DAYS * 86400;
@@ -185,6 +266,12 @@ export async function scheduled(c: ScheduledController, env: Env, _ctx: Executio
     console.log(`analytics rollup: ${days.length ? days.join(",") : "none"}`);
   } catch (e) {
     console.error("analytics rollup failed", errName(e));
+  }
+  // Its own step: a failing detail day never stops the main rollup (above), the cleanup or the weekly emails.
+  try {
+    console.log(`analytics detail rollup: ${(await rollupDetail(env, now, spent)) ?? "none"}`);
+  } catch (e) {
+    console.error("analytics detail rollup failed", errName(e));
   }
   // Cleanup shares the rollup's daily D1 write budget; each table's deletion and its charge commit together.
   const today = utcDay(now);

@@ -34,8 +34,14 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("resolveRange", () => {
-  it('"7": the last 7 UTC days through tomorrow 00:00, prev the 7 before', () => {
-    const r = resolveRange({ range: "7" }, NOW);
+  it('"7" (S13 R8): 168 hourly buckets ending at the current hour\'s end, prev the 168 before', () => {
+    const r = resolveRange({ range: "7" }, NOW, true);
+    if ("error" in r) throw new Error(r.error);
+    expect([r.from.toISOString(), r.to.toISOString(), r.unit]).toEqual(["2026-11-13T13:00:00.000Z", "2026-11-20T13:00:00.000Z", "hour"]);
+    expect(r.prev?.from.toISOString()).toBe("2026-11-06T13:00:00.000Z");
+  });
+  it('"7" without Analytics Engine: the last 7 UTC days through tomorrow 00:00, prev the 7 before', () => {
+    const r = resolveRange({ range: "7" }, NOW, false);
     if ("error" in r) throw new Error(r.error);
     expect([r.from.toISOString(), r.to.toISOString(), r.unit]).toEqual(["2026-11-14T00:00:00.000Z", "2026-11-21T00:00:00.000Z", "day"]);
     expect([r.prev?.from.toISOString(), r.prev?.to.toISOString()]).toEqual(["2026-11-07T00:00:00.000Z", "2026-11-14T00:00:00.000Z"]);

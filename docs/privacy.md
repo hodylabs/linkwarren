@@ -22,8 +22,12 @@ Each visit to a live link (a redirect, or a contact card download) records one d
 - the operating system family (iOS, Android, Windows, macOS, Linux, ChromeOS or Other) and the browser family (Chrome, Safari, Firefox, Edge, Opera, Samsung Internet or Other), worked out from the user agent at the moment of the click; the user agent itself is not kept
 - the visitor's preferred language: the first tag of the browser's Accept-Language header, lowercased and cut to two parts (for example `en-us`)
 - the city as Cloudflare reports it (or the region when Cloudflare gives no city), with the country code, for example `Toronto, CA`; nothing finer than the city, never coordinates or a postal code
+- for a scan of a labelled QR print (`?lw=qr.<code>`), the print's code (a short code the instance made, never anything about the visitor)
+- the UTM values (`utm_source`, `utm_medium`, `utm_campaign`) of the short link's own address, as the visitor's link carried them: lowercased, trimmed, control characters removed and cut to 64 characters. Whoever builds the link chooses them; a UTM value can say anything, so do not put personal data in the UTM values of links you share. Other query values are never recorded.
 
-Points recorded before these four were added have them empty. They are kept only in Analytics Engine (90 days), never in the daily totals. On their own and together they are coarse buckets that many people share, not something that identifies a person, but a small instance with few visitors from one city should treat its reports as personal data and share them with care.
+Points recorded before these were added have them empty. Since 0.8.0 a daily detail rollup also keeps, in D1, the operating system, browser, language, city, print and UTM counts per link and day (the 20 biggest values of each, the rest added up as `(other)`), so these counts are kept until the instance is deleted, like the daily totals. On their own and together they are coarse buckets that many people share, not something that identifies a person, but a small instance with few visitors from one city should treat its reports as personal data and share them with care.
+
+**Recent clicks** on the Analytics screen lists the last 50 clicks by people in the last 24 hours with their time, link, country and city, device, operating system, browser, language, source, print, referrer host and UTM values, read from the same Analytics Engine points. It shows no IP address, visitor code or user agent, and only to people who may see analytics for that link's domain. Nothing extra is stored for it.
 
 A forwarder (the old address of a moved link, see [deploy.md](deploy.md#behaviour-to-know)) records no click. The visit is recorded once, by the link it forwards to, under that link's current domain. Points recorded before a move keep the domain of the moment.
 
@@ -83,8 +87,9 @@ The instance name is shown to signed-out visitors on the sign-in page and on the
 
 ## How long data is kept
 
-- Raw click points live 90 days in Cloudflare Workers Analytics Engine (its documented retention is three months), then the platform removes them. The operating system, browser, language, place and busiest-times views read only these points, so they cover the last 90 days at most.
-- Daily totals stay in the instance's D1 database until the instance is deleted.
+- Raw click points live 90 days in Cloudflare Workers Analytics Engine (its documented retention is three months), then the platform removes them. The busiest-times view, recent clicks and filtered views read only these points, so they cover the last 90 days at most.
+- Daily totals and the daily detail rollup (operating system, browser, language, city, print and UTM counts per link and day) stay in the instance's D1 database until the instance is deleted.
+- QR print labels (the code, the label, who made it and when) are kept until the label or its link is deleted.
 - The audit log of dashboard changes (including changes by agents and keys) is kept for 3 years.
 - MCP tool calls are kept 90 days.
 

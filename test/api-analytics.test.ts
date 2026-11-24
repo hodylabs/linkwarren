@@ -98,7 +98,7 @@ describe("GET /api/analytics", () => {
   it("a failing Analytics Engine degrades to live unavailable, not 500", async () => {
     fetchSpy.mockImplementation(async () => new Response("no", { status: 500 }));
     await withAe(async () => {
-      const res = await get("?range=7");
+      const res = await get("?range=30");
       expect(res.status).toBe(200);
       const r = (await res.json()) as any;
       expect(r.live).toBe("unavailable");

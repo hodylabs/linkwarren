@@ -64,8 +64,8 @@ function countD1() {
 const restoreDB = () => { (env as unknown as Record<string, unknown>).DB = realDB; };
 
 // roles first: a restore needs them before users.role_id refers to them. Never deleted here: the built-in rows stay.
-const BASE_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "vcards", "qr_codes", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
-const ALL_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "vcards", "qr_codes", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "api_keys", "agent_connections", "tool_calls"];
+const BASE_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "vcards", "qr_codes", "qr_labels", "slug_locks", "audit_log", "settings", "api_keys", "agent_connections", "tool_calls"];
+const ALL_TABLES = ["roles", "users", "domains", "domain_cf", "domain_members", "links", "vcards", "qr_codes", "qr_labels", "slug_locks", "audit_log", "settings", "clicks_daily", "clicks_daily_dim", "clicks_daily_detail", "api_keys", "agent_connections", "tool_calls"];
 const NEVER = ["sessions", "login_tokens", "passkeys", "auth_challenges", "auth_limits", "locks", "analytics_state"];
 
 beforeAll(setupAccess);
@@ -91,6 +91,8 @@ beforeEach(async () => {
   await run("INSERT INTO qr_codes (id,name,kind,data,secret,style,created_by,updated_by,created_at,updated_at) VALUES ('q1','Office','wifi','{}',?,'{}','uo','uo',1,1)", qrCipher);
   await run("INSERT INTO clicks_daily (day,link_id,domain_id,slug,qr,typed,bots,visitors) VALUES ('2026-01-01','l1','d1','open',1,2,0,3)");
   await run("INSERT INTO clicks_daily_dim (day,link_id,domain_id,dim,value,clicks) VALUES ('2026-01-01','l1','d1','device','ios',3)");
+  await run("INSERT INTO clicks_daily_detail (day,link_id,domain_id,dim,value,clicks) VALUES ('2026-01-01','l1','d1','os','iOS',3)");
+  await run("INSERT INTO qr_labels (id,link_id,code,label,created_at,created_by) VALUES ('ql1','l1','abc123','Flyer',1,'uo')");
   keyHash = await hashKey(KEY_SECRET);
   await run("INSERT INTO api_keys (id,user_id,name,prefix,hash,can_write,can_delete,domain_ids,expires_at,created_at) VALUES ('k1','uo','ci','lw_secr',?,1,0,'[]',9999999999,1)", keyHash);
   await run("INSERT INTO agent_connections (id,user_id,client_id,client_name,redirect_host,created_at) VALUES ('c1','uo','cl','Agent','agent.test',1)");
