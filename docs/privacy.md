@@ -22,8 +22,12 @@ Each visit to a live link (a redirect, or a contact card download) records one d
 - the operating system family (iOS, Android, Windows, macOS, Linux, ChromeOS or Other) and the browser family (Chrome, Safari, Firefox, Edge, Opera, Samsung Internet or Other), worked out from the user agent at the moment of the click; the user agent itself is not kept
 - the visitor's preferred language: the first tag of the browser's Accept-Language header, lowercased and cut to two parts (for example `en-us`)
 - the city as Cloudflare reports it (or the region when Cloudflare gives no city), with the country code, for example `Toronto, CA`; nothing finer than the city, never coordinates or a postal code
+- for a scan of a labelled QR print (`?lw=qr.<code>`), the print's code (a short code the instance made, never anything about the visitor)
+- the UTM values (`utm_source`, `utm_medium`, `utm_campaign`) of the short link's own address, as the visitor's link carried them: lowercased, trimmed, control characters removed and cut to 64 characters. Whoever builds the link chooses them; a UTM value can say anything, so do not put personal data in the UTM values of links you share. Other query values are never recorded.
 
-Points recorded before these four were added have them empty. They are kept only in Analytics Engine (90 days), never in the daily totals. On their own and together they are coarse buckets that many people share, not something that identifies a person, but a small instance with few visitors from one city should treat its reports as personal data and share them with care.
+Points recorded before these were added have them empty. Since 0.8.0 a daily detail rollup also keeps, in D1, the operating system, browser, language, city, print and UTM counts per link and day (the 20 biggest values of each, the rest added up as `(other)`), so these counts are kept until the instance is deleted, like the daily totals. On their own and together they are coarse buckets that many people share, not something that identifies a person, but a small instance with few visitors from one city should treat its reports as personal data and share them with care.
+
+**Recent clicks** on the Analytics screen lists the last 50 clicks by people in the last 24 hours with their time, link, country and city, device, operating system, browser, language, source, print, referrer host and UTM values, read from the same Analytics Engine points. It shows no IP address, visitor code or user agent, and only to people who may see analytics for that link's domain. Nothing extra is stored for it.
 
 A forwarder (the old address of a moved link, see [deploy.md](deploy.md#behaviour-to-know)) records no click. The visit is recorded once, by the link it forwards to, under that link's current domain. Points recorded before a move keep the domain of the moment.
 
@@ -79,16 +83,28 @@ The people who use the dashboard are stored in the instance's D1 database:
 
 - **Weekly email** (opt-in, off by default): whether the person turned it on, their time zone, the last week sent and a random per-person secret that signs the unsubscribe link (a new one each time it is turned on). Removing the person deletes it. The secret is never in the export.
 
+- **Link alerts** (opt-in, off by default): whether the person turned them on and which kinds, the last UTC day handled, a random per-person secret that signs the unsubscribe link, and which links they were already told about (link id, kind and day). Removing the person or the link deletes those rows.
+
+## Share pages
+
+A share page shows one link's or one domain's click totals to anyone who has its URL, without signing in (see [analytics.md](analytics.md#share-page)).
+
+- **What it shows**: totals for the last 30 days, a daily table and the top countries, referrers and devices. Never a list of links, recent clicks, IP addresses, visitor codes or anything else about one visitor. Referrers are visitor-supplied text, shown escaped.
+- **What is stored**: the SHA-256 of the page's token (never the token or the URL), the link or domain it covers, who made it, when, and when it was revoked. Making and revoking it are audit-logged without the token.
+- **Reach**: it is the person who makes it who decides to share; the page stops when revoked, when the link or domain is deleted, when the link moves to another domain, or when its maker is disabled or removed. Search engines are told not to index it, and it sends no referrer.
+- **Rate limit**: views count against the viewer's IP range (the /24 or /48, never the full address) for one minute, in the same table as the sign-in limits, cleaned up the same way.
+
 The instance name is shown to signed-out visitors on the sign-in page and on the `/join` page an invite opens, so anyone who opens the dashboard address can see it.
 
 ## How long data is kept
 
-- Raw click points live 90 days in Cloudflare Workers Analytics Engine (its documented retention is three months), then the platform removes them. The operating system, browser, language, place and busiest-times views read only these points, so they cover the last 90 days at most.
-- Daily totals stay in the instance's D1 database until the instance is deleted.
+- Raw click points live 90 days in Cloudflare Workers Analytics Engine (its documented retention is three months), then the platform removes them. The busiest-times view, recent clicks and filtered views read only these points, so they cover the last 90 days at most.
+- Daily totals and the daily detail rollup (operating system, browser, language, city, print and UTM counts per link and day) stay in the instance's D1 database until the instance is deleted.
+- QR print labels (the code, the label, who made it and when) are kept until the label or its link is deleted.
 - The audit log of dashboard changes (including changes by agents and keys) is kept for 3 years.
 - MCP tool calls are kept 90 days.
 
-Everything linkwarren stores stays in the Cloudflare account that runs the instance. It sends two things elsewhere: the daily update check (see "Update check" below, off with one switch) and email: sign-in links, invites, test mails and the weekly summary go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself; for the weekly summary: click totals and the addresses of the person's top 5 links). See "People and email" below.
+Everything linkwarren stores stays in the Cloudflare account that runs the instance. It sends two things elsewhere: the daily update check (see "Update check" below, off with one switch) and email: sign-in links, invites, test mails, the weekly summary and link alerts go through Resend, which receives the recipient's address and the text of the mail (for an invite: the instance name, the inviter's name or email and the dashboard address; for a sign-in link: the link itself; for the weekly summary: click totals and the addresses of the person's top 5 links; for an alert: the addresses and names of the links it lists and their click counts). See "People and email" below.
 
 ## Update check
 

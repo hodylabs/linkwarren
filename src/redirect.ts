@@ -1,5 +1,5 @@
 import { type Ctx, getDomainByHost, getLink } from "./cache";
-import { browserOf, classifyAgent, languageOf, osOf, placeOf, referrerHost, splitQrMarker, UA_MAX, utcDay, visitorHash } from "./clicks";
+import { browserOf, classifyAgent, languageOf, osOf, placeOf, referrerHost, splitQrMarker, UA_MAX, utcDay, utmValue, visitorHash } from "./clicks";
 import type { Env } from "./env";
 import { normalizeHost, slugFromPath } from "./host";
 import { notFoundPage, PAGE_HEADERS, pendingPage } from "./pages";
@@ -51,7 +51,7 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   if (link.kind === "vcard" && !link.vcard) return miss(domain.notfoundRedirect);
   const res = link.kind === "vcard" ? vcardResponse(link, domain, head) : redirect(destinationOf(req, link, m.search), link.redirectCode, domain);
   // Off the hot path: the response never waits for, or fails because of, analytics.
-  if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
+  if (req.method === "GET" && env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m, now).catch(() => {}));
   return res;
 }
 
@@ -62,7 +62,7 @@ export function destinationOf(req: Request, link: LinkRow, search: string): stri
   return withQuery(pickDestination(link, countryOf(req), devices), link.passQuery, search);
 }
 
-export async function recordClick(env: Env, req: Request, link: LinkRow, domain: DomainRow, qr: boolean, now: number): Promise<void> {
+export async function recordClick(env: Env, req: Request, link: LinkRow, domain: DomainRow, qr: { qr: boolean; code: string }, now: number): Promise<void> {
   try {
     // A macrotask, not `await null`: microtasks still run before the response is handed back, a timer runs after it.
     await new Promise((r) => setTimeout(r, 0));
@@ -77,11 +77,14 @@ export async function recordClick(env: Env, req: Request, link: LinkRow, domain:
     // An own-host referrer is the protected link's form page (same-origin policy), never where the visitor came from.
     const ref = referrerHost(req.headers.get("referer"));
     const s = ua ?? "";
+    const q = new URL(req.url).searchParams;
     env.CLICKS?.writeDataPoint({
       indexes: [domain.id],
-      // S10 appended blob10-13 (os, browser, language, place): older points simply have them empty.
-      blobs: [domain.id, link.id, link.slug, country, device, ref === referrerHost(req.url) ? "" : ref, qr ? "qr" : "typed", kind, visitor,
-        osOf(s), browserOf(s), languageOf(req.headers.get("accept-language")), placeOf(cf, country)],
+      // S10 appended blob10-13 (os, browser, language, place), S13 blob14-17 (print code, utm_source, utm_medium, utm_campaign):
+      // older points simply have them empty.
+      blobs: [domain.id, link.id, link.slug, country, device, ref === referrerHost(req.url) ? "" : ref, qr.qr ? "qr" : "typed", kind, visitor,
+        osOf(s), browserOf(s), languageOf(req.headers.get("accept-language")), placeOf(cf, country),
+        qr.qr ? qr.code : "", utmValue(q.get("utm_source")), utmValue(q.get("utm_medium")), utmValue(q.get("utm_campaign"))],
       doubles: [1],
     });
   } catch (e) {

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { AnalyticsReport } from "../api";
 import { PHONE, useMedia } from "../shell/narrow";
-import { bucketLabel, chartGeometry, DESK, PHONE_BOX } from "./chart";
+import { bucketLabel, chartGeometry, dayTicks, DESK, hourDayLabel, PHONE_BOX } from "./chart";
 import { fmt } from "./view";
 
 /** Keys on the focused chart (handled by its onKeyDown) and their text on the shortcuts sheet. */
@@ -24,9 +24,13 @@ type Active = { i: number; x: number; y: number } | null;
 
 /** Stacked bar chart of clicks per bucket (QR bottom, typed top) with a hover and keyboard tooltip, or the same data as a table. */
 export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Props) {
-  const rows = series.map((s) => ({ label: bucketLabel(s.bucket, unit), qr: s.qr, typed: s.typed }));
+  const phone = useMedia(PHONE);
+  // S13 R8: the 7 day view is hourly too. Its points name the day as well as the hour, and the axis labels the days.
+  const days = unit === "hour" && series.length > 48;
+  const ticks = days ? dayTicks(series.map((s) => s.bucket), phone ? 2 : 1) : [];
+  const rows = series.map((s, i) => ({ label: days ? hourDayLabel(s.bucket) : bucketLabel(s.bucket, unit), qr: s.qr, typed: s.typed, tick: ticks[i] }));
   const total = rows.reduce((n, r) => n + r.qr + r.typed, 0);
-  const g = chartGeometry(rows, useMedia(PHONE) ? PHONE_BOX : DESK);
+  const g = chartGeometry(rows, phone ? PHONE_BOX : DESK);
   const { W, H } = g.box;
   const [active, setActive] = useState<Active>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -53,7 +57,7 @@ export function ClicksChart({ series, unit, table, onToggle, empty = EMPTY }: Pr
     tip.style.top = `${active.y}px`;
   }, [active]);
 
-  const title = unit === "hour" ? "Clicks per hour, last 24 hours" : `Clicks per day, ${rows[0]?.label ?? ""} to ${rows.at(-1)?.label ?? ""}`;
+  const title = unit === "hour" ? `Clicks per hour, last ${days ? "7 days" : "24 hours"}` : `Clicks per day, ${rows[0]?.label ?? ""} to ${rows.at(-1)?.label ?? ""}`;
 
   // Keyboard: put the tip over the top of bar i (viewBox units scaled to the drawn size).
   const atBar = (i: number): Active => {

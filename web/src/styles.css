@@ -675,6 +675,16 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .bars .bt svg{display:block;width:100%;height:3px}
 .bars .bt .bg{fill:var(--line-soft)} .bars .bt .fg{fill:color-mix(in srgb,var(--accent) 70%,var(--card))}
 .bd .empty,.card-b>.empty{margin:0;font-size:13px}
+.bd.c4{grid-template-columns:repeat(4,minmax(0,1fr))}
+/* S13: a breakdown row that filters the page; pressed while its filter is on */
+.bars .hb-f{border:0;background:none;padding:0;font:inherit;text-align:left;cursor:pointer}
+.bars .hb-f:hover{color:var(--text);text-decoration:underline}
+.bars .hb-f[aria-pressed="true"]{color:var(--text);font-weight:600}
+.recent .card-b{padding:8px 16px 12px}
+.recent .rtable{width:100%}
+.rwrap{overflow-x:auto;max-width:100%}
+.rtable td{white-space:nowrap}
+.rtable td.mono{font-family:var(--mono);font-size:12.5px}
 .cols2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
 .cols2.one{grid-template-columns:minmax(0,1fr)}
 .an-filters{display:grid;gap:12px}
@@ -713,6 +723,17 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .qr-edit .qr{min-height:60px}
 .qr-style{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
 .qr-style input[type=color]{display:block;width:56px;height:36px;border:1px solid var(--line);border-radius:var(--r-ctl);background:var(--inset);padding:3px;cursor:pointer}
+/* S13: share pages and labelled QR prints, compact rows (title, count and action on one line) */
+.rows li .end{margin-left:auto}
+.share-url,.qrl-add{display:flex;gap:8px;align-items:center}
+.share-url .input,.qrl-add .input{flex:1;min-width:0}
+.qrl{margin-top:14px;display:grid;gap:8px}
+.qrl h3{margin:0;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.qrl ul{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.qrl li{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:36px;border-top:1px solid var(--line-soft);padding-top:4px}
+.qrl li .name{flex:1;min-width:0;overflow-wrap:anywhere}
+.qrl li .code{color:var(--faint);font-family:var(--mono);font-size:12px}
+.qrl li .input{flex:1;min-width:120px}
 
 /* ---------- responsive: keep the widths in step with NARROW and PHONE in shell/narrow.tsx ---------- */
 /* Tablets and phones: list and detail share one column; the detail is a full-screen pushed view with a Back bar. */
@@ -731,6 +752,9 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
   .stats4>div:nth-child(3){border-left:0}
   .stats4>div:nth-child(n+3){border-top:1px solid var(--line-soft)}
   .cols2{grid-template-columns:minmax(0,1fr)}
+  .bd.c4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bd.c4>section:nth-child(3){border-left:0}
+  .bd.c4>section:nth-child(n+3){border-top:1px solid var(--line-soft)}
   .setwrap{grid-template-columns:minmax(0,1fr);grid-template-rows:max-content minmax(0,1fr);align-content:start}
   .subnav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}
   .subnav a{white-space:nowrap}
@@ -795,7 +819,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
   .log li::after{left:75px}
 
   /* touch: 44 px targets, 16 px text in fields (no iOS zoom on focus) */
-  .btn,.btn.sm,.bulkbar .btn,.chip,.chips .chip,.nav a,.search,.sug,.p-item,.seg button,.seg a,.tab,.subnav a,.rule,.chk,.check,.input,.ctl,.ctl select,.ctl input,.dd-it,.custom input,.sblock .btn{min-height:44px}
+  .btn,.btn.sm,.bulkbar .btn,.chip,.chips .chip,.nav a,.search,.sug,.p-item,.seg button,.seg a,.tab,.subnav a,.rule,.chk,.check,.input,.ctl,.ctl select,.ctl input,.dd-it,.custom input,.sblock .btn,.bars .hb-f{min-height:44px}
   .btn,.btn.sm{height:44px;font-size:15px}
   .btn.icon,.btn.sm.icon{width:44px}
   .x-btn{width:44px;height:44px}
@@ -845,7 +869,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
   .card2-h{flex-wrap:wrap}
   .chart text{font-size:11px}
   .tip{white-space:normal;width:max-content;max-width:220px}
-  .bd{grid-template-columns:minmax(0,1fr)}
+  .bd,.bd.c4{grid-template-columns:minmax(0,1fr)}
   .bd>section{border-left:0;border-top:1px solid var(--line-soft)}
   .bd>section:first-child{border-top:0}
   .tabs{width:100%}

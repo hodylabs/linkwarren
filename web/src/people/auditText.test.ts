@@ -32,6 +32,13 @@ describe("describeAudit", () => {
     });
     expect(d({ action: "link.delete", detail: { host: "go.test", slug: "x" } }).text).toBe("deleted");
   });
+  it("QR prints and share pages read as sentences", () => {
+    expect(d({ action: "qr_label.create", detail: { host: "go.test", slug: "spring", code: "ab12cd", label: "Flyer" } }))
+      .toMatchObject({ text: "added the QR print", code: "Flyer", suffix: " to go.test/spring" });
+    expect(describeAudit(mk({ action: "share.create", targetType: "domain", targetId: "d1", detail: { share: "s1" } }), "uo", [{ id: "d1", host: "go.test" }]))
+      .toMatchObject({ text: "made a share page for", code: "go.test" });
+    expect(d({ action: "share.revoke", targetType: "link", targetId: "l1", detail: { share: "s1" } }).text).toBe("turned off a share page for");
+  });
   it("link.move names both hosts and says the old address forwards", () => {
     expect(d({ action: "link.move", detail: { fromHost: "go.test", toHost: "b.test", slug: "spring", oldAddress: "forward" } })).toMatchObject({
       text: "moved", code: "go.test/spring", suffix: " to b.test, the old address forwards",

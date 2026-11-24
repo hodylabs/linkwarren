@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ApiError, type AnalyticsReport, type DetailReport } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
@@ -8,12 +8,13 @@ import { useOpenSheets } from "../shell/Sheet";
 import { Icon, Kbd, ScreenHeader, Seg } from "../shell/ui";
 import { can } from "../perms";
 import { useApp } from "../state";
-import { Breakdowns, linkPage } from "./Breakdowns";
+import { Breakdowns, DIM_LABEL, filterText, linkPage } from "./Breakdowns";
 import { BusyTimes } from "./BusyTimes";
 import { ClicksChart } from "./ClicksChart";
 import { downloadCsv } from "./csv";
 import { DomainPicker } from "./DomainPicker";
-import { filtersQuery, rangeProblem, readFilters, utcToday, type Filters, type Range } from "./filters";
+import { filtersQuery, MAX_FILTERS, rangeProblem, readFilters, utcToday, withFilter, type DimFilter, type Filters, type Range } from "./filters";
+import { RecentClicks } from "./RecentClicks";
 import { tiles } from "./view";
 import { viewerZone } from "../time";
 import { shortUrl } from "../links/linkView";
@@ -41,8 +42,8 @@ const LIVE_NOTE = {
 } as const;
 /** The 24 hour view reads the live data only, so with live off or unavailable it has no clicks to show. */
 const HOURLY_EMPTY = {
-  off: "Hourly clicks need live clicks, which are off on this instance. Pick 7 days or longer for daily totals.",
-  unavailable: "Hourly clicks could not be loaded. Try again shortly, or pick 7 days or longer for daily totals.",
+  off: "Hourly clicks need live clicks, which are off on this instance. Pick 30 days or longer for daily totals.",
+  unavailable: "Hourly clicks could not be loaded. Try again shortly, or pick 30 days or longer for daily totals.",
 } as const;
 const DEBOUNCE_MS = 250;
 const DETAIL_NOTE = {
@@ -245,7 +246,29 @@ export function AnalyticsScreen() {
     if (fromRef.current && fromRef.current.value !== f.from) fromRef.current.value = f.from;
     if (toRef.current && toRef.current.value !== f.to) toRef.current.value = f.to;
   }, [f.from, f.to, custom]);
-  const anyFilter = n > 0 || f.q !== "" || f.range === "custom";
+  // S13: breakdown filters. A row click adds its filter (or removes it when it is already on); one per dimension, at most six.
+  const activeRef = useRef<HTMLDivElement>(null);
+  const refocus = useRef<number | null>(null);
+  const sameF = (a: DimFilter, b: DimFilter) => a.dim === b.dim && a.value === b.value;
+  const pickFilter = (x: DimFilter) => {
+    if (f.f.some((y) => sameF(x, y))) return go({ f: f.f.filter((y) => !sameF(x, y)) });
+    const next = withFilter(f.f, x.dim, x.value);
+    if (next) go({ f: next });
+    else announce(`At most ${MAX_FILTERS} filters. Remove one first.`);
+  };
+  const removeFilter = (i: number) => {
+    refocus.current = i;
+    go({ f: f.f.filter((_, j) => j !== i) });
+  };
+  // A removed chip takes the focused button with it: focus the chip now in its place, else the date range.
+  useLayoutEffect(() => {
+    const i = refocus.current;
+    if (i === null) return;
+    refocus.current = null;
+    const left = activeRef.current?.querySelectorAll<HTMLButtonElement>(".fpill.dim button") ?? [];
+    (left[Math.min(i, left.length - 1)] ?? document.querySelector<HTMLElement>('.fbar [role=radiogroup] [aria-checked="true"]'))?.focus();
+  }, [f.f.length]);
+  const anyFilter = n > 0 || f.q !== "" || f.range === "custom" || f.f.length > 0;
   // Invalid filters or a failed request show no numbers; a newer request in flight dims the older ones (aria-busy).
   const report = !invalid && !error ? loaded?.report ?? null : null;
   const stale = report !== null && loaded?.key !== key;
@@ -365,7 +388,7 @@ export function AnalyticsScreen() {
             </label>}
             <span className="end">
               {/* Enabled only while the report on screen answers the current filters: the CSV is built from it (R10). */}
-              <button type="button" className="btn" ref={exportRef} disabled={!canExport} aria-keyshortcuts="X" onClick={() => canExport && downloadCsv(report, shown)}>
+              <button type="button" className="btn" ref={exportRef} disabled={!canExport} aria-keyshortcuts="X" onClick={() => canExport && downloadCsv(report, shown, f.f)}>
                 <Icon name="dl" />Export CSV<span className="k2">X</span>
               </button>
             </span>
@@ -373,14 +396,14 @@ export function AnalyticsScreen() {
           <p className="retention">
             <Icon name="clock" />
             <span>
-              <span>Bots and link previews are left out</span>. Each click keeps its full detail for three months (Analytics Engine retention); older days keep daily totals, countries, devices and referrers only.
+              <span>Bots and link previews are left out</span>. Each click keeps its full detail for three months (Analytics Engine retention); older days keep daily totals and the top values of each breakdown, and filters cover the last three months.
             </span>
           </p>
         </div>
         {badLink && <p className="err" role="alert">That link was not found. Open it again from Links or go back to all analytics.</p>}
         {invalid && !badLink && <p className="err" role="alert">{problem === "order" ? "From must be on or before To" : errorText("bad_range")}</p>}
         {error && !invalid && <p className="err" role="alert">{error}</p>}
-        <div className="active">
+        <div className="active" ref={activeRef}>
           {anyFilter && (
             <>
               {n > 0 && (
@@ -395,6 +418,27 @@ export function AnalyticsScreen() {
                   <button type="button" aria-label="Clear link search" onClick={clearQ}>×</button>
                 </span>
               )}
+              {f.f.map((x, i) => {
+                const text = filterText(x, hostOf, det?.prints);
+                return (
+                  <span className="fpill dim" key={x.dim}>
+                    {DIM_LABEL[x.dim]} <b>{text}</b>
+                    <button
+                      type="button"
+                      aria-label={`Remove filter ${DIM_LABEL[x.dim]} ${text}`}
+                      aria-keyshortcuts="Delete Backspace"
+                      onClick={() => removeFilter(i)}
+                      onKeyDown={(e: KeyboardEvent) => {
+                        if (e.key !== "Delete" && e.key !== "Backspace") return;
+                        e.preventDefault();
+                        removeFilter(i);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
               {f.range === "custom" && (
                 <span className="fpill">
                   Dates <b>{f.from} to {f.to}</b>
@@ -411,6 +455,7 @@ export function AnalyticsScreen() {
           <div className={stale ? "an-data stale" : "an-data"} aria-busy={stale}>
             {report.live !== "ok" && <p className="note" role="status">{LIVE_NOTE[report.live]}</p>}
             {report.truncated && <p className="note" role="status">Showing the first 500 matching links</p>}
+            {report.filteredFrom && <p className="note" role="status">Filters cover the last 90 days only, so this shows {report.filteredFrom} on.</p>}
             <div className="card an-sum">
               <div className={noClicks ? "stats4 zero" : "stats4"}>
                 {tiles(report).map((t) => (
@@ -452,12 +497,14 @@ export function AnalyticsScreen() {
                 range={filtersQuery({ ...f, domains: [], q: "" })}
                 note={coverage}
                 busy={shown ? <BusyTimes hours={shown.hours} zone={zone} /> : undefined}
+                filters={{ on: f.f, pick: pickFilter }}
               />
             )}
             {det !== undefined && det?.live !== "ok" && !noClicks && <p className="note" role="status">{DETAIL_NOTE[det?.live ?? "unavailable"]}</p>}
             <p className="hint">Only clicks since this version record the operating system, browser, language and place.</p>
           </div>
         )}
+        {!invalid && <RecentClicks query={key} perLink={isLink} />}
       </div>
     </>
   );

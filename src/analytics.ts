@@ -1,4 +1,4 @@
-import { aeConfigured, aeDetail, AeError, aeReport, type DayRow, type DimCount, type LinkRow, type Scope, type Unit } from "./ae";
+import { aeConfigured, aeDetail, AeError, aeRecent, aeReport, type DayRow, type DetailDim, type DimCount, type LinkRow, type Scope, type Unit } from "./ae";
 import { utcDay } from "./clicks";
 import { rolledThrough } from "./cron";
 import type { Env } from "./env";
@@ -26,6 +26,8 @@ export type AnalyticsReport = {
   countries: Count[]; devices: Count[]; referrers: Count[];
   /** Per-link report only (S10). */
   link?: { linkId: string; host: string; slug: string; name?: string | null };
+  /** S13 R1: a filtered report whose range starts before the Analytics Engine window covers only this day onwards. */
+  filteredFrom?: string;
 };
 
 const DAY_MS = 86_400_000;
@@ -46,13 +48,14 @@ function realDay(v: string | undefined): Date | null {
   return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v ? d : null; // rejects 2026-02-30
 }
 
-export function resolveRange(q: RangeQuery, nowSec: number): Range | { error: "bad_range" } {
+/** `hourly`: 7 days use the hour unit (S13 R8), for the dashboard report when Analytics Engine is read; daily otherwise (D1 rollups). */
+export function resolveRange(q: RangeQuery, nowSec: number, hourly = false): Range | { error: "bad_range" } {
   const today = dayStart(utcDay(nowSec));
   const tomorrow = addMs(today, DAY_MS);
   const back = (from: Date, to: Date) => ({ from: addMs(from, from.getTime() - to.getTime()), to: from });
-  if (q.range === "1") {
+  if (q.range === "1" || (q.range === "7" && hourly)) {
     const to = new Date(Math.floor((nowSec * 1000) / HOUR_MS) * HOUR_MS + HOUR_MS);
-    const from = addMs(to, -24 * HOUR_MS);
+    const from = addMs(to, -(q.range === "1" ? 24 : 7 * 24) * HOUR_MS);
     return { from, to, unit: "hour", prev: back(from, to) };
   }
   if (q.range === "custom") {
@@ -115,8 +118,14 @@ function scopeSql(scope: Scope, binds: unknown[]): string {
 }
 
 export type { DayRow, DimCount, LinkRow } from "./ae";
-/** `rolled`: the rollup mark this load capped its D1 read at (daily reports; null when none), so a caller checks the same mark. */
-export type ReportRows = { days: DayRow[]; links: LinkRow[]; dims: DimCount[]; live: Live; rolled?: string | null };
+/**
+ * `rolled`: the rollup mark this load capped its D1 read at (daily reports; null when none), so a caller checks the same mark.
+ * `filteredFrom` (S13 R1): a filtered load clipped to the Analytics Engine window starts there; its previous window is then partial.
+ */
+export type ReportRows = { days: DayRow[]; links: LinkRow[]; dims: DimCount[]; live: Live; rolled?: string | null; filteredFrom?: string; prevPartial?: boolean };
+
+/** The first UTC day Analytics Engine still holds in full (today - 89). */
+const aeFloor = (nowSec: number) => addMs(dayStart(utcDay(nowSec)), -(AE_DAYS - 1) * DAY_MS);
 
 /**
  * D1 rollups, summed in SQL so the Worker gets at most (days + links + dim values) rows, never days x links.
@@ -181,10 +190,17 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
     dims.set(k, c);
   };
   let rolled: string | null = null;
-  const out = (live: Live): ReportRows => ({ days: [...days.values()], links: [...links.values()], dims: [...dims.values()], live, rolled });
+  const floor = aeFloor(nowSec);
+  // R1: the D1 rollups keep one count per dimension, so a filtered load reads Analytics Engine only, inside its window.
+  const filtered = !!scope.filters?.length;
+  const clip = filtered && range.from < floor ? { filteredFrom: bucketKey(floor, "day") } : {};
+  const partial = filtered && start < floor ? { prevPartial: true } : {};
+  const out = (live: Live): ReportRows => ({ days: [...days.values()], links: [...links.values()], dims: [...dims.values()], live, rolled, ...clip, ...partial });
 
   let aeFrom = start;
-  if (unit === "day") {
+  if (filtered) {
+    if (aeFrom < floor) aeFrom = floor;
+  } else if (unit === "day") {
     const w = (rolled = await rolledThrough(env));
     const first = bucketKey(start, "day");
     const last = bucketKey(addMs(range.to, -DAY_MS), "day");
@@ -195,7 +211,6 @@ export async function loadRows(env: Env, range: Range, scope: Scope, nowSec = Ma
       d1.dims.forEach(addDim);
       aeFrom = addMs(dayStart(w), DAY_MS);
     }
-    const floor = addMs(dayStart(utcDay(nowSec)), -(AE_DAYS - 1) * DAY_MS);
     if (aeFrom < floor) aeFrom = floor;
   }
   if (!aeConfigured(env)) return out("off");
@@ -262,43 +277,147 @@ export function offsetMin(tz: Tz, ms: number): number {
  */
 export const shiftOf = (tz: Tz, ms: number): number => ((((offsetMin(tz, ms) % 60) + 60) % 60) * 60);
 
+/** S13 print breakdown row: a QR print code of one link ("" = a scan with no code), with that link's label for it (null: none). */
+export type PrintCount = { dim: "print"; value: string; linkId: string; label: string | null; clicks: number };
+/** S13 UTM breakdown row, the contract's `{ dim, value, clicks }`. */
+export type DimItem = { dim: DetailDim; value: string; clicks: number };
 export type DetailReport = {
-  /** The UTC days covered; both "" when the range is wholly older than AE_DAYS. */
+  /** The UTC days Analytics Engine covers (the hours grid and filtered detail); both "" when the range is wholly older than AE_DAYS. */
   live: Live; from: string; to: string;
   os: Count[]; browsers: Count[]; languages: Count[]; places: Count[];
+  prints: PrintCount[]; utmSources: DimItem[]; utmMediums: DimItem[]; utmCampaigns: DimItem[];
   /** hours[weekday][hour], Monday first, in the viewer's zone. */
   hours: number[][];
+  /** S13 R1: a filtered detail whose range starts before the Analytics Engine window covers only this day onwards. */
+  filteredFrom?: string;
+  /** Some print or UTM breakdowns were too big for one request (a scope over its query budget, or over 2,000 print rows): those are empty. */
+  cut?: true;
 };
 
+/** Rolled detail value "(other)": the sum of a day's values past the top 20 (R3). */
+export const OTHER = "(other)";
+type DetailRow = { dim: DetailDim; value: string; clicks: number; linkId?: string };
+
 /**
- * Per-click detail (S10): Analytics Engine only, so it covers the report range clipped to the last AE_DAYS days
- * (Analytics Engine keeps three months). `from`/`to` say which UTC days it covers.
+ * Per-click detail: the breakdowns read the S13 detail rollup (clicks_daily_detail) for the days before the Analytics Engine
+ * window and Analytics Engine for the window (the last AE_DAYS days), with the seam at the window's first day, so no day is
+ * read twice. The busiest-hours grid and any filtered read (R1) are Analytics Engine only; `from`/`to` say which UTC days it covers.
  */
 export async function loadDetail(env: Env, range: Range, scope: Scope, tz: Tz, nowSec = Math.floor(Date.now() / 1000)): Promise<DetailReport> {
-  const floor = addMs(dayStart(utcDay(nowSec)), -(AE_DAYS - 1) * DAY_MS);
+  const floor = aeFloor(nowSec);
   const from = range.from > floor ? range.from : floor;
+  const filtered = !!scope.filters?.length;
   const out: DetailReport = {
     live: "ok", from: from.toISOString().slice(0, 10), to: addMs(range.to, -1).toISOString().slice(0, 10),
-    os: [], browsers: [], languages: [], places: [], hours: Array.from({ length: 7 }, () => new Array<number>(24).fill(0)),
+    os: [], browsers: [], languages: [], places: [], prints: [], utmSources: [], utmMediums: [], utmCampaigns: [],
+    hours: Array.from({ length: 7 }, () => new Array<number>(24).fill(0)),
+    ...(filtered && range.from < floor ? { filteredFrom: bucketKey(floor, "day") } : {}),
   };
-  if (!aeConfigured(env)) return { ...out, live: "off" };
-  if (from >= range.to) return { ...out, from: "", to: "" }; // the whole range is older than Analytics Engine keeps
+  const acc = new Map<string, DetailRow>();
+  const add = (r: DetailRow) => {
+    const k = `${r.dim}|${r.linkId ?? ""}|${r.value}`;
+    const c = acc.get(k) ?? acc.set(k, { ...r, clicks: 0 }).get(k)!;
+    c.clicks += r.clicks;
+  };
+  if (!filtered && range.from < floor && scope.domainIds?.length !== 0 && scope.linkIds?.length !== 0) {
+    const b: unknown[] = [bucketKey(range.from, "day"), bucketKey(range.to < floor ? range.to : floor, "day")];
+    const rows = await env.DB.prepare(
+      `SELECT dim, value, CASE WHEN dim = 'print' THEN link_id END AS linkId, SUM(clicks) AS clicks FROM clicks_daily_detail WHERE day >= ? AND day < ?${scopeSql(scope, b)} GROUP BY dim, value, 3`,
+    ).bind(...b).all<{ dim: DetailDim; value: string; linkId: string | null; clicks: number }>();
+    for (const r of rows.results) add({ dim: r.dim, value: r.value, clicks: r.clicks, ...(r.linkId === null ? {} : { linkId: r.linkId }) });
+  }
+  const finish = (o: DetailReport) => fill(env, o, [...acc.values()], scope);
+  if (!aeConfigured(env)) return finish({ ...out, live: "off" });
+  if (from >= range.to) return finish({ ...out, from: "", to: "" }); // the whole range is older than Analytics Engine keeps
   const shift = shiftOf(tz, range.to.getTime());
   let rows: Awaited<ReturnType<typeof aeDetail>>;
   try {
     rows = await aeDetail(env, from, range.to, scope, shift);
   } catch (e) {
     console.error("analytics detail read failed", errCode(e));
-    return { ...out, live: "unavailable" };
+    return finish({ ...out, live: "unavailable" });
   }
-  const key = { os: "os", browser: "browsers", language: "languages", place: "places" } as const;
-  for (const r of rows.dims) out[key[r.dim]].push({ value: r.value, clicks: r.clicks });
-  for (const k of Object.values(key)) out[k].sort((a, b) => b.clicks - a.clicks);
+  // A cut dim is left out whole, never shown for only the older days the rollup holds; a per-code print answer makes every print
+  // row per code, the rollup's too, so one code is one row.
+  for (const k of [...acc.keys()]) if (rows.cut.includes(acc.get(k)!.dim) || (rows.printByCode && acc.get(k)!.dim === "print")) {
+    const r = acc.get(k)!;
+    acc.delete(k);
+    if (rows.printByCode && r.dim === "print" && !rows.cut.includes("print")) rows.dims.push({ ...r, linkId: "" });
+  }
+  rows.dims.forEach(add);
+  if (rows.cut.length) out.cut = true;
   for (const h of rows.hours) {
     const p = localParts(Date.parse(h.bucket) - shift * 1000, tz); // the start of the local hour the bucket holds
     out.hours[p.dow]![p.hour]! += h.clicks;
   }
+  return finish(out);
+}
+
+const NAMED = { os: "os", browser: "browsers", language: "languages", place: "places" } as const;
+const UTM = { utm_source: "utmSources", utm_medium: "utmMediums", utm_campaign: "utmCampaigns" } as const;
+
+/** Sorts the summed detail rows into the report's arrays and names each print by its own link's label. */
+async function fill(env: Env, out: DetailReport, rows: DetailRow[], scope: Scope): Promise<DetailReport> {
+  const live = rows.filter((r) => r.clicks > 0);
+  const labels = await printLabels(env, live.filter((r) => r.dim === "print").map((r) => ({ linkId: r.linkId ?? "", code: r.value })), scope);
+  for (const r of live) {
+    if (r.dim === "print") out.prints.push({ dim: "print", value: r.value, linkId: r.linkId ?? "", label: labels.get(`${r.linkId}|${r.value}`) ?? null, clicks: r.clicks });
+    else if (r.dim in UTM) out[UTM[r.dim as keyof typeof UTM]].push({ dim: r.dim, value: r.value, clicks: r.clicks });
+    else out[NAMED[r.dim as keyof typeof NAMED]].push({ value: r.value, clicks: r.clicks });
+  }
+  for (const k of [...Object.values(NAMED), ...Object.values(UTM), "prints"] as const) (out[k] as { clicks: number }[]).sort((a, b) => b.clicks - a.clicks);
   return out;
+}
+
+/**
+ * Labels for (link, code) pairs, by the code's own link only (a visitor can put any code on any link). Like S12 names: only for a
+ * link whose current domain is in the reader's scope, so a link moved to a domain they cannot use never shows its labels.
+ * Keys are `link|code`.
+ */
+export async function printLabels(env: Env, pairs: { linkId: string; code: string }[], scope: Scope): Promise<Map<string, string>> {
+  const want = pairs.filter((p) => p.linkId && p.code && p.code !== OTHER);
+  if (!want.length) return new Map();
+  const b: unknown[] = [JSON.stringify(want.map((p) => ({ l: p.linkId, c: p.code })))];
+  let dom = "";
+  if (scope.domainIds) {
+    dom = " AND l.domain_id IN (SELECT value FROM json_each(?))";
+    b.push(JSON.stringify(scope.domainIds));
+  }
+  const rows = await env.DB.prepare(
+    `SELECT q.link_id AS linkId, q.code, q.label FROM json_each(?) j
+     JOIN qr_labels q ON q.link_id = json_extract(j.value, '$.l') AND q.code = json_extract(j.value, '$.c')
+     JOIN links l ON l.id = q.link_id WHERE 1 = 1${dom}`,
+  ).bind(...b).all<{ linkId: string; code: string; label: string }>();
+  return new Map(rows.results.map((r) => [`${r.linkId}|${r.code}`, r.label]));
+}
+
+/** S13 recent clicks item (the contract shape): no IP, visitor code or user agent. */
+export type RecentItem = {
+  at: string; linkId: string; host: string; slug: string; country: string; place: string; device: string; os: string; browser: string;
+  language: string; source: string; print: string; printLabel: string | null; referrer: string; utmSource: string; utmMedium: string; utmCampaign: string;
+};
+export const RECENT_MAX = 50;
+
+/** The last RECENT_MAX human clicks of the last 24 hours in `scope`, newest first (Analytics Engine only). */
+export async function loadRecent(env: Env, scope: Scope, nowSec: number): Promise<{ items: RecentItem[]; live: Live }> {
+  if (!aeConfigured(env)) return { items: [], live: "off" };
+  const to = new Date((nowSec + 1) * 1000), from = addMs(to, -DAY_MS);
+  let rows: Awaited<ReturnType<typeof aeRecent>>;
+  try {
+    rows = await aeRecent(env, from, to, scope, RECENT_MAX);
+  } catch (e) {
+    console.error("analytics recent read failed", errCode(e));
+    return { items: [], live: "unavailable" };
+  }
+  if (!rows.length) return { items: [], live: "ok" };
+  const ids = JSON.stringify([...new Set(rows.map((r) => r.domainId))]);
+  const hosts = new Map((await env.DB.prepare("SELECT id, host FROM domains WHERE id IN (SELECT value FROM json_each(?))").bind(ids)
+    .all<{ id: string; host: string }>()).results.map((d) => [d.id, d.host]));
+  const labels = await printLabels(env, rows.filter((r) => r.source === "qr").map((r) => ({ linkId: r.linkId, code: r.print })), scope);
+  const items = rows.map(({ domainId, ...r }): RecentItem => ({
+    ...r, host: hosts.get(domainId) ?? "", printLabel: r.source === "qr" ? labels.get(`${r.linkId}|${r.print}`) ?? null : null,
+  }));
+  return { items, live: "ok" };
 }
 
 /** The link a per-link report is about, and its scope: the caller's usable domains (so a moved link's clicks on a domain they cannot use stay out) and this one link. Unknown or not visible is not_found either way. */
@@ -372,7 +491,8 @@ export function buildReport(range: Range, rows: ReportRows, hosts: Map<string, s
     totals: {
       clicks: totals.qr + totals.typed, qr: totals.qr, typed: totals.typed, bots: totals.bots,
       visitors: opts.visitors ? totals.visitors : null,
-      prevClicks: range.prev && prev > 0 ? prev : null,
+      // A filtered previous window clipped by the Analytics Engine window would undercount: no comparison (R1).
+      prevClicks: range.prev && prev > 0 && !rows.prevPartial ? prev : null,
     },
     series: [...series.values()],
     links: desc(links).slice(0, TOP_LINKS),
@@ -380,5 +500,6 @@ export function buildReport(range: Range, rows: ReportRows, hosts: Map<string, s
     countries: desc(by.country),
     devices: desc(by.device),
     referrers: desc(by.referrer),
+    ...(rows.filteredFrom ? { filteredFrom: rows.filteredFrom } : {}),
   };
 }

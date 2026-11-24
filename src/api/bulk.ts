@@ -269,6 +269,14 @@ export async function bulk(c: Context<E>) {
           targetId: link.id, k, g, r: link.updatedAt, f: rows[i]!.f,
           detail: { fromHost: domain.host, toHost: target.host, slug: link.slug, url: link.url, oldAddress: "forward", forwarderId: rows[i]!.f },
         })), { sql: `${MINE} AND ${G.sql}`, binds: G.binds }),
+        // S13 R7: a moved link stops being shared for good (moving it back must not wake an old share page). Only the links
+        // this batch moved: the OWN mark is still on them here. Driven from the active link shares, so a move reads no links for
+        // this unless one of them is shared.
+        // shortcut: reads every active link share once per forward move (at most 10 per link); drive it from json_each if instances keep thousands.
+        env.DB.prepare(
+          `UPDATE share_links SET revoked_at = ? WHERE scope = 'link' AND revoked_at IS NULL
+           AND EXISTS (SELECT 1 FROM json_each(?) j WHERE json_extract(j.value,'$.t') = share_links.scope_id AND ${OWN})`,
+        ).bind(now, json),
         // The editor back on each link this batch moved (the OWN mark).
         env.DB.prepare(`UPDATE links SET updated_by = ? FROM json_each(?) j WHERE links.id = json_extract(j.value,'$.t') AND links.updated_by = json_extract(j.value,'$.f') AND ${G.sql}`)
           .bind(user.id, json, ...G.binds),

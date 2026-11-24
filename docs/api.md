@@ -335,3 +335,52 @@ curl -s -H "Authorization: Bearer $LW_KEY" "$LW/analytics/links?ids=<link id>,<l
 - Bots and link previews are not counted.
 
 Errors: `400 bad_query` (no ids, more than 50, or a malformed id), `403 forbidden` (a link on a domain the key cannot see analytics for).
+
+## Dashboard endpoints used by analytics and QR prints
+
+These are part of the dashboard's own API (`/api`, signed in to the dashboard), not of `/api/v1`: a key cannot call them. They are listed here for people who build on or check a self-hosted instance.
+
+### Analytics filters
+
+`GET /api/analytics` (the report, and one link's report with `link=<id>`), `GET /api/analytics/detail` and `GET /api/analytics/recent` take the same scope (`range`, `from`, `to`, `domains`, `q`, `link`) plus repeatable filters `f=<dimension>:<value>`:
+
+- Dimensions: `country`, `place`, `device`, `os`, `browser`, `language`, `referrer`, `source` (`qr` or `typed`), `domain` (a domain id), `print` (a print code, or empty for a QR scan with no code), `utm_source`, `utm_medium`, `utm_campaign`.
+- At most 6 filters, each dimension once, values up to 100 characters; they all have to match. The value is split from the dimension at the first colon, so `f=referrer:example.com` and `f=print:` both work. A `referrer` filter counts typed or clicked visits and a `print` filter counts QR scans, like their breakdowns.
+- An unknown or repeated dimension, a filter without a colon, a value over 100 characters or more than 6 filters answer `400 {"error":"bad_filter"}`.
+- Filters read the last 90 days only. A filtered range that starts earlier answers for the last 90 days and says from when, in `filteredFrom` (`YYYY-MM-DD`), and `totals.prevClicks` is `null`.
+- With live analytics on, `range=7` answers in hours (`unit: "hour"`, 168 points), like `range=1`.
+
+The detail answer has, next to `os`, `browsers`, `languages` and `places` (`{ value, clicks }`):
+
+- `prints`: `{ dim: "print", value, linkId, label, clicks }`, one per link and print code; `label` is that link's label for the code, or `null` (no code, or a code that is not one of its labels).
+- `utmSources`, `utmMediums`, `utmCampaigns`: `{ dim, value, clicks }`.
+- When the range has more than 2,000 link and print pairs, `prints` falls back to one row per code over all links, with `linkId` "" and `label` null.
+- `cut: true` when some of these could not be read within one request: the scope is too big for prints and UTM values (a search matching several hundred links over many domains: all four are empty), or even the per-code prints of one part of the scope are over 2,000 rows (`prints` is empty). A big scope is read in parts, so `prints` can hold more than 2,000 rows in all. The rest of the detail is complete. A scope too big even for the operating systems, browsers, languages, places and hours answers `live: "unavailable"`.
+
+### `GET /api/analytics/recent`
+
+The last 50 clicks by people in the last 24 hours, newest first, scoped like the report (`range`, `from` and `to` are ignored, never refused). Analytics Engine may sample clicks on a very busy instance, so these are the latest clicks it kept:
+
+```json
+{
+  "items": [
+    { "at": "2026-11-20T11:30:00Z", "linkId": "<link id>", "host": "go.example.com", "slug": "spring", "country": "CA", "place": "Toronto, CA",
+      "device": "mobile", "os": "iOS", "browser": "Safari", "language": "en-ca", "source": "qr", "print": "k3x9qa", "printLabel": "Flyer",
+      "referrer": "", "utmSource": "", "utmMedium": "", "utmCampaign": "" }
+  ],
+  "live": "ok"
+}
+```
+
+No IP address, visitor code or user agent. `live` is `off` without live analytics and `unavailable` when the read failed (`items` is then empty).
+
+### QR print labels
+
+The same permission as editing the link; every change is in the audit log (`qr_label.create`, `qr_label.rename`, `qr_label.delete`).
+
+- `GET /api/links/{id}/qr-labels`: `{ "items": [{ "id", "code", "label", "createdAt" }] }`, oldest first.
+- `POST /api/links/{id}/qr-labels` with `{ "label": "Flyer" }`: `201` with the new label. The server picks the code (6 characters, `a-z` and `0-9`); the QR code's content is `<short URL>?lw=qr.<code>`.
+- `PATCH /api/links/{id}/qr-labels/{labelId}` with `{ "label": "Business card" }`: `200` with the renamed label.
+- `DELETE /api/links/{id}/qr-labels/{labelId}`: `204`.
+
+Errors: `400 invalid_body`, `400 bad_label` (empty, over 100 characters, or control characters), `403 forbidden`, `404 not_found` (no such link or label, or a label of another link), `409 forwarder` (an old address takes no labels), `409 too_many_labels` (20 per link).

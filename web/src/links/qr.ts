@@ -6,7 +6,8 @@ const DARK = "#15181D";
 const LIGHT = "#FFFFFF";
 
 /** What the QR carries: the short link plus the marker the redirect strips and counts as a QR scan. */
-export const qrText = (host: string, slug: string): string => `${shortUrl(host, slug)}?${QR_PARAM}=${QR_VALUE}`;
+/** S13: a labelled print carries its code after the marker (`?lw=qr.<code>`), so analytics can tell the prints apart. */
+export const qrText = (host: string, slug: string, code?: string): string => `${shortUrl(host, slug)}?${QR_PARAM}=${QR_VALUE}${code ? `.${code}` : ""}`;
 
 /** Error correction M unless given; the quiet zone is added when drawing. Throws when the text does not fit a QR code. */
 export const qrMatrix = (text: string, ecc: "L" | "M" | "Q" | "H" = "M"): boolean[][] => encode(text, { ecc, border: 0 }).data;

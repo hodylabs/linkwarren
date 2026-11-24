@@ -43,3 +43,9 @@ A Wi-Fi password is stored encrypted (AES-GCM with the `SECRETS_KEY` secret, see
 ## No API for saved codes
 
 Saved codes are managed in the dashboard only. The `/api/v1` API and the MCP tools have no QR code endpoints. A short link's own QR code needs none: it is the short link with `?lw=qr` added.
+
+## Labelled prints
+
+One link can carry several QR codes, one per print ("Flyer", "Business card", ...), so analytics can tell which print was scanned. Open the link's QR code sheet: under **Labelled prints**, type a label and **Add**. Each label gets a random 6-character code, and its QR code holds the short link with `?lw=qr.<code>` added. Download each one as SVG or PNG from its row; rename or delete it there too. A link can have up to 20 labels; managing them needs the right to edit the link.
+
+The plain code (`?lw=qr`) stays as it was, and codes printed before labels existed keep working: they count as "QR, no label". Deleting a label does not break its printed codes either: they still redirect and count as an unlabelled print.

@@ -43,6 +43,18 @@ describe("toCsv", () => {
       ].join("\n") + "\n",
     );
   });
+  it("S13: leads with the filters it answers, and adds prints and UTM tags when the detail has them", () => {
+    const d = {
+      live: "ok" as const, from: "2026-11-19", to: "2026-11-20", os: [], browsers: [], languages: [], places: [], hours: [],
+      prints: [{ value: "", clicks: 2, label: null }, { value: "flyer1", clicks: 1, label: "Flyer" }],
+      utmSources: [{ value: "newsletter", clicks: 1 }, { value: "", clicks: 3 }], utmMediums: [],
+    };
+    const csv = toCsv(r, "day", d, [{ dim: "country", value: "US" }, { dim: "referrer", value: "" }]);
+    expect(csv.startsWith("filter,value\ncountry,US\nreferrer,\n\nday,")).toBe(true);
+    expect(csv).toContain("\n\nprint,label,clicks\nplain qr,,2\nflyer1,Flyer,1\n\nutm_source,clicks\nnewsletter,1\nnot tagged,3\n\nweekday,hour,clicks");
+    expect(csv).not.toContain("utm_medium"); // empty sections are left out
+    expect(toCsv(r, "day", d).startsWith("day,")).toBe(true);
+  });
   it("uses an hour header for hourly reports", () => {
     expect(toCsv({ ...r, unit: "hour" }, "hour").split("\n")[0]).toBe("hour,from_qr,typed_or_clicked,total");
   });

@@ -84,6 +84,6 @@ export async function handleProtected(req: Request, env: Env, link: LinkRow, dom
     status: 303, // always 303, whatever redirect_code says (R4): POST becomes GET, nothing cacheable pairs URL and destination
     headers: { location: destinationOf(req, link, m.search), "cache-control": "private, no-store", "referrer-policy": "no-referrer", ...HSTS, ...robots(domain) },
   });
-  if (env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m.qr, now).catch(() => {}));
+  if (env.CLICKS && ctx) ctx.waitUntil(recordClick(env, req, link, domain, m, now).catch(() => {}));
   return res;
 }

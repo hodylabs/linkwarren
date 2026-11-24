@@ -44,7 +44,9 @@ const ROUTES: [M, string, Need, string?][] = [
   ["POST", "/api/users/x/resend", ["people.manage"]], ["DELETE", "/api/users/x/invite", ["people.manage"]],
   ["GET", "/api/roles", ["people.manage"]], ["POST", "/api/roles", "owner"], ["PATCH", "/api/roles/x", "owner"], ["DELETE", "/api/roles/x", "owner"],
   ["GET", "/api/audit", ["audit"]],
-  ["GET", "/api/analytics", null], ["GET", "/api/analytics/links", null],
+  ["GET", "/api/analytics", null], ["GET", "/api/analytics/links", null], ["GET", "/api/analytics/detail", null], ["GET", "/api/analytics/recent", null],
+  ["GET", "/api/links/x/qr-labels", null], ["POST", "/api/links/x/qr-labels", null, JSON.stringify({ label: "x" })],
+  ["PATCH", "/api/links/x/qr-labels/y", null, JSON.stringify({ label: "x" })], ["DELETE", "/api/links/x/qr-labels/y", null],
   ["GET", "/api/settings", ["settings"]], ["PATCH", "/api/settings", ["settings"]], ["PUT", "/api/settings/logo", ["settings"]], ["DELETE", "/api/settings/logo", ["settings"]],
   ["GET", "/api/settings/cloudflare", ["settings", "domains.manage"]], ["PATCH", "/api/settings/cloudflare", ["settings"]], ["POST", "/api/settings/cloudflare/check", "owner"],
   ["POST", "/api/settings/cloudflare/setup", ["settings"]], ["POST", "/api/settings/cloudflare/resync", ["settings"]],
@@ -61,6 +63,8 @@ const ROUTES: [M, string, Need, string?][] = [
   ["POST", "/api/export/start", ["data"]], ["POST", "/api/export/page", ["data"]],
   ["GET", "/api/qr-codes", ["links.create", "links.editAny"]], ["POST", "/api/qr-codes", ["links.create"]],
   ["GET", "/api/qr-codes/x", null], ["PATCH", "/api/qr-codes/x", null], ["DELETE", "/api/qr-codes/x", null],
+  ["GET", "/api/account/alerts", null], ["PUT", "/api/account/alerts", null],
+  ["GET", "/api/shares?link=x", null], ["POST", "/api/shares", null], ["DELETE", "/api/shares/x", null],
 ];
 /** Ruled rows the code does not match yet; each has its own it.fails below, so the suite turns red once the fix lands. */
 const PENDING = new Set<string>(); // rows whose ruled behaviour is not built yet (none)

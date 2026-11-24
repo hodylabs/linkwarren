@@ -29,6 +29,8 @@ import { isV1, v1 } from "./api/v1";
 import { authorize } from "./mcp/authorize";
 import { unsubscribe } from "./digest";
 import { PAGE_HEADERS, unsubscribePage } from "./pages";
+import { sharePage } from "./share";
+import { shares } from "./api/shares";
 
 export const app = new Hono<{ Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } }>();
 
@@ -107,15 +109,22 @@ app.route("/api/keys", keys);
 app.route("/api/agents", agents);
 app.route("/api/export", exportApi);
 app.route("/api/qr-codes", qrCodes);
+app.route("/api/shares", shares);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 
 // S10 weekly email: no sign-in, the signed token is the credential. GET asks, POST (the button or one-click) turns it off.
-app.get("/unsubscribe", (c) => c.body(unsubscribePage("ask"), 200, PAGE_HEADERS));
+// S13 alert emails use the same page with k=alerts (their own table and signature).
+const unsubKind = (k: string | undefined) => (k === "alerts" ? "alerts" : "digest");
+app.get("/unsubscribe", (c) => c.body(unsubscribePage("ask", unsubKind(c.req.query("k"))), 200, PAGE_HEADERS));
 app.post("/unsubscribe", async (c) => {
-  const ok = await unsubscribe(c.env, c.req.query("u") ?? "", c.req.query("t") ?? "");
-  return c.body(unsubscribePage(ok ? "done" : "bad"), ok ? 200 : 400, PAGE_HEADERS);
+  const kind = unsubKind(c.req.query("k"));
+  const ok = await unsubscribe(c.env, c.req.query("u") ?? "", c.req.query("t") ?? "", kind);
+  return c.body(unsubscribePage(ok ? "done" : "bad", kind), ok ? 200 : 400, PAGE_HEADERS);
 });
+
+// S13 R7 share page: no sign-in, the token is the credential. Registered before the dashboard catch-all.
+app.get("/share/:token", (c) => sharePage(c.req.raw, c.env, c.req.param("token")));
 
 // OAuth consent (MCP agents). Reached only through the wrapper, which 404s it while agent connections are off.
 app.route("/authorize", authorize);

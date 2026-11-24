@@ -28,6 +28,14 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     }
     case "link.update": return done("changed", link); // detail does not say which field changed
     case "link.delete": return done("deleted", link, ". The slug is locked, visits go to the domain's not-found page");
+    case "qr_label.create": return done("added the QR print", str(a.detail.label) ?? a.targetId, ` to ${link}`);
+    case "qr_label.rename": return done("renamed the QR print", str(a.detail.label) ?? a.targetId, ` on ${link}`);
+    case "qr_label.delete": return done("removed the QR print", str(a.detail.label) ?? a.targetId, ` from ${link}`);
+    case "share.create":
+    case "share.revoke": {
+      const what = a.targetType === "domain" ? domains.find((d) => d.id === a.targetId)?.host ?? a.targetId : link;
+      return done(a.action === "share.create" ? "made a share page for" : "turned off a share page for", what);
+    }
     case "domain.create": return done("added the domain", host ?? a.targetId);
     case "domain.approve": return done("approved", host ?? a.targetId);
     case "domain.disable": return done("disabled", host ?? a.targetId);
