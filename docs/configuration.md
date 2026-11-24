@@ -91,7 +91,7 @@ Reports also need `CF_ACCOUNT_ID`, `AE_READ_TOKEN` and the `CLICKS` binding. See
 
 Some settings live in D1, not in the config, and are changed in Settings by owners and people with the Settings permission: the instance name and logo, the main domain, the default redirect type (`302` unless changed) and query pass-through (on unless changed) for new links, the Cloudflare controls switch, the agents switch, and **Check for updates** (on by default; see [updating.md](updating.md)).
 
-Settings, Sign-in (app mode, see [sso.md](sso.md)) keeps the Google, GitHub and single sign-on setup in D1: `sso.google.enabled`, `sso.google.clientId`, `sso.github.enabled`, `sso.github.clientId`, `sso.oidc.enabled`, `sso.oidc.issuer`, `sso.oidc.clientId` and `sso.oidc.label` (the button text, "Single sign-on" by default). Only owners change these. The email domain list (auto-join role and enforced single sign-on, at most 50 domains) is changed by owners and people with the Settings permission.
+Settings, Sign-in (app mode, see [sso.md](sso.md)) keeps the Google, GitHub and single sign-on setup in D1: `sso.google.enabled`, `sso.google.clientId`, `sso.github.enabled`, `sso.github.clientId`, `sso.oidc.enabled`, `sso.oidc.issuer`, `sso.oidc.clientId` and `sso.oidc.label` (the button text, "Single sign-on" by default). The email domain list (auto-join role and enforced single sign-on, at most 50 domains) lives there too. Only owners change any of it; people with the Settings permission can read it.
 
 ## Limits in the code
 

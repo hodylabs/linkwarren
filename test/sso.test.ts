@@ -3,6 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import worker from "../src/index";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LIMITS, limitKey } from "../src/limits";
+import { PERMS } from "../src/roles";
 import { ORIGIN, dash } from "./helpers/access";
 import { fakeIdp, ISS } from "./helpers/idp";
 import { call, pathEnv } from "./helpers/path";
@@ -379,6 +380,17 @@ describe("settings", () => {
     expect(await err("nope", { enabled: true })).toEqual({ error: "not_found" });
   });
 
+  it("a callback that overlaps an issuer change binds nothing", async () => {
+    await addUser("a@example.com");
+    idp.s.onToken = async () => {
+      await setting("sso.oidc.issuer", "https://other.example.com");
+      await run("DELETE FROM sso_identities WHERE provider = 'oidc'");
+    };
+    expect(errorOf(await signIn("oidc"))).toBe("not_invited");
+    expect(await all("SELECT * FROM sso_identities")).toEqual([]);
+    expect(await all("SELECT COUNT(*) n FROM sessions")).toEqual([{ n: 0 }]);
+  });
+
   it("a new issuer drops the identities bound under the old one", async () => {
     await addUser("a@example.com");
     await signIn("oidc");
@@ -406,12 +418,32 @@ describe("settings", () => {
     expect((await all("SELECT action FROM audit_log WHERE action LIKE 'email_domain.%' ORDER BY id")).map((r) => r.action)).toEqual(["email_domain.set", "email_domain.set", "email_domain.delete"]);
   });
 
-  it("email domains: auto-join can only give a role the actor holds", async () => {
-    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('rs','Settings','[\"settings\"]',0,1,1), ('rp','People','[\"people.manage\"]',0,1,1)");
-    const s = await signedIn("s@example.com", { roleId: "rs" });
-    const r = await dash("/api/settings/email-domains/example.com", json(s.cookie, "PUT", { joinRoleId: "rp", enforceSso: false }));
-    expect([r.status, await r.json()]).toEqual([403, { error: "forbidden" }]);
-    expect((await dash("/api/settings/email-domains/example.com", json(s.cookie, "PUT", { joinRoleId: null, enforceSso: true }))).status).toBe(200);
+  it("R14: a non-owner with every permission reads the page but every write is refused", async () => {
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('ra','All',?,0,1,1)", JSON.stringify(PERMS));
+    await run("INSERT INTO email_domains (domain, enforce_sso, updated_at) VALUES ('example.com',0,1)");
+    const s = await signedIn("s@example.com", { roleId: "ra" });
+    expect((await dash("/api/settings/sso", withCookie(s.cookie))).status).toBe(200);
+    for (const [m, path, body] of [
+      ["PUT", "/api/settings/sso/google", { enabled: false }], ["PUT", "/api/settings/sso/github", { clientId: "x" }],
+      ["PUT", "/api/settings/sso/oidc", { issuer: "https://evil.example" }],
+      ["PUT", "/api/settings/email-domains/example.com", { joinRoleId: null, enforceSso: true }],
+      ["PUT", "/api/settings/email-domains/new.example.com", { joinRoleId: "member", enforceSso: false }],
+      ["DELETE", "/api/settings/email-domains/example.com", undefined],
+    ] as const) {
+      const r = await dash(path, json(s.cookie, m, body));
+      expect([m, path, r.status, await r.json()]).toEqual([m, path, 403, { error: "forbidden" }]);
+    }
+    expect(await all("SELECT domain, enforce_sso FROM email_domains")).toEqual([{ domain: "example.com", enforce_sso: 0 }]);
+    expect(await all("SELECT * FROM audit_log WHERE action IN ('sso.settings', 'email_domain.set', 'email_domain.delete')")).toEqual([]);
+  });
+
+  it("email_domain.set records the role name; an encoded domain in the path works", async () => {
+    await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('r1','Editors','[]',0,1,1)");
+    const { cookie } = await signedIn("owner@example.com", { role: "owner" });
+    expect((await dash(`/api/settings/email-domains/${encodeURIComponent("example.com")}`, json(cookie, "PUT", { joinRoleId: "r1", enforceSso: false }))).status).toBe(200);
+    expect(await all("SELECT target_id, detail FROM audit_log WHERE action = 'email_domain.set'")).toEqual([
+      { target_id: "example.com", detail: JSON.stringify({ domain: "example.com", joinRoleId: "r1", joinRoleName: "Editors", enforceSso: false }) },
+    ]);
   });
 
   it("deleting a role an auto-join uses turns the auto-join off", async () => {

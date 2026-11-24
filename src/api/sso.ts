@@ -9,7 +9,7 @@ import { UNSAFE } from "../email";
 import type { Env } from "../env";
 import { LIMITS, blocked, hit, limitKey } from "../limits";
 import type { Grant } from "../principal";
-import { ROLE_JOIN, USER_COLS, actorCan, requirePerm, roleWithin, type Guard } from "../roles";
+import { ROLE_JOIN, USER_COLS, requirePerm, roleWithin, type Guard } from "../roles";
 import { deleteSecretStmts, getSecret, putSecretStmts, secretsReady } from "../secrets";
 import { createSession, ipPrefix, newSecret, safeNext, sha256Hex } from "../session";
 import {
@@ -118,7 +118,7 @@ export async function ssoCallback(c: Context<{ Bindings: Env }>): Promise<Respon
     if (e instanceof SsoError) return failed(e.code);
     throw e;
   }
-  const m = await matchPerson(env, p, who);
+  const m = await matchPerson(env, p, who, r.issuer);
   if ("error" in m) return failed(m.error);
   const s = await createSession(env, c.req.raw, m.user, p, m.joined);
   if (!s.started(await env.DB.batch(s.stmts))) return failed("disabled"); // disabled after the match
@@ -130,7 +130,7 @@ export async function ssoCallback(c: Context<{ Bindings: Env }>): Promise<Respon
  * R6 matching, then R7: (provider, subject) first, else the verified email of a person with no identity for this provider yet,
  * else a domain auto-join. Enforcement is decided before anyone is created or bound, so a refusal writes nothing.
  */
-async function matchPerson(env: Env, p: Provider, who: Who): Promise<{ user: UserRow; joined: boolean } | { error: Code }> {
+async function matchPerson(env: Env, p: Provider, who: Who, issuer: string | null): Promise<{ user: UserRow; joined: boolean } | { error: Code }> {
   const bound = await env.DB.prepare(`SELECT ${USER_COLS} FROM sso_identities i JOIN users u ON u.id = i.user_id ${ROLE_JOIN} WHERE i.provider = ? AND i.subject = ?`)
     .bind(p, who.subject).first();
   let user = bound ? rowToUser(bound) : await findUser(env, who.email);
@@ -156,8 +156,11 @@ async function matchPerson(env: Env, p: Provider, who: Who): Promise<{ user: Use
   if (bound) {
     await env.DB.prepare("UPDATE sso_identities SET email = ?, last_used_at = ? WHERE provider = ? AND subject = ?").bind(who.email, now, p, who.subject).run();
   } else {
-    await env.DB.prepare("INSERT INTO sso_identities (provider, subject, user_id, email, created_at, last_used_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING")
-      .bind(p, who.subject, user.id, who.email, now, now).run();
+    // OIDC: bound only while the issuer the token was checked against is still the configured one, so a callback that
+    // overlaps an issuer change cannot bind an old-issuer subject after the change dropped that issuer's identities.
+    const same = p === "oidc" ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [ssoKey("oidc", "issuer"), JSON.stringify(issuer)] } : { sql: "1", binds: [] };
+    await env.DB.prepare(`INSERT INTO sso_identities (provider, subject, user_id, email, created_at, last_used_at) SELECT ?,?,?,?,?,? WHERE ${same.sql} ON CONFLICT DO NOTHING`)
+      .bind(p, who.subject, user.id, who.email, now, now, ...same.binds).run();
     const own = await env.DB.prepare("SELECT user_id FROM sso_identities WHERE provider = ? AND subject = ?").bind(p, who.subject).first<{ user_id: string }>();
     if (own?.user_id !== user.id) return { error: "not_invited" }; // a racing sign-in bound it elsewhere
   }
@@ -167,7 +170,7 @@ async function matchPerson(env: Env, p: Provider, who: Who): Promise<{ user: Use
   return { user: r.user, joined };
 }
 
-// ---- Settings > Sign-in (perm settings; provider changes owner only). Mounted at /api/settings, app mode only. ----
+// ---- Settings > Sign-in: read with perm settings, every write owner only (R14). Mounted at /api/settings, app mode only. ----
 
 export const ssoSettings = new Hono<E>();
 ssoSettings.use("*", requirePerm("settings"));
@@ -263,21 +266,23 @@ const domainBody = z.strictObject({ joinRoleId: z.string().min(1).max(64).nullab
 
 ssoSettings.put("/email-domains/:domain", async (c) => {
   const domain = c.req.param("domain").toLowerCase(), env = c.env, me = c.var.user;
+  if (me.role !== "owner") return c.json(forbidden, 403); // R14
   if (!DOMAIN.test(domain)) return c.json({ error: "bad_domain" }, 400);
   const parsed = domainBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json(invalid, 400);
   const { joinRoleId, enforceSso } = parsed.data;
   if (joinRoleId === "owner") return c.json({ error: "owner_role" }, 400);
-  if (joinRoleId && !(await env.DB.prepare("SELECT 1 FROM roles WHERE id = ?").bind(joinRoleId).first())) return c.json({ error: "bad_role" }, 400);
-  // Auto-join may only hand out a role the actor could assign by hand (as with invites).
-  const may = actorCan(me.id, "settings"), within = joinRoleId ? roleWithin(joinRoleId, me.id) : null;
+  const role = joinRoleId ? await env.DB.prepare("SELECT name FROM roles WHERE id = ?").bind(joinRoleId).first<{ name: string }>() : null;
+  if (joinRoleId && !role) return c.json({ error: "bad_role" }, 400);
+  // R14: owners only, re-checked in SQL; roleWithin stays as the backstop should the gate ever widen.
+  const may: Guard = { sql: ACTOR_OK, binds: [me.id] }, within = joinRoleId ? roleWithin(joinRoleId, me.id) : null;
   const room = "((SELECT COUNT(*) FROM email_domains) < ? OR EXISTS (SELECT 1 FROM email_domains WHERE domain = ?))";
   const g: Guard = { sql: `${may.sql}${within ? ` AND ${within.sql}` : ""} AND ${room}`, binds: [...may.binds, ...(within?.binds ?? []), MAX_DOMAINS, domain] };
   const res = await env.DB.batch([
     env.DB.prepare(`INSERT INTO email_domains (domain, join_role_id, enforce_sso, updated_at, updated_by) SELECT ?,?,?,?,? WHERE ${g.sql}
       ON CONFLICT(domain) DO UPDATE SET join_role_id = excluded.join_role_id, enforce_sso = excluded.enforce_sso, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
       .bind(domain, joinRoleId, enforceSso ? 1 : 0, nowS(), me.id, ...g.binds),
-    auditStmt(env, { actorId: me.id, action: "email_domain.set", targetType: "email_domain", targetId: domain, detail: { domain, joinRoleId, enforceSso } }, { sql: "changes() > 0", binds: [] }),
+    auditStmt(env, { actorId: me.id, action: "email_domain.set", targetType: "email_domain", targetId: domain, detail: { domain, joinRoleId, joinRoleName: role?.name ?? null, enforceSso } }, { sql: "changes() > 0", binds: [] }),
   ]);
   if (!res[0]!.meta.changes) {
     if (!(await holds(env, may)) || (within && !(await holds(env, within)))) return c.json(forbidden, 403);
@@ -288,7 +293,8 @@ ssoSettings.put("/email-domains/:domain", async (c) => {
 
 ssoSettings.delete("/email-domains/:domain", async (c) => {
   const domain = c.req.param("domain").toLowerCase(), env = c.env, me = c.var.user;
-  const may = actorCan(me.id, "settings");
+  if (me.role !== "owner") return c.json(forbidden, 403); // R14
+  const may: Guard = { sql: ACTOR_OK, binds: [me.id] };
   const [, del] = await env.DB.batch([
     auditStmt(env, { actorId: me.id, action: "email_domain.delete", targetType: "email_domain", targetId: domain, detail: { domain } },
       { sql: `EXISTS (SELECT 1 FROM email_domains WHERE domain = ?) AND ${may.sql}`, binds: [domain, ...may.binds] }),

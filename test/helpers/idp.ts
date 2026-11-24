@@ -25,6 +25,8 @@ export async function fakeIdp() {
     gh: { id: 4242, emails: [{ email: "a@example.com", primary: true, verified: true }] as GhEmail[] },
     calls: [] as { url: string; method: string; headers: Headers; body: string }[],
     tokenStatus: 200,
+    /** Runs while the token call is in flight (e.g. a settings change racing the callback). */
+    onToken: null as null | (() => Promise<void>),
   };
   const doc = (iss: string, base: string) => ({
     issuer: iss, authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`, jwks_uri: `${base}/jwks`,
@@ -48,6 +50,7 @@ export async function fakeIdp() {
     if (url === `${GOOGLE}/.well-known/openid-configuration`) return Response.json(doc(GOOGLE, base));
     if (url === `${base}/jwks`) return Response.json({ keys: [pub] });
     if (url === `${base}/token` && method === "POST") {
+      await s.onToken?.();
       if (s.tokenStatus !== 200) return Response.json({ error: "invalid_grant", error_description: "PROVIDER-SECRET-TEXT" }, { status: s.tokenStatus });
       return Response.json({ access_token: "at", id_token: await idToken(google ? GOOGLE : ISS) });
     }

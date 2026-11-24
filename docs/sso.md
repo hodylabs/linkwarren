@@ -63,10 +63,10 @@ Changing the issuer unlinks every single sign-on account, because account ids fr
 
 Below the provider cards, the email domain list (at most 50 domains) sets two things per domain, for example `example.com`:
 
-- **Auto-join role.** A person whose verified email is at this domain, and who is not in People yet, is added on their first provider sign-in with this role. Owner is never allowed. You can only choose a role whose permissions you hold yourself. Deleting the role turns auto-join off for that domain.
+- **Auto-join role.** A person whose verified email is at this domain, and who is not in People yet, is added on their first provider sign-in with this role. Owner is never allowed. Deleting the role turns auto-join off for that domain.
 - **Enforce single sign-on.** People at this domain can then only use the single sign-on button: email links, passkeys, Google and GitHub are refused with "sign in with single sign-on". **Owners are never blocked**, so a broken single sign-on setup cannot lock you out. The rule is checked at sign-in; sessions that already exist keep working. People at an enforced domain cannot unlink their single sign-on account.
 
-Owners and people with the Settings permission change the list.
+Only owners change the list. People with the Settings permission can see the whole page, but every change on it is for owners only: whoever controls the single sign-on issuer or the domain rules could otherwise sign in as someone else.
 
 ## Errors on the sign-in page
 

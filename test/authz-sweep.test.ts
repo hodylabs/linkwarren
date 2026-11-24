@@ -53,7 +53,7 @@ const ROUTES: [M, string, Need, string?][] = [
   ["GET", "/api/settings/secrets", ["settings"]], ["PUT", "/api/settings/secrets/resend", "owner"], ["DELETE", "/api/settings/secrets/resend", "owner"],
   ["POST", "/api/settings/email/test", ["settings"]],
   ["GET", "/api/settings/sso", ["settings"]], ["PUT", "/api/settings/sso/google", "owner"],
-  ["PUT", "/api/settings/email-domains/example.com", ["settings"]], ["DELETE", "/api/settings/email-domains/example.com", ["settings"]],
+  ["PUT", "/api/settings/email-domains/example.com", "owner"], ["DELETE", "/api/settings/email-domains/example.com", "owner"],
   ["GET", "/api/account/identities", null], ["DELETE", "/api/account/identities/google", null],
   ["GET", "/api/setup", "owner"], ["POST", "/api/setup/complete", "owner"],
   ["GET", "/api/instance", null], ["GET", "/api/instance/logo", null],
