@@ -131,8 +131,11 @@ export async function ssoCallback(c: Context<{ Bindings: Env }>): Promise<Respon
  * else a domain auto-join. Enforcement is decided before anyone is created or bound, so a refusal writes nothing.
  */
 async function matchPerson(env: Env, p: Provider, who: Who, issuer: string | null): Promise<{ user: UserRow; joined: boolean } | { error: Code }> {
-  const bound = await env.DB.prepare(`SELECT ${USER_COLS} FROM sso_identities i JOIN users u ON u.id = i.user_id ${ROLE_JOIN} WHERE i.provider = ? AND i.subject = ?`)
-    .bind(p, who.subject).first();
+  // OIDC: the issuer the token was checked against must still be the configured one, both to match a bound identity and
+  // to bind a new one, so a callback that overlaps an issuer change can neither match nor bind across issuers.
+  const same = p === "oidc" ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [ssoKey("oidc", "issuer"), JSON.stringify(issuer)] } : { sql: "1", binds: [] };
+  const bound = await env.DB.prepare(`SELECT ${USER_COLS} FROM sso_identities i JOIN users u ON u.id = i.user_id ${ROLE_JOIN} WHERE i.provider = ? AND i.subject = ? AND ${same.sql}`)
+    .bind(p, who.subject, ...same.binds).first();
   let user = bound ? rowToUser(bound) : await findUser(env, who.email);
   // Never rebind: a person already linked to another account at this provider is not this one.
   if (!bound && user && (await env.DB.prepare("SELECT 1 FROM sso_identities WHERE user_id = ? AND provider = ?").bind(user.id, p).first())) return { error: "not_invited" };
@@ -156,9 +159,6 @@ async function matchPerson(env: Env, p: Provider, who: Who, issuer: string | nul
   if (bound) {
     await env.DB.prepare("UPDATE sso_identities SET email = ?, last_used_at = ? WHERE provider = ? AND subject = ?").bind(who.email, now, p, who.subject).run();
   } else {
-    // OIDC: bound only while the issuer the token was checked against is still the configured one, so a callback that
-    // overlaps an issuer change cannot bind an old-issuer subject after the change dropped that issuer's identities.
-    const same = p === "oidc" ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [ssoKey("oidc", "issuer"), JSON.stringify(issuer)] } : { sql: "1", binds: [] };
     await env.DB.prepare(`INSERT INTO sso_identities (provider, subject, user_id, email, created_at, last_used_at) SELECT ?,?,?,?,?,? WHERE ${same.sql} ON CONFLICT DO NOTHING`)
       .bind(p, who.subject, user.id, who.email, now, now, ...same.binds).run();
     const own = await env.DB.prepare("SELECT user_id FROM sso_identities WHERE provider = ? AND subject = ?").bind(p, who.subject).first<{ user_id: string }>();

@@ -391,6 +391,16 @@ describe("settings", () => {
     expect(await all("SELECT COUNT(*) n FROM sessions")).toEqual([{ n: 0 }]);
   });
 
+  it("a callback that overlaps an issuer change never matches an identity bound under the new issuer", async () => {
+    await addUser("a@example.com");
+    await signIn("oidc"); // binds (oidc, sub-1)
+    await run("DELETE FROM sessions");
+    // The issuer changes while the next callback is in flight; the row now stands for the new issuer's sub-1.
+    idp.s.onToken = async () => { await setting("sso.oidc.issuer", "https://other.example.com"); };
+    expect(errorOf(await signIn("oidc"))).toBe("not_invited");
+    expect(await all("SELECT COUNT(*) n FROM sessions")).toEqual([{ n: 0 }]);
+  });
+
   it("a new issuer drops the identities bound under the old one", async () => {
     await addUser("a@example.com");
     await signIn("oidc");
