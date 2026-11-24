@@ -90,11 +90,11 @@ A link can have up to 20 labelled QR codes, for example "Flyer" and "Business ca
 
 Each person can get an email when one of their links changes pace. It is off until they turn it on.
 
-- **Turn it on** in Sign-in and security, **Link alert emails**, then pick the kinds: **Gone quiet** and **Spike** (both on by default). Like the weekly email it needs email set up on the instance and is part of app-mode sign-in, so it is not offered in access mode.
+- **Turn it on** in Sign-in and security, **Link alert emails**, then pick the kinds: **Gone quiet** and **Spike** (both on by default). Like the weekly email it needs email set up on the instance, and it also needs live analytics reads (`CF_ACCOUNT_ID`, `AE_READ_TOKEN` and the `CLICKS` binding; without them the switch says why and stays off) and is part of app-mode sign-in, so it is not offered in access mode.
 - **Gone quiet**: a link that had at least 5 clicks a day on average over days 15 to 42 before today, and no click in the last 14 days (today and the 13 days before it). The same link is not reported as quiet again for 28 days.
 - **Spike**: yesterday (UTC) had at least 20 clicks and at least 3 times the average of the 7 days before it. Each spike day is reported once.
 - **Which links**: only links your Analytics screen shows you, checked again when the email is made, so a role or domain change counts at once. Only clicks on domains you can use count. Forwarding addresses and expired links are left out.
-- **How often**: at most one email per person per UTC day, listing up to 10 alerts (the rest come the next day), and at most 20 alert emails per instance per day, so Resend's free 100 a day stay mostly for sign-in links and invites. Each email has a one-click unsubscribe link that turns alerts off without signing in.
+- **How often**: at most one email per person per UTC day, listing every new alert, and at most 20 alert emails per instance per day, so Resend's free 100 a day stay mostly for sign-in links and invites. Each email has a one-click unsubscribe link that turns alerts off without signing in.
 
 For operators: alerts run on their own Cron Trigger, `45 * * * *`, apart from the hourly rollup at :15 (see [deploy.md](deploy.md#scheduled-job)). An instance set up before v0.8.0 must add it to `triggers.crons` in `wrangler.instance.jsonc`. A run reads the D1 daily totals up to the rollup mark and the newer days, yesterday included, from Analytics Engine. Without Analytics Engine reads, or when a read fails, no alert is sent: a missing day never counts as "quiet". When nobody is due the run reads nothing.
 
@@ -105,7 +105,7 @@ A read-only page of one link's or one domain's clicks, for a client who has no a
 - **Make one**: on the Links page, open a link and use **Share page**, **New share link**; for a domain, open it on the Domains page. The page's URL is shown once, right after it is made: copy it then, because only a hash of it is kept and it cannot be shown again. A link or domain can have up to 10 active share pages.
 - **Who can**: for a link, anyone who may edit it (its creator, the domain's owner, an owner, or someone with `links.editAny`); for a domain, its owner or someone with `domains.manage`. The same people list and revoke them. Making and revoking are in the audit log as `share.create` and `share.revoke` (never the URL).
 - **What it shows**: total clicks, QR scans and typed visits for the last 30 days (UTC), a daily table, and the top countries, referrers and devices. Totals only: no link lists, no recent clicks, nothing about a single visitor.
-- **When it stops**: once revoked, once the link or domain is deleted, once the link moves to another domain, or once the person who made it is disabled or removed. Every one of these answers the same "not found" page.
+- **When it stops**: once revoked, once the link or domain is deleted, once the link moves to another domain (the move revokes it, so moving the link back does not bring it back), or once the person who made it is disabled or removed. Every one of these answers the same "not found" page.
 - **Limits**: 60 views a minute per IP range; the page is cached privately for 60 seconds and sends `noindex` and no referrer.
 
 In access mode the dashboard host sits behind Cloudflare Access, so a client cannot open the page unless the Access application has a bypass policy for the path `/share/*`, like the `/healthz` bypass in [deploy.md](deploy.md#access-mode). The token is still the only key to the page.

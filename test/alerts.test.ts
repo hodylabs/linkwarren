@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addClicks, ALERT_CRON, alertEmail, findAlerts, sendAlerts, type ClickTable, type LinkInfo } from "../src/alerts";
-import { unsubToken } from "../src/digest";
+import { unsubscribe, unsubToken } from "../src/digest";
 import type { Env } from "../src/env";
 import worker from "../src/index";
 import { dash } from "./helpers/access";
@@ -31,6 +31,7 @@ function fakes() {
     if (url !== "https://api.resend.com/emails") throw new Error(`unexpected fetch ${url}`);
     sent.push(JSON.parse(String(init!.body)));
     keys.push((init!.headers as Record<string, string>)["idempotency-key"]!);
+    if (s.resend === 0) throw new TypeError("network"); // 0: the answer is lost
     return s.resend === 200 ? Response.json({ id: "e1" }) : Response.json({ message: "no" }, { status: s.resend });
   });
   return { sent, keys, s };
@@ -114,13 +115,12 @@ describe("findAlerts", () => {
 describe("alertEmail", () => {
   it("escapes hosts, slugs and names in the HTML and keeps one line per alert", () => {
     const l: LinkInfo = { id: "l1", slug: "<b>x</b>\n", name: "N\"<i>", domainId: "d", host: "ex\"ample.com" };
-    const m = alertEmail({ instanceName: "Acme\r\nBcc: x@example.com", day: "2026-11-23", alerts: [{ kind: "spike", link: l, clicks: 30, avg: 2 }], more: 2, dashboardUrl: "https://dash.example.com", unsubUrl: "https://dash.example.com/unsubscribe?k=alerts&u=1&t=abc" });
-    expect(m.subject).toBe("3 link alerts in AcmeBcc: x@example.com");
+    const m = alertEmail({ instanceName: "Acme\r\nBcc: x@example.com", day: "2026-11-23", alerts: [{ kind: "spike", link: l, clicks: 30, avg: 2 }], dashboardUrl: "https://dash.example.com", unsubUrl: "https://dash.example.com/unsubscribe?k=alerts&u=1&t=abc" });
+    expect(m.subject).toBe("1 link alert in AcmeBcc: x@example.com");
     expect(m.html).not.toContain("<b>x</b>");
     expect(m.html).not.toContain("<i>");
     expect(m.html).toContain('href="https://dash.example.com/unsubscribe?k=alerts&amp;u=1&amp;t=abc"');
     expect(m.text).toContain("Spike: ex\"ample.com/<b>x</b>  (N\"<i>): 30 clicks on 2026-11-22, about 2 a day the week before.");
-    expect(m.text).toContain("And 2 more, in the next email.");
     expect(m.text).toContain("https://dash.example.com/analytics/link/l1");
   });
 });
@@ -242,13 +242,25 @@ describe("cron dispatch and unsubscribe", () => {
 });
 
 describe("GET/PUT /api/account/alerts", () => {
+  const ae = env as unknown as Record<string, unknown>;
+  const withAe = () => Object.assign(ae, { CLICKS: { writeDataPoint() {} }, CF_ACCOUNT_ID: "acc1", AE_READ_TOKEN: "tok" });
+  afterEach(() => { delete ae.CLICKS; delete ae.CF_ACCOUNT_ID; delete ae.AE_READ_TOKEN; });
+
+  it("refuses turning on without live analytics reads, and says so", async () => {
+    const a = await signedIn("a@example.com");
+    const r = await dash("/api/account/alerts", withCookie(a.cookie, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true, quiet: true, spike: true }) }));
+    expect([r.status, await r.json()]).toEqual([409, { error: "analytics_not_configured" }]);
+    expect(((await (await dash("/api/account/alerts", withCookie(a.cookie))).json()) as { analyticsReady: boolean }).analyticsReady).toBe(false);
+  });
+
   it("defaults to off with both kinds, saves, and refuses turning on without email", async () => {
+    withAe();
     const a = await signedIn("a@example.com");
     const get = async () => (await dash("/api/account/alerts", withCookie(a.cookie))).json();
-    expect(await get()).toEqual({ enabled: false, quiet: true, spike: true, emailReady: true });
+    expect(await get()).toEqual({ enabled: false, quiet: true, spike: true, emailReady: true, analyticsReady: true });
     const put = (b: unknown) => dash("/api/account/alerts", withCookie(a.cookie, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }));
     expect((await put({ enabled: true, quiet: false, spike: true })).status).toBe(200);
-    expect(await get()).toEqual({ enabled: true, quiet: false, spike: true, emailReady: true });
+    expect(await get()).toEqual({ enabled: true, quiet: false, spike: true, emailReady: true, analyticsReady: true });
     expect((await put({ enabled: true, quiet: true, spike: true, extra: 1 })).status).toBe(400);
     const s1 = (await env.DB.prepare("SELECT secret FROM alert_prefs").first<{ secret: string }>())!.secret;
     await put({ enabled: false, quiet: true, spike: true });
@@ -262,5 +274,119 @@ describe("GET/PUT /api/account/alerts", () => {
     } finally {
       (env as { EMAIL_FROM?: string }).EMAIL_FROM = prev;
     }
+  });
+});
+
+describe("fix round (whole-branch review)", () => {
+  /** The test env with Analytics Engine and a DB whose `batch` runs `hook(n)` first (n counts batch calls from 1). */
+  const hooked = (hook: (n: number) => void | Promise<void>): Env => {
+    const real = env.DB;
+    let n = 0;
+    const DB = { prepare: (q: string) => real.prepare(q), batch: async (s: D1PreparedStatement[]) => { await hook(++n); return real.batch(s); } } as unknown as D1Database;
+    return { ...aeEnv(), DB };
+  };
+
+  it("every new alert is in the one email of the day: none is left for a later email that would never come", async () => {
+    const f = await fixture();
+    const extra = Array.from({ length: 12 }, (_, i) => `lX${i}`);
+    for (const id of extra)
+      await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES (?,'dM',?,?,'https://example.com/',?,?,1,1)", id, id, id, f.b.user.id, f.b.user.id);
+    (f.s.ae as unknown[]).push(...extra.map((id) => ({ bucket: "2026-11-22 00:00:00", linkId: id, domainId: "dM", n: 40 })));
+    await sendAlerts(aeEnv(), NOW);
+    const a = mailTo(f.sent, "a@example.com")!;
+    expect(a.subject).toBe("14 link alerts in linkwarren");
+    expect(a.text.match(/^Spike: /gm)).toHaveLength(13);
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM alert_state WHERE user_id = ?").bind(f.a.user.id).first<{ n: number }>())!.n).toBe(14);
+  });
+
+  it("a retry under the same key sends the saved email, never a rebuilt list, and marks only its alerts as told", async () => {
+    const f = await fixture();
+    await run("UPDATE alert_prefs SET enabled = 0 WHERE user_id != ?", f.a.user.id);
+    f.s.resend = 0; // accepted or not, the answer is lost: released with the same key
+    await sendAlerts(aeEnv(), NOW);
+    const first = f.sent[0]!;
+    f.s.resend = 200;
+    f.s.ae = [{ bucket: "2026-11-22 00:00:00", linkId: "lQ", domainId: "dM", n: 50 }]; // the data changed: lS no longer spikes
+    await sendAlerts(aeEnv(), NOW + 3600);
+    expect(f.sent).toHaveLength(2);
+    expect([f.sent[1]!.text, f.sent[1]!.subject]).toEqual([first.text, first.subject]);
+    expect(f.keys[0]).toBe(f.keys[1]);
+    const told = (await env.DB.prepare("SELECT link_id, kind FROM alert_state WHERE user_id = ? ORDER BY link_id").bind(f.a.user.id).all()).results;
+    expect(told).toEqual([{ link_id: "lQ", kind: "quiet" }, { link_id: "lS", kind: "spike" }]);
+    expect((await env.DB.prepare("SELECT pending FROM alert_prefs WHERE user_id = ?").bind(f.a.user.id).first<{ pending: string | null }>())!.pending).toBeNull();
+  });
+
+  it("a saved email is not sent again once its reader may no longer see a link in it", async () => {
+    const f = await fixture();
+    await run("UPDATE alert_prefs SET enabled = 0 WHERE user_id != ?", f.b.user.id);
+    f.s.resend = 0;
+    await sendAlerts(aeEnv(), NOW);
+    expect(f.sent[0]!.text).toContain("s-lP");
+    await run("UPDATE domains SET owner_id = ? WHERE id = 'dB'", f.a.user.id); // b loses the private domain
+    f.s.resend = 200;
+    await sendAlerts(aeEnv(), NOW + 3600);
+    expect(f.sent).toHaveLength(1);
+    expect(await prefs(f.b.user.id)).toMatchObject({ last_day: "2026-11-23", claimed_at: null });
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM alert_state").first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it("a saved email is withheld once its reader loses a domain whose clicks it counted, even if the link's own domain stays", async () => {
+    const f = await fixture();
+    await run("UPDATE alert_prefs SET enabled = 0 WHERE user_id != ?", f.b.user.id);
+    await run("UPDATE links SET domain_id = 'dM' WHERE id = 'lP'"); // moved to the main domain; yesterday's clicks were on dB
+    f.s.resend = 0;
+    await sendAlerts(aeEnv(), NOW);
+    expect(f.sent[0]!.text).toContain("Spike: main.example.com/s-lP: 25 clicks");
+    await run("UPDATE domains SET owner_id = ? WHERE id = 'dB'", f.a.user.id);
+    f.s.resend = 200;
+    await sendAlerts(aeEnv(), NOW + 3600);
+    expect(f.sent).toHaveLength(1);
+    expect(await prefs(f.b.user.id)).toMatchObject({ last_day: "2026-11-23", claimed_at: null });
+  });
+
+  it("a claim write that fails gives the daily slot back", async () => {
+    const f = await fixture();
+    const real = env.DB;
+    const DB = {
+      prepare: (q: string) => (q.includes("pending = ?11") ? { bind: () => ({ run: () => Promise.reject(new Error("d1 down")) }) } : real.prepare(q)),
+      batch: (s: D1PreparedStatement[]) => real.batch(s),
+    } as unknown as D1Database;
+    expect(await sendAlerts({ ...aeEnv(), DB }, NOW)).toBe(0);
+    expect(f.sent).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT count FROM auth_limits WHERE key = 'alert:day'").first<{ count: number }>())!.count).toBe(0);
+  });
+
+  it("one person's failure skips only that person; the run goes on with the next", async () => {
+    const f = await fixture();
+    expect(await sendAlerts(hooked((n) => { if (n === 1) throw new Error("d1 down"); }), NOW)).toBe(1);
+    expect(f.sent).toHaveLength(1);
+  });
+
+  it("a change of kinds between the read and the claim stops the claim; the next run builds the email again", async () => {
+    const f = await fixture();
+    await run("UPDATE alert_prefs SET enabled = 0 WHERE user_id != ?", f.a.user.id);
+    await sendAlerts(hooked(async (n) => { if (n === 1) await run("UPDATE alert_prefs SET quiet = 0 WHERE user_id = ?", f.a.user.id); }), NOW);
+    expect(f.sent).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT count FROM auth_limits WHERE key = 'alert:day'").first<{ count: number }>())!.count).toBe(0); // refunded
+    await sendAlerts(aeEnv(), NOW + 60);
+    expect(f.sent).toHaveLength(1);
+    expect(f.sent[0]!.text).not.toContain("Gone quiet");
+  });
+
+  it("settings that cannot be read stop before the daily cap is spent", async () => {
+    const f = await fixture();
+    const real = env.DB;
+    const DB = { prepare: (q: string) => { if (q.includes("FROM settings")) throw new Error("settings down"); return real.prepare(q); }, batch: (s: D1PreparedStatement[]) => real.batch(s) } as unknown as D1Database;
+    await sendAlerts({ ...aeEnv(), DB }, NOW);
+    expect(f.sent).toHaveLength(0);
+    expect(await env.DB.prepare("SELECT count FROM auth_limits WHERE key = 'alert:day'").first()).toBeNull();
+  });
+
+  it("an unsubscribe link signed with an older secret never turns off alerts that were turned on again", async () => {
+    const f = await fixture();
+    const old = await unsubToken("s".repeat(64), f.a.user.id, "alerts");
+    await run("UPDATE alert_prefs SET secret = ? WHERE user_id = ?", "t".repeat(64), f.a.user.id);
+    expect(await unsubscribe(env, f.a.user.id, old, "alerts")).toBe(false);
+    expect(await unsubscribe(env, f.a.user.id, await unsubToken("t".repeat(64), f.a.user.id, "alerts"), "alerts")).toBe(true);
   });
 });

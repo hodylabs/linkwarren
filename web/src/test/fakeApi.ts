@@ -13,7 +13,7 @@ export type FakeRoutes = Record<string, (req: FakeReq) => FakeRes | Promise<Fake
  */
 const INSTANCE = { name: "", logoVersion: null, configured: true, dashboardHost: "links.example.com", mainDomainId: null, linkDefaults: { redirectCode: 302, passQuery: true } };
 const DIGEST = { enabled: false, tz: null, emailReady: true };
-const ALERTS = { enabled: false, quiet: true, spike: true, emailReady: true };
+const ALERTS = { enabled: false, quiet: true, spike: true, emailReady: true, analyticsReady: true };
 export function fakeApi(given: FakeRoutes): { calls: { method: string; path: string; body: unknown }[] } {
   const routes: FakeRoutes = { "GET /api/instance": () => ({ body: INSTANCE }), "GET /api/account/digest": () => ({ body: DIGEST }),
     "GET /api/account/alerts": () => ({ body: ALERTS }), "GET /api/shares": () => ({ body: { items: [] } }), ...given };

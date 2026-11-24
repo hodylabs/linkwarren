@@ -40,12 +40,14 @@ export function LinkAlerts() {
         <div>
           <b>Link alert emails</b>
           <small id="alerts-hint">
-            {p.emailReady
-              ? "At most one email a day about the links you can see, when one of the alerts below happens."
-              : "Email is not set up on this instance, so alerts are off. The owner can set it up in Settings."}
+            {!p.emailReady
+              ? "Email is not set up on this instance, so alerts are off. The owner can set it up in Settings."
+              : !p.analyticsReady
+                ? "Live analytics reads are not set up on this instance, so alerts cannot be checked. The owner can add them (see the deploy guide)."
+                : "At most one email a day about the links you can see, when one of the alerts below happens."}
           </small>
         </div>
-        <Switch checked={p.enabled} onChange={(enabled) => void save({ enabled })} label="Link alert emails" disabled={saving || (!p.emailReady && !p.enabled)} describedBy="alerts-hint" />
+        <Switch checked={p.enabled} onChange={(enabled) => void save({ enabled })} label="Link alert emails" disabled={saving || (!(p.emailReady && p.analyticsReady) && !p.enabled)} describedBy="alerts-hint" />
       </div>
       {p.enabled && (
         <>
