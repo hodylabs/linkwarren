@@ -89,7 +89,8 @@ export async function loadClicks(env: Env, nowSec: number): Promise<ClickTable> 
 }
 
 export type LinkInfo = { id: string; slug: string; name: string | null; domainId: string; host: string };
-export type Alert = { kind: "quiet" | "spike"; link: LinkInfo; clicks: number; avg: number };
+/** `domains`: the domains whose clicks the numbers count (a retry of a saved email checks the reader still uses each). */
+export type Alert = { kind: "quiet" | "spike"; link: LinkInfo; clicks: number; avg: number; domains?: string[] };
 
 /** Pure: the alerts one person gets, from links on their domains (null: all) and clicks on those domains only. */
 export function findAlerts(t: ClickTable, links: Map<string, LinkInfo>, domains: Set<string> | null, want: { quiet: boolean; spike: boolean }): Alert[] {
@@ -98,12 +99,15 @@ export function findAlerts(t: ClickTable, links: Map<string, LinkInfo>, domains:
     const link = links.get(id);
     if (!link || (domains && !domains.has(link.domainId))) continue;
     const s = { base: 0, recent: 0, yday: 0, week: 0 };
+    const from = new Set([link.domainId]); // every domain whose clicks the numbers include, and the link's own
     for (const [d, c] of per) {
       if (domains && !domains.has(d)) continue;
       s.base += c.base; s.recent += c.recent; s.yday += c.yday; s.week += c.week;
+      from.add(d);
     }
-    if (want.quiet && s.base >= QUIET_AVG * BASE_DAYS && s.recent === 0) out.push({ kind: "quiet", link, clicks: 0, avg: s.base / BASE_DAYS });
-    if (want.spike && s.yday >= SPIKE_MIN && s.yday * 7 >= SPIKE_FACTOR * s.week) out.push({ kind: "spike", link, clicks: s.yday, avg: s.week / 7 });
+    const ds = [...from];
+    if (want.quiet && s.base >= QUIET_AVG * BASE_DAYS && s.recent === 0) out.push({ kind: "quiet", link, clicks: 0, avg: s.base / BASE_DAYS, domains: ds });
+    if (want.spike && s.yday >= SPIKE_MIN && s.yday * 7 >= SPIKE_FACTOR * s.week) out.push({ kind: "spike", link, clicks: s.yday, avg: s.week / 7, domains: ds });
   }
   // Spikes first (they are news), then by size.
   return out.sort((a, b) => (a.kind === b.kind ? b.clicks - a.clicks || b.avg - a.avg : a.kind === "spike" ? -1 : 1));
@@ -193,7 +197,7 @@ export async function sendAlerts(env: Env, nowSec: number): Promise<number> {
 }
 
 /** The email a claim stands for, saved with the claim: a retry under the same key sends exactly this, never a rebuilt list. */
-type Pending = { key: string; ids: { l: string; k: Alert["kind"]; d: string }[]; mail: { subject: string; text: string; html: string }; unsub: string; name: string | null };
+type Pending = { key: string; ids: { l: string; k: Alert["kind"]; d: string; ds: string[] }[]; mail: { subject: string; text: string; html: string }; unsub: string; name: string | null };
 const readPending = (v: string | null, key: string): Pending | null => {
   try {
     const x = v ? (JSON.parse(v) as Pending) : null;
@@ -236,7 +240,7 @@ async function alertOne(env: Env, p: Pref, r: Run): Promise<"sent" | "tried" | "
     const now = await env.DB.prepare("SELECT id, domain_id FROM links WHERE id IN (SELECT value FROM json_each(?))")
       .bind(JSON.stringify(pending.ids.map((x) => x.l))).all<{ id: string; domain_id: string }>();
     const at = new Map(now.results.map((x) => [x.id, x.domain_id]));
-    const still = pending.ids.every((x) => at.has(x.l) && (!domains || domains.has(at.get(x.l)!)) && (x.k === "quiet" ? !!p.quiet : !!p.spike));
+    const still = pending.ids.every((x) => at.has(x.l) && (!domains || [at.get(x.l)!, ...(Array.isArray(x.ds) ? x.ds : [])].every((d) => domains.has(d))) && (x.k === "quiet" ? !!p.quiet : !!p.spike));
     if (!still) return handled();
   } else {
     const prior = new Map((sr!.results as { link_id: string; kind: string; last_day: string }[]).map((x) => [`${x.link_id}|${x.kind}`, x.last_day]));
@@ -246,7 +250,7 @@ async function alertOne(env: Env, p: Pref, r: Run): Promise<"sent" | "tried" | "
     const unsub = `${r.base}/unsubscribe?k=alerts&u=${encodeURIComponent(p.user_id)}&t=${await unsubToken(p.secret, p.user_id, "alerts")}`;
     const { name } = await getSettings(env);
     const mail = alertEmail({ instanceName: name, day: today, alerts: fresh, dashboardUrl: r.base, unsubUrl: unsub });
-    pending = { key, ids: fresh.map((a) => ({ l: a.link.id, k: a.kind, d: stateDay(a, today) })), mail, unsub, name };
+    pending = { key, ids: fresh.map((a) => ({ l: a.link.id, k: a.kind, d: stateDay(a, today), ds: a.domains ?? [a.link.domainId] })), mail, unsub, name };
   }
 
   const prev = resume ? addDays(today, -1) : p.last_day; // what a release puts back
@@ -262,7 +266,11 @@ async function alertOne(env: Env, p: Pref, r: Run): Promise<"sent" | "tried" | "
     // Compare-and-set, as in the digest, plus the kinds and secret the email was built from: a row another run or the person
     // changed meanwhile matches nothing and is skipped (the next run rebuilds it).
   ).bind(today, p.user_id, nowSec, tries, (mine ? p.attempts : 0) + (give ? 0 : 1), give ? 1 : 0, stale, p.attempts, p.tries, p.try_day,
-    give ? null : JSON.stringify(pending), p.quiet, p.spike, p.secret).run();
+    give ? null : JSON.stringify(pending), p.quiet, p.spike, p.secret).run().catch(async (e: unknown) => {
+      // No send follows a claim write that failed: the slot goes back. If the write did commit, a stale-claim resume charges again.
+      if (!give) await refund(env, limitKey.alertDay).catch(() => {});
+      throw e;
+    });
   if (!claim.meta.changes || give) {
     if (!give) await refund(env, limitKey.alertDay).catch(() => {});
     return "skip";

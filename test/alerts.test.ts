@@ -330,6 +330,32 @@ describe("fix round (whole-branch review)", () => {
     expect((await env.DB.prepare("SELECT COUNT(*) n FROM alert_state").first<{ n: number }>())!.n).toBe(0);
   });
 
+  it("a saved email is withheld once its reader loses a domain whose clicks it counted, even if the link's own domain stays", async () => {
+    const f = await fixture();
+    await run("UPDATE alert_prefs SET enabled = 0 WHERE user_id != ?", f.b.user.id);
+    await run("UPDATE links SET domain_id = 'dM' WHERE id = 'lP'"); // moved to the main domain; yesterday's clicks were on dB
+    f.s.resend = 0;
+    await sendAlerts(aeEnv(), NOW);
+    expect(f.sent[0]!.text).toContain("Spike: main.example.com/s-lP: 25 clicks");
+    await run("UPDATE domains SET owner_id = ? WHERE id = 'dB'", f.a.user.id);
+    f.s.resend = 200;
+    await sendAlerts(aeEnv(), NOW + 3600);
+    expect(f.sent).toHaveLength(1);
+    expect(await prefs(f.b.user.id)).toMatchObject({ last_day: "2026-11-23", claimed_at: null });
+  });
+
+  it("a claim write that fails gives the daily slot back", async () => {
+    const f = await fixture();
+    const real = env.DB;
+    const DB = {
+      prepare: (q: string) => (q.includes("pending = ?11") ? { bind: () => ({ run: () => Promise.reject(new Error("d1 down")) }) } : real.prepare(q)),
+      batch: (s: D1PreparedStatement[]) => real.batch(s),
+    } as unknown as D1Database;
+    expect(await sendAlerts({ ...aeEnv(), DB }, NOW)).toBe(0);
+    expect(f.sent).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT count FROM auth_limits WHERE key = 'alert:day'").first<{ count: number }>())!.count).toBe(0);
+  });
+
   it("one person's failure skips only that person; the run goes on with the next", async () => {
     const f = await fixture();
     expect(await sendAlerts(hooked((n) => { if (n === 1) throw new Error("d1 down"); }), NOW)).toBe(1);
