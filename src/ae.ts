@@ -309,6 +309,8 @@ const BASE_DIMS = 4;
  * within it, which leaves room for one print fallback per chunk.
  */
 const DETAIL_BUDGET = 40;
+/** A detail plan whose S10 part alone is over this many queries (a domain list in many chunks) is refused before any query. */
+const DETAIL_MAX = 48;
 /** Hourly buckets per query: 80 days of hours (1920 rows) stays under ROW_CAP, so a 90-day window is two queries. */
 const HOUR_SPAN_MS = 80 * 86_400_000;
 
@@ -317,24 +319,27 @@ const isTruncated = (e: unknown) => e instanceof AeError && e.message === "ae_tr
 /**
  * Detail for `from`..`to` from Analytics Engine (older days come from the S13 detail rollup, read in analytics.ts loadDetail):
  * human clicks per detail value, and per hour for the busiest-times grid. Per id chunk: 4 S10 dim queries and 1 or 2 hour
- * queries, plus the 4 S13 dims (print, UTM) when the request stays within DETAIL_BUDGET; `cut` says they were left out.
- * The per-link print query falls back to codes over all links (linkId "", so no label) when it is over ROW_CAP, so a big
- * print answer never hides the other breakdowns.
+ * queries, plus the 4 S13 dims (print, UTM) when the request stays within DETAIL_BUDGET; `cut` names the dims left out.
+ * The per-link print query falls back to codes over all links when it is over ROW_CAP, and then every print row is per code
+ * (`printByCode`, linkId "", so no label); a fallback still over ROW_CAP cuts print alone. A big print answer never hides the
+ * other breakdowns. Past DETAIL_MAX queries for the S10 part alone the request is refused (scope_too_big) before it starts.
  * `shiftSec` (0..3540, whole minutes): the viewer zone's offset past the whole hour (1800 for +05:30). Each timestamp is moved
  * by it before the hour is cut, so a bucket is exactly one local hour; a bucket's start minus the shift is that hour's start.
  * Whole-hour zones pass 0 and keep the plain UTC hour query.
  */
 export async function aeDetail(
   env: Env, from: Date, to: Date, scope: Scope, shiftSec = 0,
-): Promise<{ dims: DetailCount[]; hours: { bucket: string; clicks: number }[]; cut: boolean }> {
-  if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0 || from >= to) return { dims: [], hours: [], cut: false };
+): Promise<{ dims: DetailCount[]; hours: { bucket: string; clicks: number }[]; cut: DetailDim[]; printByCode: boolean }> {
+  if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0 || from >= to) return { dims: [], hours: [], cut: [], printByCode: false };
   if (!Number.isInteger(shiftSec) || shiftSec < 0 || shiftSec >= 3600) throw new AeError("bad_shift");
   const hour = shiftSec ? "toStartOfHour(toDateTime(toUnixTimestamp(timestamp) + toUInt32($shift)))" : "toStartOfHour(timestamp)";
   const spans: [Date, Date][] = [];
   for (let s = from; s < to; s = new Date(s.getTime() + HOUR_SPAN_MS)) spans.push([s, new Date(Math.min(to.getTime(), s.getTime() + HOUR_SPAN_MS))]);
   const chunks = scopeChunks(scope);
-  const cut = chunks.length * (DETAIL.length + spans.length) > DETAIL_BUDGET;
-  const dimsAsked = cut ? DETAIL.slice(0, BASE_DIMS) : DETAIL;
+  if (chunks.length * (BASE_DIMS + spans.length) > DETAIL_MAX) throw new AeError("scope_too_big");
+  const budgetCut = chunks.length * (DETAIL.length + spans.length) > DETAIL_BUDGET;
+  const dimsAsked = budgetCut ? DETAIL.slice(0, BASE_DIMS) : DETAIL;
+  let printByCode = false, printLost = false;
   const runChunk = (c: Chunk) => {
     const p = baseParams(env, from, to);
     const where = WINDOW + HUMAN + chunkClause(c, p);
@@ -344,7 +349,15 @@ export async function aeDetail(
         if (dim !== "print") return byValue(col, extra);
         // Print codes are per link, so one link's code never names another's label.
         return aeQuery(env, `SELECT blob2 AS linkId, ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where}${extra} GROUP BY blob2, ${col}`, p)
-          .catch((e) => (isTruncated(e) ? byValue(col, extra) : Promise.reject(e)));
+          .catch((e) => {
+            if (!isTruncated(e)) throw e;
+            printByCode = true;
+            return byValue(col, extra).catch((e2) => {
+              if (!isTruncated(e2)) throw e2;
+              printLost = true;
+              return [];
+            });
+          });
       }),
       ...spans.map(([a, b]) => {
         const q: Params = { ...p, from: iso(a), to: iso(b), ...(shiftSec ? { shift: String(shiftSec) } : {}) };
@@ -363,13 +376,16 @@ export async function aeDetail(
           hours.set(b, (hours.get(b) ?? 0) + num(r.n));
           continue;
         }
-        const dim = dimsAsked[i]![0], linkId = dim === "print" ? str(r.linkId) : undefined, k = `${dim}|${linkId ?? ""}|${str(r.value)}`;
+        const dim = dimsAsked[i]![0];
+        if (dim === "print" && printLost) continue;
+        const linkId = dim !== "print" ? undefined : printByCode ? "" : str(r.linkId), k = `${dim}|${linkId ?? ""}|${str(r.value)}`;
         const c = dims.get(k) ?? dims.set(k, { dim, value: str(r.value), clicks: 0, ...(linkId === undefined ? {} : { linkId }) }).get(k)!;
         c.clicks += num(r.n);
       }
     });
   }
-  return { dims: [...dims.values()], hours: [...hours].map(([bucket, clicks]) => ({ bucket, clicks })), cut };
+  const cut: DetailDim[] = budgetCut ? DETAIL.slice(BASE_DIMS).map(([d]) => d) : printLost ? ["print"] : [];
+  return { dims: [...dims.values()], hours: [...hours].map(([bucket, clicks]) => ({ bucket, clicks })), cut, printByCode };
 }
 
 /**

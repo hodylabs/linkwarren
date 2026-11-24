@@ -290,7 +290,7 @@ export type DetailReport = {
   hours: number[][];
   /** S13 R1: a filtered detail whose range starts before the Analytics Engine window covers only this day onwards. */
   filteredFrom?: string;
-  /** The scope was too big for the print and UTM breakdowns within one request's Analytics Engine budget: they are left empty. */
+  /** Some print or UTM breakdowns were too big for one request (a scope over its query budget, or over 2,000 print rows): those are empty. */
   cut?: true;
 };
 
@@ -337,8 +337,15 @@ export async function loadDetail(env: Env, range: Range, scope: Scope, tz: Tz, n
     console.error("analytics detail read failed", errCode(e));
     return finish({ ...out, live: "unavailable" });
   }
+  // A cut dim is left out whole, never shown for only the older days the rollup holds; a per-code print answer makes every print
+  // row per code, the rollup's too, so one code is one row.
+  for (const k of [...acc.keys()]) if (rows.cut.includes(acc.get(k)!.dim) || (rows.printByCode && acc.get(k)!.dim === "print")) {
+    const r = acc.get(k)!;
+    acc.delete(k);
+    if (rows.printByCode && r.dim === "print" && !rows.cut.includes("print")) rows.dims.push({ ...r, linkId: "" });
+  }
   rows.dims.forEach(add);
-  if (rows.cut) out.cut = true;
+  if (rows.cut.length) out.cut = true;
   for (const h of rows.hours) {
     const p = localParts(Date.parse(h.bucket) - shift * 1000, tz); // the start of the local hour the bucket holds
     out.hours[p.dow]![p.hour]! += h.clicks;
@@ -351,8 +358,7 @@ const UTM = { utm_source: "utmSources", utm_medium: "utmMediums", utm_campaign: 
 
 /** Sorts the summed detail rows into the report's arrays and names each print by its own link's label. */
 async function fill(env: Env, out: DetailReport, rows: DetailRow[], scope: Scope): Promise<DetailReport> {
-  // A cut detail leaves out print and UTM whole, never only the older days the rollup holds.
-  const live = rows.filter((r) => r.clicks > 0 && (!out.cut || r.dim in NAMED));
+  const live = rows.filter((r) => r.clicks > 0);
   const labels = await printLabels(env, live.filter((r) => r.dim === "print").map((r) => ({ linkId: r.linkId ?? "", code: r.value })), scope);
   for (const r of live) {
     if (r.dim === "print") out.prints.push({ dim: "print", value: r.value, linkId: r.linkId ?? "", label: labels.get(`${r.linkId}|${r.value}`) ?? null, clicks: r.clicks });

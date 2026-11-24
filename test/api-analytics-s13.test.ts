@@ -180,6 +180,17 @@ describe("detail: print and UTM breakdowns", () => {
     const r = await withAe(() => json("/detail?range=7&tz=UTC", "a@example.com"));
     expect(r.prints).toEqual([{ dim: "print", value: "bbb222", linkId: "lB", label: null, clicks: 1 }]);
   });
+  it("a per-code print answer makes the rollup's print rows per code too: one row per code, no label", async () => {
+    await run("INSERT INTO clicks_daily_detail (day,link_id,domain_id,dim,value,clicks) VALUES (?,'lM','dM','print','abc123',2)", dayAt(-100));
+    fetchSpy.mockImplementation(async (_u: unknown, init: unknown) => {
+      const q = JSON.parse(String((init as RequestInit).body)).query as string;
+      if (q.includes("blob2 AS linkId, blob14")) return Response.json({ data: [], rows_before_limit_at_least: 5000 });
+      return Response.json({ data: q.includes("blob14 AS value") ? [{ value: "abc123", n: 3 }] : [] });
+    });
+    const r = await withAe(() => json(`/detail?range=custom&from=${dayAt(-100)}&to=${dayAt(-1)}&tz=UTC`));
+    expect(r.prints).toEqual([{ dim: "print", value: "abc123", linkId: "", label: null, clicks: 5 }]);
+    expect(r.cut).toBeUndefined();
+  });
   it("days before the Analytics Engine window come from the detail rollup, unfiltered only", async () => {
     await run(
       "INSERT INTO clicks_daily_detail (day,link_id,domain_id,dim,value,clicks) VALUES (?,'lM','dM','os','iOS',4),(?,'lM','dM','print','abc123',2),(?,'lM','dM','utm_campaign','(other)',6),(?,'lB','dB','os','iOS',9),(?,'lM','dM','os','iOS',100)",
