@@ -46,7 +46,8 @@ export async function fakeIdp() {
     const url = input instanceof Request ? input.url : String(input);
     const method = init?.method ?? "GET";
     s.calls.push({ url, method, headers: new Headers(init?.headers), body: init?.body ? String(init.body) : "" });
-    const google = url.startsWith(GOOGLE) || url.startsWith("https://oauth2.example.test/");
+    const origin = new URL(url).origin;
+    const google = origin === GOOGLE || origin === "https://oauth2.example.test";
     const base = google ? "https://oauth2.example.test" : ISS;
     if (url.endsWith("/.well-known/openid-configuration")) await s.onDiscovery?.();
     if (url === `${ISS}/.well-known/openid-configuration`) return Response.json(doc(ISS, ISS));
