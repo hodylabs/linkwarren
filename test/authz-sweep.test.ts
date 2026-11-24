@@ -52,6 +52,9 @@ const ROUTES: [M, string, Need, string?][] = [
   ["POST", "/api/settings/cloudflare/setup", ["settings"]], ["POST", "/api/settings/cloudflare/resync", ["settings"]],
   ["GET", "/api/settings/secrets", ["settings"]], ["PUT", "/api/settings/secrets/resend", "owner"], ["DELETE", "/api/settings/secrets/resend", "owner"],
   ["POST", "/api/settings/email/test", ["settings"]],
+  ["GET", "/api/settings/sso", ["settings"]], ["PUT", "/api/settings/sso/google", "owner"],
+  ["PUT", "/api/settings/email-domains/example.com", ["settings"]], ["DELETE", "/api/settings/email-domains/example.com", ["settings"]],
+  ["GET", "/api/account/identities", null], ["DELETE", "/api/account/identities/google", null],
   ["GET", "/api/setup", "owner"], ["POST", "/api/setup/complete", "owner"],
   ["GET", "/api/instance", null], ["GET", "/api/instance/logo", null],
   ["GET", "/api/account", null], ["POST", "/api/account/passkeys/options", null], ["POST", "/api/account/passkeys", null],
@@ -306,7 +309,7 @@ describe("/api/v1 (Bearer keys only)", () => {
 });
 
 describe("/auth/* and /api/account/*", () => {
-  const AUTH = ["/auth/email", "/auth/email/verify", "/auth/passkey/options", "/auth/passkey/verify"];
+  const AUTH = ["/auth/email", "/auth/email/verify", "/auth/passkey/options", "/auth/passkey/verify", "/auth/sso/providers", "/auth/sso/google/start"];
   it.each(AUTH)("POST %s: 404 in access mode, Origin required, 415 for text/plain", async (path) => {
     e.AUTH_MODE = "access";
     expect((await dash(path, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(404);

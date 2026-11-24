@@ -2,7 +2,7 @@ import { auditStmt } from "./audit";
 import { dash } from "./dash";
 import type { Env } from "./env";
 import { ROLE_JOIN, USER_COLS } from "./roles";
-import { rowToUser, type SessionRef, type UserRow } from "./types";
+import { rowToUser, type SessionMethod, type SessionRef, type UserRow } from "./types";
 
 /** The host-mode cookie name; path mode uses `__Secure-lw_session` scoped to the prefix (R6). See `dash(env).cookie`. */
 export const SESSION_COOKIE = "__Host-lw_session";
@@ -56,7 +56,7 @@ const nowS = () => Math.floor(Date.now() / 1000);
  * and the Set-Cookie value. The secret leaves this function only inside `setCookie`. The insert requires the person to still be
  * active, so a disable that lands after the caller's check creates nothing; `started` tells the caller from the batch result.
  */
-export async function createSession(env: Env, req: Request, user: UserRow, method: "email" | "passkey"): Promise<{ setCookie: string; stmts: D1PreparedStatement[]; started: (res: D1Result[]) => boolean }> {
+export async function createSession(env: Env, req: Request, user: UserRow, method: SessionMethod, joined = false): Promise<{ setCookie: string; stmts: D1PreparedStatement[]; started: (res: D1Result[]) => boolean }> {
   const secret = newSecret();
   const id = crypto.randomUUID();
   const now = nowS();
@@ -71,8 +71,13 @@ export async function createSession(env: Env, req: Request, user: UserRow, metho
     auditStmt(env, { actorId: user.id, action: "auth.sign_in", targetType: "session", targetId: id, detail: { method } },
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE id = ?)", binds: [id] }),
   );
+  // S14 R12: a provider sign-in also records signin.sso (joined: the person was created by a domain auto-join).
+  if (method !== "email" && method !== "passkey") stmts.push(
+    auditStmt(env, { actorId: user.id, action: "signin.sso", targetType: "session", targetId: id, detail: { provider: method, joined } },
+      { sql: "EXISTS (SELECT 1 FROM sessions WHERE id = ?)", binds: [id] }),
+  );
   // No Domain: host-only. Host mode's __Host- forces Path=/; path mode's Path=<prefix> keeps it off short-link paths (R6).
-  const at = stmts.length - 2; // the insert
+  const at = old ? 1 : 0; // the insert
   return { setCookie: `${ck.name}=${secret}; Path=${ck.path}; Max-Age=${ABSOLUTE}; Secure; HttpOnly; SameSite=Lax`, stmts, started: (res) => !!res[at]?.meta.changes };
 }
 

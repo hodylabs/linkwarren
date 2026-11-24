@@ -20,6 +20,7 @@ import { instance, settings, setup } from "./api/settings";
 import { serveDashboard } from "./assets";
 import { signin } from "./api/signin";
 import { account } from "./api/account";
+import { ssoAccount, ssoAuth, ssoCallback, ssoSettings } from "./api/sso";
 import { keys } from "./api/keys";
 import { agents } from "./api/agents";
 import { exportApi } from "./api/export";
@@ -58,7 +59,14 @@ const appModeOnly: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 };
 app.use("/auth/*", appModeOnly);
 app.use("/api/account/*", appModeOnly);
+app.use("/api/settings/sso", appModeOnly);
+app.use("/api/settings/sso/*", appModeOnly);
+app.use("/api/settings/email-domains/*", appModeOnly);
+// S14 R1: the provider's redirect is a GET, so it is registered before the POST-only /auth guard (which would 404 it).
+app.get("/auth/sso/:provider/callback", ssoCallback);
 app.route("/auth", signin);
+// After /auth: signin's guard (POST only, exact Origin, JSON, no-store) covers these routes too.
+app.route("/auth/sso", ssoAuth);
 
 // API responses carry identity and private data: never cache them anywhere.
 app.use("/api/*", async (c, next) => {
@@ -102,9 +110,11 @@ app.route("/api/roles", roles);
 app.route("/api/audit", audit);
 app.route("/api/analytics", analytics);
 app.route("/api/settings", settings);
+app.route("/api/settings", ssoSettings);
 app.route("/api/setup", setup);
 app.route("/api/instance", instance);
 app.route("/api/account", account);
+app.route("/api/account", ssoAccount);
 app.route("/api/keys", keys);
 app.route("/api/agents", agents);
 app.route("/api/export", exportApi);

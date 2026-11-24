@@ -7,6 +7,8 @@ export type UserRow = {
   role: "owner" | "member"; status: "invited" | "active" | "disabled"; createdAt: number;
   roleId: string; roleName: string; perms: readonly Perm[];
 };
+/** How a session was started: the two own methods or an S14 sign-in provider. */
+export type SessionMethod = "email" | "passkey" | "google" | "github" | "oidc";
 /** The public side of an app-mode session (never the cookie secret or its hash). */
 export type SessionRef = { id: string; createdAt: number };
 export type DomainRow = {
@@ -129,7 +131,7 @@ export const rowToCf = (r: R): CfRow => ({
 export type PasskeyItem = { id: string; name: string; createdAt: number; lastUsedAt: number | null; backedUp: boolean };
 
 /** One live session of the signed-in person (never the cookie secret or its hash). */
-export type SessionItem = { id: string; current: boolean; method: "email" | "passkey"; createdAt: number; lastSeenAt: number; device: string | null; ipPrefix: string | null };
+export type SessionItem = { id: string; current: boolean; method: SessionMethod; createdAt: number; lastSeenAt: number; device: string | null; ipPrefix: string | null };
 
 /** A personal API key as the dashboard sees it (never the secret or its hash). `userEmail` only in the owner's all-keys view. */
 export type KeyItem = {
