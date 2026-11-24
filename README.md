@@ -24,7 +24,7 @@ linkwarren is a self-hosted link shortener for people with more than one domain.
 - **Safe moves and bulk edit.** Move links between domains and the old address keeps forwarding, so printed codes never break. Delete, schedule, move or protect up to 50 links at once. Deleted slugs stay locked.
 - **Analytics.** Clicks over time, QR scans, countries, referrers, devices, operating systems, browsers, languages, cities, UTM campaigns and the busiest hours, with a page per link. Click any row to filter the whole page, watch the last 50 clicks come in, and keep the breakdowns past three months. Bots and link previews are left out.
 - **Alerts and share pages.** Opt-in emails when a link goes quiet or spikes, a weekly summary, and a read-only, revocable page of click totals to share with a client.
-- **People and roles.** Invites, custom roles, per-person domain access, sign-in with email links or passkeys (or Cloudflare Access), and a 3-year audit log. Coming soon: sign-in with Google or GitHub, and single sign-on (OIDC) with your own identity provider.
+- **People and roles.** Invites, custom roles, per-person domain access, sign-in with email links, passkeys, Google, GitHub or single sign-on (OIDC), with SSO enforceable per email domain (or Cloudflare Access), and a 3-year audit log.
 - **API and MCP.** A REST API with personal keys, and an MCP server so Claude, ChatGPT and other agents act with your permissions and no more.
 - **Import and export.** Bring links in from CSV or JSON in the setup wizard, and take a full JSON export at any time.
 - **Yours to run.** Your account, your data, your bill. Updates are tagged releases you deploy when you choose; the dashboard tells you when one is out.
@@ -34,7 +34,7 @@ linkwarren is a self-hosted link shortener for people with more than one domain.
 You need a Cloudflare account with a domain on it, a [Resend](https://resend.com) account for sign-in emails, and Node.js 23.6 or newer. Between the commands below you create one D1 database and two KV namespaces, fill in `wrangler.instance.jsonc` (the ids, your hosts and `EMAIL_FROM`), turn on Analytics Engine (or remove its line), and set the `OWNER_EMAIL` and `RESEND_API_KEY` secrets. [docs/getting-started.md](docs/getting-started.md) walks through every step.
 
 ```sh
-git clone https://github.com/hodylabs/linkwarren && cd linkwarren && git checkout v0.8.0
+git clone https://github.com/hodylabs/linkwarren && cd linkwarren && git checkout v0.9.0
 npm ci
 cp wrangler.instance.example.jsonc wrangler.instance.jsonc
 npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc
