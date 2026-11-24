@@ -12,6 +12,7 @@ import { settingsError } from "./copy";
 import { exportEstimate, exportFileName, runExport, saveBlob, startExport, type ExportStart } from "./exportRun";
 import { LOGO_ACCEPT, readLogoFile } from "./logoFile";
 import { SecretField } from "./SecretField";
+import { SsoSettingsBlock } from "./SsoSection";
 
 /** Backups and export hotkeys and their text on the shortcuts sheet. */
 export const EXPORT_KEYS = { escape: "Cancel the running export" } as const;
@@ -165,7 +166,9 @@ export function SignInSection({ s }: { s: SettingsBody }) {
         </Field>
       ) : (
         <>
-          <p>linkwarren sign-in: email link and passkeys</p>
+          <p>linkwarren sign-in: email link, passkeys, and Google, GitHub or single sign-on when turned on below</p>
+          <SsoSettingsBlock />
+          <h3 className="sso-sub">Your sign-ins</h3>
           <AccountPanel />
         </>
       )}

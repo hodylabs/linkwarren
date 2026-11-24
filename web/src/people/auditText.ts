@@ -1,4 +1,4 @@
-import type { AuditItem } from "../api";
+import { providerName, type AuditItem } from "../api";
 import { plural } from "../copy";
 import { PERMS, PERM_TEXT, type Perm } from "../perms";
 
@@ -8,6 +8,18 @@ const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 /** Known permission keys in a detail array as their labels; anything else is dropped. */
 const labels = (v: unknown): string[] => (Array.isArray(v) ? PERMS.filter((p: Perm) => v.includes(p)).map((p) => PERM_TEXT[p].label) : []);
+
+/** A provider mid-sentence: "Google", "GitHub", and OIDC (or an unknown id) as "single sign-on". */
+const ssoName = (p: unknown): string => (p === "oidc" ? "single sign-on" : providerName(p) ?? "single sign-on");
+const SSO_FIELDS: Record<string, string> = { enabled: "on or off", clientId: "client ID", clientSecret: "client secret", issuer: "issuer", label: "button label" };
+/** ": auto-join as Member, single sign-on enforced" from an email_domain.set detail; only what the detail says. */
+function emailDomainSuffix(d: Record<string, unknown>): string {
+  const parts = [
+    ...(str(d.joinRoleName) ?? str(d.joinRoleId) ? [`auto-join as ${str(d.joinRoleName) ?? str(d.joinRoleId)}`] : d.joinRoleId === null ? ["no auto-join"] : []),
+    ...(d.enforceSso === true ? ["single sign-on enforced"] : d.enforceSso === false ? ["single sign-on not enforced"] : []),
+  ];
+  return parts.length ? `: ${parts.join(", ")}` : "";
+}
 
 /** Plain-language parts of one audit row. Every value is text for React to escape; nothing here is HTML. */
 export function describeAudit(a: AuditItem, meId: string, domains: readonly { id: string; host: string }[] = [], users: readonly { id: string; email: string; name?: string | null }[] = []): AuditText {
@@ -101,6 +113,18 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
     case "user.bootstrap": return done("set up this linkwarren");
     case "user.activate": return done("signed in for the first time");
     case "auth.sign_in": return done(a.detail.method === "passkey" ? "signed in with a passkey" : "signed in with an email link");
+    // S14 (R12): single sign-on. Field names are mapped to words; unknown ones are dropped, values are never in the detail.
+    case "signin.sso": {
+      const p = ssoName(a.detail.provider);
+      return done(a.detail.joined === true ? `joined by signing in with ${p}` : `signed in with ${p}`);
+    }
+    case "sso.settings": {
+      const fields = Array.isArray(a.detail.fields) ? a.detail.fields.filter((f): f is string => typeof f === "string" && Object.hasOwn(SSO_FIELDS, f)).map((f) => SSO_FIELDS[f]!) : [];
+      return done("changed the sign-in settings for", ssoName(a.detail.provider), fields.length ? `: ${fields.join(", ")}` : "");
+    }
+    case "email_domain.set": return done("set the email domain", str(a.detail.domain) ?? a.targetId, emailDomainSuffix(a.detail));
+    case "email_domain.delete": return done("removed the email domain", str(a.detail.domain) ?? a.targetId);
+    case "identity.unlink": return done(`unlinked a ${ssoName(a.detail.provider)} sign-in`);
     case "auth.sign_out": return done("signed out");
     case "auth.sign_out_all": return done("signed out everywhere");
     case "session.end": return done("ended a session");

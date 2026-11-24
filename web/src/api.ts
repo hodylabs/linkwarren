@@ -145,3 +145,27 @@ export type ShareItem = { id: string; scope: "link" | "domain"; scopeId: string;
 export type NewShare = ShareItem & { url: string };
 /** S13: one labelled QR print of a link (GET /api/links/:id/qr-labels). Its QR content is `<shortUrl>?lw=qr.<code>`. */
 export type QrLabel = { id: string; code: string; label: string; createdAt: number };
+/** S14: a single sign-on provider id, as in /auth/sso/:provider and the settings routes. */
+export type SsoProvider = "google" | "github" | "oidc";
+export const SSO_PROVIDERS: readonly SsoProvider[] = ["google", "github", "oidc"];
+/** POST /auth/sso/providers: the enabled providers only. `label` is the button text the owner set (OIDC). */
+export type SsoProviderItem = { id: SsoProvider; label: string };
+/** One row of the email domains list: `joinRoleId` null means no auto-join, and it is never the owner role. */
+export type EmailDomain = { domain: string; joinRoleId: string | null; enforceSso: boolean };
+/** GET and PUT /api/settings/sso (perm settings, app mode). Never carries a client secret, only whether one is set. */
+export type SsoSettings = {
+  redirectUris: Record<SsoProvider, string>;
+  google: { enabled: boolean; clientId: string; secretSet: boolean };
+  github: { enabled: boolean; clientId: string; secretSet: boolean };
+  oidc: { enabled: boolean; issuer: string; clientId: string; label: string; secretSet: boolean };
+  emailDomains: EmailDomain[];
+  secretsReady: boolean;
+};
+/** PUT /api/settings/sso/:provider. An empty `clientSecret` clears it; leaving it out keeps it. */
+export type SsoPatch = { enabled?: boolean; clientId?: string; clientSecret?: string; issuer?: string; label?: string };
+/** One item of GET /api/account/identities. */
+export type IdentityItem = { provider: SsoProvider; email: string; createdAt: number; lastUsedAt: number | null };
+/** Plain provider names for lists and the audit log. */
+export const PROVIDER_NAME: Record<SsoProvider, string> = { google: "Google", github: "GitHub", oidc: "Single sign-on" };
+/** The provider's name, or null for an id this build does not know. */
+export const providerName = (p: unknown): string | null => (typeof p === "string" && Object.hasOwn(PROVIDER_NAME, p) ? PROVIDER_NAME[p as SsoProvider] : null);

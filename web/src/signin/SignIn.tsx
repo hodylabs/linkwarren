@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { api, ApiError, type Me } from "../api";
-import { errorText } from "../copy";
+import { api, ApiError, type Me, type SsoProviderItem } from "../api";
+import { errorText, SIGNIN_ERRORS, signInErrorText } from "../copy";
 import { useHotkeys } from "../keys";
-import { goNext } from "./next";
+import { goNext, nav } from "./next";
 import { addPasskey, passkeysSupported, signInWithPasskey } from "./passkey";
 import { stripBase, withBase } from "../base";
 
@@ -18,6 +18,25 @@ export function takeToken(): { token: string | null; incomplete: boolean } {
   return { token: m ? m[1]! : null, incomplete };
 }
 
+/** S14 R13: a failed single sign-on lands here with ?error=<code>. Only known codes show their text; anything else reads as sso_failed. */
+export function ssoErrorFromUrl(): string | null {
+  const raw = new URLSearchParams(location.search).get("error");
+  if (raw === null) return null;
+  return signInErrorText((SIGNIN_ERRORS as readonly string[]).includes(raw) ? raw : "sso_failed");
+}
+/** Drops ?error= from the address (other parameters such as next stay), so a reload or a shared URL does not show it again. */
+function dropErrorParam() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("error")) return;
+  q.delete("error");
+  const rest = q.toString();
+  history.replaceState(history.state, "", withBase(stripBase(location.pathname)) + (rest ? `?${rest}` : "") + location.hash);
+}
+
+/** Google and GitHub by name; the OIDC button carries the label the owner set. */
+const buttonText = (p: SsoProviderItem) =>
+  p.id === "google" ? "Continue with Google" : p.id === "github" ? "Continue with GitHub" : p.label.trim() || "Single sign-on";
+
 type View = "form" | "sent" | "landing" | "signedIn" | "offer";
 type Done = { email: string | null; next: string; offer: boolean };
 
@@ -32,13 +51,32 @@ export function SignIn({ next, token, incomplete, onSpent, join }: { next: strin
   const [view, setView] = useState<View>(token ? "landing" : "form");
   const [email, setEmail] = useState("");
   const [sentTo, setSentTo] = useState(""); // the address the link went to, fixed at submit time
-  const [error, setError] = useState<string | null>(incomplete ? errorText("link_incomplete") : null);
+  const [error, setError] = useState<string | null>(() => (incomplete ? errorText("link_incomplete") : ssoErrorFromUrl()));
+  const [providers, setProviders] = useState<SsoProviderItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
   const supported = passkeysSupported();
   // The invite page opens on its heading (not the field), so a screen reader hears where it is first.
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (join) heading.current?.focus(); }, [join]);
+  useEffect(dropErrorParam, []);
+  // Back from a provider can restore this page from the back/forward cache with busy still set: free the buttons again.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => e.persisted && setBusy(false);
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, []);
+  // S14: the enabled providers. The email link's landing sends nothing before Sign in (R4), so only the form asks.
+  // Any failure leaves the page as it was, without single sign-on.
+  useEffect(() => {
+    if (token) return;
+    const ac = new AbortController();
+    api<{ items?: unknown }>("POST", "/auth/sso/providers", {}, ac.signal).then(
+      (r) => setProviders(Array.isArray(r.items) ? (r.items as SsoProviderItem[]).filter((p) => ["google", "github", "oidc"].includes(p?.id) && typeof p.label === "string") : []),
+      () => undefined,
+    );
+    return () => ac.abort();
+  }, [token]);
 
   const run = async (fn: () => Promise<void>) => {
     if (busy) return;
@@ -59,7 +97,21 @@ export function SignIn({ next, token, incomplete, onSpent, join }: { next: strin
     setSentTo(to);
     setView("sent");
   });
-  const usePasskey = () => run(async () => goNext((await signInWithPasskey(next)).next));
+  // The state behind the returned URL is single use, so the page stays busy until the browser leaves.
+  const startSso = async (p: SsoProviderItem) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { url } = await api<{ url: string }>("POST", `/auth/sso/${p.id}/start`, { next });
+      if (new URL(url).protocol !== "https:") throw new ApiError(0, "sso_failed");
+      nav.assign(url);
+    } catch (e) {
+      setError(signInErrorText(e instanceof ApiError ? e.code : "sso_failed"));
+      setBusy(false);
+    }
+  };
+  const usePasskey =() => run(async () => goNext((await signInWithPasskey(next)).next));
   // Nothing is sent until the person presses Sign in: some mail scanners run JavaScript (R4).
   const verify = () => run(async () => {
     const t = token;
@@ -101,6 +153,16 @@ export function SignIn({ next, token, incomplete, onSpent, join }: { next: strin
           </>
         ) : (
           <h1>Sign in to {host}</h1>
+        )}
+        {providers.length > 0 && (
+          <div className="signin-sso">
+            {providers.map((p) => (
+              <button key={p.id} type="button" className="btn" disabled={busy} onClick={() => void startSso(p)}>
+                {buttonText(p)}
+              </button>
+            ))}
+            <p className="signin-or">or with your email</p>
+          </div>
         )}
         <form onSubmit={submit(sendLink)}>
           <label htmlFor="signin-email">Email</label>

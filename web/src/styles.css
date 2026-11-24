@@ -525,6 +525,22 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .sfield b{font-weight:500}
 .sfield .input{width:100%;max-width:380px}
 .secret .row-actions .input{flex:1;min-width:0}
+/* S14 single sign-on: provider cards and the email domains table (compact, not the full-width list table) */
+.sso-sub{font-size:14px;font-weight:600;margin:10px 0 2px}
+.sso-card{border:1px solid var(--line);border-radius:var(--r-card);padding:4px 14px 10px;margin:6px 0;background:var(--card)}
+.sso-card h3{font-size:14px;font-weight:600;margin:8px 0 2px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sso-card .save-row{padding:6px 0 0}
+.sso-uri{display:flex;align-items:center;gap:8px;min-width:0}
+.sso-uri .mono{flex:1;min-width:0;overflow-wrap:anywhere}
+.sso-doms{overflow-x:auto}
+.sso-doms table{width:100%}
+.sso-doms th{position:static;height:32px;padding:0 8px;background:none}
+.sso-doms td{padding:4px 8px;white-space:normal}
+.sso-doms th:first-child,.sso-doms td:first-child{padding-left:0}
+.sso-doms th:last-child,.sso-doms td:last-child{padding-right:0}
+.sso-doms tbody tr{cursor:default}
+.sso-doms tbody tr:hover{background:none}
+.sso-doms select.input{max-width:200px}
 .logo-up{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .logo-up img{width:40px;height:40px;border:1px solid var(--line);border-radius:var(--r-ctl);padding:4px;background:var(--chrome);object-fit:contain}
 .check{display:flex;align-items:center;gap:8px;margin:2px 0;min-height:32px}
@@ -563,6 +579,8 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .signin input:focus{outline:0;border-color:var(--ring);box-shadow:0 0 0 3px var(--accent-wash)}
 .signin .btn{height:44px;min-height:44px;width:100%}
 .signin-err{color:var(--bad);background:var(--bad-wash);border-radius:var(--r-ctl);padding:8px 10px;font-weight:500}
+.signin-sso{display:grid;gap:8px}
+.signin .signin-or{text-align:center;color:var(--muted);font-size:13px}
 .setup{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:100vh}
 .steps{background:var(--chrome);border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:14px}
 .steps ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
