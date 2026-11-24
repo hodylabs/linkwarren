@@ -26,8 +26,19 @@ export type DimCount = { dim: Dim; value: string; clicks: number };
 export type RollTot = { linkId: string; domainId: string; slug: string; qr: number; typed: number; bots: number; visitors: number };
 /** One clicks_daily_dim row (without the day). */
 export type RollDim = { linkId: string; domainId: string; dim: Dim; value: string; clicks: number };
-/** `null` = no filter, `[]` = match nothing. */
-export type Scope = { domainIds: string[] | null; linkIds: string[] | null };
+/**
+ * S13 filter dimensions (the contract's keys) and the column each one reads; the dimension never reaches SQL as text (R5).
+ * `extra` keeps a filter equal to its breakdown row: referrers are counted on typed clicks, prints on QR scans only.
+ */
+export const FILTER_DIMS = {
+  country: ["blob4", ""], place: ["blob13", ""], device: ["blob5", ""], os: ["blob10", ""], browser: ["blob11", ""],
+  language: ["blob12", ""], referrer: ["blob6", " AND blob7 = $typed"], source: ["blob7", ""], domain: ["blob1", ""],
+  print: ["blob14", " AND blob7 = $qr"], utm_source: ["blob15", ""], utm_medium: ["blob16", ""], utm_campaign: ["blob17", ""],
+} as const;
+export type FilterDim = keyof typeof FILTER_DIMS;
+export type Filter = { dim: FilterDim; value: string };
+/** `null` = no filter, `[]` = match nothing. `filters` (S13) AND together, each value a bound param. */
+export type Scope = { domainIds: string[] | null; linkIds: string[] | null; filters?: Filter[] };
 type Params = Record<string, string>;
 
 const SQL_URL = "https://api.cloudflare.com/client/v4/analytics/sql";
@@ -63,14 +74,15 @@ export const aeConfigured = (env: Env): boolean =>
  */
 export const ROW_CAP = 2000;
 
-export async function aeQuery(env: Env, sql: string, params: Params): Promise<Record<string, unknown>[]> {
+/** `limit` (S13 recent clicks): a deliberate top-n read, so more rows than `limit` is expected and never "truncated". */
+export async function aeQuery(env: Env, sql: string, params: Params, limit?: number): Promise<Record<string, unknown>[]> {
   if (!aeConfigured(env)) throw new AeError("off");
   let res: Response;
   try {
     res = await fetch(SQL_URL, {
       method: "POST",
       headers: { authorization: `Bearer ${trim(env.AE_READ_TOKEN)}`, "content-type": "application/json" },
-      body: JSON.stringify({ query: `${sql} LIMIT ${ROW_CAP + 1}`, params }),
+      body: JSON.stringify({ query: `${sql} LIMIT ${limit ?? ROW_CAP + 1}`, params }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (e) {
@@ -82,6 +94,7 @@ export async function aeQuery(env: Env, sql: string, params: Params): Promise<Re
   }
   const json = (await res.json().catch(() => null)) as { data?: unknown; rows?: unknown; rows_before_limit_at_least?: unknown } | null;
   if (!Array.isArray(json?.data)) throw new AeError("bad_response");
+  if (limit !== undefined) return json.data.slice(0, limit) as Record<string, unknown>[];
   const n = json.data.length;
   const more = json.rows_before_limit_at_least;
   if (n > ROW_CAP || (typeof json.rows === "number" && json.rows !== n) || (typeof more === "number" && more > n)) throw new AeError("truncated");
@@ -101,7 +114,7 @@ function idClause(col: string, prefix: string, ids: string[] | null, params: Par
 
 /** Analytics Engine caps a statement at 10 KiB; stay well under it. */
 export const MAX_SQL = 8192;
-const SQL_OVERHEAD = 1100; // select, group by, limit and fixed where terms of the longest statement
+const SQL_OVERHEAD = 1500; // select, group by, limit, fixed where terms and up to 6 filters (S13) of the longest statement
 
 const BUDGET = MAX_SQL - SQL_OVERHEAD;
 /** The length an id clause adds for `n` ids (` OR col = $p<i>` per id). */
@@ -131,9 +144,18 @@ function chunkIds(all: string[], col: string, prefix: string, budget = BUDGET): 
   return chunks;
 }
 
-type Chunk = { links: string[] | null; domains: string[] | null };
-/** Both id clauses of one chunk, bound into `p`. */
-const chunkClause = (c: Chunk, p: Params) => idClause("blob2", "l", c.links, p) + idClause("blob1", "d", c.domains, p);
+type Chunk = { links: string[] | null; domains: string[] | null; filters?: Filter[] };
+
+/** ` AND col = $f<i>` per filter (plus its breakdown's extra term); the column comes from FILTER_DIMS, the value is bound. */
+function filterClause(filters: Filter[] | undefined, p: Params): string {
+  return (filters ?? []).map((f, i) => {
+    const [col, extra] = FILTER_DIMS[f.dim];
+    p[`f${i}`] = f.value;
+    return ` AND ${col} = $f${i}${extra}`;
+  }).join("");
+}
+/** Both id clauses of one chunk and its filters, bound into `p`. */
+const chunkClause = (c: Chunk, p: Params) => idClause("blob2", "l", c.links, p) + idClause("blob1", "d", c.domains, p) + filterClause(c.filters, p);
 
 /**
  * The id chunks of a scope. A moved link keeps its older points under the domain of the moment, so when links are named
@@ -141,6 +163,10 @@ const chunkClause = (c: Chunk, p: Params) => idClause("blob2", "l", c.links, p) 
  * the chunks are their cross product (each list partitioned), sized so one statement holds a link chunk and a domain chunk.
  */
 function scopeChunks(scope: Scope): Chunk[] {
+  const filters = scope.filters?.length ? scope.filters : undefined;
+  return idChunks(scope).map((c) => ({ ...c, filters }));
+}
+function idChunks(scope: Scope): Chunk[] {
   const { linkIds, domainIds } = scope;
   if (!linkIds) return domainIds ? chunkIds(domainIds, "blob1", "d").map((domains) => ({ links: null, domains })) : [{ links: null, domains: null }];
   if (!domainIds) return chunkIds(linkIds, "blob2", "l").map((links) => ({ links, domains: null }));
@@ -190,6 +216,15 @@ export async function aeReport(env: Env, from: Date, cur: Date, to: Date, unit: 
   if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0) return { days: [], links: [], dims: [] };
   const b = unit === "day" ? "toStartOfDay(timestamp)" : "toStartOfHour(timestamp)";
   const curFrom = cur > from ? cur : from;
+  // S13 R8: an hourly view longer than a day (7 days) still counts a visitor once per UTC day, read over the current window and
+  // filed under its first hour there; only the 24-hour view counts per hour. Totals read visitors of the current window only.
+  const dayVis = unit === "hour" && to.getTime() - curFrom.getTime() > 86_400_000;
+  const vb = dayVis ? "toStartOfDay(timestamp)" : b;
+  const visKey = (v: unknown) => {
+    if (!dayVis) return bucketOf(v, unit);
+    const k = `${bucketOf(v, "day")}T00:00:00Z`, c = `${iso(curFrom).slice(0, 13)}:00:00Z`;
+    return k < c ? c : k;
+  };
   const runChunk = (c: ReturnType<typeof scopeChunks>[number]) => {
     const p = baseParams(env, from, to);
     p.cur = iso(curFrom);
@@ -198,7 +233,7 @@ export async function aeReport(env: Env, from: Date, cur: Date, to: Date, unit: 
     const now = curFrom < to;
     return Promise.all([
       q(`${b} AS bucket, ${COUNTS}`, "from", "", b),
-      q(`${b} AS bucket, ${VISITORS}`, "from", VISITOR, b),
+      q(`${vb} AS bucket, ${VISITORS}`, dayVis ? "cur" : "from", VISITOR, vb),
       // Per link and domain: a link moved inside the window keeps each domain's clicks apart.
       now ? q("blob2 AS linkId, blob1 AS domainId, argMax(blob3, timestamp) AS slug, COUNT(*) AS clicks", "cur", HUMAN, "blob2, blob1") : [],
       ...DIMS.map(([, col, extra]) => (now ? q(`${col} AS value, COUNT(*) AS n`, "cur", HUMAN + extra, col) : [])),
@@ -214,7 +249,7 @@ export async function aeReport(env: Env, from: Date, cur: Date, to: Date, unit: 
       const d = day(bucketOf(r.bucket, unit));
       d.qr += num(r.qr); d.typed += num(r.typed); d.bots += num(r.bots);
     }
-    for (const r of vis) day(bucketOf(r.bucket, unit)).visitors += num(r.n);
+    for (const r of vis) day(visKey(r.bucket)).visitors += num(r.n);
     for (const r of ls) links.push({ linkId: str(r.linkId), domainId: str(r.domainId), slug: str(r.slug), clicks: num(r.clicks) });
     dimRows.forEach((rows, i) => {
       for (const r of rows) {
@@ -254,23 +289,34 @@ export async function aeDay(env: Env, day: string): Promise<{ tot: RollTot[]; di
   };
 }
 
-/** S10 per-click detail, appended after blob9 (older points have them empty): os, browser, language, place. */
-export type DetailDim = "os" | "browser" | "language" | "place";
-const DETAIL = [["os", "blob10"], ["browser", "blob11"], ["language", "blob12"], ["place", "blob13"]] as const;
+/**
+ * Per-click detail, appended after blob9 (older points have them empty): S10 os, browser, language, place; S13 print code
+ * (QR scans only, "" is a scan with no label) and the three UTM values (clicks that carried one).
+ */
+export type DetailDim = "os" | "browser" | "language" | "place" | "print" | "utm_source" | "utm_medium" | "utm_campaign";
+const DETAIL = [
+  ["os", "blob10", ""], ["browser", "blob11", ""], ["language", "blob12", ""], ["place", "blob13", ""],
+  ["print", "blob14", " AND blob7 = $qr"], ["utm_source", "blob15", " AND blob15 != $none"],
+  ["utm_medium", "blob16", " AND blob16 != $none"], ["utm_campaign", "blob17", " AND blob17 != $none"],
+] as const;
+/** One detail value's human clicks; print rows also name their link (a code belongs to one link). */
+export type DetailCount = { dim: DetailDim; value: string; clicks: number; linkId?: string };
+/** Detail runs 8 dim queries plus 1 or 2 hour queries per chunk: 4 chunks keep it at 40, under Workers Free's 50 subrequests. */
+const DETAIL_CHUNKS = 4;
 /** Hourly buckets per query: 80 days of hours (1920 rows) stays under ROW_CAP, so a 90-day window is two queries. */
 const HOUR_SPAN_MS = 80 * 86_400_000;
 
 /**
- * Detail for `from`..`to` from Analytics Engine only (D1 rollups keep totals and country, device, referrer, not these):
- * human clicks per detail value, and per hour for the busiest-times grid. Per id chunk: 4 dim queries plus 1 or 2 hour
- * queries, so MAX_CHUNKS keeps a request at 36 at most.
+ * Detail for `from`..`to` from Analytics Engine (older days come from the S13 detail rollup, read in analytics.ts loadDetail):
+ * human clicks per detail value, and per hour for the busiest-times grid. Per id chunk: 8 dim queries plus 1 or 2 hour
+ * queries; past DETAIL_CHUNKS chunks it is refused (scope_too_big), so a request makes 40 at most.
  * `shiftSec` (0..3540, whole minutes): the viewer zone's offset past the whole hour (1800 for +05:30). Each timestamp is moved
  * by it before the hour is cut, so a bucket is exactly one local hour; a bucket's start minus the shift is that hour's start.
  * Whole-hour zones pass 0 and keep the plain UTC hour query.
  */
 export async function aeDetail(
   env: Env, from: Date, to: Date, scope: Scope, shiftSec = 0,
-): Promise<{ dims: { dim: DetailDim; value: string; clicks: number }[]; hours: { bucket: string; clicks: number }[] }> {
+): Promise<{ dims: DetailCount[]; hours: { bucket: string; clicks: number }[] }> {
   if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0 || from >= to) return { dims: [], hours: [] };
   if (!Number.isInteger(shiftSec) || shiftSec < 0 || shiftSec >= 3600) throw new AeError("bad_shift");
   const hour = shiftSec ? "toStartOfHour(toDateTime(toUnixTimestamp(timestamp) + toUInt32($shift)))" : "toStartOfHour(timestamp)";
@@ -280,15 +326,20 @@ export async function aeDetail(
     const p = baseParams(env, from, to);
     const where = WINDOW + HUMAN + chunkClause(c, p);
     return Promise.all([
-      ...DETAIL.map(([, col]) => aeQuery(env, `SELECT ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where} GROUP BY ${col}`, p)),
+      ...DETAIL.map(([dim, col, extra]) => {
+        const g = dim === "print" ? `blob2, ${col}` : col; // print codes are per link: one link's code never names another's label
+        return aeQuery(env, `SELECT ${dim === "print" ? "blob2 AS linkId, " : ""}${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${where}${extra} GROUP BY ${g}`, p);
+      }),
       ...spans.map(([a, b]) => {
         const q: Params = { ...p, from: iso(a), to: iso(b), ...(shiftSec ? { shift: String(shiftSec) } : {}) };
         return aeQuery(env, `SELECT ${hour} AS bucket, COUNT(*) AS n FROM ${ds(env)} ${where} GROUP BY ${hour}`, q);
       }),
     ]);
   };
-  const parts = await Promise.all(scopeChunks(scope).map(runChunk));
-  const dims = new Map<string, { dim: DetailDim; value: string; clicks: number }>();
+  const chunks = scopeChunks(scope);
+  if (chunks.length > DETAIL_CHUNKS) throw new AeError("scope_too_big");
+  const parts = await Promise.all(chunks.map(runChunk));
+  const dims = new Map<string, DetailCount>();
   const hours = new Map<string, number>();
   for (const rows of parts) {
     rows.forEach((rs, i) => {
@@ -298,8 +349,8 @@ export async function aeDetail(
           hours.set(b, (hours.get(b) ?? 0) + num(r.n));
           continue;
         }
-        const dim = DETAIL[i]![0], k = `${dim}|${str(r.value)}`;
-        const c = dims.get(k) ?? dims.set(k, { dim, value: str(r.value), clicks: 0 }).get(k)!;
+        const dim = DETAIL[i]![0], linkId = dim === "print" ? str(r.linkId) : undefined, k = `${dim}|${linkId ?? ""}|${str(r.value)}`;
+        const c = dims.get(k) ?? dims.set(k, { dim, value: str(r.value), clicks: 0, ...(linkId === undefined ? {} : { linkId }) }).get(k)!;
         c.clicks += num(r.n);
       }
     });
@@ -324,4 +375,52 @@ export async function aeLinkDays(env: Env, from: Date, to: Date, linkIds: string
     )
   ).flat();
   return rows.map((r) => ({ bucket: bucketOf(r.bucket, "day"), linkId: str(r.linkId), qr: num(r.qr), typed: num(r.typed) }));
+}
+
+/**
+ * S13 detail rollup (R2): one UTC day of detail rows per link, domain, dim and value, one query per detail dim (8). Rows with
+ * no UTM value and non-QR print rows are left out by the queries, so they cost no D1 write. Each answer at most ROW_CAP rows
+ * or AeError("truncated").
+ */
+export async function aeDayDetail(env: Env, day: string): Promise<{ linkId: string; domainId: string; dim: DetailDim; value: string; clicks: number }[]> {
+  const from = new Date(`${day}T00:00:00Z`);
+  const p = baseParams(env, from, new Date(from.getTime() + 86_400_000));
+  const rows = await Promise.all(
+    DETAIL.map(([, col, extra]) =>
+      aeQuery(env, `SELECT blob2 AS linkId, blob1 AS domainId, ${col} AS value, COUNT(*) AS n FROM ${ds(env)} ${WINDOW}${HUMAN}${extra} GROUP BY blob2, blob1, ${col}`, p)),
+  );
+  return rows.flatMap((rs, i) => rs.map((r) => ({ linkId: str(r.linkId), domainId: str(r.domainId), dim: DETAIL[i]![0], value: str(r.value), clicks: num(r.n) })));
+}
+
+/** One recent human click (S13). No IP, visitor code or user agent: those columns are never selected. */
+export type RecentRow = {
+  at: string; linkId: string; domainId: string; slug: string; country: string; place: string; device: string; os: string; browser: string;
+  language: string; source: string; print: string; referrer: string; utmSource: string; utmMedium: string; utmCampaign: string;
+};
+const RECENT_COLS = "blob2 AS linkId, blob1 AS domainId, blob3 AS slug, blob4 AS country, blob13 AS place, blob5 AS device, blob10 AS os, "
+  + "blob11 AS browser, blob12 AS language, blob7 AS source, blob14 AS print, blob6 AS referrer, blob15 AS utmSource, blob16 AS utmMedium, blob17 AS utmCampaign";
+const RECENT_KEYS = ["linkId", "domainId", "slug", "country", "place", "device", "os", "browser", "language", "source", "print", "referrer", "utmSource", "utmMedium", "utmCampaign"] as const;
+
+/** `2026-11-19 13:04:05` (or ISO) to `2026-11-19T13:04:05Z`. */
+function instantOf(v: unknown): string {
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(String(v ?? ""));
+  if (!m) throw new AeError("bad_response");
+  return `${m[1]}T${m[2]}Z`;
+}
+
+/** The newest `n` human clicks in `from`..`to`, newest first: `n` per id chunk (at most MAX_CHUNKS queries), merged and cut to `n`. */
+export async function aeRecent(env: Env, from: Date, to: Date, scope: Scope, n: number): Promise<RecentRow[]> {
+  if (scope.domainIds?.length === 0 || scope.linkIds?.length === 0) return [];
+  const parts = await Promise.all(
+    scopeChunks(scope).map((c) => {
+      const p = baseParams(env, from, to);
+      return aeQuery(env, `SELECT timestamp AS at, ${RECENT_COLS} FROM ${ds(env)} ${WINDOW}${HUMAN}${chunkClause(c, p)} ORDER BY timestamp DESC`, p, n);
+    }),
+  );
+  const rows = parts.flat().map((r) => {
+    const out = { at: instantOf(r.at) } as RecentRow;
+    for (const k of RECENT_KEYS) out[k] = str(r[k]);
+    return out;
+  });
+  return rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, n);
 }

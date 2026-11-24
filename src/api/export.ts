@@ -33,6 +33,8 @@ export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]
     columns: ["id", "name", "kind", "data", "style", "created_by", "updated_by", "created_at", "updated_at"],
     computed: { hasPassword: "secret IS NOT NULL" },
   },
+  // S13: the labelled QR prints of each link.
+  { table: "qr_labels", columns: ["id", "link_id", "code", "label", "created_at", "created_by"] },
   { table: "slug_locks", columns: ["domain_id", "slug_key", "locked_at", "locked_by"] },
   // Only for people who may read the audit log (owners always): `data` alone never crosses the `audit` boundary.
   { table: "audit_log", columns: ["id", "at", "actor_id", "via", "action", "target_type", "target_id", "detail"], audit: true },
@@ -40,6 +42,7 @@ export const EXPORT_TABLES: readonly { table: string; columns: readonly string[]
   // Rollups are kept forever and can hold millions of rows: out unless the owner asks (each exported row is one D1 read).
   { table: "clicks_daily", columns: ["day", "link_id", "domain_id", "slug", "qr", "typed", "bots", "visitors"], analytics: true },
   { table: "clicks_daily_dim", columns: ["day", "link_id", "domain_id", "dim", "value", "clicks"], analytics: true },
+  { table: "clicks_daily_detail", columns: ["day", "link_id", "domain_id", "dim", "value", "clicks"], analytics: true },
   { table: "api_keys", columns: ["id", "user_id", "name", "prefix", "can_write", "can_delete", "domain_ids", "expires_at", "created_at", "last_used_at", "revoked_at"] },
   { table: "agent_connections", columns: ["id", "user_id", "client_id", "client_name", "redirect_host", "can_write", "can_delete", "created_at", "revoked_at"] },
   { table: "tool_calls", columns: ["id", "at", "user_id", "via", "conn_id", "tool", "status"] },

@@ -75,9 +75,10 @@ describe("click recording appends the detail blobs after the old ones", () => {
     const h = harness();
     await h.go(d.host, "/spring", { ...visit({ "accept-language": "pt-BR,pt;q=0.9" }), cf: { country: "br", city: "Recife", region: "Pernambuco" } });
     const b = h.points[0].blobs!;
-    expect(b).toHaveLength(13);
+    expect(b).toHaveLength(17);
     expect(b.slice(3, 8)).toEqual(["BR", "mobile", "instagram.com", "typed", "human"]);
-    expect(b.slice(9)).toEqual(["iOS", "Safari", "pt-br", "Recife, BR"]);
+    expect(b.slice(9, 13)).toEqual(["iOS", "Safari", "pt-br", "Recife, BR"]);
+    expect(b.slice(13)).toEqual(["", "", "", ""]); // S13: no print code and no UTM on a typed visit without them
     expect(JSON.stringify(b)).not.toMatch(/Mozilla|203\.0\.113/);
   });
 });

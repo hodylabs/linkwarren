@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { aeConfigured, aeLinkDays } from "../ae";
-import { buildReport, everyDomain, linkScope, loadDetail, loadRows, parseTz, resolveRange, resolveScope, type AnalyticsReport, type Range, type RangeQuery } from "../analytics";
+import { aeConfigured, aeLinkDays, FILTER_DIMS, type Filter, type FilterDim } from "../ae";
+import { buildReport, everyDomain, linkScope, loadDetail, loadRecent, loadRows, parseTz, resolveRange, resolveScope, type AnalyticsReport, type Range, type RangeQuery } from "../analytics";
 import type { Scope } from "../ae";
 import { utcDay } from "../clicks";
 import { rolledThrough } from "../cron";
@@ -33,30 +33,63 @@ const query = z.strictObject({
 
 type Prepared = { range: Range; scope: Scope; truncated: boolean; link?: AnalyticsReport["link"]; nowSec: number };
 
+const MAX_FILTERS = 6;
+const FILTER_VALUE_MAX = 100;
+/**
+ * S13 `f=<dim>:<value>` (repeatable): split on the first colon, the dimension from FILTER_DIMS, at most MAX_FILTERS, each
+ * dimension once, values at most FILTER_VALUE_MAX characters (an empty value is a real one: print "" is a scan with no code).
+ * Anything else is null (bad_filter). The values only ever reach Analytics Engine as bound params.
+ */
+export function parseFilters(raw: string[]): Filter[] | null {
+  if (raw.length > MAX_FILTERS) return null;
+  const out: Filter[] = [];
+  for (const f of raw) {
+    const i = f.indexOf(":");
+    if (i < 0) return null;
+    const dim = f.slice(0, i), value = f.slice(i + 1);
+    if (!Object.hasOwn(FILTER_DIMS, dim) || [...value].length > FILTER_VALUE_MAX || out.some((x) => x.dim === dim)) return null;
+    out.push({ dim: dim as FilterDim, value });
+  }
+  return out;
+}
+
 /** Shared by the report and the detail: the query checked, the range resolved and the scope cut to what the caller may see. */
 async function prepare(c: Context<E>): Promise<Prepared | Response> {
-  const p = query.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+  const sp = new URL(c.req.url).searchParams;
+  const filters = parseFilters(sp.getAll("f"));
+  if (!filters) return c.json({ error: "bad_filter" }, 400);
+  sp.delete("f");
+  const p = query.safeParse(Object.fromEntries(sp));
   if (!p.success) return c.json({ error: "bad_query" }, 400);
   const { range: r, from, to, domains, q = "", link } = p.data;
   if (q.length > 48) return c.json({ error: "q_too_long" }, 400);
   if (link && (q || domains?.length)) return c.json({ error: "bad_query" }, 400);
   const nowSec = Math.floor(Date.now() / 1000);
-  const range = resolveRange({ range: r as RangeQuery["range"], from, to }, nowSec);
+  // R8: 7 days are hourly when Analytics Engine is read; without it the D1 daily rollups keep answering.
+  const range = resolveRange({ range: r as RangeQuery["range"], from, to }, nowSec, aeConfigured(c.env));
   if ("error" in range) return c.json({ error: "bad_range" }, 400);
   if (link) {
     const l = await linkScope(c.env, c.var.user, link, c.var.grant.domains);
     if ("error" in l) return c.json({ error: "not_found" }, 404);
-    return { range, scope: l.scope, truncated: false, link: l.link, nowSec };
+    return { range, scope: { ...l.scope, filters }, truncated: false, link: l.link, nowSec };
   }
   const s = await resolveScope(c.env, c.var.user, domains?.length ? domains : null, q, c.var.grant.domains);
   if ("error" in s) return c.json({ error: "forbidden" }, 403);
-  return { range, scope: s.scope, truncated: s.truncated, nowSec };
+  return { range, scope: { ...s.scope, filters }, truncated: s.truncated, nowSec };
 }
 
 analytics.get("/", async (c) => {
   const p = await prepare(c);
   if (p instanceof Response) return p;
-  const rows = await loadRows(c.env, p.range, p.scope, p.nowSec);
+  let rows = await loadRows(c.env, p.range, p.scope, p.nowSec);
+  // R9 as before R8: a failed live read of the hourly 7 days falls back to the daily 7 days, whose older days D1 still answers.
+  if (rows.live === "unavailable" && p.range.unit === "hour" && new URL(c.req.url).searchParams.get("range") === "7") {
+    const daily = resolveRange({ range: "7" }, p.nowSec);
+    if (!("error" in daily)) {
+      p.range = daily;
+      rows = await loadRows(c.env, daily, p.scope, p.nowSec);
+    }
+  }
   const hosts = new Map(
     ((await c.env.DB.prepare("SELECT id, host FROM domains").all<{ id: string; host: string }>()).results).map((d) => [d.id, d.host]),
   );
@@ -80,6 +113,13 @@ analytics.get("/detail", async (c) => {
   const p = await prepare(c);
   if (p instanceof Response) return p;
   return c.json(await loadDetail(c.env, p.range, p.scope, tz, p.nowSec));
+});
+
+/** S13: the last 50 human clicks of the last 24 hours, scoped like the report (its scope params and `f`; the range is ignored). */
+analytics.get("/recent", async (c) => {
+  const p = await prepare(c);
+  if (p instanceof Response) return p;
+  return c.json(await loadRecent(c.env, p.scope, p.nowSec));
 });
 
 const linksQuery = z.strictObject({ ids: idList(50, 1) });
