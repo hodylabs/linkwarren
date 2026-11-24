@@ -516,7 +516,11 @@ const labelItem = (r: LabelRow) => ({ id: r.id, code: r.code, label: r.label, cr
 const labelQ = (env: Env, linkId: string, id: string) =>
   env.DB.prepare("SELECT id, code, label, created_at FROM qr_labels WHERE id = ? AND link_id = ?").bind(id, linkId).first<LabelRow>();
 
-// Every label route needs the right to edit the link (editable), and every write re-checks it in SQL (editGuard).
+/** The link is still on the domain its edit right was checked for: a move in flight makes the write match nothing (409). */
+const pinned = (link: LinkRow) => ({ sql: "EXISTS (SELECT 1 FROM links WHERE id = ? AND domain_id = ?)", binds: [link.id, link.domainId] });
+
+// Every label route needs the right to edit the link (editable), and every write re-checks it in SQL (editGuard), pinned to the
+// link's domain at read time.
 links.get("/:id/qr-labels", async (c) => {
   const found = await editable(c, c.req.param("id"));
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
@@ -533,16 +537,16 @@ links.post("/:id/qr-labels", async (c) => {
   if ("status" in found) return c.json({ error: found.status === 404 ? "not_found" : "forbidden" }, found.status);
   const { link, domain } = found;
   if (link.forwardTo) return c.json({ error: "forwarder" }, 409);
-  const g = editGuard(c.var.user, link, domain);
+  const g = editGuard(c.var.user, link, domain), pin = pinned(link);
   const now = Math.floor(Date.now() / 1000);
   // A code already on this link is drawn again (36^6 codes, at most 20 per link: practically never twice).
   for (let attempt = 0; attempt < 3; attempt++) {
     const id = crypto.randomUUID(), code = labelCode();
     // The cap, the code's uniqueness and the edit right are all checked in the same statement as the write.
     const may = {
-      sql: `EXISTS (SELECT 1 FROM links WHERE id = ?) AND (SELECT COUNT(*) FROM qr_labels WHERE link_id = ?) < ${QR_LABELS_MAX}
+      sql: `${pin.sql} AND (SELECT COUNT(*) FROM qr_labels WHERE link_id = ?) < ${QR_LABELS_MAX}
         AND NOT EXISTS (SELECT 1 FROM qr_labels WHERE link_id = ? AND code = ?) AND ${g.sql}`,
-      binds: [link.id, link.id, link.id, code, ...g.binds],
+      binds: [...pin.binds, link.id, link.id, code, ...g.binds],
     };
     const res = await c.env.DB.batch([
       auditStmt(c.env, { ...actor(c), action: "qr_label.create", targetType: "link", targetId: link.id, detail: { host: domain.host, slug: link.slug, code, label } }, may),
@@ -559,6 +563,15 @@ links.post("/:id/qr-labels", async (c) => {
   return c.json({ error: "conflict" }, 409);
 });
 
+/** A rename or delete lands only on the label as read (same link, same text), on the link's domain as read, with the edit right. */
+function labelGuard(user: UserRow, link: LinkRow, domain: DomainRow, row: LabelRow): Guard {
+  const g = editGuard(user, link, domain), pin = pinned(link);
+  return {
+    sql: `EXISTS (SELECT 1 FROM qr_labels WHERE id = ? AND link_id = ? AND label = ?) AND ${pin.sql} AND ${g.sql}`,
+    binds: [row.id, link.id, row.label, ...pin.binds, ...g.binds],
+  };
+}
+
 links.patch("/:id/qr-labels/:labelId", async (c) => {
   const body = labelBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
@@ -569,13 +582,13 @@ links.patch("/:id/qr-labels/:labelId", async (c) => {
   const { link, domain } = found;
   const row = await labelQ(c.env, link.id, c.req.param("labelId"));
   if (!row) return c.json({ error: "not_found" }, 404);
-  const g = editGuard(c.var.user, link, domain);
-  const may = { sql: `EXISTS (SELECT 1 FROM qr_labels WHERE id = ? AND link_id = ?) AND ${g.sql}`, binds: [row.id, link.id, ...g.binds] };
+  const may = labelGuard(c.var.user, link, domain, row);
+  // Only while the label still reads as it was read: a rename in between makes this one a 409, so the audit's `from` is exact.
   const res = await c.env.DB.batch([
     auditStmt(c.env, { ...actor(c), action: "qr_label.rename", targetType: "link", targetId: link.id, detail: { host: domain.host, slug: link.slug, code: row.code, label, from: row.label } }, may),
-    c.env.DB.prepare(`UPDATE qr_labels SET label = ? WHERE id = ? AND link_id = ? AND ${g.sql}`).bind(label, row.id, link.id, ...g.binds),
+    c.env.DB.prepare(`UPDATE qr_labels SET label = ? WHERE id = ? AND ${may.sql}`).bind(label, row.id, ...may.binds),
   ]);
-  if (!res[1]!.meta.changes) return (await labelQ(c.env, link.id, row.id)) ? lost(c, link.id, g) : c.json({ error: "not_found" }, 404);
+  if (!res[1]!.meta.changes) return (await labelQ(c.env, link.id, row.id)) ? lost(c, link.id, editGuard(c.var.user, link, domain)) : c.json({ error: "not_found" }, 404);
   return c.json(labelItem({ ...row, label }));
 });
 
@@ -585,13 +598,12 @@ links.delete("/:id/qr-labels/:labelId", async (c) => {
   const { link, domain } = found;
   const row = await labelQ(c.env, link.id, c.req.param("labelId"));
   if (!row) return c.json({ error: "not_found" }, 404);
-  const g = editGuard(c.var.user, link, domain);
-  const may = { sql: `EXISTS (SELECT 1 FROM qr_labels WHERE id = ? AND link_id = ?) AND ${g.sql}`, binds: [row.id, link.id, ...g.binds] };
+  const may = labelGuard(c.var.user, link, domain, row);
   const res = await c.env.DB.batch([
     auditStmt(c.env, { ...actor(c), action: "qr_label.delete", targetType: "link", targetId: link.id, detail: { host: domain.host, slug: link.slug, code: row.code, label: row.label } }, may),
-    c.env.DB.prepare(`DELETE FROM qr_labels WHERE id = ? AND link_id = ? AND ${g.sql}`).bind(row.id, link.id, ...g.binds),
+    c.env.DB.prepare(`DELETE FROM qr_labels WHERE id = ? AND ${may.sql}`).bind(row.id, ...may.binds),
   ]);
-  if (!res[1]!.meta.changes) return (await labelQ(c.env, link.id, row.id)) ? lost(c, link.id, g) : c.json({ error: "not_found" }, 404);
+  if (!res[1]!.meta.changes) return (await labelQ(c.env, link.id, row.id)) ? lost(c, link.id, editGuard(c.var.user, link, domain)) : c.json({ error: "not_found" }, 404);
   return c.body(null, 204);
 });
 
