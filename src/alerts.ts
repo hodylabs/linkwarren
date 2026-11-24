@@ -13,7 +13,7 @@ import { rowToUser } from "./types";
 
 /**
  * S13 alerts (R6): opt-in email per person about the links they can see.
- * - "Gone quiet": at least QUIET_AVG clicks a day on average over days 15 to 42 before today, and none in the last 14 days (today included).
+ * - "Gone quiet": at least QUIET_AVG clicks a day on average over days 15 to 42 before today, and none in the last 14 days (today and the 13 before it).
  * - "Spike": yesterday's clicks are at least SPIKE_FACTOR times the average of the 7 days before it, and at least SPIKE_MIN.
  * Runs on its own cron trigger (ALERT_CRON), never inside the rollup run. One email per person per UTC day at most, listing
  * every new alert; at most LIMITS.alertDay emails per instance per day. The per-person day is claimed exactly like the weekly
@@ -52,7 +52,7 @@ export function addClicks(t: ClickTable, today: string, linkId: string, domainId
   const per = t.get(linkId) ?? t.set(linkId, new Map()).get(linkId)!;
   const c = per.get(domainId) ?? per.set(domainId, { base: 0, recent: 0, yday: 0, week: 0 }).get(domainId)!;
   if (day >= addDays(today, -BASE_FROM) && day <= addDays(today, -BASE_TO)) c.base += n;
-  if (day >= addDays(today, -QUIET_DAYS)) c.recent += n;
+  if (day >= addDays(today, 1 - QUIET_DAYS)) c.recent += n; // today and the 13 days before it
   if (day === addDays(today, -1)) c.yday += n;
   if (day >= addDays(today, -8) && day <= addDays(today, -2)) c.week += n;
 }
@@ -199,8 +199,8 @@ export async function sendAlerts(env: Env, nowSec: number): Promise<number> {
     if (!fresh.length) {
       // Nothing new: the day is handled (an unfinished claim from a dead run too), so later runs today skip this person.
       await env.DB.prepare(
-        "UPDATE alert_prefs SET last_day = ?1, claimed_at = NULL WHERE user_id = ?2 AND enabled = 1 AND (last_day IS NULL OR last_day < ?1 OR (last_day = ?1 AND claimed_at < ?3))",
-      ).bind(today, p.user_id, stale).run();
+        "UPDATE alert_prefs SET last_day = ?1, claimed_at = NULL, last_attempt_at = ?4 WHERE user_id = ?2 AND enabled = 1 AND (last_day IS NULL OR last_day < ?1 OR (last_day = ?1 AND claimed_at < ?3))",
+      ).bind(today, p.user_id, stale, nowSec).run(); // bumped, so people never looked at go first tomorrow
       continue;
     }
     const prev = resume ? addDays(today, -1) : p.last_day; // what a release puts back

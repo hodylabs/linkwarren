@@ -73,7 +73,7 @@ Delivery rules, for operators: the hourly job sends at most 2 emails per run, so
 Each person can get an email when one of their links changes pace. It is off until they turn it on.
 
 - **Turn it on** in Sign-in and security, **Link alert emails**, then pick the kinds: **Gone quiet** and **Spike** (both on by default). Like the weekly email it needs email set up on the instance and is part of app-mode sign-in, so it is not offered in access mode.
-- **Gone quiet**: a link that had at least 5 clicks a day on average over days 15 to 42 before today, and no click in the last 14 days (today included). The same link is not reported as quiet again for 28 days.
+- **Gone quiet**: a link that had at least 5 clicks a day on average over days 15 to 42 before today, and no click in the last 14 days (today and the 13 days before it). The same link is not reported as quiet again for 28 days.
 - **Spike**: yesterday (UTC) had at least 20 clicks and at least 3 times the average of the 7 days before it. Each spike day is reported once.
 - **Which links**: only links your Analytics screen shows you, checked again when the email is made, so a role or domain change counts at once. Only clicks on domains you can use count. Forwarding addresses and expired links are left out.
 - **How often**: at most one email per person per UTC day, listing up to 10 alerts (the rest come the next day), and at most 20 alert emails per instance per day, so Resend's free 100 a day stay mostly for sign-in links and invites. Each email has a one-click unsubscribe link that turns alerts off without signing in.

@@ -84,6 +84,10 @@ describe("findAlerts", () => {
     addClicks(t, today, "q", "d1", today, 1);
     expect(findAlerts(t, links, null, { quiet: true, spike: true })).toEqual([]);
     expect(findAlerts(base(500), links, null, { quiet: false, spike: true })).toEqual([]);
+    // The 14 days are today and the 13 before it: a click 14 days ago does not count against quiet.
+    const edge = (day: string) => { const x = base(500); addClicks(x, today, "q", "d1", day, 1); return findAlerts(x, links, null, { quiet: true, spike: false }); };
+    expect(edge("2026-11-09")).toHaveLength(1);
+    expect(edge("2026-11-10")).toEqual([]);
   });
   it("spike needs at least 20 yesterday and 3 times the 7-day average before it", () => {
     const links = new Map([["s", link("s")]]);
@@ -146,6 +150,15 @@ describe("sendAlerts", () => {
     expect(f.sent).toHaveLength(2);
     expect((await env.DB.prepare("SELECT COUNT(*) n FROM alert_state").first<{ n: number }>())!.n).toBe(5);
     expect((await prefs(f.a.user.id)).last_day).toBe("2026-11-24");
+  });
+
+  it("a person checked with nothing to send goes behind the people not looked at yet", async () => {
+    const f = await fixture();
+    await run("DELETE FROM clicks_daily");
+    f.s.ae = [];
+    await sendAlerts(aeEnv(), NOW);
+    const at = (await env.DB.prepare("SELECT last_attempt_at FROM alert_prefs WHERE user_id = ?").bind(f.a.user.id).first<{ last_attempt_at: number }>())!;
+    expect([at.last_attempt_at, (await prefs(f.a.user.id)).last_day]).toEqual([NOW, "2026-11-23"]);
   });
 
   it("a new spike the next day is a new email; a link that clicked in the last 14 days is not quiet", async () => {
