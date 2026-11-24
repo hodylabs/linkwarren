@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { bucketLabel, chartGeometry, PHONE_BOX } from "./chart";
+import { bucketLabel, chartGeometry, dayTicks, hourDayLabel, PHONE_BOX } from "./chart";
 
 const s = (n: number, f: (i: number) => [number, number] = () => [1, 1]) =>
   Array.from({ length: n }, (_, i) => ({ label: `d${i}`, qr: f(i)[0], typed: f(i)[1] }));
@@ -85,5 +85,42 @@ describe("bucketLabel", () => {
   it("formats an hour in local time", () => {
     process.env.TZ = "America/Los_Angeles";
     expect(bucketLabel("2026-11-20T22:00:00Z", "hour")).toBe("14:00");
+  });
+});
+
+describe("hourly 7 days (S13 R8)", () => {
+  const tz = process.env.TZ;
+  afterEach(() => {
+    process.env.TZ = tz;
+  });
+  // 168 hours from a local midnight in UTC, so 7 midnights land on indexes 0, 24, ..., 144.
+  const week = Array.from({ length: 168 }, (_, i) => new Date(Date.UTC(2026, 10, 14, i)).toISOString().slice(0, 13) + ":00:00Z");
+
+  it("hourDayLabel names the local day and hour", () => {
+    process.env.TZ = "America/Los_Angeles";
+    expect(hourDayLabel("2026-11-20T22:00:00Z")).toBe("Nov 20, 14:00");
+  });
+
+  it("dayTicks labels each local midnight, or every nth", () => {
+    process.env.TZ = "UTC";
+    const t = dayTicks(week);
+    expect(t.flatMap((x, i) => (x ? [[i, x]] : []))).toEqual([[0, "Nov 14"], [24, "Nov 15"], [48, "Nov 16"], [72, "Nov 17"], [96, "Nov 18"], [120, "Nov 19"], [144, "Nov 20"]]);
+    expect(dayTicks(week, 2).filter(Boolean)).toEqual(["Nov 14", "Nov 16", "Nov 18", "Nov 20"]);
+  });
+
+  it("a series with ticks puts the axis labels at exactly those points", () => {
+    process.env.TZ = "UTC";
+    const ticks = dayTicks(week);
+    const g = chartGeometry(week.map((b, i) => ({ label: b, qr: 0, typed: 1, tick: ticks[i] })));
+    expect(g.ticks.map((x) => x.label)).toEqual(["Nov 14", "Nov 15", "Nov 16", "Nov 17", "Nov 18", "Nov 19", "Nov 20"]);
+  });
+
+  it("on the phone box, every other day keeps labels about 90 units apart, wider than a label at 11 px", () => {
+    process.env.TZ = "UTC";
+    const ticks = dayTicks(week, 2);
+    const g = chartGeometry(week.map((b, i) => ({ label: b, qr: 0, typed: 1, tick: ticks[i] })), PHONE_BOX);
+    const gaps = g.ticks.slice(1).map((t, i) => t.x - g.ticks[i]!.x);
+    // "Nov 20" at 11 px is about 36 px wide; viewBox units are about CSS pixels on the phone box.
+    expect(Math.min(...gaps)).toBeGreaterThan(80);
   });
 });

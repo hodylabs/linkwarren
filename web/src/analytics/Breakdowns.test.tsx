@@ -1,13 +1,17 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import type { AnalyticsReport } from "../api";
-import { Breakdowns } from "./Breakdowns";
+import { describe, expect, it, vi } from "vitest";
+import type { AnalyticsReport, DetailReport } from "../api";
+import { Breakdowns, filterText, printName } from "./Breakdowns";
+import type { DimFilter } from "./filters";
 
 const base: AnalyticsReport = {
   from: "2026-11-01", to: "2026-11-20", unit: "day", live: "ok", truncated: false,
   totals: { clicks: 0, qr: 0, typed: 0, bots: 0, visitors: null, prevClicks: null },
   series: [], links: [], domains: [], countries: [], devices: [], referrers: [],
 };
+const detailOf = (o: Partial<DetailReport>): DetailReport => ({
+  live: "ok", from: "2026-11-01", to: "2026-11-20", os: [], browsers: [], languages: [], places: [], hours: [], ...o,
+});
 const card = (title: string) => screen.getByRole("heading", { name: title }).closest("section")!;
 const labels = (title: string) => [...card(title).querySelectorAll(".hb-l")].map((e) => e.textContent);
 const values = (title: string) => [...card(title).querySelectorAll(".hb-v")].map((e) => e.textContent);
@@ -64,7 +68,7 @@ describe("Breakdowns", () => {
   it("the tabs follow the ARIA tab pattern: one Tab stop, arrows, Home and End move and select, each panel is labelled by its tab", () => {
     render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 3 }, countries: [{ value: "US", clicks: 3 }] }} />);
     const tabs = within(screen.getByRole("tablist", { name: "Breakdown" })).getAllByRole("tab");
-    expect(tabs.map((t) => [t.textContent, t.getAttribute("aria-selected"), t.tabIndex])).toEqual([["Places", "true", 0], ["Sources", "false", -1], ["Devices", "false", -1]]);
+    expect(tabs.map((t) => [t.textContent, t.getAttribute("aria-selected"), t.tabIndex])).toEqual([["Places", "true", 0], ["Sources", "false", -1], ["Devices", "false", -1], ["Campaigns", "false", -1]]);
     const panel = screen.getByRole("tabpanel");
     expect(panel.getAttribute("aria-labelledby")).toBe(tabs[0]!.id);
     expect(tabs[0]!.getAttribute("aria-controls")).toBe(panel.id);
@@ -75,13 +79,13 @@ describe("Breakdowns", () => {
     expect(tabs[1]!.getAttribute("aria-selected")).toBe("true");
     expect(within(screen.getByRole("tabpanel")).getByRole("heading", { name: "Where clicks came from" })).toBeTruthy();
     fireEvent.keyDown(tabs[1]!, { key: "End" });
-    expect(document.activeElement).toBe(tabs[2]);
-    expect(within(screen.getByRole("tabpanel")).getByRole("heading", { name: "Devices" })).toBeTruthy();
-    fireEvent.keyDown(tabs[2]!, { key: "ArrowRight" }); // wraps
+    expect(document.activeElement).toBe(tabs[3]);
+    expect(within(screen.getByRole("tabpanel")).getByRole("heading", { name: "QR prints" })).toBeTruthy();
+    fireEvent.keyDown(tabs[3]!, { key: "ArrowRight" }); // wraps
     expect(document.activeElement).toBe(tabs[0]);
     fireEvent.keyDown(tabs[0]!, { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(tabs[2]);
-    fireEvent.keyDown(tabs[2]!, { key: "Home" });
+    expect(document.activeElement).toBe(tabs[3]);
+    fireEvent.keyDown(tabs[3]!, { key: "Home" });
     expect(tabs[0]!.getAttribute("aria-selected")).toBe("true");
     expect(screen.getAllByRole("tabpanel")).toHaveLength(1); // the others are hidden
   });
@@ -108,5 +112,113 @@ describe("Breakdowns", () => {
     tab("Sources");
     expect(labels("QR scans or link opens")).toEqual(["Link opened", "QR code scanned"]);
     expect(values("QR scans or link opens")).toEqual(["6", "4"]);
+  });
+});
+
+describe("Breakdowns as filters (S13)", () => {
+  const ctl = (on: DimFilter[] = []) => ({ on, pick: vi.fn() });
+  const btn = (name: string) => screen.getByRole("button", { name });
+
+  it("a row of one value is a button that picks its filter; merged Unknown and Other are not buttons", () => {
+    const c = ctl([{ dim: "country", value: "US" }]);
+    const countries = [["US", 50], ["CA", 20], ["GB", 10], ["DE", 8], ["XX", 2], ["T1", 1], ["FR", 1]].map(([value, clicks]) => ({ value: value as string, clicks: clicks as number }));
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 92 }, countries }} filters={c} />);
+    expect(btn("Filter by Country: United States").getAttribute("aria-pressed")).toBe("true");
+    expect(btn("Filter by Country: Canada").getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(btn("Filter by Country: Canada"));
+    expect(c.pick).toHaveBeenCalledWith({ dim: "country", value: "CA" });
+    expect(within(card("Countries")).getAllByRole("button")).toHaveLength(4); // Other is plain text
+    expect(labels("Countries")).toContain("Other");
+  });
+
+  it("a merged label (two codes reading Unknown) is not a filter", () => {
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 5 }, countries: [{ value: "XX", clicks: 3 }, { value: "T1", clicks: 2 }] }} filters={ctl()} />);
+    expect(labels("Countries")).toEqual(["Unknown"]);
+    expect(within(card("Countries")).queryByRole("button")).toBeNull();
+  });
+
+  it("without filters the rows stay plain text", () => {
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 3 }, countries: [{ value: "US", clicks: 3 }] }} />);
+    expect(within(card("Countries")).queryByRole("button")).toBeNull();
+  });
+
+  it("sources: QR filters source qr, Direct an empty referrer, a host its referrer; the rollup's (other) is not a filter", () => {
+    const c = ctl();
+    const referrers = [{ value: "", clicks: 3 }, { value: "a.example.com", clicks: 2 }, { value: "(other)", clicks: 1 }];
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 9, qr: 3 }, referrers, domains: [{ domainId: "d1", host: "go.example.com", clicks: 9 }] }} filters={c} />);
+    tab("Sources");
+    fireEvent.click(btn("Filter by Source: QR code (no referrer)"));
+    fireEvent.click(btn("Filter by Referrer: Direct, typed or saved"));
+    fireEvent.click(btn("Filter by Referrer: a.example.com"));
+    fireEvent.click(btn("Filter by Source: Link opened"));
+    fireEvent.click(btn("Filter by Domain: go.example.com"));
+    expect(c.pick.mock.calls.map((x) => x[0])).toEqual([
+      { dim: "source", value: "qr" }, { dim: "referrer", value: "" }, { dim: "referrer", value: "a.example.com" },
+      { dim: "source", value: "typed" }, { dim: "domain", value: "d1" },
+    ]);
+    expect(labels("Where clicks came from")).toContain("Other sites");
+    expect(screen.queryByRole("button", { name: /Other sites/ })).toBeNull();
+  });
+
+  it("detail columns filter by their raw value, Not recorded by the empty one", () => {
+    const c = ctl();
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 5 } }} detail={detailOf({ os: [{ value: "", clicks: 2 }, { value: "iOS", clicks: 3 }] })} filters={c} />);
+    tab("Devices");
+    fireEvent.click(btn("Filter by Operating system: Not recorded"));
+    expect(c.pick).toHaveBeenCalledWith({ dim: "os", value: "" });
+  });
+
+  it("Campaigns: prints by label, unlabelled with their code, plain QR as QR, no label; UTM tags, untagged reads Not tagged", () => {
+    const c = ctl();
+    const prints = [{ value: "", clicks: 5, label: null }, { value: "flyer1", clicks: 4, label: "Flyer" }, { value: "abc123", clicks: 2, label: null }];
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 11 } }} detail={detailOf({ prints, utmSources: [{ value: "newsletter", clicks: 3 }, { value: "", clicks: 8 }] })} filters={c} />);
+    tab("Campaigns");
+    expect(labels("QR prints")).toEqual(["QR, no label", "Flyer", "Unlabelled print (abc123)"]);
+    expect(labels("UTM source")).toEqual(["Not tagged", "newsletter"]);
+    expect(within(card("UTM medium")).getByText("No clicks match these filters")).toBeTruthy(); // the server sent none
+    fireEvent.click(btn("Filter by Print: Flyer"));
+    fireEvent.click(btn("Filter by Print: QR, no label"));
+    fireEvent.click(btn("Filter by UTM source: newsletter"));
+    expect(c.pick.mock.calls.map((x) => x[0])).toEqual([{ dim: "print", value: "flyer1" }, { dim: "print", value: "" }, { dim: "utm_source", value: "newsletter" }]);
+  });
+
+  it("plain QR scans from several links (one print row per link) add up to one row that still filters", () => {
+    const c = ctl();
+    const prints = [{ value: "", clicks: 2, label: null, linkId: "l1" }, { value: "", clicks: 3, label: null, linkId: "l2" }];
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 5 } }} detail={detailOf({ prints })} filters={c} />);
+    tab("Campaigns");
+    expect(labels("QR prints")).toEqual(["QR, no label"]);
+    expect(values("QR prints")).toEqual(["5"]);
+    fireEvent.click(btn("Filter by Print: QR, no label"));
+    expect(c.pick).toHaveBeenCalledWith({ dim: "print", value: "" });
+  });
+
+  it("Campaigns while the detail loads or fails", () => {
+    const { rerender } = render(<Breakdowns report={base} />);
+    tab("Campaigns");
+    expect(within(card("QR prints")).getByText("Loading")).toBeTruthy();
+    rerender(<Breakdowns report={base} detail={null} />);
+    expect(within(card("UTM campaign")).getByText("Not available for this range")).toBeTruthy();
+  });
+});
+
+describe("filterText and printName", () => {
+  it("name a filter in the words of its row", () => {
+    expect(filterText({ dim: "country", value: "FR" })).toBe("France");
+    expect(filterText({ dim: "device", value: "mobile" })).toBe("Phone");
+    expect(filterText({ dim: "language", value: "en-us" })).toBe("American English");
+    expect(filterText({ dim: "referrer", value: "" })).toBe("Direct, typed or saved");
+    expect(filterText({ dim: "source", value: "qr" })).toBe("QR code scanned");
+    expect(filterText({ dim: "domain", value: "d1" }, (id) => (id === "d1" ? "go.example.com" : id))).toBe("go.example.com");
+    expect(filterText({ dim: "print", value: "flyer1" }, undefined, [{ value: "flyer1", clicks: 1, label: "Flyer" }])).toBe("Flyer");
+    expect(filterText({ dim: "print", value: "abc123" })).toBe("Unlabelled print (abc123)");
+    expect(filterText({ dim: "utm_campaign", value: "" })).toBe("Not tagged");
+    expect(filterText({ dim: "browser", value: "" })).toBe("Not recorded");
+    expect(filterText({ dim: "place", value: "Paris" })).toBe("Paris");
+  });
+  it("printName", () => {
+    expect(printName("", null)).toBe("QR, no label");
+    expect(printName("abc", "Card")).toBe("Card");
+    expect(printName("abc", null)).toBe("Unlabelled print (abc)");
   });
 });
