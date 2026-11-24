@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { PHONE } from "../shell/narrow";
 import { ClicksChart } from "./ClicksChart";
 
 const series = [
@@ -18,6 +19,29 @@ describe("ClicksChart", () => {
     expect(screen.getByText("From QR codes")).toBeTruthy();
     expect(screen.getByText("All clicks")).toBeTruthy();
     expect(screen.getByRole("img", { name: "Clicks over time, with the share from QR scans" })).toBeTruthy();
+  });
+
+  it("7 days hourly (S13 R8): its own title, day ticks on the axis, day and hour in the tip and the table", () => {
+    const week = Array.from({ length: 168 }, (_, i) => ({ bucket: new Date(Date.UTC(2026, 10, 14, i)).toISOString().slice(0, 13) + ":00:00Z", qr: 0, typed: i % 5 }));
+    const { container, rerender } = render(<ClicksChart series={week} unit="hour" table={false} onToggle={() => {}} />);
+    expect(screen.getByRole("heading", { name: "Clicks per hour, last 7 days" })).toBeTruthy();
+    const ticks = [...container.querySelectorAll("svg.chart > text[text-anchor=middle]")].map((t) => t.textContent);
+    expect(ticks.length).toBeGreaterThanOrEqual(6); // one per local midnight, whatever the test zone
+    expect(ticks.every((t) => /^[A-Z][a-z]{2} \d{1,2}$/.test(t!))).toBe(true);
+    fireEvent.mouseMove(container.querySelectorAll(".bar")[3]!, { clientX: 10, clientY: 10 });
+    expect(tip()).toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2}: 3 clicks/);
+    rerender(<ClicksChart series={week} unit="hour" table onToggle={() => {}} />);
+    expect(screen.getAllByRole("row")).toHaveLength(169);
+    expect(screen.getAllByRole("row")[1]!.textContent).toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2}/);
+  });
+
+  it("7 days hourly on a phone labels every other day", () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q === PHONE, media: q, addEventListener() {}, removeEventListener() {} }));
+    const week = Array.from({ length: 168 }, (_, i) => ({ bucket: new Date(Date.UTC(2026, 10, 14, i)).toISOString().slice(0, 13) + ":00:00Z", qr: 0, typed: 1 }));
+    const { container } = render(<ClicksChart series={week} unit="hour" table={false} onToggle={() => {}} />);
+    expect(container.querySelector("svg.chart")!.getAttribute("viewBox")).toBe("0 0 360 220");
+    expect(container.querySelectorAll("svg.chart > text[text-anchor=middle]").length).toBeLessThanOrEqual(4);
+    vi.unstubAllGlobals();
   });
 
   it("hourly title", () => {

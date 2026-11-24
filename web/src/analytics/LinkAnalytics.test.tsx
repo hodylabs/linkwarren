@@ -106,6 +106,29 @@ describe("Per-link analytics page", () => {
     expect(screen.getByText(/full detail for three months/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "All analytics" }).getAttribute("href")).toBe("/analytics");
   });
+
+  it("keeps breakdown filters (S13): the report, the detail and recent clicks all get them with the link", async () => {
+    history.replaceState(null, "", "/analytics/link/lM?range=7&f=os:iOS");
+    const api = fakeApi({
+      "GET /api/me": () => ({ body: owner }),
+      "GET /api/domains": () => ({ body: [] }),
+      "GET /api/users": () => ({ body: { items: [] } }),
+      "GET /api/analytics": () => ({ body: report({ link: { linkId: "lM", host: "go.example.com", slug: "spring" } }) }),
+      "GET /api/analytics/detail": () => ({ body: detail() }),
+      "GET /api/analytics/recent": () => ({ body: { items: [{
+        at: new Date().toISOString(), linkId: "lM", host: "go.example.com", slug: "spring", country: "FR", place: "", device: "mobile", os: "iOS",
+        browser: "Safari", language: "fr", source: "typed", print: "", printLabel: null, referrer: "", utmSource: "", utmMedium: "", utmCampaign: "",
+      }], live: "ok" } }),
+    });
+    render(<App />);
+    await screen.findByRole("button", { name: "Remove filter Operating system iOS" });
+    await screen.findByText("just now");
+    const paths = api.calls.map((c) => c.path);
+    expect(paths).toContain("/api/analytics?range=7&f=os%3AiOS&link=lM");
+    expect(paths).toContain("/api/analytics/recent?range=7&f=os%3AiOS&link=lM");
+    expect(paths.some((p) => /^\/api\/analytics\/detail\?range=7&f=os%3AiOS&link=lM&tz=/.test(p))).toBe(true);
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["When", "Place", "Device", "Source", "Referrer"]); // no link column on a link's page
+  });
 });
 
 describe("Per-link page edge cases", () => {

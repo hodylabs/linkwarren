@@ -30,7 +30,7 @@ function boot(path = "/analytics", answer: (req: FakeReq) => FakeRes | Promise<F
   });
   const user = userEvent.setup();
   render(<App />);
-  const reports = () => api.calls.filter((c) => c.path.startsWith("/api/analytics") && !c.path.startsWith("/api/analytics/detail")).map((c) => c.path);
+  const reports = () => api.calls.filter((c) => c.path.startsWith("/api/analytics") && !/^\/api\/analytics\/(detail|recent)/.test(c.path)).map((c) => c.path);
   return { api, user, reports };
 }
 const clicksTile = () => screen.getByText("Clicks", { selector: ".tile2 small" }).parentElement!.querySelector("b")!.textContent;
@@ -230,7 +230,7 @@ describe("Analytics screen", () => {
 
   it("the 24 hour view with live off explains why there are no clicks", async () => {
     boot("/analytics?range=1", () => ({ body: report(0, { unit: "hour", live: "off", series: [{ bucket: "2026-11-20T10:00:00Z", qr: 0, typed: 0 }] }) }));
-    expect(await screen.findByText("Hourly clicks need live clicks, which are off on this instance. Pick 7 days or longer for daily totals.")).toBeTruthy();
+    expect(await screen.findByText("Hourly clicks need live clicks, which are off on this instance. Pick 30 days or longer for daily totals.")).toBeTruthy();
   });
 
   it("Tab out of the domain picker closes it", async () => {
@@ -398,5 +398,68 @@ describe("Analytics domain filter follows the role", () => {
     await screen.findByRole("listbox");
     await ready();
     expect(options()).toEqual(["go.example.comMain"]);
+  });
+});
+
+describe("Analytics filters (S13)", () => {
+  const fr = () => ({ body: report(10, { countries: [{ value: "FR", clicks: 6 }, { value: "DE", clicks: 4 }] }) });
+  const others = (api: { calls: { path: string }[] }, route: string) => api.calls.filter((c) => c.path.startsWith(`/api/analytics/${route}`)).map((c) => c.path);
+
+  it("a breakdown row filters the whole page: URL, report, detail and recent clicks, and shows a chip; Delete on the chip removes it", async () => {
+    const { api, user, reports } = boot("/analytics?range=7", fr);
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Filter by Country: France" }));
+    await waitFor(() => expect(location.search).toBe("?range=7&f=country%3AFR"));
+    await waitFor(() => expect(reports().at(-1)).toBe("/api/analytics?range=7&f=country%3AFR"));
+    await waitFor(() => expect(others(api, "detail").at(-1)).toMatch(/^\/api\/analytics\/detail\?range=7&f=country%3AFR&tz=/));
+    await waitFor(() => expect(others(api, "recent").at(-1)).toBe("/api/analytics/recent?range=7&f=country%3AFR"));
+    const remove = await screen.findByRole("button", { name: "Remove filter Country France" });
+    expect(remove.closest(".active")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Filter by Country: France" })).getAttribute("aria-pressed")).toBe("true");
+    remove.focus();
+    await user.keyboard("{Delete}");
+    await waitFor(() => expect(location.search).toBe("?range=7"));
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: "7 days" }));
+  });
+
+  it("a pressed row removes its filter; another row of the same dimension replaces it", async () => {
+    const { user } = boot("/analytics?f=country:FR", fr);
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Filter by Country: Germany" }));
+    await waitFor(() => expect(location.search).toBe("?f=country%3ADE"));
+    await user.click(await screen.findByRole("button", { name: "Filter by Country: Germany", pressed: true }));
+    await waitFor(() => expect(location.search).toBe(""));
+  });
+
+  it("a bookmarked view reads its chips; removing one moves focus to the next chip", async () => {
+    const { user, reports } = boot("/analytics?f=country:FR&f=device:mobile", fr);
+    await ready();
+    expect(reports()[0]).toBe("/api/analytics?f=country%3AFR&f=device%3Amobile");
+    await user.click(screen.getByRole("button", { name: "Remove filter Country France" }));
+    await waitFor(() => expect(location.search).toBe("?f=device%3Amobile"));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Remove filter Device Phone" }));
+  });
+
+  it("a seventh filter is refused and announced", async () => {
+    const six = ["place:Paris", "device:mobile", "os:iOS", "browser:Safari", "language:fr", "source:qr"].map((x) => `f=${x}`).join("&");
+    const { user } = boot(`/analytics?${six}`, fr);
+    await ready();
+    const before = location.search;
+    await user.click(screen.getByRole("button", { name: "Filter by Country: France" }));
+    expect(await screen.findByText("At most 6 filters. Remove one first.")).toBeTruthy();
+    expect(location.search).toBe(before);
+  });
+
+  it("Clear all drops the filters too", async () => {
+    const { user } = boot("/analytics?f=country:FR", fr);
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Clear all" }));
+    await waitFor(() => expect(location.search).toBe(""));
+    expect(screen.queryByRole("button", { name: /Remove filter/ })).toBeNull();
+  });
+
+  it("a filtered report cut to the 90-day window says so (R1)", async () => {
+    boot("/analytics?range=custom&from=2026-01-01&to=2026-11-20&f=country:FR", () => ({ body: report(5, { filteredFrom: "2026-08-23" }) }));
+    expect(await screen.findByText("Filters cover the last 90 days only, so this shows 2026-08-23 on.")).toBeTruthy();
   });
 });

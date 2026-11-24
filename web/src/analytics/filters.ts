@@ -1,6 +1,14 @@
 export const RANGES = ["1", "7", "30", "90", "custom"] as const;
 export type Range = (typeof RANGES)[number];
-export type Filters = { range: Range; from: string; to: string; domains: string[]; q: string };
+/** S13 contract: the dimensions a breakdown row can filter by (`f=<dim>:<value>`). */
+export const DIMS = ["country", "place", "device", "os", "browser", "language", "referrer", "source", "domain", "print", "utm_source", "utm_medium", "utm_campaign"] as const;
+export type Dim = (typeof DIMS)[number];
+export type DimFilter = { dim: Dim; value: string };
+/** Contract limits: at most 6 filters, one per dimension, values up to 100 characters. */
+export const MAX_FILTERS = 6;
+const MAX_VALUE = 100;
+/** `f`: the breakdown filters, in the order they were added. */
+export type Filters = { range: Range; from: string; to: string; domains: string[]; q: string; f: DimFilter[] };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -22,7 +30,29 @@ export function readFilters(p: URLSearchParams, today: string): Filters {
     [from, to] = DAY.test(f) && DAY.test(t) ? [f, t] : [addDays(today, -13), today];
   }
   const domains = (p.get("domains") ?? "").split(",").filter(Boolean);
-  return { range, from, to, domains, q: p.get("q") ?? "" };
+  return { range, from, to, domains, q: p.get("q") ?? "", f: readDimFilters(p) };
+}
+
+/** Repeated `f=<dim>:<value>`, split on the first colon. A hand-edited URL never reaches the server as a 400: unknown or
+ * repeated dimensions, values over 100 characters and filters past the sixth are dropped. An empty value is legal. */
+export function readDimFilters(p: URLSearchParams): DimFilter[] {
+  const out: DimFilter[] = [];
+  for (const raw of p.getAll("f")) {
+    const i = raw.indexOf(":");
+    if (i < 0) continue;
+    const dim = raw.slice(0, i) as Dim;
+    const value = raw.slice(i + 1);
+    if (!DIMS.includes(dim) || value.length > MAX_VALUE || out.some((x) => x.dim === dim)) continue;
+    if (out.length === MAX_FILTERS) break;
+    out.push({ dim, value });
+  }
+  return out;
+}
+
+/** Filters with `dim` set to `value` (replacing that dimension), or null when it would be a seventh filter. */
+export function withFilter(fs: DimFilter[], dim: Dim, value: string): DimFilter[] | null {
+  const rest = fs.filter((x) => x.dim !== dim);
+  return rest.length >= MAX_FILTERS ? null : [...rest, { dim, value }];
 }
 
 /** The query string for filters: defaults and empties left out, dates only for a custom range. */
@@ -35,6 +65,7 @@ export function filtersQuery(f: Filters): string {
   }
   if (f.domains.length) p.set("domains", f.domains.join(","));
   if (f.q) p.set("q", f.q);
+  for (const x of f.f) p.append("f", `${x.dim}:${x.value}`);
   return p.toString();
 }
 

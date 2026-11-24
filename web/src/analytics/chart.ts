@@ -22,8 +22,28 @@ export function bucketLabel(bucket: string, unit: AnalyticsReport["unit"]): stri
     : new Date(bucket).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
-/** All clicks as a line over a soft fill, QR scans as a second line (Hody's pick, option D). */
-export function chartGeometry(series: { label: string; qr: number; typed: number }[], box: Box = DESK): Geometry {
+/** "Nov 20, 14:00" in local time: an hour of a multi-day hourly series (S13 R8, the 7 day view), in tips and the table. */
+export const hourDayLabel = (bucket: string): string =>
+  `${new Date(bucket).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${bucketLabel(bucket, "hour")}`;
+
+/**
+ * Axis ticks for a multi-day hourly series: one per local midnight, labelled with the day ("Nov 20"); `every` keeps every
+ * nth day so labels never collide in a narrow box. Returns, per index, the tick label or undefined.
+ */
+export function dayTicks(buckets: string[], every = 1): (string | undefined)[] {
+  let n = 0;
+  return buckets.map((b) => {
+    const d = new Date(b);
+    if (d.getHours() !== 0) return undefined;
+    return n++ % every === 0 ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : undefined;
+  });
+}
+
+/**
+ * All clicks as a line over a soft fill, QR scans as a second line (Hody's pick, option D). A series where any point carries
+ * `tick` labels the axis at exactly those points; otherwise ticks sit at 0, N/3, 2N/3 and N-1.
+ */
+export function chartGeometry(series: { label: string; qr: number; typed: number; tick?: string }[], box: Box = DESK): Geometry {
   const { W, H, pl, pb, pt } = box;
   const N = series.length;
   const mx = Math.max(0, ...series.map((s) => s.qr + s.typed));
@@ -42,6 +62,9 @@ export function chartGeometry(series: { label: string; qr: number; typed: number
   const path = (k: "yAll" | "yQr") => bars.map((b, i) => `${i ? "L" : "M"}${r1(b.cx)} ${r1(b[k])}`).join(" ");
   const all = path("yAll");
   const lines = { all, qr: path("yQr"), area: N ? `${all} L${r1(bars[N - 1]!.cx)} ${r1(y0)} L${r1(bars[0]!.cx)} ${r1(y0)} Z` : "" };
-  const ticks = N ? [...new Set([0, Math.floor(N / 3), Math.floor((2 * N) / 3), N - 1])].map((i) => ({ x: pl + i * bw + bw / 2, label: series[i]!.label })) : [];
+  const at = (i: number, label: string) => ({ x: pl + i * bw + bw / 2, label });
+  const ticks = series.some((s) => s.tick)
+    ? series.flatMap((s, i) => (s.tick ? [at(i, s.tick)] : []))
+    : N ? [...new Set([0, Math.floor(N / 3), Math.floor((2 * N) / 3), N - 1])].map((i) => at(i, series[i]!.label)) : [];
   return { box, top, grid, bars, lines, ticks, tickY: H - 6, gridX: { x1: pl, x2: W - 6, label: pl - 8 }, plot: { top: pt, height: H - pt - pb } };
 }

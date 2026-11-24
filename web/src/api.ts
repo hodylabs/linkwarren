@@ -46,14 +46,28 @@ export type AnalyticsReport = {
   countries: Count[]; devices: Count[]; referrers: Count[];
   /** Only on a per-link report (`?link=`). */
   link?: { linkId: string; host: string; slug: string; name?: string | null };
+  /** S13 R1: set when breakdown filters cut a range reaching past the 90-day window; the report covers this UTC day on. */
+  filteredFrom?: string;
 };
+/** One print of a QR code (S13): `value` is its code ("" for a plain `?lw=qr` scan), `label` its name, null when unlabelled. */
+export type PrintCount = Count & { label: string | null };
 /** GET /api/analytics/detail (src/analytics.ts DetailReport): from Analytics Engine only, `from`..`to` are the UTC days covered. */
 export type DetailReport = {
   live: "ok" | "off" | "unavailable"; from: string; to: string;
   os: Count[]; browsers: Count[]; languages: Count[]; places: Count[];
   /** hours[weekday][hour], Monday first, in the time zone sent. */
   hours: number[][];
+  /** S13, optional so a server without them still reads: prints and the UTM tags. */
+  prints?: PrintCount[]; utmSources?: Count[]; utmMediums?: Count[]; utmCampaigns?: Count[];
+  filteredFrom?: string;
 };
+/** One item of GET /api/analytics/recent (S13): the last 50 human clicks of the last 24 hours, newest first. No IP or user agent. */
+export type RecentClick = {
+  at: string; linkId: string; host: string; slug: string; country: string; place: string; device: string; os: string; browser: string;
+  language: string; source: "qr" | "typed"; print: string; printLabel: string | null; referrer: string;
+  utmSource: string; utmMedium: string; utmCampaign: string;
+};
+export type RecentReport = { items: RecentClick[]; live: "ok" | "off" | "unavailable" };
 /** GET and PUT /api/account/digest: the weekly email opt-in. */
 export type DigestPrefs = { enabled: boolean; tz: string | null; emailReady: boolean };
 /** One item of GET /api/analytics/links: `days` are today-6..today (UTC), oldest first. */
