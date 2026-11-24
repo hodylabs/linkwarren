@@ -393,6 +393,14 @@ describe("settings", () => {
     expect(await all("SELECT COUNT(*) n FROM sessions")).toEqual([{ n: 0 }]);
   });
 
+  it("an auto-join that overlaps an issuer change creates no person", async () => {
+    await run("INSERT INTO email_domains (domain, join_role_id, enforce_sso, updated_at) VALUES ('example.com','member',0,1)");
+    idp.s.email = "new@example.com";
+    idp.s.onToken = async () => { await setting("sso.oidc.issuer", "https://other.example.com"); };
+    expect(errorOf(await signIn("oidc"))).toBe("not_invited");
+    expect(await all("SELECT COUNT(*) n FROM users WHERE email = 'new@example.com'")).toEqual([{ n: 0 }]);
+  });
+
   it("a callback that overlaps an issuer change never matches an identity bound under the new issuer", async () => {
     await addUser("a@example.com");
     await signIn("oidc"); // binds (oidc, sub-1)

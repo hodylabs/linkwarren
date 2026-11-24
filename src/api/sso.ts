@@ -157,8 +157,8 @@ async function matchPerson(env: Env, p: Provider, who: Who, same: Guard): Promis
     const id = crypto.randomUUID();
     // Re-checked in the insert: the auto-join still gives this role, and nobody took the address meanwhile.
     await env.DB.prepare(`INSERT INTO users (id, email, name, role, role_id, status, created_at) SELECT ?, ?, NULL, 'member', ?, 'active', ?
-      WHERE EXISTS (SELECT 1 FROM email_domains WHERE domain = ? AND join_role_id = ?) AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?)`)
-      .bind(id, who.email, role === "member" ? null : role, now, domain, role, who.email).run();
+      WHERE EXISTS (SELECT 1 FROM email_domains WHERE domain = ? AND join_role_id = ?) AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?) AND ${same.sql}`)
+      .bind(id, who.email, role === "member" ? null : role, now, domain, role, who.email, ...same.binds).run();
     user = await findUser(env, who.email);
     if (!user) return { error: "not_invited" };
     joined = user.id === id;

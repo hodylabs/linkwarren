@@ -228,6 +228,7 @@ const PRUNES: readonly (readonly [table: string, col: string, age: number, where
   ["login_tokens", "expires_at", 0],
   ["auth_challenges", "expires_at", 0],
   ["sessions", "expires_at", 0],
+  ["sso_states", "expires_at", 0], // started provider sign-ins: 10 minutes, then gone within the hour
   ["tool_calls", "at", 7_776_000], // MCP tool-call log: 90 days
 ];
 

@@ -375,7 +375,7 @@ Write costs: the rebuild copies every existing row of both tables once, so an in
 
 ### Upgrading to Google, GitHub and single sign-on (v0.9.0, migration 0018)
 
-This version adds migration `0018_sso.sql`. **Apply it before you deploy the Worker** (same commands as above). It adds the tables `sso_states`, `sso_identities` and `email_domains`, and rebuilds `sessions` so a session can record the new sign-in methods. The rebuild copies every session row once, so nobody is signed out. Without it, Google, GitHub and single sign-on do not work; email links and passkeys keep working.
+This version adds migration `0018_sso.sql`. **Apply it before you deploy the Worker** (same commands as above). It adds the tables `sso_states`, `sso_identities` and `email_domains`, and rebuilds `sessions` so a session can record the new sign-in methods. The rebuild copies every session row once, so nobody is signed out. Without it, only owners can sign in: email-link and passkey sign-in for everyone else check the new `email_domains` table first and fail, and Google, GitHub and single sign-on do not work at all.
 
 Nothing changes until an owner turns a provider on in Settings, Sign-in (see [sso.md](sso.md)). The client secrets can be pasted there (needs `SECRETS_KEY`) or set as the Worker secrets `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET` and `OIDC_CLIENT_SECRET`.
 

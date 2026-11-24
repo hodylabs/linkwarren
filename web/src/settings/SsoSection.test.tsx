@@ -144,6 +144,19 @@ describe("Settings > Sign-in single sign-on (S14)", () => {
     expect(within(await card("Google")).getByText("Not set")).toBeTruthy();
   });
 
+  it("a settings role that is not an owner can change nothing: fields disabled, Ctrl Enter writes nothing", async () => {
+    const { api, user } = boot({ me: { ...owner, ...customRole(["settings"]) }, routes: { "GET /api/roles": () => ({ status: 403, body: { error: "forbidden" } }) } });
+    const g = await card("Google");
+    expect(screen.getByText("Only an owner can change sign-in settings.")).toBeTruthy();
+    expect((within(g).getByLabelText("Client ID") as HTMLInputElement).disabled).toBe(true);
+    expect((within(g).getByRole("switch", { name: "Turn on Google sign-in" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(g).getByRole("button", { name: /Save/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("New email domain") as HTMLInputElement).disabled).toBe(true);
+    within(g).getByLabelText("Client ID").focus();
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(writes(api)).toEqual([]);
+  });
+
   it("removing a secret keeps an unsaved client ID edit", async () => {
     const { user } = boot();
     const gh = await card("GitHub");

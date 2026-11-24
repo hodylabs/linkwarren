@@ -284,7 +284,7 @@ describe("purgeAudit", () => {
 describe("pruneExpired", () => {
   const T = NOW;
   async function fill(expired: number, live: number) {
-    await env.DB.batch(["auth_limits", "login_tokens", "auth_challenges", "sessions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+    await env.DB.batch(["auth_limits", "login_tokens", "auth_challenges", "sessions", "sso_states"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
     await env.DB.prepare("INSERT OR IGNORE INTO users (id,email,role,status,created_at) VALUES ('u1','o@x.com','owner','active',1)").run();
     const rows = (n: number, old: boolean) => Array.from({ length: n }, (_, i) => `${old ? "o" : "l"}${i}`);
     const stmts: D1PreparedStatement[] = [];
@@ -296,16 +296,17 @@ describe("pruneExpired", () => {
           env.DB.prepare("INSERT INTO login_tokens (token_hash, email, created_at, expires_at) VALUES (?, 'o@x.com', 1, ?)").bind(k, exp),
           env.DB.prepare("INSERT INTO auth_challenges (challenge, purpose, expires_at) VALUES (?, 'login', ?)").bind(k, exp),
           env.DB.prepare("INSERT INTO sessions (id, token_hash, user_id, method, created_at, last_seen_at, expires_at) VALUES (?, ?, 'u1', 'email', 1, 1, ?)").bind(k, `h${k}`, exp),
+          env.DB.prepare("INSERT INTO sso_states (id_hash, provider, verifier, nonce, next, ip_prefix, created_at, expires_at) VALUES (?, 'google', 'v', 'n', '/', '1.2.3', 1, ?)").bind(k, exp),
         );
       }
     for (let i = 0; i < stmts.length; i += 200) await env.DB.batch(stmts.slice(i, i + 200));
   }
   const count = async (t: string) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first<{ n: number }>())!.n;
 
-  it("deletes expired limiter rows, link tokens, challenges and sessions; keeps live ones; counts 3 writes per row", async () => {
+  it("deletes expired limiter rows, link tokens, challenges, sessions and provider sign-in states; keeps live ones; counts 3 writes per row", async () => {
     await fill(3, 2);
-    expect(await pruneExpired(env, T, RUN_WRITE_BUDGET)).toBe(4 * 3 * 3);
-    for (const t of ["auth_limits", "login_tokens", "auth_challenges", "sessions"]) expect([t, await count(t)]).toEqual([t, 2]);
+    expect(await pruneExpired(env, T, RUN_WRITE_BUDGET)).toBe(5 * 3 * 3);
+    for (const t of ["auth_limits", "login_tokens", "auth_challenges", "sessions", "sso_states"]) expect([t, await count(t)]).toEqual([t, 2]);
   });
 
   it("stays inside the budget it is given and at most PRUNE_MAX rows per table; the next run continues", async () => {
@@ -333,7 +334,7 @@ describe("pruneExpired", () => {
     expect([await count("auth_limits"), await count("sessions")]).toEqual([3, 3]);
     await env.DB.prepare("INSERT OR REPLACE INTO analytics_state (k, v) VALUES ('rollup_writes', '2026-11-20|100')").run();
     await worker.scheduled(ctl, env, {} as ExecutionContext);
-    expect(await mark()).toBe(`2026-11-20|${100 + 4 * (2 * 3 + 2)}`); // 4 tables x (2 rows x 3 writes + 2 for the counter)
+    expect(await mark()).toBe(`2026-11-20|${100 + 5 * (2 * 3 + 2)}`); // 5 tables x (2 rows x 3 writes + 2 for the counter)
   });
 
   it("reserves the counter write inside the budget and rolls a deletion back when its charge fails", async () => {

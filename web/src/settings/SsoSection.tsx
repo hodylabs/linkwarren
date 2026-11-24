@@ -17,7 +17,7 @@ const TITLE: Record<SsoProvider, string> = { google: "Google", github: "GitHub",
 const ON_HINT: Record<SsoProvider, string> = {
   google: "Shows Continue with Google on the sign-in page once the client ID and secret are set",
   github: "Shows Continue with GitHub on the sign-in page once the client ID and secret are set. Only a verified primary email counts",
-  oidc: "Shows your button on the sign-in page once the issuer, client ID and secret are set. Works with Entra ID, Okta, Authentik and others",
+  oidc: "Shows your button on the sign-in page once the issuer, client ID and secret are set. Works with Okta, Authentik, Google and others",
 };
 
 type Draft = { enabled: boolean; clientId: string; issuer: string; label: string };
@@ -309,12 +309,15 @@ export function SsoSettingsBlock() {
         <button type="button" className="btn" onClick={() => setTries((n) => n + 1)}>Retry</button>
       </p>
     ) : <p className="muted" role="status">Loading</p>;
+  const owner = isOwner(me);
   return (
     <div className="sso">
       <h3 className="sso-sub">Single sign-on</h3>
-      {SSO_PROVIDERS.map((p) => <ProviderCard key={p} p={p} s={s} owner={isOwner(me)} serial={serial} busy={busy}
+      {!owner && <p className="muted hint">Only an owner can change sign-in settings.</p>}
+      {/* Non-owners read only: every write here is owner only on the server (R14). */}
+      {SSO_PROVIDERS.map((p) => <ProviderCard key={p} p={p} s={s} owner={owner} serial={serial} busy={busy || !owner}
         onSaved={(q, n) => setS((cur) => cur && { ...cur, [q]: n[q], redirectUris: n.redirectUris, secretsReady: n.secretsReady })} />)}
-      <EmailDomains s={s} serial={serial} busy={busy} onChange={(f) => setS((cur) => cur && { ...cur, emailDomains: f(cur.emailDomains) })} />
+      <EmailDomains s={s} serial={serial} busy={busy || !owner} onChange={(f) => setS((cur) => cur && { ...cur, emailDomains: f(cur.emailDomains) })} />
     </div>
   );
 }
