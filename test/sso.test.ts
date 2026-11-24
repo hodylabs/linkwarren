@@ -265,8 +265,9 @@ describe("callback", () => {
     // Break-glass: an owner at the enforced domain signs in with Google.
     await addUser("boss@example.com", { role: "owner" });
     idp.s.email = "boss@example.com"; idp.s.sub = "sub-b";
-    expect((await signIn("google")).status).toBe(302);
-    expect(errorOf(await signIn("google"))).not.toBe("sso_required");
+    const boss = await signIn("google");
+    expect([boss.status, boss.headers.get("location")]).toEqual([302, "https://dash.test/"]);
+    expect(await all("SELECT s.method FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = 'boss@example.com'")).toEqual([{ method: "google" }]);
   });
 
   it("enforced domain: the email link is refused with sso_required for members, not owners", async () => {
@@ -417,6 +418,31 @@ describe("settings", () => {
     expect(ok.started(await env.DB.batch(ok.stmts))).toBe(true);
   });
 
+  it("Google: both documented iss forms are accepted; generic OIDC stays exact", async () => {
+    await addUser("a@example.com");
+    idp.s.claims = { iss: "accounts.google.com" };
+    expect((await signIn("google")).headers.get("location")).toBe("https://dash.test/");
+    idp.s.claims = { iss: "idp.example.com" };
+    expect(errorOf(await signIn("oidc"))).toBe("sso_failed");
+  });
+
+  it("the identity wipe follows the issuer stored at commit time, not an earlier read", async () => {
+    const { cookie } = await signedIn("owner@example.com", { role: "owner" });
+    const uid = await addUser("a@example.com");
+    // While this save (issuer = ISS, as read) checks discovery, another save switches to issuer B and someone binds there.
+    idp.s.onDiscovery = async () => {
+      idp.s.onDiscovery = null;
+      await setting("sso.oidc.issuer", "https://b.example.com");
+      await run("INSERT INTO sso_identities (provider, subject, user_id, email, created_at) VALUES ('oidc','sub-b',?,'a@example.com',1)", uid);
+    };
+    expect((await dash("/api/settings/sso/oidc", json(cookie, "PUT", { issuer: ISS }))).status).toBe(200);
+    expect(await all("SELECT COUNT(*) n FROM sso_identities")).toEqual([{ n: 0 }]);
+    // Saving the issuer that is already stored keeps the links.
+    await run("INSERT INTO sso_identities (provider, subject, user_id, email, created_at) VALUES ('oidc','sub-1',?,'a@example.com',1)", uid);
+    expect((await dash("/api/settings/sso/oidc", json(cookie, "PUT", { issuer: ISS }))).status).toBe(200);
+    expect(await all("SELECT COUNT(*) n FROM sso_identities")).toEqual([{ n: 1 }]);
+  });
+
   it("a new issuer drops the identities bound under the old one", async () => {
     await addUser("a@example.com");
     await signIn("oidc");
@@ -466,7 +492,7 @@ describe("settings", () => {
   it("email_domain.set records the role name; an encoded domain in the path works", async () => {
     await run("INSERT INTO roles (id,name,perms,builtin,created_at,updated_at) VALUES ('r1','Editors','[]',0,1,1)");
     const { cookie } = await signedIn("owner@example.com", { role: "owner" });
-    expect((await dash(`/api/settings/email-domains/${encodeURIComponent("example.com")}`, json(cookie, "PUT", { joinRoleId: "r1", enforceSso: false }))).status).toBe(200);
+    expect((await dash(`/api/settings/email-domains/example%2Ecom`, json(cookie, "PUT", { joinRoleId: "r1", enforceSso: false }))).status).toBe(200);
     expect(await all("SELECT target_id, detail FROM audit_log WHERE action = 'email_domain.set'")).toEqual([
       { target_id: "example.com", detail: JSON.stringify({ domain: "example.com", joinRoleId: "r1", joinRoleName: "Editors", enforceSso: false }) },
     ]);

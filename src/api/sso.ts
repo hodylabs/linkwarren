@@ -251,15 +251,19 @@ ssoSettings.put("/sso/:provider", async (c) => {
   const set = (field: "enabled" | "clientId" | "issuer" | "label", v: unknown) => { fields.push(field); stmts.push(put(field, v)); };
   if (b.enabled !== undefined) set("enabled", b.enabled);
   if (clientId !== undefined) set("clientId", clientId);
-  if (issuer !== undefined) set("issuer", issuer);
+  if (issuer !== undefined) {
+    // A new issuer is a new namespace of subjects: identities bound under the old one must never match a stranger there.
+    // Decided in SQL on the issuer stored when this batch commits (before its own write below), not on the earlier read,
+    // so an overlapping save cannot leave identities from another issuer behind. Clearing the issuer always drops them.
+    if (p === "oidc") stmts.push(env.DB.prepare(`DELETE FROM sso_identities WHERE provider = 'oidc' AND ${g.sql}${issuer ? " AND NOT EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)" : ""}`)
+      .bind(...g.binds, ...(issuer ? [ssoKey("oidc", "issuer"), JSON.stringify(issuer)] : [])));
+    set("issuer", issuer);
+  }
   if (label !== undefined) set("label", label);
   if (secret !== undefined) {
     fields.push("clientSecret");
     stmts.push(...(secret ? await putSecretStmts(env, me.id, SECRET_OF[p], secret, g) : deleteSecretStmts(env, me.id, SECRET_OF[p], g)));
   }
-  // A new issuer is a new namespace of subjects: identities bound under the old one must never match a stranger there.
-  if (p === "oidc" && issuer !== undefined && (issuer || null) !== cfg.oidc.issuer)
-    stmts.push(env.DB.prepare(`DELETE FROM sso_identities WHERE provider = 'oidc' AND ${g.sql}`).bind(...g.binds));
   stmts.push(auditStmt(env, { actorId: me.id, action: "sso.settings", targetType: "settings", targetId: `sso.${p}`, detail: { provider: p, fields } }, g));
   const res = await env.DB.batch(stmts);
   if (!res.at(-1)!.meta.changes) return c.json(forbidden, 403); // no longer an active owner: nothing was written

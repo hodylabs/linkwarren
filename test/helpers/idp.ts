@@ -27,6 +27,8 @@ export async function fakeIdp() {
     tokenStatus: 200,
     /** Runs while the token call is in flight (e.g. a settings change racing the callback). */
     onToken: null as null | (() => Promise<void>),
+    /** Runs while a discovery document is fetched (e.g. a settings save racing another). */
+    onDiscovery: null as null | (() => Promise<void>),
   };
   const doc = (iss: string, base: string) => ({
     issuer: iss, authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`, jwks_uri: `${base}/jwks`,
@@ -46,6 +48,7 @@ export async function fakeIdp() {
     s.calls.push({ url, method, headers: new Headers(init?.headers), body: init?.body ? String(init.body) : "" });
     const google = url.startsWith(GOOGLE) || url.startsWith("https://oauth2.example.test/");
     const base = google ? "https://oauth2.example.test" : ISS;
+    if (url.endsWith("/.well-known/openid-configuration")) await s.onDiscovery?.();
     if (url === `${ISS}/.well-known/openid-configuration`) return Response.json(doc(ISS, ISS));
     if (url === `${GOOGLE}/.well-known/openid-configuration`) return Response.json(doc(GOOGLE, base));
     if (url === `${base}/jwks`) return Response.json({ keys: [pub] });

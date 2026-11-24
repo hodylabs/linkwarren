@@ -177,7 +177,8 @@ async function oidc(env: Env, r: Ready, code: string, verifier: string, nonce: s
   const idToken = tok?.id_token;
   if (typeof idToken !== "string") throw fail();
   const check = async (jwks: JSONWebKeySet) => (await jwtVerify(idToken, createLocalJWKSet(jwks), {
-    issuer, audience: r.clientId, algorithms: ["RS256", "ES256"], clockTolerance: 300, maxTokenAge: 600, requiredClaims: ["exp", "iat", "sub"],
+    // Google documents both forms of its iss; any other provider must match the configured issuer exactly (R4).
+    issuer: r.provider === "google" ? [GOOGLE_ISSUER, "accounts.google.com"] : issuer, audience: r.clientId, algorithms: ["RS256", "ES256"], clockTolerance: 300, maxTokenAge: 600, requiredClaims: ["exp", "iat", "sub"],
   })).payload;
   let p: JWTPayload;
   try {
