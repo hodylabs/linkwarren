@@ -32,6 +32,10 @@ export type Env = {
   CF_API_TOKEN?: string;
   /** Optional secret: base64 of 32 random bytes; enables pasting CF_API_TOKEN / RESEND_API_KEY in the dashboard (stored AES-GCM encrypted in D1). */
   SECRETS_KEY?: string;
+  /** S14 sign-in client secrets (optional Worker secrets; else pasted in Settings > Sign-in and stored encrypted). */
+  GOOGLE_CLIENT_SECRET?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  OIDC_CLIENT_SECRET?: string;
   CF_ACCOUNT_ID?: string;
   CF_WORKER_NAME?: string;
   CF_SAAS_ZONE_ID?: string;

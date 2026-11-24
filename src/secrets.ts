@@ -6,7 +6,7 @@ import { auditStmt } from "./audit";
 import type { Guard } from "./roles";
 import type { Env } from "./env";
 
-export type SecretName = "CF_API_TOKEN" | "RESEND_API_KEY";
+export type SecretName = "CF_API_TOKEN" | "RESEND_API_KEY" | "GOOGLE_CLIENT_SECRET" | "GITHUB_CLIENT_SECRET" | "OIDC_CLIENT_SECRET";
 export type SecretSource = "secret" | "dashboard" | "missing";
 
 export class SecretsError extends Error {

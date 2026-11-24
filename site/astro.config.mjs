@@ -37,7 +37,7 @@ export default defineConfig({
         { label: "Getting started", items: ["docs/getting-started", "docs/domains"] },
         {
           label: "Using linkwarren",
-          items: ["docs/links", "docs/people-and-roles", "docs/analytics", "docs/qr-codes", "docs/vcards", "docs/import"],
+          items: ["docs/links", "docs/people-and-roles", "docs/sso", "docs/analytics", "docs/qr-codes", "docs/vcards", "docs/import"],
         },
         { label: "Agents and API", items: ["docs/agents", "docs/api", "docs/mcp"] },
         {
