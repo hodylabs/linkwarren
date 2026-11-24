@@ -681,6 +681,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .bars .hb-f:hover{color:var(--text);text-decoration:underline}
 .bars .hb-f[aria-pressed="true"]{color:var(--text);font-weight:600}
 .recent .card-b{padding:8px 16px 12px}
+.recent .rtable{width:100%}
 .rwrap{overflow-x:auto;max-width:100%}
 .rtable td{white-space:nowrap}
 .rtable td.mono{font-family:var(--mono);font-size:12.5px}

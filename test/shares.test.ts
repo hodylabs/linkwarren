@@ -115,6 +115,16 @@ describe("share page", () => {
     expect(html).toContain("main.example.com/spring");
     expect(html).toMatch(/<b>7<\/b><small>clicks/);
     expect(html).toContain("Top referrers");
+    expect(html).toContain('<svg class="chart"'); // the daily line, as markup (no script, no image)
+  });
+
+  it("lineChart draws a line and a closed fill, and nothing for fewer than two days", async () => {
+    const { lineChart } = await import("../src/share");
+    expect(lineChart([3])).toBe("");
+    const svg = lineChart([0, 2, 4]);
+    expect(svg.match(/<path /g)).toHaveLength(2);
+    expect(svg).toContain(" Z\"");
+    expect(svg).toContain('aria-label="Clicks per day, highest 4"');
   });
 
   it("every failure is the same 404: bad shape, unknown, creator disabled, link deleted, link moved", async () => {

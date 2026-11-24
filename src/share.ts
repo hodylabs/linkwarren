@@ -28,7 +28,7 @@ const WIDE =
   CSS +
   `main{max-width:720px;text-align:left}.sub{margin:0 0 14px;font-size:14px}.tot{display:flex;gap:8px;margin:0 0 14px}` +
   `.tot div{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--inset)}.tot b{display:block;font-size:20px}` +
-  `.tot small,.foot,.note{color:var(--muted);font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}` +
+  `.tot small,.foot,.note{color:var(--muted);font-size:13px}.chart{display:block;width:100%;height:120px;margin:4px 0 12px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}` +
   `h2{margin:0 0 4px;font-size:14px;font-weight:600}table{width:100%;border-collapse:collapse;font-size:14px}` +
   `td{padding:3px 0;border-top:1px solid var(--line)}td.n{text-align:right;font-variant-numeric:tabular-nums}` +
   `.foot{margin:14px 0 0}.note{margin:0 0 12px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}`;
@@ -36,10 +36,22 @@ const WIDE =
 const fmt = (n: number) => n.toLocaleString("en-US");
 const e = escapeHtml;
 type Row = { value: string; clicks: number };
-const table = (title: string, rows: Row[], empty: string) =>
+const table = (title: string, rows: Row[], empty: string, blank = "Unknown") =>
   `<section><h2>${e(title)}</h2>` +
-  (rows.length ? `<table>${rows.map((r) => `<tr><td>${e(r.value || "Unknown")}</td><td class="n">${fmt(r.clicks)}</td></tr>`).join("")}</table>` : `<p class="note">${e(empty)}</p>`) +
+  (rows.length ? `<table>${rows.map((r) => `<tr><td>${e(r.value || blank)}</td><td class="n">${fmt(r.clicks)}</td></tr>`).join("")}</table>` : `<p class="note">${e(empty)}</p>`) +
   `</section>`;
+
+/** Clicks per day as an inline SVG line over a soft fill, like the dashboard chart; plain markup, so the no-script CSP holds. */
+export function lineChart(clicks: number[]): string {
+  const W = 600, H = 120, pad = 6, n = clicks.length;
+  if (n < 2) return "";
+  const top = Math.max(1, ...clicks);
+  const pts = clicks.map((c, i) => `${((i / (n - 1)) * (W - 2 * pad) + pad).toFixed(1)} ${(H - pad - (c / top) * (H - 2 * pad)).toFixed(1)}`);
+  const line = `M${pts.join(" L")}`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Clicks per day, highest ${fmt(top)}">` +
+    `<path d="${line} L${W - pad} ${H - pad} L${pad} ${H - pad} Z" fill="#FD8D27" fill-opacity=".14"/>` +
+    `<path d="${line}" fill="none" stroke="#FD8D27" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
 
 type Share = { scope: "link" | "domain"; scope_id: string; domain_id: string; host: string; link_domain: string | null; slug: string | null; name: string | null };
 
@@ -65,14 +77,15 @@ export async function sharePage(req: Request, env: Env, token: string, nowSec = 
   const r = buildReport(range, rows, new Map([[s.domain_id, s.host]]), { truncated: false, visitors: false });
   const address = s.scope === "link" ? `${s.host}/${s.slug}` : s.host;
   const title = s.scope === "link" && s.name ? s.name : address;
-  const days = [...r.series].reverse().map((d) => ({ value: d.bucket, clicks: d.qr + d.typed }));
+  const perDay = r.series.map((d) => d.qr + d.typed);
+  const days = [...r.series].reverse().map((d) => ({ value: d.bucket, clicks: d.qr + d.typed })).filter((d) => d.clicks > 0);
   const live = rows.live === "ok" ? "" : `<p class="note">Clicks from the last day or two are not available right now, so the newest days may show fewer.</p>`;
   const main =
     `<h1>${e(title)}</h1><p class="sub"><span class="mono">${e(address)}</span>, clicks from ${e(r.from)} to ${e(r.to)} (UTC days)</p>` +
     `<div class="tot"><div><b>${fmt(r.totals.clicks)}</b><small>clicks</small></div><div><b>${fmt(r.totals.qr)}</b><small>from QR codes</small></div>` +
-    `<div><b>${fmt(r.totals.typed)}</b><small>typed or clicked</small></div></div>${live}` +
-    `<div class="grid">${table("Daily clicks", days, "No clicks yet.")}${table("Top countries", r.countries.slice(0, TOP), "No clicks yet.")}` +
-    `${table("Top referrers", r.referrers.slice(0, TOP), "No referrers yet.")}${table("Devices", r.devices.slice(0, TOP), "No clicks yet.")}</div>` +
+    `<div><b>${fmt(r.totals.typed)}</b><small>typed or clicked</small></div></div>${live}${lineChart(perDay)}` +
+    `<div class="grid">${table("Days with clicks", days, "No clicks yet.")}${table("Top countries", r.countries.slice(0, TOP), "No clicks yet.")}` +
+    `${table("Top referrers", r.referrers.slice(0, TOP), "No referrers yet.", "Direct")}${table("Devices", r.devices.slice(0, TOP), "No clicks yet.")}</div>` +
     `<p class="foot">A read-only share from linkwarren: totals only, no visitor details.</p>`;
   return ok(doc(e(title), WIDE, main));
 }

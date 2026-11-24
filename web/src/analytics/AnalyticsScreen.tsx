@@ -396,7 +396,7 @@ export function AnalyticsScreen() {
           <p className="retention">
             <Icon name="clock" />
             <span>
-              <span>Bots and link previews are left out</span>. Each click keeps its full detail for three months (Analytics Engine retention); older days keep daily totals, countries, devices and referrers only.
+              <span>Bots and link previews are left out</span>. Each click keeps its full detail for three months (Analytics Engine retention); older days keep daily totals and the top values of each breakdown, and filters cover the last three months.
             </span>
           </p>
         </div>
