@@ -52,7 +52,7 @@ Shape:
 - API key secrets and hashes: keys in the file cannot be used. Create new keys after a restore.
 - Secrets pasted in the dashboard (the `secret.*` settings rows, stored encrypted) and the Worker secrets.
 - Sign-in data: sessions, sign-in links, passkeys, sign-in challenges and rate-limit counters.
-- Linked Google, GitHub and single sign-on accounts, and the email domain list (auto-join and enforced single sign-on). After a restore people link again on their next sign-in, and an owner adds the domains again in Settings, Sign-in. The provider client IDs are in `settings` and come back; their secrets do not. A provider whose secret was pasted in the dashboard has no button until an owner pastes the secret again (Worker secrets are not touched by a restore), so do that before people sign in again.
+- Linked Google, GitHub and single sign-on accounts, and the email domain list (auto-join and enforced single sign-on). After a restore people link again on their next sign-in, and an owner adds the domains again in Settings, Sign-in. The provider client IDs are in `settings` and come back; their secrets do not. A provider whose secret was pasted in the dashboard has no button until an owner pastes the secret again, or sets it as the Worker secret (`npx wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.instance.jsonc`, likewise for Google and OIDC; a restore never touches Worker secrets). Owners can always sign in with an email link to do this.
 - Internal state: locks and the analytics rollup mark.
 - OAuth grants and tokens of agent connections (they live in KV, not D1).
 - Raw clicks still in Analytics Engine that are not yet rolled into the daily totals.
