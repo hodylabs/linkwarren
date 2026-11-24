@@ -60,6 +60,8 @@ export type DetailReport = {
   /** S13, optional so a server without them still reads: prints and the UTM tags. */
   prints?: PrintCount[]; utmSources?: Count[]; utmMediums?: Count[]; utmCampaigns?: Count[];
   filteredFrom?: string;
+  /** Some print or UTM lists were left out: the view was too big for one answer. */
+  cut?: true;
 };
 /** One item of GET /api/analytics/recent (S13): the last 50 human clicks of the last 24 hours, newest first. No IP or user agent. */
 export type RecentClick = {

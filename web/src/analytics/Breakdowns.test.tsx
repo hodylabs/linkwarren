@@ -182,6 +182,12 @@ describe("Breakdowns as filters (S13)", () => {
     expect(c.pick.mock.calls.map((x) => x[0])).toEqual([{ dim: "print", value: "flyer1" }, { dim: "print", value: "" }, { dim: "utm_source", value: "newsletter" }]);
   });
 
+  it("a cut answer says why the print and UTM lists are empty", () => {
+    render(<Breakdowns report={{ ...base, totals: { ...base.totals, clicks: 5 } }} detail={{ ...detailOf({}), cut: true }} filters={ctl()} />);
+    tab("Campaigns");
+    expect(within(card("QR prints")).getByText("Too many to list here: pick fewer domains or a shorter range")).toBeTruthy();
+  });
+
   it("plain QR scans from several links (one print row per link) add up to one row that still filters", () => {
     const c = ctl();
     const prints = [{ value: "", clicks: 2, label: null, linkId: "l1" }, { value: "", clicks: 3, label: null, linkId: "l2" }];

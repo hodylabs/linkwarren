@@ -189,6 +189,8 @@ export function Breakdowns({ report: r, detail, perLink = false, range = "", not
   const [tab, setTab] = useState<Tab>("places");
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const none = detail === undefined ? "Loading" : detail === null || detail.live !== "ok" ? "Not available for this range" : undefined;
+  // Some print or UTM lists were left out because the view was too big for one answer (S13 detail budget).
+  const cutNote = detail?.cut ? "Too many to list here: pick fewer domains or a shorter range" : undefined;
   const det = (xs: Count[] | undefined, name: (v: string) => string, dim: Dim) => named(xs ?? [], name, dim);
   const columns: Record<Tab, ReactNode> = {
     places: (
@@ -221,10 +223,10 @@ export function Breakdowns({ report: r, detail, perLink = false, range = "", not
     ),
     campaigns: (
       <>
-        <Column title="QR prints" rows={printRows(detail?.prints ?? [])} empty={none} ctl={c} />
-        <Column title="UTM source" rows={det(detail?.utmSources, untagged, "utm_source")} empty={none} ctl={c} />
-        <Column title="UTM medium" rows={det(detail?.utmMediums, untagged, "utm_medium")} empty={none} ctl={c} />
-        <Column title="UTM campaign" rows={det(detail?.utmCampaigns, untagged, "utm_campaign")} empty={none} ctl={c} />
+        <Column title="QR prints" rows={printRows(detail?.prints ?? [])} empty={cutNote ?? none} ctl={c} />
+        <Column title="UTM source" rows={det(detail?.utmSources, untagged, "utm_source")} empty={cutNote ?? none} ctl={c} />
+        <Column title="UTM medium" rows={det(detail?.utmMediums, untagged, "utm_medium")} empty={cutNote ?? none} ctl={c} />
+        <Column title="UTM campaign" rows={det(detail?.utmCampaigns, untagged, "utm_campaign")} empty={cutNote ?? none} ctl={c} />
       </>
     ),
   };
