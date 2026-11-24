@@ -24,7 +24,7 @@ Clone the repository and check out the newest release tag (listed on the [releas
 ```sh
 git clone https://github.com/hodylabs/linkwarren
 cd linkwarren
-git checkout v0.8.0   # use the newest tag
+git checkout v0.9.0   # use the newest tag
 npm ci
 ```
 
@@ -154,6 +154,7 @@ A `302` with your destination means the install works end to end. A `404` "Not f
 
 - [links.md](links.md): link rules, moving links, bulk edit and slug locks.
 - [people-and-roles.md](people-and-roles.md): invite people and decide what they can do.
+- [sso.md](sso.md): let people sign in with Google, GitHub or your own single sign-on provider.
 - [agents.md](agents.md): connect an AI agent, or create an API key for scripts.
 - [updating.md](updating.md): moving to a new release.
 - [backup.md](backup.md): restores and the full export.

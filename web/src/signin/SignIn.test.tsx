@@ -34,6 +34,77 @@ function form(routes: FakeRoutes = {}) {
   render(<SignIn next="/links" />);
   return { api, user: userEvent.setup() };
 }
+/** The calls a test makes, without the provider list the form asks for on its own. */
+const sent = (api: ReturnType<typeof fakeApi>) => api.calls.filter((c) => c.path !== "/auth/sso/providers");
+const PROVIDERS = { items: [{ id: "google", label: "Google" }, { id: "github", label: "GitHub" }, { id: "oidc", label: "Northwind SSO" }] };
+
+describe("SignIn single sign-on (S14)", () => {
+  afterEach(() => history.replaceState(null, "", "/"));
+
+  it("shows a button per listed provider above the email field, the OIDC one with its label", async () => {
+    form({ "POST /auth/sso/providers": () => ({ body: PROVIDERS }) });
+    const google = await screen.findByRole("button", { name: "Continue with Google" });
+    expect(screen.getByRole("button", { name: "Continue with GitHub" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Northwind SSO" })).toBeTruthy();
+    expect(google.compareDocumentPosition(screen.getByLabelText("Email")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("only the providers the server lists; none means the page is as before", async () => {
+    const { api } = form({ "POST /auth/sso/providers": () => ({ body: { items: [{ id: "github", label: "GitHub" }] } }) });
+    expect(await screen.findByRole("button", { name: "Continue with GitHub" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+    expect(api.calls[0]).toEqual({ method: "POST", path: "/auth/sso/providers", body: {} });
+  });
+
+  it("an empty list or a failed request shows no single sign-on", async () => {
+    const { api } = form({ "POST /auth/sso/providers": () => ({ body: { items: [] } }) });
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(screen.queryByText("or with your email")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByLabelText("Email"));
+  });
+
+  it("a button posts start with next and goes to the returned URL", async () => {
+    const { api, user } = form({
+      "POST /auth/sso/providers": () => ({ body: PROVIDERS }),
+      "POST /auth/sso/google/start": () => ({ body: { url: "https://accounts.example.com/authorize?state=s" } }),
+    });
+    await user.click(await screen.findByRole("button", { name: "Continue with Google" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://accounts.example.com/authorize?state=s"));
+    expect(sent(api)).toEqual([{ method: "POST", path: "/auth/sso/google/start", body: { next: "/links" } }]);
+  });
+
+  it("a start URL that is not https is refused", async () => {
+    const { user } = form({
+      "POST /auth/sso/providers": () => ({ body: PROVIDERS }),
+      "POST /auth/sso/oidc/start": () => ({ body: { url: "javascript:alert(1)" } }),
+    });
+    await user.click(await screen.findByRole("button", { name: "Northwind SSO" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Sign-in with that provider did not finish. Try again, or sign in another way if your account allows it.");
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("a 429 on start shows the sign-in too_many text", async () => {
+    const { user } = form({ "POST /auth/sso/providers": () => ({ body: PROVIDERS }), "POST /auth/sso/github/start": () => ({ status: 429, body: { error: "too_many" } }) });
+    await user.click(await screen.findByRole("button", { name: "Continue with GitHub" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Too many sign-in attempts. Wait a few minutes and try again.");
+  });
+
+  it.each([
+    ["sso_failed", "Sign-in with that provider did not finish. Try again, or sign in another way if your account allows it."],
+    ["not_invited", "This account is not invited to this linkwarren. Ask the owner to invite you."],
+    ["disabled", "Your access has been turned off. Ask the owner."],
+    ["sso_required", "Your email domain signs in with single sign-on only. Use the single sign-on button."],
+    ["email_unverified", "The provider has not verified this account's email address. Verify it there, then try again."],
+    ["too_many", "Too many sign-in attempts. Wait a few minutes and try again."],
+    ["<b>call 555</b>", "Sign-in with that provider did not finish. Try again, or sign in another way if your account allows it."],
+  ])("?error=%s shows its text and is dropped from the URL, next kept", async (c, text) => {
+    history.replaceState(null, "", `/sign-in?next=%2Flinks&error=${encodeURIComponent(c)}`);
+    form();
+    expect((await screen.findByRole("alert")).textContent).toBe(text);
+    expect(location.pathname + location.search).toBe("/sign-in?next=%2Flinks");
+  });
+});
 
 describe("SignIn form", () => {
   it("the confirmation shows the submitted address even if the input changes while the request is in flight", async () => {
@@ -53,7 +124,7 @@ describe("SignIn form", () => {
     await user.type(screen.getByLabelText("Email"), "a@example.com{Enter}");
     expect(await screen.findByText("Check your email")).toBeTruthy();
     expect(screen.getByText("If a@example.com can sign in here, a link is on its way. It works once, for 15 minutes.")).toBeTruthy();
-    expect(api.calls).toEqual([{ method: "POST", path: "/auth/email", body: { email: "a@example.com", next: "/links" } }]);
+    expect(sent(api)).toEqual([{ method: "POST", path: "/auth/email", body: { email: "a@example.com", next: "/links" } }]);
     await user.keyboard("{Escape}");
     const email = (await screen.findByLabelText("Email")) as HTMLInputElement;
     expect(email.value).toBe("a@example.com");
@@ -94,7 +165,7 @@ describe("SignIn form", () => {
     await user.click(screen.getByRole("button", { name: "Use a passkey" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/links"));
     expect(wa.startAuthentication).toHaveBeenCalledWith({ optionsJSON: { challenge: "c" } });
-    expect(api.calls.map((c) => [c.path, c.body])).toEqual([
+    expect(sent(api).map((c) => [c.path, c.body])).toEqual([
       ["/auth/passkey/options", {}],
       ["/auth/passkey/verify", { response: { id: "cred" }, next: "/links" }],
     ]);
@@ -105,7 +176,7 @@ describe("SignIn form", () => {
     const { api, user } = form({ "POST /auth/passkey/options": () => ({ body: { challenge: "c" } }) });
     await user.click(screen.getByRole("button", { name: "Use a passkey" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Passkey sign-in was cancelled.");
-    expect(api.calls.map((c) => c.path)).toEqual(["/auth/passkey/options"]);
+    expect(sent(api).map((c) => c.path)).toEqual(["/auth/passkey/options"]);
     expect(assign).not.toHaveBeenCalled();
   });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { api, ApiError, type PasskeyItem, type SessionItem } from "../api";
+import { api, ApiError, providerName, type IdentityItem, type PasskeyItem, type SessionItem } from "../api";
 import { errorText } from "../copy";
 import { useHotkeys, type Bindings } from "../keys";
 import { Sheet } from "../shell/Sheet";
@@ -20,7 +20,10 @@ export const ACCOUNT_KEYS = {
 } as const;
 
 type Data = { passkeys: PasskeyItem[]; sessions: SessionItem[] };
-type Confirm = { kind: "remove"; passkey: PasskeyItem } | { kind: "end"; session: SessionItem } | { kind: "all" };
+type Confirm = { kind: "remove"; passkey: PasskeyItem } | { kind: "end"; session: SessionItem } | { kind: "all" } | { kind: "unlink"; identity: IdentityItem };
+const TITLES = { all: "Sign out everywhere", remove: "Remove passkey", end: "End session", unlink: "Unlink sign-in" } as const;
+/** How a session was signed in; S14 adds the single sign-on providers (a plain string so an older server type still fits). */
+const method = (m: string) => (m === "passkey" ? "a passkey" : m === "email" ? "an email link" : providerName(m) ?? m);
 
 const code = (e: unknown) => (e instanceof ApiError ? e.code : "internal");
 /** Where the page goes after this device is signed out. */
@@ -51,6 +54,33 @@ export function AccountPanel() {
     }
   }, []);
   useEffect(() => void load(), [load]);
+  // S14: Google, GitHub and single sign-on accounts linked to this person. An older server without the route shows nothing.
+  const [identities, setIdentities] = useState<IdentityItem[]>([]);
+  const idGen = useRef(0); // only the newest refresh may write, as in load
+  const loadIdentities = useCallback((signal?: AbortSignal) => {
+    const g = ++idGen.current;
+    return api<{ items: IdentityItem[] }>("GET", "/api/account/identities", undefined, signal).then(
+      (r) => void (g === idGen.current && setIdentities(Array.isArray(r.items) ? r.items : [])),
+      () => undefined,
+    );
+  }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    void loadIdentities(ac.signal);
+    return () => ac.abort();
+  }, [loadIdentities]);
+  // After an unlink the focused Unlink button is gone: move focus to the next one, else to the panel, so the keyboard keeps its place.
+  const root = useRef<HTMLDivElement>(null);
+  const refocus = useRef(false);
+  const openConfirm = useRef<Confirm | null>(null);
+  openConfirm.current = confirm;
+  useEffect(() => {
+    if (!refocus.current || confirm) return;
+    refocus.current = false;
+    // Runs in the commit that closes the dialog, before the person can move focus, so it always wins over a sheet's own restore.
+    const el = root.current;
+    if (el) (el.querySelector<HTMLElement>("[data-unlink]") ?? el).focus();
+  }, [identities, confirm]);
 
   const ids = data ? [...data.passkeys.map((p) => p.id), ...data.sessions.map((s) => s.id)] : [];
   const passkey = data?.passkeys.find((p) => p.id === sel) ?? null;
@@ -92,7 +122,9 @@ export function AccountPanel() {
     setName(passkey.name);
     setRenaming(passkey);
   };
+  // No new dialog while a write is in flight: its answer (or error) belongs to the dialog that started it.
   const ask = () => {
+    if (working.current) return;
     if (passkey) setConfirm({ kind: "remove", passkey });
     else if (endable) setConfirm({ kind: "end", session: endable });
   };
@@ -100,6 +132,21 @@ export function AccountPanel() {
     const c = confirm;
     if (!c) return;
     if (c.kind === "all") return run(() => api("POST", "/api/account/sign-out-everywhere", {}), goHome, true);
+    if (c.kind === "unlink") {
+      const p = c.identity.provider;
+      // 404: already unlinked (another tab), which is the outcome asked for.
+      const del = () => api("DELETE", `/api/account/identities/${encodeURIComponent(p)}`).catch((e: unknown) => {
+        if (!(e instanceof ApiError && e.status === 404)) throw e;
+      });
+      return run(del, () => {
+        setConfirm(null);
+        idGen.current++; // a refresh already on its way must not bring the row back
+        setIdentities((cur) => cur.filter((i) => i.provider !== p));
+        // Only when this dialog was still open: after Cancel the person has chosen where focus goes.
+        refocus.current = openConfirm.current === c;
+        void loadIdentities();
+      });
+    }
     const path = c.kind === "remove" ? `/api/account/passkeys/${c.passkey.id}` : `/api/account/sessions/${c.session.id}`;
     return run(() => api("DELETE", path), () => {
       setConfirm(null);
@@ -130,9 +177,10 @@ export function AccountPanel() {
 
   if (!data) return error ? <p className="err" role="alert">{errorText(error)}</p> : <p className="muted">Loading</p>;
 
-  const method = (m: SessionItem["method"]) => (m === "passkey" ? "a passkey" : "an email link");
+  // An unlink refused by an enforced domain (R7) needs words of its own; the shared text is for the sign-in page.
+  const confirmError = (c: string) => (confirm?.kind === "unlink" && c === "sso_required" ? "Your email domain requires single sign-on, so this sign-in cannot be unlinked." : errorText(c));
   return (
-    <div className="acct">
+    <div className="acct" ref={root} tabIndex={-1}>
       {error && !confirm && !renaming && <p className="err" role="alert">{errorText(error)}</p>}
       <div className="p-sec">Passkeys</div>
       {data.passkeys.length === 0 && <p className="muted acct-empty">No passkeys yet. You sign in with an email link.</p>}
@@ -164,6 +212,28 @@ export function AccountPanel() {
           Add a passkey <span className="k">A</span>
         </button>
       )}
+      {identities.length > 0 && (
+        <>
+          <div className="p-sec">Connected sign-ins</div>
+          <ul className="acct-list" aria-label="Connected sign-ins">
+            {identities.map((i) => (
+              <li key={i.provider} className="acct-row">
+                <div className="acct-main">
+                  <b>{providerName(i.provider) ?? i.provider}</b> <span className="muted">{i.email}</span>
+                  <br />
+                  <small className="muted">
+                    Linked {shortDate(i.createdAt)}, {i.lastUsedAt === null ? "Never used" : `Last used ${shortDate(i.lastUsedAt)}`}
+                  </small>
+                </div>
+                <button type="button" className="btn" data-unlink disabled={busy} aria-label={`Unlink ${providerName(i.provider) ?? i.provider}`}
+                  onClick={() => !working.current && setConfirm({ kind: "unlink", identity: i })}>
+                  Unlink
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <div className="p-sec">Sessions</div>
       <ul className="acct-list" aria-label="Sessions">
         {data.sessions.map((s) => (
@@ -192,20 +262,22 @@ export function AccountPanel() {
       <WeeklyEmail />
       <LinkAlerts />
       {confirm && (
-        <Sheet label={confirm.kind === "all" ? "Sign out everywhere" : confirm.kind === "remove" ? "Remove passkey" : "End session"} onClose={() => { setConfirm(null); setError(null); }}>
+        <Sheet label={TITLES[confirm.kind]} onClose={() => { setConfirm(null); setError(null); }}>
           <div className="sh-head">
-            <h2>{confirm.kind === "all" ? "Sign out everywhere" : confirm.kind === "remove" ? "Remove passkey" : "End session"}</h2>
+            <h2>{TITLES[confirm.kind]}</h2>
           </div>
           <div className="sh-body">
             <p>
               {confirm.kind === "all" && "Sign out on every device, including this one?"}
               {confirm.kind === "remove" && `Remove ${confirm.passkey.name}? You can still sign in with an email link.`}
               {confirm.kind === "end" && `Sign out ${confirm.session.device ?? "Unknown device"}?`}
+              {confirm.kind === "unlink" &&
+                `Unlink ${providerName(confirm.identity.provider) ?? confirm.identity.provider} (${confirm.identity.email})? It links again on a later sign-in with it, if your account may still use it and its email still matches yours.`}
             </p>
-            {error && <p className="err" role="alert">{errorText(error)}</p>}
+            {error && <p className="err" role="alert">{confirmError(error)}</p>}
             <div className="actions">
               <button type="button" className="btn danger solid" autoFocus disabled={busy} onClick={() => void doConfirm()}>
-                {confirm.kind === "remove" ? "Remove" : confirm.kind === "end" ? "Sign out" : "Sign out everywhere"} <span className="k">Enter</span>
+                {confirm.kind === "remove" ? "Remove" : confirm.kind === "end" ? "Sign out" : confirm.kind === "unlink" ? "Unlink" : "Sign out everywhere"} <span className="k">Enter</span>
               </button>
               <button type="button" className="btn" onClick={() => { setConfirm(null); setError(null); }}>
                 Cancel <kbd>Esc</kbd>

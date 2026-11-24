@@ -4,6 +4,7 @@ import { resolveUser } from "../auth";
 import { sendEmail, signInEmail } from "../email";
 import { getSecret } from "../secrets";
 import { getSettings } from "../settings";
+import { ssoRequired } from "../sso";
 import { dash, dashUrl } from "../dash";
 import type { Env } from "../env";
 import { normalizeHost } from "../host";
@@ -151,6 +152,9 @@ signin.post("/email/verify", async (c) => {
   }
   const r = await resolveUser(env, t.email);
   if (!("user" in r)) return c.json({ error: r.error }, r.status);
+  // S14 R7: people at an enforced domain sign in with OIDC only (owners never blocked); checked here, where the person is
+  // known, so POST /auth/email keeps its uniform answer.
+  if (await ssoRequired(env, r.user)) return c.json({ error: "sso_required" }, 403);
   const s = await createSession(env, c.req.raw, r.user, "email");
   if (!s.started(await env.DB.batch(s.stmts))) return c.json({ error: "disabled" }, 403); // disabled after the check above
   c.header("Set-Cookie", s.setCookie);
@@ -183,6 +187,7 @@ signin.post("/passkey/verify", async (c) => {
     return c.json(passkeyFailed, 400); // one answer for every cause (R10); nothing logged, library text can quote client data
   }
   if (v.user.status !== "active") return c.json({ error: "disabled" }, 403);
+  if (await ssoRequired(env, v.user)) return c.json({ error: "sso_required" }, 403); // S14 R7, before the counter moves
   // Counters only move forward (0 = an authenticator without one). Of two racing assertions at the same counter only one
   // gets the row; the other is a concurrent or replayed assertion and gets no session.
   const moved = await env.DB.prepare("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ? AND (counter < ? OR ? = 0)")

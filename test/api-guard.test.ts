@@ -93,9 +93,11 @@ describe("csrf and json-only bodies", () => {
 describe("every /api route requires a token", () => {
   const routes = app.routes.filter((r) => r.method !== "ALL" && r.path.startsWith("/api/"));
   it("finds the routes", () => expect(routes.length).toBeGreaterThanOrEqual(14));
-  // This suite runs in access mode, where /api/account/* does not exist (R2); its app-mode 401s are in passkeys.test.ts.
+  // This suite runs in access mode, where /api/account/* and the S14 sign-in settings do not exist (R2); their app-mode 401s
+  // are in passkeys.test.ts and authz-sweep.test.ts.
+  const appOnly = (p: string) => p === "/api/account" || /^\/api\/(account|settings\/sso|settings\/email-domains)\//.test(p) || p === "/api/settings/sso";
   for (const { method, path } of routes) {
-    const want = path === "/api/account" || path.startsWith("/api/account/") ? 404 : 401;
+    const want = appOnly(path) ? 404 : 401;
     it(`${method} ${path} -> ${want}`, async () => {
       const r = await dash(path.replace(/:\w+/g, "x"), { method });
       expect(r.status).toBe(want);

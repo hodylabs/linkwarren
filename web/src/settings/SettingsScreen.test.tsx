@@ -138,7 +138,7 @@ describe("Settings sections", () => {
 
   it("Sign-in shows the app mode line and the account panel", async () => {
     const { api } = boot("/settings/sign-in");
-    expect(await screen.findByText("linkwarren sign-in: email link and passkeys")).toBeTruthy();
+    expect(await screen.findByText("linkwarren sign-in: email link, passkeys, and Google, GitHub or single sign-on when turned on below")).toBeTruthy();
     await waitFor(() => expect(api.calls.some((c) => c.path === "/api/account")).toBe(true));
   });
 

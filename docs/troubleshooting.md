@@ -74,6 +74,14 @@ A link works once, for 15 minutes. Ask for a new one.
 
 Passkeys belong to the dashboard host they were made on. After a move to another host (or to path mode), sign in with an email link and add a new passkey. linkwarren gives the same answer for every passkey failure on purpose.
 
+### Google, GitHub or single sign-on sends me back with an error
+
+The sign-in page shows a code such as `sso_failed`, `not_invited`, `sso_required` or `email_unverified`. Each one is explained in [sso.md](sso.md#errors-on-the-sign-in-page). A Google error page (never reaching linkwarren) usually means the redirect URI in the Google client does not match the one in Settings, Sign-in exactly, or the Google app is in testing mode and the account is not a test user. GitHub's "redirect_uri is not associated with this application" means the same mismatch on the GitHub side.
+
+### The Google, GitHub or single sign-on button does not show
+
+A button shows only when its provider is switched on and has a client ID and a secret (single sign-on also needs an issuer). Check the provider's card in Settings, Sign-in: "Set" under Client secret means the secret is there. Buttons never show in access mode.
+
 ### The owner is locked out after changing `SECRETS_KEY`
 
 A pasted Resend key that can no longer be decrypted reads as missing (Workers Logs: `secrets_unreadable RESEND_API_KEY`), so email sign-in answers `503`. Set the key as a Worker secret, which always wins: `npx wrangler secret put RESEND_API_KEY -c wrangler.instance.jsonc`. Then sign in and remove the stale pasted value in Settings.

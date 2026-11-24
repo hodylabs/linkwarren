@@ -88,7 +88,7 @@ account.get("/", async (c) => {
   ]);
   const passkeys: PasskeyItem[] = p!.results.map((r) => ({ id: r.id as string, name: r.name as string, createdAt: r.created_at as number, lastUsedAt: r.last_used_at as number | null, backedUp: !!r.backed_up }));
   const sessions: SessionItem[] = s!.results.map((r) => ({
-    id: r.id as string, current: r.id === cur, method: r.method as "email" | "passkey", createdAt: r.created_at as number,
+    id: r.id as string, current: r.id === cur, method: r.method as SessionItem["method"], createdAt: r.created_at as number,
     lastSeenAt: r.last_seen_at as number, device: r.device as string | null, ipPrefix: r.ip_prefix as string | null,
   }));
   return c.json({ passkeys, sessions });

@@ -2,6 +2,37 @@ import { describe, expect, it } from "vitest";
 import type { AuditItem } from "../api";
 import { describeAudit } from "./auditText";
 
+describe("describeAudit single sign-on (S14)", () => {
+  const s = (o: Partial<AuditItem>) => describeAudit({ id: 1, at: 1, actorId: "u1", actorEmail: "dana@example.com", actorName: "Dana R.", via: null, action: "x", targetType: "user", targetId: "u1", detail: {}, ...o }, "uo");
+  it("signin.sso names the provider and a first-time join", () => {
+    expect(s({ action: "signin.sso", detail: { provider: "google", joined: false } }).text).toBe("signed in with Google");
+    expect(s({ action: "signin.sso", detail: { provider: "oidc", joined: true } }).text).toBe("joined by signing in with single sign-on");
+    expect(s({ action: "signin.sso", detail: { provider: "github" } }).text).toBe("signed in with GitHub");
+  });
+  it("sso.settings lists the changed fields in words and drops unknown ones, never values", () => {
+    expect(s({ action: "sso.settings", targetType: "settings", detail: { provider: "github", fields: ["clientId", "clientSecret", "bogus"] } }))
+      .toMatchObject({ text: "changed the sign-in settings for", code: "GitHub", suffix: ": client ID, client secret" });
+    expect(s({ action: "sso.settings", detail: { provider: "oidc" } })).toMatchObject({ code: "single sign-on", suffix: "" });
+  });
+  it("email_domain.set and email_domain.delete", () => {
+    expect(s({ action: "email_domain.set", targetType: "email_domain", targetId: "example.com", detail: { joinRoleId: "member", enforceSso: true } }))
+      .toMatchObject({ text: "set the email domain", code: "example.com", suffix: ": auto-join as member, single sign-on enforced" });
+    expect(s({ action: "email_domain.set", targetId: "example.com", detail: { domain: "example.com", joinRoleId: null, joinRoleName: null, enforceSso: false } }).suffix)
+      .toBe(": no auto-join, single sign-on not enforced");
+    expect(s({ action: "email_domain.delete", targetId: "example.com", detail: {} })).toMatchObject({ text: "removed the email domain", code: "example.com" });
+  });
+  it("auth.sign_in names the provider for a provider sign-in, as signin.sso does", () => {
+    expect(s({ action: "auth.sign_in", detail: { method: "google" } }).text).toBe("signed in with Google");
+    expect(s({ action: "auth.sign_in", detail: { method: "github" } }).text).toBe("signed in with GitHub");
+    expect(s({ action: "auth.sign_in", detail: { method: "oidc" } }).text).toBe("signed in with single sign-on");
+    expect(s({ action: "auth.sign_in", detail: { method: "passkey" } }).text).toBe("signed in with a passkey");
+    expect(s({ action: "auth.sign_in", detail: { method: "email" } }).text).toBe("signed in with an email link");
+  });
+  it("identity.unlink", () => {
+    expect(s({ action: "identity.unlink", detail: { provider: "google" } }).text).toBe("unlinked a Google sign-in");
+  });
+});
+
 const mk = (o: Partial<AuditItem>): AuditItem => ({
   id: 1, at: 1, actorId: "u1", actorEmail: "dana@example.com", actorName: "Dana R.", via: null,
   action: "link.update", targetType: "link", targetId: "l1", detail: {}, ...o,

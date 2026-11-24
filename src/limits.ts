@@ -31,6 +31,8 @@ export const LIMITS = {
   alertDay: { n: 20, s: 86400, utc: true },
   /** S13 R7: share page views per IP range (each view is a report read). */
   share: { n: 60, s: 60 },
+  /** S14 R11: SSO starts per IP range (each writes a state row), its own budget so sign-in emails keep theirs. */
+  ssoStart: { n: 20, s: 900 },
 } as const;
 /** utc: the window is aligned to multiples of s since the epoch (s = 86400 is the UTC day) instead of starting at the first event. */
 export type Limit = { n: number; s: number; utc?: boolean };
@@ -67,6 +69,7 @@ export const limitKey = {
   logoDay: "logo:day",
   alertDay: "alert:day",
   share: (prefix: string | null) => `share:${prefix ?? "none"}`,
+  ssoStart: (prefix: string | null) => `sso:${prefix ?? "none"}`,
 } as const;
 
 /** Counts one event in one atomic upsert (a window older than s restarts at 1); true when still within the limit. */

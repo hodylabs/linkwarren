@@ -52,6 +52,7 @@ The example config also sets `"triggers": { "crons": ["15 * * * *"] }`: the hour
 | --- | --- | --- |
 | `SECRETS_KEY` | unset | Base64 of exactly 32 random bytes (`openssl rand -base64 32`). Lets the owner paste `RESEND_API_KEY` and `CF_API_TOKEN` in Settings or the setup wizard; they are stored AES-GCM encrypted in D1. The same key encrypts the Wi-Fi passwords of saved [QR codes](qr-codes.md); without it a Wi-Fi code with a password cannot be saved. Without a valid key the paste field is hidden. Losing or changing it makes pasted values and Wi-Fi passwords unreadable (see [deploy.md](deploy.md#secrets-pasted-in-the-dashboard-optional)). |
 | `CF_API_TOKEN` | unset | A Cloudflare API token that lets linkwarren attach domains (DNS records, Worker routes, Cloudflare for SaaS custom hostnames) and set per-domain controls. Its permissions are listed in [deploy.md](deploy.md#api-token). Can also be pasted by the owner (needs `SECRETS_KEY`). |
+| `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET`, `OIDC_CLIENT_SECRET` | unset | The client secrets for [Google, GitHub and single sign-on](sso.md). Optional as Worker secrets: the owner can paste them in Settings, Sign-in instead (needs `SECRETS_KEY`). A Worker secret wins over a pasted value. Never shown again after saving. |
 | `AE_READ_TOKEN` | unset | An API token with only Account, Account Analytics, Read, for reading click data from Analytics Engine. Without it reports show daily totals from D1 only, and the hourly rollup is skipped. |
 | `VISITOR_SALT` | unset | 32 random bytes as hex (`openssl rand -hex 32`), for the daily visitor code that counts unique visitors. Without it, unique visitors are not counted. |
 
@@ -89,6 +90,8 @@ Reports also need `CF_ACCOUNT_ID`, `AE_READ_TOKEN` and the `CLICKS` binding. See
 ## Settings in the dashboard
 
 Some settings live in D1, not in the config, and are changed in Settings by owners and people with the Settings permission: the instance name and logo, the main domain, the default redirect type (`302` unless changed) and query pass-through (on unless changed) for new links, the Cloudflare controls switch, the agents switch, and **Check for updates** (on by default; see [updating.md](updating.md)).
+
+Settings, Sign-in (app mode, see [sso.md](sso.md)) keeps the Google, GitHub and single sign-on setup in D1: `sso.google.enabled`, `sso.google.clientId`, `sso.github.enabled`, `sso.github.clientId`, `sso.oidc.enabled`, `sso.oidc.issuer`, `sso.oidc.clientId` and `sso.oidc.label` (the button text, "Single sign-on" by default). The email domain list (auto-join role and enforced single sign-on, at most 50 domains) lives there too. Only owners change any of it; people with the Settings permission can read it.
 
 ## Limits in the code
 

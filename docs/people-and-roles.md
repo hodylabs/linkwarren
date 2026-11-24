@@ -1,6 +1,6 @@
 ---
 title: People and roles
-description: Inviting people, built-in and custom roles, domain access, and signing in with email links, passkeys or Cloudflare Access.
+description: Inviting people, built-in and custom roles, domain access, and signing in with email links, passkeys, Google, GitHub, single sign-on or Cloudflare Access.
 slug: docs/people-and-roles
 ---
 
@@ -66,9 +66,12 @@ linkwarren signs people in itself:
 - **Email link**: enter your email, and a link arrives that works once, for 15 minutes. The form gives the same answer for every address, so it never tells which emails have accounts.
 - **Passkey**: after the first email sign-in, add a passkey in Sign-in and security, up to 10 per person. A passkey signs you in on that device without an email. Passkeys belong to the dashboard host: if the dashboard moves to another host, add them again.
 
+- **Google, GitHub or single sign-on** (optional): an owner turns these on in Settings, Sign-in, see [sso.md](sso.md). They are invite-only: a sign-in is accepted when the provider's verified email belongs to someone already in the list, or to a domain with auto-join on. After the first sign-in the provider account is linked to the person and matched on the provider's own account id, never on the email alone. Linked accounts are listed, and can be unlinked, in Sign-in and security.
+- **Enforced single sign-on**: when an email domain has single sign-on enforced, its people can only use the single sign-on button: email links, passkeys, Google and GitHub answer "sign in with single sign-on". Owners are never blocked, so a broken setup cannot lock the instance. The rule applies at sign-in only; sessions that already exist keep working.
+
 A session lasts 30 days from your last visit, and at most 90 days. Sign-in and security lists your sessions and passkeys, and has **Sign out everywhere**.
 
-Limits against guessing and mail floods: 5 sign-in emails per address and 20 per network every 15 minutes, 20 failed link or passkey checks per network every 15 minutes, and 50 sign-in emails per hour for the whole instance.
+Limits against guessing and mail floods: 5 sign-in emails per address and 20 per network every 15 minutes, 20 failed link, passkey or provider sign-ins per network every 15 minutes, 20 provider sign-in starts per network every 15 minutes, and 50 sign-in emails per hour for the whole instance.
 
 ### Access mode
 
