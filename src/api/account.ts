@@ -10,6 +10,7 @@ import type { Grant } from "../principal";
 import { parseTz } from "../analytics";
 import { newSecret, startWeek } from "../digest";
 import { emailConfigured } from "../email";
+import { aeConfigured } from "../ae";
 
 type E = { Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } };
 /** The signed-in person's own account (app mode only, behind requireUser): passkeys, sessions, sign out. */
@@ -168,11 +169,14 @@ account.put("/digest", async (c) => {
   return c.json({ enabled: b.enabled, tz: stored, emailReady: ready });
 });
 
-/** S13 link alerts: the person's own opt-in and which kinds. `emailReady` false shows the switch disabled. */
-type AlertPrefs = { enabled: boolean; quiet: boolean; spike: boolean; emailReady: boolean };
+/**
+ * S13 link alerts: the person's own opt-in and which kinds. `emailReady` false or `analyticsReady` false (no Analytics Engine
+ * reads, so the alert run never sends) shows the switch disabled with the reason.
+ */
+type AlertPrefs = { enabled: boolean; quiet: boolean; spike: boolean; emailReady: boolean; analyticsReady: boolean };
 account.get("/alerts", async (c) => {
   const r = await c.env.DB.prepare("SELECT enabled, quiet, spike FROM alert_prefs WHERE user_id = ?").bind(c.var.user.id).first<{ enabled: number; quiet: number; spike: number }>();
-  const out: AlertPrefs = { enabled: !!r?.enabled, quiet: r ? !!r.quiet : true, spike: r ? !!r.spike : true, emailReady: await emailConfigured(c.env) };
+  const out: AlertPrefs = { enabled: !!r?.enabled, quiet: r ? !!r.quiet : true, spike: r ? !!r.spike : true, emailReady: await emailConfigured(c.env), analyticsReady: aeConfigured(c.env) };
   return c.json(out);
 });
 
@@ -182,6 +186,8 @@ account.put("/alerts", async (c) => {
   if (!b) return c.json({ error: "invalid_body" }, 400);
   const ready = await emailConfigured(c.env);
   if (b.enabled && !ready) return c.json({ error: "email_not_configured" }, 409); // turning it off works without email
+  const analyticsReady = aeConfigured(c.env);
+  if (b.enabled && !analyticsReady) return c.json({ error: "analytics_not_configured" }, 409);
   // Turning it on (from off or never set) starts a new secret, so older unsubscribe links stop working. The day state is kept:
   // off and on again the same day never sends a second email that day (R6).
   await c.env.DB.prepare(
@@ -189,7 +195,7 @@ account.put("/alerts", async (c) => {
      ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, quiet = excluded.quiet, spike = excluded.spike, updated_at = excluded.updated_at,
        secret = CASE WHEN excluded.enabled = 1 AND alert_prefs.enabled = 0 THEN excluded.secret ELSE alert_prefs.secret END`,
   ).bind(c.var.user.id, b.enabled ? 1 : 0, b.quiet ? 1 : 0, b.spike ? 1 : 0, newSecret(), nowS()).run();
-  const out: AlertPrefs = { ...b, emailReady: ready };
+  const out: AlertPrefs = { ...b, emailReady: ready, analyticsReady };
   return c.json(out);
 });
 

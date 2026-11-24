@@ -145,6 +145,25 @@ describe("share page", () => {
     expect((await page(url)).status).toBe(404);
   });
 
+  it("a move revokes the link's share pages for good: moving it back does not wake them; a refused move revokes nothing", async () => {
+    const { o } = await fixture();
+    const url = await urlOf(await create(o.cookie, "link", "lM"));
+    const move = (domainId: string) => dash("/api/links/bulk", json(o.cookie, "POST", { action: "move", ids: ["lM"], domainId, oldAddress: "forward" }));
+    // Refused: the slug is taken on the target, so nothing moves and the share stays.
+    await run("INSERT INTO links (id,domain_id,slug,slug_key,url,created_by,updated_by,created_at,updated_at) VALUES ('lT','dO','spring','spring','https://example.com/',?,?,1,1)", o.user.id, o.user.id);
+    const refused = (await (await move("dO")).json()) as { results: { ok: boolean }[] };
+    expect(refused.results[0]!.ok).toBe(false);
+    expect((await page(url)).status).toBe(200);
+    await run("DELETE FROM links WHERE id = 'lT'");
+    const moved = (await (await move("dO")).json()) as { results: { ok: boolean }[] };
+    expect(moved.results[0]!.ok).toBe(true);
+    expect((await page(url)).status).toBe(404);
+    expect((await (await move("dM")).json() as { results: { ok: boolean }[] }).results[0]!.ok).toBe(true);
+    expect((await env.DB.prepare("SELECT domain_id FROM links WHERE id = 'lM'").first<{ domain_id: string }>())!.domain_id).toBe("dM");
+    expect((await page(url)).status).toBe(404);
+    expect((await env.DB.prepare("SELECT revoked_at FROM share_links").first<{ revoked_at: number | null }>())!.revoked_at).not.toBeNull();
+  });
+
   it("a domain share covers the domain; a deleted domain is 404", async () => {
     const { o } = await fixture();
     const url = await urlOf(await create(o.cookie, "domain", "dM"));

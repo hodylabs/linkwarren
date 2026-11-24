@@ -77,6 +77,12 @@ describe("LinkAlerts", () => {
     expect(((await screen.findByRole("switch", { name: "Link alert emails" })) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Email is not set up on this instance/)).toBeTruthy();
   });
+  it("without live analytics reads it is disabled and says why", async () => {
+    fakeApi({ "GET /api/account/alerts": () => ({ body: { enabled: false, quiet: true, spike: true, emailReady: true, analyticsReady: false } }) });
+    render(<LinkAlerts />);
+    expect(((await screen.findByRole("switch", { name: "Link alert emails" })) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Live analytics reads are not set up/)).toBeTruthy();
+  });
 });
 
 describe("QrPanel labelled prints", () => {

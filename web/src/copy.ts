@@ -113,6 +113,7 @@ const ERRORS: Record<string, string> = {
   invite_email: "Enter a full email address, like jordan@example.com.",
   email_taken: "This email is already in linkwarren.",
   bad_domain: "One of those domains is no longer shared. Reload and try again.",
+  analytics_not_configured: "Live analytics reads are not set up on this instance, so alerts cannot run. Ask the owner.",
   share_limit: "This already has 10 share pages. Revoke one first.",
   role_in_use: "People still have this role. Choose where they go.",
   role_name_taken: "Another role already has this name.",

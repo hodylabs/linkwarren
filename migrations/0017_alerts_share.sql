@@ -14,6 +14,9 @@ CREATE TABLE alert_prefs (
   attempts INTEGER NOT NULL DEFAULT 0,
   claimed_at INTEGER,
   last_error TEXT,
+  -- The claimed email (its idempotency key, the alert ids it lists and its text), so a retry under the same key sends exactly it
+  -- and only its alerts are marked as told; cleared once the day is done.
+  pending TEXT,
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX alert_prefs_enabled ON alert_prefs(enabled, last_attempt_at);

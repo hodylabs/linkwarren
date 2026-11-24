@@ -62,8 +62,9 @@ export async function unsubscribe(env: Env, userId: string, token: string, kind:
   const want = new Uint8Array(await mac(row.secret, userId, kind));
   const got = Uint8Array.from(atob(token.replace(/-/g, "+").replace(/_/g, "/") + "="), (c) => c.charCodeAt(0));
   if (got.byteLength !== want.byteLength || !crypto.subtle.timingSafeEqual(got, want)) return false;
-  await env.DB.prepare(`UPDATE ${table} SET enabled = 0, updated_at = ? WHERE user_id = ?`).bind(Math.floor(Date.now() / 1000), userId).run();
-  return true;
+  // Only the row whose secret signed the token: a re-enable in between (which starts a new secret) is never undone by an old link.
+  const r = await env.DB.prepare(`UPDATE ${table} SET enabled = 0, updated_at = ? WHERE user_id = ? AND secret = ?`).bind(Math.floor(Date.now() / 1000), userId, row.secret).run();
+  return r.meta.changes > 0;
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US");
