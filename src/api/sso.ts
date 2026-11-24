@@ -118,10 +118,12 @@ export async function ssoCallback(c: Context<{ Bindings: Env }>): Promise<Respon
     if (e instanceof SsoError) return failed(e.code);
     throw e;
   }
-  const m = await matchPerson(env, p, who, r.issuer);
+  const same = issuerStill(p, r.issuer);
+  const m = await matchPerson(env, p, who, same);
   if ("error" in m) return failed(m.error);
-  const s = await createSession(env, c.req.raw, m.user, p, m.joined);
-  if (!s.started(await env.DB.batch(s.stmts))) return failed("disabled"); // disabled after the match
+  // The session insert re-checks the issuer too, so an issuer change landing after the match still starts nothing.
+  const s = await createSession(env, c.req.raw, m.user, p, m.joined, same);
+  if (!s.started(await env.DB.batch(s.stmts))) return failed((await holds(env, same)) ? "disabled" : "sso_failed");
   c.header("Set-Cookie", s.setCookie, { append: true });
   return c.redirect(dashUrl(env, st.next), 302); // stored after safeNext: an inner path
 }
@@ -130,10 +132,15 @@ export async function ssoCallback(c: Context<{ Bindings: Env }>): Promise<Respon
  * R6 matching, then R7: (provider, subject) first, else the verified email of a person with no identity for this provider yet,
  * else a domain auto-join. Enforcement is decided before anyone is created or bound, so a refusal writes nothing.
  */
-async function matchPerson(env: Env, p: Provider, who: Who, issuer: string | null): Promise<{ user: UserRow; joined: boolean } | { error: Code }> {
-  // OIDC: the issuer the token was checked against must still be the configured one, both to match a bound identity and
-  // to bind a new one, so a callback that overlaps an issuer change can neither match nor bind across issuers.
-  const same = p === "oidc" ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [ssoKey("oidc", "issuer"), JSON.stringify(issuer)] } : { sql: "1", binds: [] };
+/**
+ * OIDC: the issuer the token was checked against is still the configured one. Applied to the bound lookup, the bind and the
+ * session insert, so a callback that overlaps an issuer change can neither match, bind nor sign in across issuers.
+ */
+const issuerStill = (p: Provider, issuer: string | null): Guard => p === "oidc"
+  ? { sql: "EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)", binds: [ssoKey("oidc", "issuer"), JSON.stringify(issuer)] }
+  : { sql: "1", binds: [] };
+
+async function matchPerson(env: Env, p: Provider, who: Who, same: Guard): Promise<{ user: UserRow; joined: boolean } | { error: Code }> {
   const bound = await env.DB.prepare(`SELECT ${USER_COLS} FROM sso_identities i JOIN users u ON u.id = i.user_id ${ROLE_JOIN} WHERE i.provider = ? AND i.subject = ? AND ${same.sql}`)
     .bind(p, who.subject, ...same.binds).first();
   let user = bound ? rowToUser(bound) : await findUser(env, who.email);

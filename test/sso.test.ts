@@ -4,6 +4,7 @@ import worker from "../src/index";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LIMITS, limitKey } from "../src/limits";
 import { PERMS } from "../src/roles";
+import { createSession } from "../src/session";
 import { ORIGIN, dash } from "./helpers/access";
 import { fakeIdp, ISS } from "./helpers/idp";
 import { call, pathEnv } from "./helpers/path";
@@ -399,6 +400,21 @@ describe("settings", () => {
     idp.s.onToken = async () => { await setting("sso.oidc.issuer", "https://other.example.com"); };
     expect(errorOf(await signIn("oidc"))).toBe("not_invited");
     expect(await all("SELECT COUNT(*) n FROM sessions")).toEqual([{ n: 0 }]);
+  });
+
+  it("the session insert re-checks the issuer: a change after the match starts no session", async () => {
+    const uid = await addUser("a@example.com");
+    const user = (await import("../src/auth")).findUser;
+    const u = (await user(env, "a@example.com"))!;
+    const guard = { sql: "EXISTS (SELECT 1 FROM settings WHERE key = 'sso.oidc.issuer' AND value = ?)", binds: [JSON.stringify(ISS)] };
+    await setting("sso.oidc.issuer", "https://other.example.com");
+    const s = await createSession(env, new Request(`${ORIGIN}/auth/sso/oidc/callback`), u, "oidc", false, guard);
+    expect(s.started(await env.DB.batch(s.stmts))).toBe(false);
+    expect(await all("SELECT COUNT(*) n FROM sessions WHERE user_id = ?", uid)).toEqual([{ n: 0 }]);
+    expect(await all("SELECT COUNT(*) n FROM audit_log")).toEqual([{ n: 0 }]);
+    await setting("sso.oidc.issuer", ISS);
+    const ok = await createSession(env, new Request(`${ORIGIN}/auth/sso/oidc/callback`), u, "oidc", false, guard);
+    expect(ok.started(await env.DB.batch(ok.stmts))).toBe(true);
   });
 
   it("a new issuer drops the identities bound under the old one", async () => {

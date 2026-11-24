@@ -56,18 +56,20 @@ const nowS = () => Math.floor(Date.now() / 1000);
  * and the Set-Cookie value. The secret leaves this function only inside `setCookie`. The insert requires the person to still be
  * active, so a disable that lands after the caller's check creates nothing; `started` tells the caller from the batch result.
  */
-export async function createSession(env: Env, req: Request, user: UserRow, method: SessionMethod, joined = false): Promise<{ setCookie: string; stmts: D1PreparedStatement[]; started: (res: D1Result[]) => boolean }> {
+export async function createSession(env: Env, req: Request, user: UserRow, method: SessionMethod, joined = false, guard?: { sql: string; binds: unknown[] }): Promise<{ setCookie: string; stmts: D1PreparedStatement[]; started: (res: D1Result[]) => boolean }> {
   const secret = newSecret();
   const id = crypto.randomUUID();
   const now = nowS();
   const stmts: D1PreparedStatement[] = [];
   const ck = cookieOf(env);
   const old = readCookie(req, env);
+  // `guard`: an extra condition the sign-in still needs at commit time (S14: the OIDC issuer is unchanged).
+  const g = guard ? ` AND (${guard.sql})` : "", gb = guard?.binds ?? [];
   // Same guard as the insert: a refused sign-in leaves the incoming session alone.
-  if (old) stmts.push(env.DB.prepare("DELETE FROM sessions WHERE token_hash = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')").bind(await sha256Hex(old), user.id));
+  if (old) stmts.push(env.DB.prepare(`DELETE FROM sessions WHERE token_hash = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')${g}`).bind(await sha256Hex(old), user.id, ...gb));
   stmts.push(
-    env.DB.prepare("INSERT INTO sessions (id, token_hash, user_id, method, created_at, last_seen_at, expires_at, device, ip_prefix) SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')")
-      .bind(id, await sha256Hex(secret), user.id, method, now, now, now + ROLLING, deviceLabel(req.headers.get("user-agent")), ipPrefix(req.headers.get("cf-connecting-ip")), user.id),
+    env.DB.prepare(`INSERT INTO sessions (id, token_hash, user_id, method, created_at, last_seen_at, expires_at, device, ip_prefix) SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')${g}`)
+      .bind(id, await sha256Hex(secret), user.id, method, now, now, now + ROLLING, deviceLabel(req.headers.get("user-agent")), ipPrefix(req.headers.get("cf-connecting-ip")), user.id, ...gb),
     auditStmt(env, { actorId: user.id, action: "auth.sign_in", targetType: "session", targetId: id, detail: { method } },
       { sql: "EXISTS (SELECT 1 FROM sessions WHERE id = ?)", binds: [id] }),
   );
