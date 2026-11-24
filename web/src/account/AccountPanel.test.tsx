@@ -66,6 +66,29 @@ describe("AccountPanel connected sign-ins (S14)", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Unlink Single sign-on" })));
   });
 
+  it("an unlink cancelled while pending does not move focus when it finishes", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let gone = false;
+    const { user } = await boot({
+      "GET /api/account/identities": () => ({ body: gone ? { items: IDS.items.filter((i) => i.provider !== "google") } : IDS }),
+      "DELETE /api/account/identities/google": async () => {
+        await gate;
+        gone = true;
+        return { status: 204 };
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Unlink Google" }));
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Escape}");
+    const other = screen.getByText("Laptop").closest("li")!; // a row stays focusable while the write is pending
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    release();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Unlink Google" })).toBeNull());
+    expect(document.activeElement).toBe(other);
+  });
+
   it("a 404 unlink (already gone) removes the row", async () => {
     let gone = false;
     const { user } = await boot({

@@ -72,6 +72,8 @@ export function AccountPanel() {
   // After an unlink the focused Unlink button is gone: move focus to the next one, else to the panel, so the keyboard keeps its place.
   const root = useRef<HTMLDivElement>(null);
   const refocus = useRef(false);
+  const openConfirm = useRef<Confirm | null>(null);
+  openConfirm.current = confirm;
   useEffect(() => {
     if (!refocus.current || confirm) return;
     refocus.current = false;
@@ -140,7 +142,8 @@ export function AccountPanel() {
         setConfirm(null);
         idGen.current++; // a refresh already on its way must not bring the row back
         setIdentities((cur) => cur.filter((i) => i.provider !== p));
-        refocus.current = true;
+        // Only when this dialog was still open: after Cancel the person has chosen where focus goes.
+        refocus.current = openConfirm.current === c;
         void loadIdentities();
       });
     }
