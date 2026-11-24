@@ -32,9 +32,9 @@ A button shows on the sign-in page only when its provider is switched on and has
 
 ### Google
 
-1. In the Google Cloud console, open APIs and services, Credentials, and create an **OAuth client ID** of type **Web application**.
-2. Add the Google redirect URI from Settings, Sign-in under **Authorized redirect URIs**.
-3. On the OAuth consent screen, the `openid` and `email` scopes are enough.
+1. In the Google Cloud console, open **Google Auth Platform** (APIs and services, OAuth consent screen in older menus) and set up the app. The `openid` and `email` scopes are enough.
+2. Pick the audience. **Internal** lets everyone in your Google Workspace sign in. **External** starts in testing mode, where only the test users you list can sign in; anyone else gets a Google error page before linkwarren is reached. Add your people as test users, or publish the app to let any Google account through (linkwarren still accepts only invited people).
+3. Under **Clients**, create a client of type **Web application** and add the Google redirect URI from Settings, Sign-in under **Authorized redirect URIs**.
 4. Paste the client ID and secret in the Google card and switch it on.
 
 ### GitHub
