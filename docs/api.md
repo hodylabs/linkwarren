@@ -355,7 +355,7 @@ The detail answer has, next to `os`, `browsers`, `languages` and `places` (`{ va
 - `prints`: `{ dim: "print", value, linkId, label, clicks }`, one per link and print code; `label` is that link's label for the code, or `null` (no code, or a code that is not one of its labels).
 - `utmSources`, `utmMediums`, `utmCampaigns`: `{ dim, value, clicks }`.
 - When the range has more than 2,000 link and print pairs, `prints` falls back to one row per code over all links, with `linkId` "" and `label` null.
-- `cut: true` when some of these could not be read within one request: the scope is too big for prints and UTM values (a search matching several hundred links over many domains: all four are empty), or even the per-code prints are over 2,000 rows (`prints` is empty). The rest of the detail is complete. A scope too big even for the operating systems, browsers, languages, places and hours answers `live: "unavailable"`.
+- `cut: true` when some of these could not be read within one request: the scope is too big for prints and UTM values (a search matching several hundred links over many domains: all four are empty), or even the per-code prints of one part of the scope are over 2,000 rows (`prints` is empty). A big scope is read in parts, so `prints` can hold more than 2,000 rows in all. The rest of the detail is complete. A scope too big even for the operating systems, browsers, languages, places and hours answers `live: "unavailable"`.
 
 ### `GET /api/analytics/recent`
 
