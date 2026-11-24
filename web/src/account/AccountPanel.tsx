@@ -75,9 +75,9 @@ export function AccountPanel() {
   useEffect(() => {
     if (!refocus.current || confirm) return;
     refocus.current = false;
+    // Runs in the commit that closes the dialog, before the person can move focus, so it always wins over a sheet's own restore.
     const el = root.current;
-    if (el && (document.activeElement === document.body || !el.contains(document.activeElement)))
-      (el.querySelector<HTMLElement>("[data-unlink]") ?? el).focus();
+    if (el) (el.querySelector<HTMLElement>("[data-unlink]") ?? el).focus();
   }, [identities, confirm]);
 
   const ids = data ? [...data.passkeys.map((p) => p.id), ...data.sessions.map((s) => s.id)] : [];
