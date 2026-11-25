@@ -148,6 +148,7 @@ describe("Person sheet reach (R4)", () => {
     const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
     const { dlg } = await openPerson("Dana", onHelper, lead);
     for (const name of [/Turn off access/, /Sign out everywhere/, /Remove/]) expect(within(dlg).getByRole("button", { name })).toBeTruthy();
+    expect(within(dlg).queryByLabelText("Name")).toBeNull(); // only owners name other people
   });
 
   it("a people manager on a Member with permissions they lack: no management actions", async () => {
@@ -452,7 +453,7 @@ describe("Person sheet name", () => {
     expect((within(dlg).getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("no name field on yourself or on someone out of reach", async () => {
+  it("no name field on yourself or for a people manager", async () => {
     const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
     const { dlg } = await openPerson("Bea", undefined, lead); // an owner, out of a manager's reach
     expect(within(dlg).queryByLabelText("Name")).toBeNull();

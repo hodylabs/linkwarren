@@ -123,6 +123,8 @@ users.patch("/:id", async (c) => {
   const name = body.data.name === undefined ? undefined : body.data.name.trim() === "" ? null : cleanName(body.data.name);
   if (name === null && body.data.name!.trim() !== "") return c.json({ error: "invalid_name" }, 400);
   if (!roleId && !status && name === undefined) return c.json({ error: "no_changes" }, 400);
+  // Only owners name other people (Hody 2026-11-25); people set their own under Sign-in and security.
+  if (name !== undefined && me.role !== "owner") return c.json(forbidden, 403);
   const id = c.req.param("id");
   if (id === me.id) return c.json({ error: "self" }, 409);
   const [row, nr] = await Promise.all([
