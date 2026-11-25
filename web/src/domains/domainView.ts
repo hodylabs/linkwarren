@@ -56,7 +56,8 @@ export function sharedWith(d: Domain, users: UserItem[] | null, me: Me): string 
 
 const ownHost = (text: string): string | null => {
   try {
-    return new URL(text).hostname.toLowerCase();
+    const u = new URL(text);
+    return u.port ? null : u.hostname.toLowerCase(); // with a port it is a web address, checked as one
   } catch {
     return null;
   }

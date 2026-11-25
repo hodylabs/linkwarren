@@ -117,6 +117,8 @@ describe("settings", () => {
     for (const raw of ["/a/b", "https://go.test/card?x=1", "https://go.test/card#top", "/bad slug"])
       await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw }), 400, { error: "bad_front_link" });
     await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "/" }), 400, { error: "loop" });
+    // A port makes it a web address on this host: the loop check refuses it rather than dropping the port.
+    await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "https://go.test:8443/card" }), 400, { error: "loop" });
     await status(await call("owner", "PATCH", "/api/domains/dm", { notfoundRedirect: "/card" }), 400);
   });
   it("bare and not-found redirects stay web-only: tel and mailto are a scheme error", async () => {
