@@ -17,6 +17,10 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
     new Response(head ? null : body, { status, headers: { ...PAGE_HEADERS, ...robots(domain) } });
 
   if (!domain || domain.status === "disabled") return html(notFoundPage, 404);
+  // Short links are HTTPS only, whatever the zone's "Always Use HTTPS": browsers block a contact card downloaded over
+  // plain HTTP. Byte-exact like the unlock: only the scheme changes. A plain-HTTP POST still reaches the unlock's 403.
+  if (url.protocol === "http:" && req.method !== "POST")
+    return new Response(null, { status: 308, headers: { location: `https:${req.url.slice(url.protocol.length)}`, "cache-control": "no-store" } });
   if (domain.status === "pending") return html(pendingPage, 200);
   // R8: POST is only for unlocking a protected link; everything else here is GET or HEAD.
   if (!head && req.method !== "GET" && req.method !== "POST") return notAllowed();

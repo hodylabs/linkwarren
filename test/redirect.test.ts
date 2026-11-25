@@ -37,6 +37,15 @@ describe("redirect", () => {
     expect(r.headers.get("x-robots-tag")).toBe("noindex");
   });
 
+  it("plain HTTP is upgraded to HTTPS with a 308 before anything is served, path and query kept byte-exact", async () => {
+    const d = await seed({ bare: "/card" });
+    await addLink(d, "card");
+    for (const path of ["/", "/card?a=%20&lw=qr", "/nope"]) {
+      const r = await exports.default.fetch(`http://${d.host}${path}`, { redirect: "manual" });
+      expect([r.status, r.headers.get("location")]).toEqual([308, `https://${d.host}${path}`]);
+    }
+  });
+
   it("tel: and mailto: answer 302 with that Location and never get the visitor query", async () => {
     const d = await seed();
     await addLink(d, "call", { url: "tel:+15551234" });
