@@ -19,6 +19,8 @@ A link has one of two types, chosen when it is made: **Link**, a redirect (every
 - Some words are reserved on every domain: `admin`, `api`, `login`, `logout`, `dash`, `dashboard`, `auth`, `oauth`, `mcp`, `signup`, `register`, `account`, `settings`, `app`, `static`, `assets`, `health`, `status`, `qr`, `.well-known`, `cdn-cgi`, `robots.txt`, `favicon.ico` and `sitemap.xml`. A domain can reserve more in its settings. With the dashboard at a path, the path's segment, `mcp` and `api` are also reserved on the main domain.
 - The New link sheet checks the slug as you type: available, taken, locked (see [Slug locks](#slug-locks)) or reserved.
 
+Short links answer over HTTPS only: a plain-HTTP request gets a `308` to the same address over HTTPS (path and query unchanged) before anything is served, whatever the zone's "Always Use HTTPS" setting. Browsers block a contact card downloaded over plain HTTP.
+
 ## Destinations
 
 A destination is one of:

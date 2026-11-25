@@ -366,10 +366,10 @@ describe("fix round 1", () => {
     expect(verifyPassword).not.toHaveBeenCalled();
   });
 
-  it("http on an unprotected link keeps redirecting as before", async () => {
+  it("http on an unprotected link is upgraded to https first, like every short link", async () => {
     const d = await seed();
     const r = await direct(`http://${d.host}/spring`);
-    expect([r.status, r.headers.get("location"), r.headers.get("strict-transport-security")]).toEqual([302, "https://dest.test/x", null]);
+    expect([r.status, r.headers.get("location"), r.headers.get("strict-transport-security")]).toEqual([308, `https://${d.host}/spring`, null]);
   });
 
   it("HSTS on the https form, the 401, the 403 and the 303", async () => {
