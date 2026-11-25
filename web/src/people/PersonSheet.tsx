@@ -56,8 +56,9 @@ export function PersonSheet({ id }: { id: string }) {
     if (users !== null && !u) app.close();
   }, [users, u]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const run = async (call: () => Promise<string | null>, done?: { msg: string; close?: boolean }) => {
-    if (busy.current) return;
+  /** Resolves true when the change was made. */
+  const run = async (call: () => Promise<string | null>, done?: { msg: string; close?: boolean }): Promise<boolean> => {
+    if (busy.current) return false;
     busy.current = true;
     setAsk(null);
     setError(null);
@@ -69,8 +70,10 @@ export function PersonSheet({ id }: { id: string }) {
         app.announce(done.msg);
       }
       app.reloadUsers().catch(() => undefined);
+      return !failed;
     } catch (e) {
       setError(e instanceof ApiError ? e.code : "internal");
+      return false;
     } finally {
       busy.current = false;
     }
@@ -230,23 +233,24 @@ export function PersonSheet({ id }: { id: string }) {
 }
 
 /** Their name, set by an owner or a people manager in reach: Enter saves, empty clears. */
-function NameField({ current, onSave }: { current: string | null; onSave: (name: string) => Promise<void> }) {
+function NameField({ current, onSave }: { current: string | null; onSave: (name: string) => Promise<boolean> }) {
   const [draft, setDraft] = useState(current ?? "");
   const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(current ?? ""), [current]); // a newer saved name replaces the draft
+  const dirty = useRef(false); // typed since the last successful save
+  useEffect(() => { if (!dirty.current) setDraft(current ?? ""); }, [current]); // a reload never eats an edit
   const changed = draft.trim() !== (current ?? "");
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!changed || saving) return;
     setSaving(true);
-    void onSave(draft).finally(() => setSaving(false));
+    void onSave(draft).then((ok) => { if (ok) dirty.current = false; }).finally(() => setSaving(false)); // a failed save keeps its text
   };
   return (
     <form className="f" onSubmit={submit}>
       <label htmlFor="ps-name">Name</label>
       <div className="acct-name">
         <input id="ps-name" className="input sans" value={draft} maxLength={40} autoComplete="off" placeholder="No name yet"
-          onChange={(e) => setDraft(e.target.value)} readOnly={saving} />
+          onChange={(e) => { dirty.current = true; setDraft(e.target.value); }} readOnly={saving} />
         <button type="submit" className="btn" disabled={!changed || saving}>{saving ? "Saving" : "Save"}</button>
       </div>
     </form>

@@ -44,7 +44,7 @@ A button shows on the sign-in page only when its provider is switched on and has
 2. Set **Authorization callback URL** to the GitHub redirect URI from Settings, Sign-in. The homepage URL can be your dashboard address.
 3. Generate a client secret, paste both values in the GitHub card and switch it on.
 
-linkwarren asks for `read:user` and `user:email`, and reads the account id and the verified primary email only.
+linkwarren asks for `read:user` and `user:email`, and reads the account id, the verified primary email and the profile name (used only to fill an empty name).
 
 ### Single sign-on (OIDC)
 

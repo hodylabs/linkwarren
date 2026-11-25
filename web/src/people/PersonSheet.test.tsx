@@ -419,6 +419,26 @@ describe("Person sheet name", () => {
     await waitFor(() => expect(writes(api)).toEqual([{ method: "PATCH", path: "/api/users/ud", body: { name: "Dana Scully" } }]));
   });
 
+  it("an edit typed while the saved name reloads is kept", async () => {
+    let release!: () => void;
+    let held = false;
+    const { user, dlg } = await openPerson("Dana", {
+      "PATCH /api/users/ud": ({ body }) => ((held = true), { body: { user: { ...USERS[2], ...(body as object) } } }),
+      "GET /api/users": () => (held
+        ? new Promise<FakeRes>((r) => { release = () => r({ body: { items: USERS.map((x) => (x.id === "ud" ? { ...x, name: "Dana Scully" } : x)) } }); })
+        : { body: { items: USERS } }),
+    });
+    const field = within(dlg).getByLabelText("Name") as HTMLInputElement;
+    await user.clear(field);
+    await user.type(field, "Dana Scully{Enter}");
+    await waitFor(() => expect(field.readOnly).toBe(false));
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await user.type(field, " Jr");
+    release();
+    await waitFor(() => expect(within(dlg).getByText(/Dana Scully/, { selector: "h2, h1, .title, [id]" })).toBeTruthy());
+    expect(field.value).toBe("Dana Scully Jr");
+  });
+
   it("no name field on yourself or on someone out of reach", async () => {
     const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
     const { dlg } = await openPerson("Bea", undefined, lead); // an owner, out of a manager's reach
