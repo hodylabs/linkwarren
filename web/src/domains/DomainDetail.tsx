@@ -223,11 +223,11 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
     }
   };
 
-  const field = (id: string, label: string, key: "bare" | "nf") => (
+  const field = (id: string, label: string, key: "bare" | "nf", placeholder = "Built-in page") => (
     <>
       <div className="field">
         <label htmlFor={id}>{label}</label>
-        <input id={id} className="input" value={draft[key]} readOnly={!canEdit} spellCheck={false} autoComplete="off" placeholder="Built-in page" aria-invalid={errors[key] ? true : undefined} onChange={(e) => set({ [key]: e.target.value })} />
+        <input id={id} className="input" value={draft[key]} readOnly={!canEdit} spellCheck={false} autoComplete="off" placeholder={placeholder} aria-invalid={errors[key] ? true : undefined} onChange={(e) => set({ [key]: e.target.value })} />
       </div>
       {errors[key] && (
         <p className="err" role="alert">
@@ -278,7 +278,7 @@ export function DomainDetail({ domain, onModal, onClose }: { domain: Domain; onM
         <fieldset className="plain" disabled={!canEdit}>
           <div className="sect">
             <h3>When someone visits</h3>
-            {field("dd-bare", "The bare domain", "bare")}
+            {field("dd-bare", "The bare domain", "bare", "Built-in page, a web address, or a link here like /card")}
             {field("dd-nf", "A missing or deleted link", "nf")}
           </div>
           <div className="sect">

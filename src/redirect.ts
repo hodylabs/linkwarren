@@ -23,9 +23,11 @@ export async function handleRedirect(req: Request, env: Env, now: number, ctx?: 
   const post = req.method === "POST";
 
   const miss = (target: string | null) => (target ? redirect(target, 302, domain) : html(notFoundPage, 404));
-  if (url.pathname === "/") return post ? notAllowed() : miss(domain.bareRedirect);
+  // A bare redirect of "/<slug>" is one of this domain's own links, served here at "/" with no extra hop (so it cannot loop).
+  const front = url.pathname === "/" && domain.bareRedirect?.startsWith("/") ? domain.bareRedirect : null;
+  if (url.pathname === "/" && !front) return post ? notAllowed() : miss(domain.bareRedirect);
 
-  const slug = slugFromPath(url.pathname);
+  const slug = slugFromPath(front ?? url.pathname);
   // Junk slugs never reach D1 or KV. Reserved words are a creation-time rule only, so stored links stay reachable.
   const link = slug === null || !checkSlugShape(slug).ok ? null : await getLink(env, domain.id, slugKey(slug, domain.caseSensitive), ctx);
   const live = link && (link.startsAt === null || link.startsAt <= now) && (link.expiresAt === null || link.expiresAt > now);
