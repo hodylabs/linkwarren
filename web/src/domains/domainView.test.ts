@@ -102,6 +102,7 @@ describe("domainDiff", () => {
     expect(domainDiff(d, { ...draftOf(d), bare: "/card" }, ["go.test"]).body).toEqual({ bareRedirect: "/card" });
     expect(domainDiff(d, { ...draftOf(d), bare: "https://go.test/card" }, ["go.test"]).body).toEqual({ bareRedirect: "https://go.test/card" });
     expect(domainDiff(d, { ...draftOf(d), nf: "https://go.test/card" }, ["go.test"]).errors.nf).toBeTruthy();
+    expect(domainDiff(d, { ...draftOf(d), bare: "https://go.test./card" }, ["go.test"]).body).toEqual({ bareRedirect: "https://go.test./card" });
     expect(domainDiff(d, { ...draftOf(d), bare: "https://go.test:8443/card" }, ["go.test"]).errors.bare).toBeTruthy();
   });
   it("reports bad redirects and reserved per field", () => {

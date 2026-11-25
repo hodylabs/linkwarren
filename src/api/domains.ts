@@ -351,7 +351,7 @@ domains.patch("/:id", async (c) => {
     if (path === null) {
       try {
         const u = new URL(t);
-        if (u.hostname.toLowerCase() === d.host && !u.port && (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password) {
+        if (normalizeHost(u.hostname) === d.host && !u.port && (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password) {
           if (u.search || u.hash) return { err: "bad_front_link" };
           path = u.pathname;
         }

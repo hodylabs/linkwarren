@@ -112,7 +112,7 @@ describe("settings", () => {
     expect(await c.json()).toMatchObject({ bareRedirect: null });
   });
   it("the bare domain may name one of its own links: stored as /<slug>; the not-found page may not", async () => {
-    for (const raw of ["/card", " https://GO.test/card ", "https://go.test/card/"])
+    for (const raw of ["/card", " https://GO.test/card ", "https://go.test/card/", "https://go.test./card"])
       expect(await (await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw })).json()).toMatchObject({ bareRedirect: "/card" });
     for (const raw of ["/a/b", "https://go.test/card?x=1", "https://go.test/card#top", "/bad slug"])
       await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw }), 400, { error: "bad_front_link" });
