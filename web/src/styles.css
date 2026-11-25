@@ -509,6 +509,9 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .acct-row[aria-current=true]{background:var(--sel)}
 .acct{padding-bottom:14px}
 .acct-empty{margin:4px 0 8px}
+.acct-name{display:flex;gap:8px;margin:4px 0}
+.acct-name input{flex:1;min-width:0}
+.acct-name+small{display:block;margin:0 0 10px}
 .setwrap{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:0;flex:1;border-top:1px solid var(--line-soft)}
 .subnav{border-right:1px solid var(--line);padding:14px 12px;display:flex;flex-direction:column;gap:2px;background:var(--chrome);overflow:auto}
 .subnav a{display:flex;align-items:center;min-height:36px;padding:0 12px;border-radius:var(--r-ctl);color:var(--text-2);text-decoration:none}

@@ -122,6 +122,45 @@ describe("people.manage holders manage people within their role", () => {
   });
 });
 
+describe("names", () => {
+  const nameOf = async (id: string) => (await one<{ name: string | null }>("SELECT name FROM users WHERE id = ?", id))?.name;
+  it("a people manager sets and clears a name in reach, cleaned and audited; role and status untouched", async () => {
+    expect((await patch(M.cookie, P.user.id, { name: "  Pat\u202E  Doe " })).status).toBe(200);
+    expect(await nameOf(P.user.id)).toBe("Pat Doe");
+    expect(await who(P.user.id)).toEqual({ role: "member", role_id: null, status: "active" });
+    expect((await patch(M.cookie, P.user.id, { name: "" })).status).toBe(200);
+    expect(await nameOf(P.user.id)).toBeNull();
+    expect((await audits("user.name")).map((a) => a.detail)).toEqual([{ email: "p@example.com", name: "Pat Doe" }, { email: "p@example.com", name: null }]);
+  });
+
+  it("refusals: a bad name 400, an owner out of reach 403, yourself 409, a plain member 403; nothing written", async () => {
+    expect(await answer(await patch(M.cookie, P.user.id, { name: "x".repeat(41) }))).toEqual([400, { error: "invalid_name" }]);
+    expect(await answer(await patch(M.cookie, P.user.id, { name: "\u200b" }))).toEqual([400, { error: "invalid_name" }]);
+    expect(await answer(await patch(M.cookie, O.user.id, { name: "Boss" }))).toEqual([403, above]);
+    expect(await answer(await patch(M.cookie, M.user.id, { name: "Me" }))).toEqual([409, { error: "self" }]);
+    expect((await patch(P.cookie, M.user.id, { name: "Nope" })).status).toBe(403);
+    for (const id of [P.user.id, O.user.id, M.user.id]) expect(await nameOf(id)).toBeNull();
+    expect(await audits("user.name")).toEqual([]);
+  });
+
+  it("your own name: set, clear, refused when bad; audited", async () => {
+    expect(await answer(await call(P.cookie, "PUT", "/api/account/name", { name: " Pat " }))).toEqual([200, { name: "Pat" }]);
+    expect(await nameOf(P.user.id)).toBe("Pat");
+    expect(await answer(await call(P.cookie, "PUT", "/api/account/name", { name: "x".repeat(41) }))).toEqual([400, { error: "invalid_name" }]);
+    expect(await answer(await call(P.cookie, "PUT", "/api/account/name", { name: "" }))).toEqual([200, { name: null }]);
+    expect(await nameOf(P.user.id)).toBeNull();
+    expect((await call(P.cookie, "PUT", "/api/account/name", { name: 5 })).status).toBe(400);
+    expect((await audits("user.name")).map((a) => (a as Record<string, unknown>).actor_id)).toEqual([P.user.id, P.user.id]);
+  });
+
+  it("an invite can carry a name; a bad one is 400 and invites nobody", async () => {
+    expect((await call(M.cookie, "POST", "/api/users/invite", { email: "new@example.com", name: "New One" })).status).toBe(201);
+    expect(await one("SELECT name, status FROM users WHERE email = 'new@example.com'")).toEqual({ name: "New One", status: "invited" });
+    expect(await answer(await call(M.cookie, "POST", "/api/users/invite", { email: "two@example.com", name: "\u202e" }))).toEqual([400, { error: "invalid_name" }]);
+    expect(await one("SELECT id FROM users WHERE email = 'two@example.com'")).toBeNull();
+  });
+});
+
 describe("removal by a people manager transfers to an owner, never to the manager", () => {
   const owned = async (id: string) => ({
     links: (await rows("SELECT created_by FROM links WHERE id IN ('l1','l2') ORDER BY id")).map((r) => r.created_by),

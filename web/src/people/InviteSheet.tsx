@@ -30,6 +30,7 @@ export function InviteSheet() {
   // Only owners and domain managers may give access to shared domains here; the server refuses the rest (src/api/invites.ts).
   const shared = can(app.me, "domains.manage") ? app.domains.filter((d) => d.type === "shared") : [];
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [chosen, setRole] = useState<string | null>(null); // a role id, once picked
   const { roles, error: rolesError, reload: reloadRoles } = useRoles();
   // Until one is picked: Member, or the first role a people manager below Member may give (R4). None at all: no invite.
@@ -57,7 +58,7 @@ export function InviteSheet() {
     setPending(true);
     setError(null);
     try {
-      const res = await api<InviteResult>("POST", "/api/users/invite", { email: e, roleId: role, domainIds: role === "owner" ? [] : picked });
+      const res = await api<InviteResult>("POST", "/api/users/invite", { email: e, roleId: role, domainIds: role === "owner" ? [] : picked, ...(name.trim() ? { name } : {}) });
       app.reloadUsers().catch(() => undefined);
       if (res.emailed) {
         app.close();
@@ -148,6 +149,12 @@ export function InviteSheet() {
                 </div>
               </div>
             )}
+            <div className="f">
+              <label htmlFor="iv-name">Name <small className="muted">optional, they can change it</small></label>
+              <div className={error === "invalid_name" ? "ctl bad" : "ctl"}>
+                <input id="iv-name" value={name} maxLength={40} autoComplete="off" onChange={(e) => setName(e.target.value)} />
+              </div>
+            </div>
             <p className="hint">They get an email with a link to sign in. They sign in with their email, and can add a passkey{ownDomains && " and their own private domains"}.</p>
             {error && (
               <p className="err" role="alert">{inviteError(error)}</p>

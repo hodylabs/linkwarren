@@ -408,3 +408,58 @@ describe("transferTargets (S8 R4: a manager's removal goes to an owner)", () => 
     expect(transferTargets(people, me, "ua", true).map((x) => x.id)).toEqual(["oa", "ob", "o1"]);
   });
 });
+
+describe("Person sheet name", () => {
+  it("an owner renames a person: Enter sends { name }", async () => {
+    const { api, user, dlg } = await openPerson("Dana");
+    const field = within(dlg).getByLabelText("Name") as HTMLInputElement;
+    expect(field.value).toBe("Dana");
+    await user.clear(field);
+    await user.type(field, "Dana Scully{Enter}");
+    await waitFor(() => expect(writes(api)).toEqual([{ method: "PATCH", path: "/api/users/ud", body: { name: "Dana Scully" } }]));
+  });
+
+  it("an edit typed while the saved name reloads is kept", async () => {
+    let release!: () => void;
+    let held = false;
+    const { user, dlg } = await openPerson("Dana", {
+      "PATCH /api/users/ud": ({ body }) => ((held = true), { body: { user: { ...USERS[2], ...(body as object) } } }),
+      "GET /api/users": () => (held
+        ? new Promise<FakeRes>((r) => { release = () => r({ body: { items: USERS.map((x) => (x.id === "ud" ? { ...x, name: "Dana Scully" } : x)) } }); })
+        : { body: { items: USERS } }),
+    });
+    const field = within(dlg).getByLabelText("Name") as HTMLInputElement;
+    await user.clear(field);
+    await user.type(field, "Dana Scully{Enter}");
+    await waitFor(() => expect(field.readOnly).toBe(false));
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await user.type(field, " Jr");
+    release();
+    await waitFor(() => expect(within(dlg).getByText(/Dana Scully/, { selector: "h2, h1, .title, [id]" })).toBeTruthy());
+    expect(field.value).toBe("Dana Scully Jr");
+  });
+
+  it("after a save the field shows the stored name, even when the reload fails", async () => {
+    let saved = false;
+    const { user, dlg } = await openPerson("Dana", {
+      "PATCH /api/users/ud": () => ((saved = true), { body: { user: { ...USERS[2], name: "Dana Scully" } } }),
+      "GET /api/users": () => (saved ? { status: 500, body: { error: "internal" } } : { body: { items: USERS } }),
+    });
+    const field = within(dlg).getByLabelText("Name") as HTMLInputElement;
+    await user.clear(field);
+    await user.type(field, "Dana\u200b  Scully{Enter}");
+    await waitFor(() => expect(field.value).toBe("Dana Scully"));
+    expect((within(dlg).getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("no name field on yourself or on someone out of reach", async () => {
+    const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
+    const { dlg } = await openPerson("Bea", undefined, lead); // an owner, out of a manager's reach
+    expect(within(dlg).queryByLabelText("Name")).toBeNull();
+    await userEvent.setup().keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    cleanup();
+    const me = await openPerson("You"); // yourself: your name is set in Sign-in and security
+    expect(within(me.dlg).queryByLabelText("Name")).toBeNull();
+  });
+});

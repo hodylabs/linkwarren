@@ -171,6 +171,8 @@ async function matchPerson(env: Env, p: Provider, who: Who, same: Guard): Promis
     const own = await env.DB.prepare("SELECT user_id FROM sso_identities WHERE provider = ? AND subject = ?").bind(p, who.subject).first<{ user_id: string }>();
     if (own?.user_id !== user.id) return { error: "not_invited" }; // a racing sign-in bound it elsewhere
   }
+  // Fill an empty name from the provider; a name the person or an owner set is never overwritten.
+  if (who.name) await env.DB.prepare("UPDATE users SET name = ? WHERE id = ? AND name IS NULL").bind(who.name, user.id).run();
   const r = await resolveUser(env, user.email); // activates an invited person, re-reads the status
   if (!("user" in r)) return { error: r.error };
   if (r.user.id !== user.id) return { error: "not_invited" };

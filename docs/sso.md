@@ -13,6 +13,7 @@ In app mode (`AUTH_MODE=app`, the default) an owner can add three sign-in button
 - **Invite-only.** A sign-in is accepted only when the provider's **verified** email belongs to someone already in [People](people-and-roles.md), or to an email domain with auto-join on (below). Anyone else sees "not invited".
 - **Linked after the first sign-in.** The first time, the person is found by email and the provider account is linked to them. From then on they are found by the provider's own account id, never by the email alone, so changing an email at the provider cannot take over someone else's account. A person can have one linked account per provider, and can see and unlink them in Sign-in and security.
 - **Verified emails only.** Google and OIDC must send `email_verified: true` in the ID token; a missing claim counts as not verified. GitHub uses the account's primary email, and only when GitHub has verified it.
+- **Names.** When the person has no name in linkwarren yet, the provider's name fills it (the `name` claim of the ID token, or the GitHub profile name). A name that is already set is never changed. A name that is empty after hidden characters are removed is ignored, and a longer one is cut to 40 characters; neither stops the sign-in.
 - **Secrets stay secret.** Client secrets are stored encrypted (or set as Worker secrets) and are never shown again or written to the audit log.
 
 ## Turning a provider on
@@ -32,7 +33,7 @@ A button shows on the sign-in page only when its provider is switched on and has
 
 ### Google
 
-1. In the Google Cloud console, open **Google Auth Platform** (APIs and services, OAuth consent screen in older menus) and set up the app. The `openid` and `email` scopes are enough.
+1. In the Google Cloud console, open **Google Auth Platform** (APIs and services, OAuth consent screen in older menus) and set up the app. linkwarren asks for the `openid`, `email` and `profile` scopes: `profile` gives the person's name, used only when they have none in linkwarren yet.
 2. Pick the audience. **Internal** lets everyone in your Google Workspace sign in. **External** starts in testing mode, where only the test users you list can sign in; anyone else gets a Google error page before linkwarren is reached. Add your people as test users, or publish the app to let any Google account through (linkwarren still accepts only invited people).
 3. Under **Clients**, create a client of type **Web application** and add the Google redirect URI from Settings, Sign-in under **Authorized redirect URIs**.
 4. Paste the client ID and secret in the Google card and switch it on.
@@ -43,7 +44,7 @@ A button shows on the sign-in page only when its provider is switched on and has
 2. Set **Authorization callback URL** to the GitHub redirect URI from Settings, Sign-in. The homepage URL can be your dashboard address.
 3. Generate a client secret, paste both values in the GitHub card and switch it on.
 
-linkwarren asks for `read:user` and `user:email`, and reads the account id and the verified primary email only.
+linkwarren asks for `read:user` and `user:email`, and reads the account id, the verified primary email and the profile name (used only to fill an empty name).
 
 ### Single sign-on (OIDC)
 

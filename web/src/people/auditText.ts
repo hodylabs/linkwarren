@@ -96,6 +96,11 @@ export function describeAudit(a: AuditItem, meId: string, domains: readonly { id
       const n = num(a.detail.people), to = str(a.detail.movedTo);
       return done("deleted the role", str(a.detail.name), n && to ? ` and moved ${plural(n, "person", "people")} to ${to}` : "");
     }
+    case "user.name": {
+      const n = str(a.detail.name);
+      if (a.actorId === a.targetId) return done(n ? `set their name to ${n}` : "removed their name");
+      return n ? done("named", person, ` ${n}`) : done("removed the name of", person);
+    }
     case "user.disable": return done("turned off access for", person);
     case "user.enable": return done("turned on access for", person);
     case "user.remove": {

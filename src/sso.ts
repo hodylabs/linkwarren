@@ -1,6 +1,7 @@
 // S14: Google, GitHub and generic OIDC sign-in. Provider config, discovery, the token exchange and the ID token checks.
 // Tokens, codes, client secrets and provider error text never reach logs, errors, audit detail or API responses:
 // every failure is an SsoError carrying one fixed code.
+import { providerName } from "./names";
 import { createLocalJWKSet, errors, jwtVerify, type JSONWebKeySet, type JWTPayload } from "jose";
 import { dash, dashUrl } from "./dash";
 import type { Env } from "./env";
@@ -145,7 +146,7 @@ export async function authorizeUrl(env: Env, r: Ready, a: { state: string; nonce
     q.set("allow_signup", "false");
   } else {
     q.set("response_type", "code");
-    q.set("scope", "openid email");
+    q.set("scope", "openid email profile"); // profile: the name, kept only when the person has none yet
     q.set("nonce", a.nonce);
   }
   return u.href;
@@ -157,7 +158,8 @@ export async function pkceChallenge(verifier: string): Promise<string> {
   return btoa(String.fromCharCode(...d)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export type Who = { subject: string; email: string };
+/** `name` is the provider's display name, already cleaned (untrusted; null when missing or unusable). */
+export type Who = { subject: string; email: string; name: string | null };
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,253}$/;
 const form = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
 
@@ -194,7 +196,7 @@ async function oidc(env: Env, r: Ready, code: string, verifier: string, nonce: s
   if (typeof p.sub !== "string" || !p.sub || p.sub.length > 255 || !EMAIL.test(email)) throw fail();
   // Google sends a boolean; for OIDC a missing or non-boolean claim counts as not verified (R4).
   if (p.email_verified !== true) throw new SsoError("email_unverified");
-  return { subject: p.sub, email };
+  return { subject: p.sub, email, name: providerName(p.name) };
 }
 
 async function github(env: Env, r: Ready, code: string, verifier: string): Promise<Who> {
@@ -211,7 +213,7 @@ async function github(env: Env, r: Ready, code: string, verifier: string): Promi
   const email = typeof primary?.email === "string" ? primary.email.trim() : "";
   if (!EMAIL.test(email)) throw fail();
   if (primary!.verified !== true) throw new SsoError("email_unverified");
-  return { subject: String(id), email };
+  return { subject: String(id), email, name: providerName((user as Record<string, unknown>).name) };
 }
 
 /** The lowercase domain part of an address. */
