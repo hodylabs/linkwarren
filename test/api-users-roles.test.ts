@@ -124,20 +124,21 @@ describe("people.manage holders manage people within their role", () => {
 
 describe("names", () => {
   const nameOf = async (id: string) => (await one<{ name: string | null }>("SELECT name FROM users WHERE id = ?", id))?.name;
-  it("a people manager sets and clears a name in reach, cleaned and audited; role and status untouched", async () => {
-    expect((await patch(M.cookie, P.user.id, { name: "  Pat\u202E  Doe " })).status).toBe(200);
+  it("an owner sets and clears a name, cleaned and audited; role and status untouched", async () => {
+    expect((await patch(O.cookie, P.user.id, { name: "  Pat\u202E  Doe " })).status).toBe(200);
     expect(await nameOf(P.user.id)).toBe("Pat Doe");
     expect(await who(P.user.id)).toEqual({ role: "member", role_id: null, status: "active" });
-    expect((await patch(M.cookie, P.user.id, { name: "" })).status).toBe(200);
+    expect((await patch(O.cookie, P.user.id, { name: "" })).status).toBe(200);
     expect(await nameOf(P.user.id)).toBeNull();
     expect((await audits("user.name")).map((a) => a.detail)).toEqual([{ email: "p@example.com", name: "Pat Doe" }, { email: "p@example.com", name: null }]);
   });
 
-  it("refusals: a bad name 400, an owner out of reach 403, yourself 409, a plain member 403; nothing written", async () => {
-    expect(await answer(await patch(M.cookie, P.user.id, { name: "x".repeat(41) }))).toEqual([400, { error: "invalid_name" }]);
-    expect(await answer(await patch(M.cookie, P.user.id, { name: "\u200b" }))).toEqual([400, { error: "invalid_name" }]);
-    expect(await answer(await patch(M.cookie, O.user.id, { name: "Boss" }))).toEqual([403, above]);
-    expect(await answer(await patch(M.cookie, M.user.id, { name: "Me" }))).toEqual([409, { error: "self" }]);
+  it("refusals: a bad name 400, a people manager 403 even in reach, yourself 409, a plain member 403; nothing written", async () => {
+    expect(await answer(await patch(O.cookie, P.user.id, { name: "x".repeat(41) }))).toEqual([400, { error: "invalid_name" }]);
+    expect(await answer(await patch(O.cookie, P.user.id, { name: "\u200b" }))).toEqual([400, { error: "invalid_name" }]);
+    expect((await patch(M.cookie, P.user.id, { name: "Pat" })).status).toBe(403);
+    expect((await patch(M.cookie, O.user.id, { name: "Boss" })).status).toBe(403);
+    expect(await answer(await patch(O.cookie, O.user.id, { name: "Me" }))).toEqual([409, { error: "self" }]);
     expect((await patch(P.cookie, M.user.id, { name: "Nope" })).status).toBe(403);
     for (const id of [P.user.id, O.user.id, M.user.id]) expect(await nameOf(id)).toBeNull();
     expect(await audits("user.name")).toEqual([]);

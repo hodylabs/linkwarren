@@ -170,7 +170,7 @@ export function PersonSheet({ id }: { id: string }) {
           {u.name && <>{u.email}<br /></>}
           {!self && <small>{u.status === "invited" ? "Invited" : "Added"} {shortDate(u.createdAt)}</small>}
         </p>
-        {reach && <NameField key={u.id} current={u.name} onSave={act.name} />}
+        {reach && isOwner(me) && <NameField key={u.id} current={u.name} onSave={act.name} />}
         <div className="f">
           <h3 className="lbl">Role</h3>
           {reach && roles ? (
@@ -238,7 +238,7 @@ export function PersonSheet({ id }: { id: string }) {
   );
 }
 
-/** Their name, set by an owner or a people manager in reach: Enter saves, empty clears. */
+/** Their name, set by an owner only: Enter saves, empty clears. */
 function NameField({ current, onSave }: { current: string | null; onSave: (name: string) => Promise<string | null> }) {
   const [draft, setDraft] = useState(current ?? "");
   const [saving, setSaving] = useState(false);

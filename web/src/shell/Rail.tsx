@@ -226,6 +226,10 @@ export function Rail() {
       {instance?.update && (
         <a href={instance.update.url} target="_blank" rel="noopener noreferrer">v{instance.update.latest} available</a>
       )}
+      <a className="pb" href="https://linkwarren.dev" target="_blank" rel="noopener noreferrer">
+        <img src={withBase("/linkwarren-mark.svg")} alt="" />
+        Powered by linkwarren
+      </a>
     </div>
   );
   if (phone)

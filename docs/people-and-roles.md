@@ -21,7 +21,7 @@ Invite emails share the Resend budget with sign-in links. linkwarren sends at mo
 A person's name is shown in the dashboard instead of their email address. It is optional, up to 40 characters, and hidden and control characters are removed.
 
 - **Your own name:** set or clear it under Sign-in and security (your avatar menu, or Settings).
-- **Someone else's name:** anyone who can invite and manage people sets it on the person's sheet in People, for the people they can manage. It can also be given on the invite.
+- **Someone else's name:** only owners set it, on the person's sheet in People. Anyone who invites someone can give a first name on the invite, which the person can change.
 - **From the sign-in provider:** when someone signs in with Google, GitHub or single sign-on and has no name yet, linkwarren takes the name the provider sends. A name that is already set is never replaced.
 
 ## Roles

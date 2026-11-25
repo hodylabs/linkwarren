@@ -227,6 +227,9 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .ver b{font-family:var(--mono);font-weight:400;color:var(--muted)}
 .ver a{color:var(--accent-text);font-weight:500;text-decoration:none}
 .ver a:hover{text-decoration:underline}
+.ver a.pb{display:flex;align-items:center;gap:6px;margin-top:4px;padding-top:6px;border-top:1px solid var(--line);color:var(--faint);font-weight:400}
+.ver a.pb:hover{color:var(--muted)}
+.ver .pb img{width:14px;height:14px}
 /* the collapsed rail: icons only */
 .app.mini .rail{padding:14px 10px}
 .app.mini .rail .nav a{justify-content:center;padding:0}
