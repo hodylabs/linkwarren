@@ -439,6 +439,19 @@ describe("Person sheet name", () => {
     expect(field.value).toBe("Dana Scully Jr");
   });
 
+  it("after a save the field shows the stored name, even when the reload fails", async () => {
+    let saved = false;
+    const { user, dlg } = await openPerson("Dana", {
+      "PATCH /api/users/ud": () => ((saved = true), { body: { user: { ...USERS[2], name: "Dana Scully" } } }),
+      "GET /api/users": () => (saved ? { status: 500, body: { error: "internal" } } : { body: { items: USERS } }),
+    });
+    const field = within(dlg).getByLabelText("Name") as HTMLInputElement;
+    await user.clear(field);
+    await user.type(field, "Dana\u200b  Scully{Enter}");
+    await waitFor(() => expect(field.value).toBe("Dana Scully"));
+    expect((within(dlg).getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("no name field on yourself or on someone out of reach", async () => {
     const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
     const { dlg } = await openPerson("Bea", undefined, lead); // an owner, out of a manager's reach

@@ -250,7 +250,7 @@ function NameField({ current, onSave }: { current: string | null; onSave: (name:
     e.preventDefault();
     if (!changed || saving) return;
     setSaving(true);
-    void onSave(draft).then((stored) => { if (stored !== null) setSaved(stored); }).finally(() => setSaving(false)); // a failed save keeps its text
+    void onSave(draft).then((stored) => { if (stored !== null) { setSaved(stored); setDraft(stored); } }).finally(() => setSaving(false)); // the field shows what the server kept; a failed save keeps its text
   };
   return (
     <form className="f" onSubmit={submit}>
