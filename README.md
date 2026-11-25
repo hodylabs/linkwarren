@@ -34,7 +34,7 @@ linkwarren is a self-hosted link shortener for people with more than one domain.
 You need a Cloudflare account with a domain on it, a [Resend](https://resend.com) account for sign-in emails, and Node.js 23.6 or newer. Between the commands below you create one D1 database and two KV namespaces, fill in `wrangler.instance.jsonc` (the ids, your hosts and `EMAIL_FROM`), turn on Analytics Engine (or remove its line), and set the `OWNER_EMAIL` and `RESEND_API_KEY` secrets. [docs/getting-started.md](docs/getting-started.md) walks through every step.
 
 ```sh
-git clone https://github.com/hodylabs/linkwarren && cd linkwarren && git checkout v0.9.0
+git clone https://github.com/hodylabs/linkwarren && cd linkwarren && git checkout v0.9.1
 npm ci
 cp wrangler.instance.example.jsonc wrangler.instance.jsonc
 npx wrangler d1 migrations apply linkwarren --remote -c wrangler.instance.jsonc
