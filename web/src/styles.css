@@ -700,7 +700,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .bars .hb-f[aria-pressed="true"]{color:var(--text);font-weight:600}
 .recent .card-b{padding:8px 16px 12px}
 .recent .rtable{width:100%}
-.rwrap{overflow-x:auto;max-width:100%}
+.rwrap{overflow-x:auto;max-width:100%;position:relative}
 .rtable td{white-space:nowrap}
 .rtable td.mono{font-family:var(--mono);font-size:12.5px}
 .cols2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
@@ -713,7 +713,8 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .short.big{margin:4px 0 0;font-size:22px;font-weight:500;color:var(--text);overflow-wrap:anywhere}
 .lname.big{margin:4px 0 0;font-size:22px;font-weight:600;white-space:normal;overflow-wrap:anywhere}
 /* When people click: a compact 7 x 24 grid, every count as text for screen readers */
-.busy-wrap{overflow-x:auto;padding:2px}
+/* position:relative keeps each cell's absolute sr-only count inside the scroll box; without it they widened the phone page */
+.busy-wrap{overflow-x:auto;padding:2px;position:relative}
 .busy-t{border-collapse:separate;border-spacing:3px;margin:-3px;width:auto}
 .busy-t th,.busy-t td{padding:0;border:0;height:auto;position:static;background:none}
 .busy-t th{font-size:11.5px;font-weight:400;color:var(--faint);text-align:left;white-space:nowrap}
@@ -771,6 +772,10 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
   .stats4>div:nth-child(n+3){border-top:1px solid var(--line-soft)}
   .cols2{grid-template-columns:minmax(0,1fr)}
   .bd.c4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  /* the 24 hour columns shrink to fit instead of scrolling sideways */
+  .busy-t{width:100%;table-layout:fixed;border-spacing:2px;margin:-2px}
+  .busy-t thead td:first-child,.busy-t tbody th{width:34px}
+  .busy-t td{width:auto;min-width:0;height:auto;aspect-ratio:1;border-radius:3px}
   .bd.c4>section:nth-child(3){border-left:0}
   .bd.c4>section:nth-child(n+3){border-top:1px solid var(--line-soft)}
   .setwrap{grid-template-columns:minmax(0,1fr);grid-template-rows:max-content minmax(0,1fr);align-content:start}
@@ -789,6 +794,7 @@ td.spk .sp{display:flex;align-items:center;gap:10px;justify-content:flex-end}
   .body,.body.people,.body.solo{overflow:visible}
   .banner{padding:8px 16px}
   .top{padding:12px 16px}
+  .identity .grow{flex-basis:100%}
   .qchip{height:44px;padding-right:0}
   .qchip button{width:44px;height:44px}
   .top h1{font-size:20px}
