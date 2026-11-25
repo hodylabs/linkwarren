@@ -19,7 +19,7 @@ A link has one of two types, chosen when it is made: **Link**, a redirect (every
 - Some words are reserved on every domain: `admin`, `api`, `login`, `logout`, `dash`, `dashboard`, `auth`, `oauth`, `mcp`, `signup`, `register`, `account`, `settings`, `app`, `static`, `assets`, `health`, `status`, `qr`, `.well-known`, `cdn-cgi`, `robots.txt`, `favicon.ico` and `sitemap.xml`. A domain can reserve more in its settings. With the dashboard at a path, the path's segment, `mcp` and `api` are also reserved on the main domain.
 - The New link sheet checks the slug as you type: available, taken, locked (see [Slug locks](#slug-locks)) or reserved.
 
-Short links answer over HTTPS only: a plain-HTTP `GET` or `HEAD` gets a `308` to the same address over HTTPS (path and query unchanged) before anything is served, and a plain-HTTP `POST` is never redirected (`403` on a protected link, `405` otherwise), whatever the zone's "Always Use HTTPS" setting. Browsers block a contact card downloaded over plain HTTP.
+Short links answer over HTTPS only. When a plain-HTTP request reaches linkwarren, a `GET` or `HEAD` gets a `308` to the same address over HTTPS (path and query unchanged) before anything is served, and a `POST` is never redirected (`403` on a protected link, `405` otherwise). When the zone has Cloudflare's "Always Use HTTPS" on, Cloudflare answers plain HTTP itself with a `301` (POST included) before linkwarren sees it. Browsers block a contact card downloaded over plain HTTP.
 
 ## Destinations
 
