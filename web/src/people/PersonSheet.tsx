@@ -93,7 +93,13 @@ export function PersonSheet({ id }: { id: string }) {
     signout: () => run(() => api("DELETE", `${path}/sessions`).then(() => null), { msg: `Signed ${email} out everywhere` }),
     remove: () => run(() => api("DELETE", `${path}?transferTo=${encodeURIComponent(to)}`).then(() => null), { msg: `Removed ${email}`, close: true }),
     role: (roleId: string, msg: string) => run(() => patch({ roleId }), { msg }),
-    name: (name: string) => run(() => patch({ name }), { msg: name.trim() ? `Saved the name for ${email}` : `Removed the name for ${email}` }),
+    /** Resolves the name the server stored, or null when the save failed. */
+    name: async (name: string) => {
+      let stored = "";
+      const ok = await run(() => api<{ user: UserItem }>("PATCH", path, { name }).then((r) => ((stored = r.user.name ?? ""), null)),
+        { msg: name.trim() ? `Saved the name for ${email}` : `Removed the name for ${email}` });
+      return ok ? stored : null;
+    },
   };
   // The transfer target starts at you (a non-owner: the first owner) each time, so a target removed or disabled since never lingers.
   const askRemove = () => {
@@ -233,7 +239,7 @@ export function PersonSheet({ id }: { id: string }) {
 }
 
 /** Their name, set by an owner or a people manager in reach: Enter saves, empty clears. */
-function NameField({ current, onSave }: { current: string | null; onSave: (name: string) => Promise<boolean> }) {
+function NameField({ current, onSave }: { current: string | null; onSave: (name: string) => Promise<string | null> }) {
   const [draft, setDraft] = useState(current ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(current ?? ""); // the last name the server confirmed
@@ -244,7 +250,7 @@ function NameField({ current, onSave }: { current: string | null; onSave: (name:
     e.preventDefault();
     if (!changed || saving) return;
     setSaving(true);
-    void onSave(draft).then((ok) => { if (ok) setSaved(tidy(draft)); }).finally(() => setSaving(false)); // a failed save keeps its text
+    void onSave(draft).then((stored) => { if (stored !== null) setSaved(stored); }).finally(() => setSaving(false)); // a failed save keeps its text
   };
   return (
     <form className="f" onSubmit={submit}>
