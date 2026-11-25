@@ -111,6 +111,16 @@ describe("settings", () => {
     const c = await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: null });
     expect(await c.json()).toMatchObject({ bareRedirect: null });
   });
+  it("the bare domain may name one of its own links: stored as /<slug>; the not-found page may not", async () => {
+    for (const raw of ["/card", " https://GO.test/card ", "https://go.test/card/", "https://go.test./card"])
+      expect(await (await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw })).json()).toMatchObject({ bareRedirect: "/card" });
+    for (const raw of ["/a/b", "https://go.test/card?x=1", "https://go.test/card#top", "/bad slug"])
+      await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: raw }), 400, { error: "bad_front_link" });
+    await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "/" }), 400, { error: "loop" });
+    // A port makes it a web address on this host: the loop check refuses it rather than dropping the port.
+    await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "https://go.test:8443/card" }), 400, { error: "loop" });
+    await status(await call("owner", "PATCH", "/api/domains/dm", { notfoundRedirect: "/card" }), 400);
+  });
   it("bare and not-found redirects stay web-only: tel and mailto are a scheme error", async () => {
     await status(await call("owner", "PATCH", "/api/domains/dm", { bareRedirect: "tel:+15551234" }), 400, { error: "scheme" });
     await status(await call("owner", "PATCH", "/api/domains/dm", { notfoundRedirect: "mailto:a@example.com" }), 400, { error: "scheme" });

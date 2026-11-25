@@ -54,6 +54,15 @@ export function sharedWith(d: Domain, users: UserItem[] | null, me: Me): string 
   return names.length ? names.join(", ") : "Only the owner";
 }
 
+const ownHost = (text: string): string | null => {
+  try {
+    const u = new URL(text);
+    return u.port ? null : u.hostname.toLowerCase().replace(/\.$/, ""); // with a port it is a web address, checked as one
+  } catch {
+    return null;
+  }
+};
+
 export type Draft = { bare: string; nf: string; noindex: boolean; reserved: string };
 export const draftOf = (d: Domain): Draft => ({
   bare: d.bareRedirect ?? "",
@@ -73,6 +82,11 @@ export function domainDiff(d: Domain, draft: Draft, shortHosts: string[]): Domai
     if (text === (saved ?? "")) continue;
     if (text === "") {
       body[key] = null;
+      continue;
+    }
+    // The bare domain may name one of this domain's own links; the server checks and stores it as "/<slug>".
+    if (field === "bare" && (text.startsWith("/") || ownHost(text) === d.host)) {
+      body[key] = text;
       continue;
     }
     const r = checkDestination(text, shortHosts);

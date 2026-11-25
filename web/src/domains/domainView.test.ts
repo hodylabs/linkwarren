@@ -97,6 +97,14 @@ describe("domainDiff", () => {
     expect(domainDiff(d, { ...draftOf(d), bare: "" }, []).body).toEqual({ bareRedirect: null });
     expect(domainDiff(d, { ...draftOf(d), noindex: false, reserved: "a" }, []).body).toEqual({ noindex: false, reservedExtra: ["a"] });
   });
+  it("the bare domain may name one of its own links; the not-found field may not", () => {
+    const d = dom();
+    expect(domainDiff(d, { ...draftOf(d), bare: "/card" }, ["go.test"]).body).toEqual({ bareRedirect: "/card" });
+    expect(domainDiff(d, { ...draftOf(d), bare: "https://go.test/card" }, ["go.test"]).body).toEqual({ bareRedirect: "https://go.test/card" });
+    expect(domainDiff(d, { ...draftOf(d), nf: "https://go.test/card" }, ["go.test"]).errors.nf).toBeTruthy();
+    expect(domainDiff(d, { ...draftOf(d), bare: "https://go.test./card" }, ["go.test"]).body).toEqual({ bareRedirect: "https://go.test./card" });
+    expect(domainDiff(d, { ...draftOf(d), bare: "https://go.test:8443/card" }, ["go.test"]).errors.bare).toBeTruthy();
+  });
   it("reports bad redirects and reserved per field", () => {
     const d = dom();
     const r = domainDiff(d, { ...draftOf(d), bare: "ftp://x", nf: "https://go.test/x", reserved: "a/b" }, ["go.test"]);

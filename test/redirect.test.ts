@@ -63,6 +63,18 @@ describe("redirect", () => {
     expect((await get(d.host, "/off?ref=qr", { redirect: "manual" })).headers.get("location")).toBe("https://x.com/a?b=1");
   });
 
+  it("a front-page link (bare redirect /<slug>) is served at / with no extra hop; a missing or expired one is not found", async () => {
+    const d = await seed({ bare: "/card", nf: "https://nf.test/" });
+    await addLink(d, "card");
+    const r = await get(d.host, "/?ref=qr", { redirect: "manual" });
+    expect([r.status, r.headers.get("location")]).toEqual([302, "https://x.com/a?b=1&ref=qr"]);
+    const gone = await seed({ bare: "/card", nf: "https://nf.test/" });
+    expect((await get(gone.host, "/", { redirect: "manual" })).headers.get("location")).toBe("https://nf.test/");
+    const old = await seed({ bare: "/card" });
+    await addLink(old, "card", { expires: now() - 60 });
+    expect((await get(old.host, "/")).status).toBe(404);
+  });
+
   it("unknown slug: notfound_redirect or built-in 404; bare path likewise", async () => {
     const a = await seed({ nf: "https://nf.test/", bare: "https://bare.test/" });
     const ra = await get(a.host, "/nope", { redirect: "manual" });

@@ -6,7 +6,7 @@ import { PlanLimitError, SECURITY_LEVELS, type Phase, deleteHostRule, isForbidde
 import { AttachError, classify, detachDomain, isVerified, logInternal, outsideCheck, syncDomain, takeoverDetail } from "../cf/attach";
 import type { Env } from "../env";
 import { dash } from "../dash";
-import { apexOf, hostError, normalizeHost } from "../host";
+import { apexOf, hostError, normalizeHost, slugFromPath } from "../host";
 import { canManageDomain, canUseDomain } from "../perm";
 import { FIRST_OWNER, actorCan, can, type Guard } from "../roles";
 import { rowToCf, rowToDomain, type CfRow, type CfView, type DomainRow, type UserRow } from "../types";
@@ -343,7 +343,27 @@ domains.patch("/:id", async (c) => {
     const r = await destination(c.env, raw, [d.host], undefined, { webOnly: true });
     return "error" in r ? { err: r.error } : { v: r.href };
   };
-  const bare = await target(b.bareRedirect, d.bareRedirect), nf = await target(b.notfoundRedirect, d.notfoundRedirect);
+  // The bare domain may also name one of this domain's own links ("/card" or "https://<host>/card"), stored as "/card".
+  const local = (raw: string | null | undefined): { v: string } | { err: string } | null => {
+    if (typeof raw !== "string") return null;
+    const t = raw.trim();
+    let path: string | null = t.startsWith("/") ? t : null;
+    if (path === null) {
+      try {
+        const u = new URL(t);
+        if (normalizeHost(u.hostname) === d.host && !u.port && (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password) {
+          if (u.search || u.hash) return { err: "bad_front_link" };
+          path = u.pathname;
+        }
+      } catch { /* not a URL: the destination check answers */ }
+    }
+    if (path === null) return null;
+    if (path === "/") return { err: "loop" }; // the bare domain sending to itself
+    const slug = slugFromPath(path);
+    return slug !== null && checkSlugShape(slug).ok ? { v: `/${slug}` } : { err: "bad_front_link" };
+  };
+  const own = local(b.bareRedirect);
+  const bare = own ?? (await target(b.bareRedirect, d.bareRedirect)), nf = await target(b.notfoundRedirect, d.notfoundRedirect);
   if ("err" in bare) return c.json({ error: bare.err }, 400);
   if ("err" in nf) return c.json({ error: nf.err }, 400);
   const next: DomainRow = {

@@ -112,6 +112,10 @@ Audit entries for create, approve and attach carry `confirmTakeover: true` when 
 
 When one of two changes failed, the error answer carries the stored `securityLevel` and `rateLimit`, so the client knows which one landed.
 
+## Front page
+
+"When someone visits, the bare domain" (`bareRedirect`) is where `https://<domain>/` goes. It takes a web address on another host, or one of this domain's own links: type `/card` or `https://<domain>/card`, stored as `/card`. An own link is served at `/` directly, with no extra redirect, so a contact card, a password page or a routed link works there exactly as it does at `/card`, and the visitor's query is passed on as usual. If that link is deleted, paused or expired, `/` behaves like a missing link (the not-found redirect, or the built-in page). A path with more than one segment, a query or a `#` answers `400 bad_front_link`; the domain's own `/` answers `400 loop`. The not-found redirect cannot point at this domain.
+
 ## Bare domains (apex)
 
 A bare domain such as `example.com` (or `example.co.uk`) has `instructions.apex: true` and `name: "@"`. Plain DNS does not allow a CNAME at the bare domain, so its DNS provider must support CNAME flattening or an ALIAS (ANAME) record pointing at the target. A flattened record shows up as A/AAAA addresses; linkwarren counts it as `found` when they match the target's addresses.

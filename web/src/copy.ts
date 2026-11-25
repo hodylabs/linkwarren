@@ -55,6 +55,7 @@ const ERRORS: Record<string, string> = {
   cloudflare_plan_limit: "Your Cloudflare plan allows no more rate limit rules in this zone. Free plans allow one per zone.",
   cloudflare_not_configured: "Cloudflare is not connected. Add the API token in Settings, then try again.",
   conflict: "Someone else changed this at the same time. Reload and try again.",
+  bad_front_link: "Use one of this domain's links, like /card, with no extra path, query or #.",
   invalid_reserved: "Reserved slugs must be valid slugs, at most 100.",
   unknown_user: "One of those people no longer exists. Reload and try again.",
   main_domain: "Everyone can use the main domain, so it has no member list.",
