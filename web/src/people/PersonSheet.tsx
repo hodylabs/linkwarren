@@ -236,21 +236,21 @@ export function PersonSheet({ id }: { id: string }) {
 function NameField({ current, onSave }: { current: string | null; onSave: (name: string) => Promise<boolean> }) {
   const [draft, setDraft] = useState(current ?? "");
   const [saving, setSaving] = useState(false);
-  const dirty = useRef(false); // typed since the last successful save
-  useEffect(() => { if (!dirty.current) setDraft(current ?? ""); }, [current]); // a reload never eats an edit
-  const changed = draft.trim() !== (current ?? "");
+  const [saved, setSaved] = useState(current ?? ""); // the last name the server confirmed
+  const changed = draft.trim() !== saved; // an unsaved edit, which a reload never replaces
+  useEffect(() => { if (!changed) setDraft(current ?? ""); setSaved(current ?? ""); }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!changed || saving) return;
     setSaving(true);
-    void onSave(draft).then((ok) => { if (ok) dirty.current = false; }).finally(() => setSaving(false)); // a failed save keeps its text
+    void onSave(draft).then((ok) => { if (ok) setSaved(draft.trim()); }).finally(() => setSaving(false)); // a failed save keeps its text
   };
   return (
     <form className="f" onSubmit={submit}>
       <label htmlFor="ps-name">Name</label>
       <div className="acct-name">
         <input id="ps-name" className="input sans" value={draft} maxLength={40} autoComplete="off" placeholder="No name yet"
-          onChange={(e) => { dirty.current = true; setDraft(e.target.value); }} readOnly={saving} />
+          onChange={(e) => setDraft(e.target.value)} readOnly={saving} />
         <button type="submit" className="btn" disabled={!changed || saving}>{saving ? "Saving" : "Save"}</button>
       </div>
     </form>
