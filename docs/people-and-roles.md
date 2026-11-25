@@ -10,11 +10,19 @@ Everyone who uses the dashboard is a person in linkwarren's own list. Signing in
 
 ## Inviting people
 
-On the People screen, invite someone with their email, a role (Member by default) and, optionally, the shared domains they may use. This needs **Invite and manage people** in your role. Granting shared domains on an invite also needs **Add and manage domains**.
+On the People screen, invite someone with their email, an optional name, a role (Member by default) and, optionally, the shared domains they may use. This needs **Invite and manage people** in your role. Granting shared domains on an invite also needs **Add and manage domains**.
 
 The person is created as invited and gets an email from the instance with a link to `https://<dashboard host>/join`. They become active the first time they sign in. An invite can be sent again or withdrawn while the person has not signed in yet.
 
 Invite emails share the Resend budget with sign-in links. linkwarren sends at most 1 invite per address per minute, 20 per hour and 40 per UTC day, so invites never take more than 40 of Resend's free 100 daily emails; sign-in links and the weekly emails use the rest. At a cap the person is still created, and the dashboard says the email was not sent; send it again later. In access mode, also add each invitee to your Cloudflare Access policy, or they cannot open the dashboard.
+
+## Names
+
+A person's name is shown in the dashboard instead of their email address. It is optional, up to 40 characters, and hidden and control characters are removed.
+
+- **Your own name:** set or clear it under Sign-in and security (your avatar menu, or Settings).
+- **Someone else's name:** anyone who can invite and manage people sets it on the person's sheet in People, for the people they can manage. It can also be given on the invite.
+- **From the sign-in provider:** when someone signs in with Google, GitHub or single sign-on and has no name yet, linkwarren takes the name the provider sends. A name that is already set is never replaced.
 
 ## Roles
 

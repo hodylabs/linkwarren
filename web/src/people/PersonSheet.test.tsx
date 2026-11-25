@@ -408,3 +408,25 @@ describe("transferTargets (S8 R4: a manager's removal goes to an owner)", () => 
     expect(transferTargets(people, me, "ua", true).map((x) => x.id)).toEqual(["oa", "ob", "o1"]);
   });
 });
+
+describe("Person sheet name", () => {
+  it("an owner renames a person: Enter sends { name }", async () => {
+    const { api, user, dlg } = await openPerson("Dana");
+    const field = within(dlg).getByLabelText("Name") as HTMLInputElement;
+    expect(field.value).toBe("Dana");
+    await user.clear(field);
+    await user.type(field, "Dana Scully{Enter}");
+    await waitFor(() => expect(writes(api)).toEqual([{ method: "PATCH", path: "/api/users/ud", body: { name: "Dana Scully" } }]));
+  });
+
+  it("no name field on yourself or on someone out of reach", async () => {
+    const lead: Me = { ...owner, id: "um", ...customRole(["people.manage", "links.create"], "Lead") };
+    const { dlg } = await openPerson("Bea", undefined, lead); // an owner, out of a manager's reach
+    expect(within(dlg).queryByLabelText("Name")).toBeNull();
+    await userEvent.setup().keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    cleanup();
+    const me = await openPerson("You"); // yourself: your name is set in Sign-in and security
+    expect(within(me.dlg).queryByLabelText("Name")).toBeNull();
+  });
+});

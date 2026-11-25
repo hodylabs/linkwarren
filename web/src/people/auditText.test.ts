@@ -172,6 +172,11 @@ describe("describeAudit agents and keys", () => {
     expect(pd({ action: "user.invite", targetType: "user", detail: { email: "jo@example.com", role: "member", roleId: "member", roleName: "Member", domains: [] } }).suffix)
       .toBe(" with access to the main domain");
   });
+  it("user.name: a rename by someone else, a cleared name, and your own", () => {
+    expect(pd({ action: "user.name", actorId: "uo", targetId: "ub", detail: { email: "bea@example.com", name: "Bea K." } })).toMatchObject({ text: "named", code: "bea@example.com", suffix: " Bea K." });
+    expect(pd({ action: "user.name", actorId: "uo", targetId: "ub", detail: { email: "bea@example.com", name: null } })).toMatchObject({ text: "removed the name of", code: "bea@example.com" });
+    expect(pd({ action: "user.name", actorId: "ub", targetId: "ub", detail: { email: "bea@example.com", name: "Bea" } })).toMatchObject({ text: "set their name to Bea" });
+  });
   it("user.invite_resend and user.revoke", () => {
     expect(pd({ action: "user.invite_resend", detail: { email: "jo@example.com", emailed: true } })).toMatchObject({ text: "re-sent the invite to", code: "jo@example.com" });
     expect(pd({ action: "user.revoke", detail: { email: "jo@example.com" } })).toMatchObject({ text: "revoked the invite for", code: "jo@example.com" });

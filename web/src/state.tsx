@@ -19,6 +19,8 @@ export type Overlay =
 
 export type AppState = {
   me: Me;
+  /** After a save of your own name: the shell shows it at once. */
+  setMyName(name: string | null): void;
   domains: Domain[];
   /** GET /api/users: owners, people.manage and domains.manage holders (S8 R11); null for anyone else and until loaded. */
   users: UserItem[] | null;
@@ -69,7 +71,9 @@ function writeDomain(id: string | null) {
 }
 
 /** Shell state for every screen. Also renders the aria-live region that `announce` writes to. */
-export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
+export function AppProvider({ me: signedIn, children }: { me: Me; children: ReactNode }) {
+  const [myName, setMyName] = useState<string | null | undefined>(undefined);
+  const me = useMemo(() => (myName === undefined ? signedIn : { ...signedIn, name: myName }), [signedIn, myName]);
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [users, setUsers] = useState<UserItem[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(readDomain);
@@ -131,6 +135,7 @@ export function AppProvider({ me, children }: { me: Me; children: ReactNode }) {
   const value = useMemo<AppState>(
     () => ({
       me,
+      setMyName,
       domains: domains ?? [],
       users,
       currentDomainId,

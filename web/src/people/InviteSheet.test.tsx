@@ -55,6 +55,15 @@ async function openInvite() {
 }
 
 describe("Invite sheet", () => {
+  it("an optional name goes with the invite; left empty, no name is sent", async () => {
+    const { api, user } = await openInvite();
+    await user.type(within(sheet()).getByLabelText("Email"), "jo@example.com");
+    await user.type(within(sheet()).getByLabelText(/^Name/), "Jo March");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(posts(api)).toHaveLength(1));
+    expect(posts(api)[0]!.body).toMatchObject({ email: "jo@example.com", name: "Jo March" });
+  });
+
   it("N opens it for an owner with the email box focused", async () => {
     await openInvite();
     expect(document.activeElement).toBe(within(sheet()).getByLabelText("Email"));

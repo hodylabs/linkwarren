@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { cleanName } from "../names";
 import { auditStmt } from "../audit";
 import type { Env } from "../env";
 import { clearCookie, endSessionStmt } from "../session";
@@ -109,7 +110,7 @@ users.delete("/:id/sessions", async (c) => {
   return c.body(null, 204);
 });
 
-const patchBody = z.strictObject({ roleId: z.string().min(1).max(64).optional(), status: z.enum(["active", "disabled"]).optional() });
+const patchBody = z.strictObject({ roleId: z.string().min(1).max(64).optional(), status: z.enum(["active", "disabled"]).optional(), name: z.string().max(200).optional() });
 type RoleRow = { id: string; name: string; perms: string };
 
 users.patch("/:id", async (c) => {
@@ -118,7 +119,10 @@ users.patch("/:id", async (c) => {
   const body = patchBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_body" }, 400);
   const { roleId, status } = body.data;
-  if (!roleId && !status) return c.json({ error: "no_changes" }, 400);
+  // An empty string clears the name; anything else must clean to 1-40 characters.
+  const name = body.data.name === undefined ? undefined : body.data.name.trim() === "" ? null : cleanName(body.data.name);
+  if (name === null && body.data.name!.trim() !== "") return c.json({ error: "invalid_name" }, 400);
+  if (!roleId && !status && name === undefined) return c.json({ error: "no_changes" }, 400);
   const id = c.req.param("id");
   if (id === me.id) return c.json({ error: "self" }, 409);
   const [row, nr] = await Promise.all([
@@ -133,7 +137,8 @@ users.patch("/:id", async (c) => {
   const next = nr && nr.id !== t.roleId ? { id: nr.id, name: nr.name, perms: nr.id === "owner" ? null : parsePerms(nr.perms) } : null;
   if (next && me.role !== "owner" && (next.id === "owner" || !within(next.perms!, me))) return c.json(above, 403);
   if ((status === "disabled" && t.status === "disabled") || (status === "active" && t.status !== "disabled")) return c.json({ error: "bad_state" }, 409);
-  if (!next && !status) return c.json({ user: (await userItems(env, id))[0] });
+  const rename = name !== undefined && name !== t.name;
+  if (!next && !status && !rename) return c.json({ user: (await userItems(env, id))[0] });
   // R13: owner is role 'owner' with role_id NULL (cleared in the same statement, or the 0011 trigger aborts); Member is
   // role_id NULL; a custom role is role 'member' with its id.
   const newRole = next ? (next.id === "owner" ? "owner" : "member") : t.role;
@@ -159,6 +164,7 @@ users.patch("/:id", async (c) => {
   const stmts: D1PreparedStatement[] = [];
   if (next) stmts.push(auditStmt(env, { actorId: me.id, action: "user.role", targetType: "user", targetId: id,
     detail: { email: t.email, from: t.roleName, to: next.name, fromId: t.roleId, toId: next.id, movedDomains: moved } }, g));
+  if (rename) stmts.push(auditStmt(env, { actorId: me.id, action: "user.name", targetType: "user", targetId: id, detail: { email: t.email, name } }, g));
   if (status) stmts.push(auditStmt(env, { actorId: me.id, action: status === "disabled" ? "user.disable" : "user.enable", targetType: "user", targetId: id, detail: { email: t.email } }, g));
   // R5: a member never owns a main or shared domain.
   if (demote) stmts.push(env.DB.prepare(`UPDATE domains SET owner_id = ? WHERE owner_id = ? AND ${SHARED} AND ${g.sql}`).bind(me.id, id, ...g.binds));
@@ -169,7 +175,7 @@ users.patch("/:id", async (c) => {
       env.DB.prepare(`DELETE FROM login_tokens WHERE email = ? COLLATE NOCASE AND ${g.sql}`).bind(t.email, ...g.binds),
       env.DB.prepare(`UPDATE agent_connections SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND ${g.sql}`).bind(now, id, ...g.binds));
   }
-  stmts.push(env.DB.prepare(`UPDATE users SET role = ?, role_id = ?, status = ? WHERE id = ? AND ${g.sql}`).bind(newRole, newRoleId, status ?? t.status, id, ...g.binds));
+  stmts.push(env.DB.prepare(`UPDATE users SET role = ?, role_id = ?, status = ?, name = CASE WHEN ? THEN ? ELSE name END WHERE id = ? AND ${g.sql}`).bind(newRole, newRoleId, status ?? t.status, rename ? 1 : 0, name ?? null, id, ...g.binds));
   const res = await env.DB.batch(stmts);
   if (!res[res.length - 1]!.meta.changes) {
     const [w, x] = await Promise.all([

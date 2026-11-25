@@ -1,3 +1,4 @@
+import { YourName } from "../account/YourName";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { AccountPanel } from "../account/AccountPanel";
 import { api, ApiError } from "../api";
@@ -169,6 +170,7 @@ export function SignInSection({ s }: { s: SettingsBody }) {
           <p>linkwarren sign-in: email link, passkeys, and Google, GitHub or single sign-on when turned on below</p>
           <SsoSettingsBlock />
           <h3 className="sso-sub">Your sign-ins</h3>
+          <YourName />
           <AccountPanel />
         </>
       )}

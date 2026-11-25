@@ -22,7 +22,7 @@ export async function fakeIdp() {
     email: "a@example.com",
     claims: {} as Claims,
     key: kp.privateKey as CryptoKey,
-    gh: { id: 4242, emails: [{ email: "a@example.com", primary: true, verified: true }] as GhEmail[] },
+    gh: { id: 4242, name: null as unknown, emails: [{ email: "a@example.com", primary: true, verified: true }] as GhEmail[] },
     calls: [] as { url: string; method: string; headers: Headers; body: string }[],
     tokenStatus: 200,
     /** Runs while the token call is in flight (e.g. a settings change racing the callback). */
@@ -59,7 +59,7 @@ export async function fakeIdp() {
       return Response.json({ access_token: "at", id_token: await idToken(google ? GOOGLE : ISS) });
     }
     if (url === "https://github.com/login/oauth/access_token" && method === "POST") return Response.json({ access_token: "gho_test" });
-    if (url === "https://api.github.com/user") return Response.json({ id: s.gh.id, login: "octo" });
+    if (url === "https://api.github.com/user") return Response.json({ id: s.gh.id, login: "octo", name: s.gh.name });
     if (url === "https://api.github.com/user/emails") return Response.json(s.gh.emails);
     throw new Error(`unexpected fetch ${url}`);
   });

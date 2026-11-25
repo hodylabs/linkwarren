@@ -11,6 +11,7 @@ import { parseTz } from "../analytics";
 import { newSecret, startWeek } from "../digest";
 import { emailConfigured } from "../email";
 import { aeConfigured } from "../ae";
+import { cleanName } from "../names";
 
 type E = { Bindings: Env; Variables: { user: UserRow; session: SessionRef | null; grant: Grant } };
 /** The signed-in person's own account (app mode only, behind requireUser): passkeys, sessions, sign out. */
@@ -26,15 +27,8 @@ account.post("/passkeys/options", async (c) => {
   return o ? c.json(o) : c.json({ error: "too_many_attempts" }, 429);
 });
 
-// Control, zero-width, line-separator and bidi characters (ALM, ZWSP/ZWNJ/ZWJ, LRM/RLM, embeddings, word joiner and invisibles, isolates, BOM).
-const HIDDEN = "\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2064\\u2066-\\u2069\\ufeff";
 const renameBody = z.strictObject({ name: z.string() });
 const nowS = () => Math.floor(Date.now() / 1000);
-/** The one name sanitizer (registration and rename): strips hidden characters (a name like "evil\u202Eexe" would display reversed), collapses whitespace, 1-40 characters or null. */
-const cleanName = (raw: string): string | null => {
-  const n = raw.replace(new RegExp(`[${HIDDEN}]`, "g"), "").replace(/\s+/g, " ").trim();
-  return n && n.length <= 40 ? n : null;
-};
 const addBody = z.strictObject({ response: z.unknown(), name: z.string().optional() });
 
 account.post("/passkeys", async (c) => {
@@ -92,6 +86,23 @@ account.get("/", async (c) => {
     lastSeenAt: r.last_seen_at as number, device: r.device as string | null, ipPrefix: r.ip_prefix as string | null,
   }));
   return c.json({ passkeys, sessions });
+});
+
+const nameBody = z.strictObject({ name: z.string().max(200) });
+
+/** Your own name: 1-40 characters, or an empty string to clear it. */
+account.put("/name", async (c) => {
+  const b = await parse(c, nameBody);
+  if (!b) return c.json({ error: "invalid_body" }, 400);
+  const name = b.name.trim() === "" ? null : cleanName(b.name);
+  if (name === null && b.name.trim() !== "") return c.json({ error: "invalid_name" }, 400);
+  const uid = c.var.user.id;
+  const live = { sql: "EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'active')", binds: [uid] };
+  await c.env.DB.batch([
+    auditStmt(c.env, { actorId: uid, action: "user.name", targetType: "user", targetId: uid, detail: { email: c.var.user.email, name } }, live),
+    c.env.DB.prepare(`UPDATE users SET name = ? WHERE id = ? AND ${live.sql}`).bind(name, uid, ...live.binds),
+  ]);
+  return c.json({ name });
 });
 
 account.patch("/passkeys/:id", async (c) => {

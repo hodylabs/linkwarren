@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type InviteResult, type Me, type UserItem } from "../api";
 import { notSent } from "./InviteSheet";
 import { errorText } from "../copy";
@@ -90,6 +90,7 @@ export function PersonSheet({ id }: { id: string }) {
     signout: () => run(() => api("DELETE", `${path}/sessions`).then(() => null), { msg: `Signed ${email} out everywhere` }),
     remove: () => run(() => api("DELETE", `${path}?transferTo=${encodeURIComponent(to)}`).then(() => null), { msg: `Removed ${email}`, close: true }),
     role: (roleId: string, msg: string) => run(() => patch({ roleId }), { msg }),
+    name: (name: string) => run(() => patch({ name }), { msg: name.trim() ? `Saved the name for ${email}` : `Removed the name for ${email}` }),
   };
   // The transfer target starts at you (a non-owner: the first owner) each time, so a target removed or disabled since never lingers.
   const askRemove = () => {
@@ -160,6 +161,7 @@ export function PersonSheet({ id }: { id: string }) {
           {u.name && <>{u.email}<br /></>}
           {!self && <small>{u.status === "invited" ? "Invited" : "Added"} {shortDate(u.createdAt)}</small>}
         </p>
+        {reach && <NameField key={u.id} current={u.name} onSave={act.name} />}
         <div className="f">
           <h3 className="lbl">Role</h3>
           {reach && roles ? (
@@ -224,5 +226,29 @@ export function PersonSheet({ id }: { id: string }) {
         </Confirm>
       )}
     </Sheet>
+  );
+}
+
+/** Their name, set by an owner or a people manager in reach: Enter saves, empty clears. */
+function NameField({ current, onSave }: { current: string | null; onSave: (name: string) => Promise<void> }) {
+  const [draft, setDraft] = useState(current ?? "");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setDraft(current ?? ""), [current]); // a newer saved name replaces the draft
+  const changed = draft.trim() !== (current ?? "");
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!changed || saving) return;
+    setSaving(true);
+    void onSave(draft).finally(() => setSaving(false));
+  };
+  return (
+    <form className="f" onSubmit={submit}>
+      <label htmlFor="ps-name">Name</label>
+      <div className="acct-name">
+        <input id="ps-name" className="input sans" value={draft} maxLength={40} autoComplete="off" placeholder="No name yet"
+          onChange={(e) => setDraft(e.target.value)} readOnly={saving} />
+        <button type="submit" className="btn" disabled={!changed || saving}>{saving ? "Saving" : "Save"}</button>
+      </div>
+    </form>
   );
 }

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
+import { cleanName } from "../names";
 import { auditStmt } from "../audit";
 import { emailConfigured, inviteEmail, sendEmail } from "../email";
 import { dashUrl } from "../dash";
@@ -30,6 +31,7 @@ const inviteBody = z.strictObject({
   email: z.string().trim().toLowerCase().pipe(z.email().max(254)),
   roleId: z.string().min(1).max(64).default("member"),
   domainIds: z.array(z.string().max(64)).max(100).default([]),
+  name: z.string().max(200).optional(),
 });
 
 type Invitee = { id: string; email: string; isOwner: boolean; roleName: string };
@@ -60,6 +62,8 @@ async function deliver(env: Env, inviter: UserRow, u: Invitee): Promise<InviteRe
 invites.post("/invite", manager, async (c) => {
   const b = await parse(c, inviteBody);
   if (!b) return c.json({ error: "invalid_body" }, 400);
+  const name = b.name === undefined || b.name.trim() === "" ? null : cleanName(b.name);
+  if (name === null && b.name !== undefined && b.name.trim() !== "") return c.json({ error: "invalid_name" }, 400);
   const me = c.var.user;
   const ids = b.roleId === "owner" ? [] : [...new Set(b.domainIds)];
   // R4: granting shared domains is domain administration, so it needs domains.manage as well.
@@ -85,12 +89,12 @@ invites.post("/invite", manager, async (c) => {
   let done: D1Result[];
   try {
     done = await c.env.DB.batch([
-      c.env.DB.prepare(`INSERT INTO users (id, email, name, role, role_id, status, created_at) SELECT ?, ?, NULL, ?, ?, 'invited', ?
+      c.env.DB.prepare(`INSERT INTO users (id, email, name, role, role_id, status, created_at) SELECT ?, ?, ?, ?, ?, 'invited', ?
         WHERE ${g.sql} AND (SELECT COUNT(*) FROM domains WHERE type = 'shared' AND id IN (SELECT value FROM json_each(?))) = ?`)
-        .bind(id, b.email, role, roleId, now, ...g.binds, JSON.stringify(doms.map((d) => d.id)), doms.length),
+        .bind(id, b.email, name, role, roleId, now, ...g.binds, JSON.stringify(doms.map((d) => d.id)), doms.length),
       ...doms.map((d) => c.env.DB.prepare(`INSERT INTO domain_members (domain_id, user_id) SELECT ?, ? WHERE ${made.sql}`).bind(d.id, id, ...made.binds)),
       auditStmt(c.env, { actorId: me.id, action: "user.invite", targetType: "user", targetId: id,
-        detail: { email: b.email, role, roleId: r.id, roleName: r.name, domains: doms.map((d) => d.host) } }, made),
+        detail: { email: b.email, ...(name ? { name } : {}), role, roleId: r.id, roleName: r.name, domains: doms.map((d) => d.host) } }, made),
       c.env.DB.prepare(`SELECT ${USER_COLS} FROM users u ${ROLE_JOIN} WHERE u.id = ?`).bind(id), // the answer's role name and perms
     ]);
   } catch (e) {

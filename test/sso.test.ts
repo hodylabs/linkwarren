@@ -86,7 +86,7 @@ describe("providers and start", () => {
     const u = new URL(s.url), q = u.searchParams;
     expect(u.origin + u.pathname).toBe(`${ISS}/authorize`);
     expect(Object.fromEntries(q)).toMatchObject({
-      client_id: "client-1", response_type: "code", scope: "openid email", code_challenge_method: "S256",
+      client_id: "client-1", response_type: "code", scope: "openid email profile", code_challenge_method: "S256",
       redirect_uri: "https://dash.test/auth/sso/oidc/callback",
     });
     expect(q.get("state")).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -285,6 +285,35 @@ describe("callback", () => {
     const m = await link("a@example.com");
     expect([m.status, await m.json()]).toEqual([403, { error: "sso_required" }]);
     expect((await link("boss@example.com")).status).toBe(200);
+  });
+
+  it("names: an empty name is filled from the provider, a set one is never overwritten, a bad one is dropped", async () => {
+    const uid = await addUser("a@example.com");
+    const name = async () => (await all("SELECT name FROM users WHERE id = ?", uid))[0];
+    idp.s.claims = { name: "  Ada\u202E  Lovelace " };
+    expect(errorOf(await signIn("google"))).toBeNull();
+    expect(await name()).toEqual({ name: "Ada Lovelace" });
+    idp.s.claims = { name: "Someone Else" };
+    expect(errorOf(await signIn("google"))).toBeNull();
+    expect(await name()).toEqual({ name: "Ada Lovelace" });
+    // A provider name that cleans to nothing, or is not a string, never fails the sign-in.
+    await run("UPDATE users SET name = NULL WHERE id = ?", uid);
+    idp.s.claims = { name: "\u200b\u200b" };
+    expect(errorOf(await signIn("google"))).toBeNull();
+    idp.s.claims = { name: { evil: true } };
+    expect(errorOf(await signIn("google"))).toBeNull();
+    expect(await name()).toEqual({ name: null });
+    // An over-long one is cut to 40 characters; GitHub's name fills the same way.
+    idp.s.gh.name = "x".repeat(300);
+    expect(errorOf(await signIn("github"))).toBeNull();
+    expect(await name()).toEqual({ name: "x".repeat(40) });
+  });
+
+  it("names: auto-join takes the provider name", async () => {
+    await run("INSERT INTO email_domains (domain, join_role_id, enforce_sso, updated_at) VALUES ('example.com','member',0,1)");
+    idp.s.email = "new@example.com"; idp.s.claims = { name: "New Person" };
+    expect(errorOf(await signIn("google"))).toBeNull();
+    expect(await all("SELECT name FROM users WHERE email = 'new@example.com'")).toEqual([{ name: "New Person" }]);
   });
 
   it("GitHub: only the verified primary email counts", async () => {
