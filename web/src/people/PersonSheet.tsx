@@ -237,13 +237,14 @@ function NameField({ current, onSave }: { current: string | null; onSave: (name:
   const [draft, setDraft] = useState(current ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(current ?? ""); // the last name the server confirmed
-  const changed = draft.trim() !== saved; // an unsaved edit, which a reload never replaces
+  const tidy = (n: string) => n.replace(/\s+/g, " ").trim(); // as the server stores it
+  const changed = tidy(draft) !== saved; // an unsaved edit, which a reload never replaces
   useEffect(() => { if (!changed) setDraft(current ?? ""); setSaved(current ?? ""); }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!changed || saving) return;
     setSaving(true);
-    void onSave(draft).then((ok) => { if (ok) setSaved(draft.trim()); }).finally(() => setSaving(false)); // a failed save keeps its text
+    void onSave(draft).then((ok) => { if (ok) setSaved(tidy(draft)); }).finally(() => setSaving(false)); // a failed save keeps its text
   };
   return (
     <form className="f" onSubmit={submit}>
