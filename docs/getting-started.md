@@ -24,7 +24,7 @@ Clone the repository and check out the newest release tag (listed on the [releas
 ```sh
 git clone https://github.com/hodylabs/linkwarren
 cd linkwarren
-git checkout v0.9.5   # use the newest tag
+git checkout v0.9.6   # use the newest tag
 npm ci
 ```
 
@@ -158,3 +158,16 @@ A `302` with your destination means the install works end to end. A `404` "Not f
 - [agents.md](agents.md): connect an AI agent, or create an API key for scripts.
 - [updating.md](updating.md): moving to a new release.
 - [backup.md](backup.md): restores and the full export.
+
+## Install the dashboard as an app
+
+The dashboard can be installed on a phone or computer and then opens in its own window, like any other app. No app store is involved.
+
+- **Android, and Chrome or Edge on a computer:** use **Install app** at the bottom of the left menu, or the browser's own Install option.
+- **iPhone and iPad:** tap Share in Safari, then Add to Home Screen. **Install app** shows the same steps.
+
+On a phone, from the second visit, linkwarren asks once at the bottom of the screen. After you tap Install or Not now it doesn't ask again on that device, and the menu button stays available.
+
+The installed app keeps its own sign-in on iPhone and iPad, separate from Safari. Sign in there with a passkey or single sign-on: email sign-in links open in Safari, not the app. On Android the app shares Chrome's sign-in.
+
+The app covers the dashboard only. Short links keep opening in the browser, and the app needs a connection to work.
