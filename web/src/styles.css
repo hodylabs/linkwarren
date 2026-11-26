@@ -222,6 +222,14 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 .nav a .k{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint);opacity:0}
 .nav a:hover .k,.nav a:focus-visible .k,.nav a[aria-current="page"] .k{opacity:1}
 .nav-sep{font-size:12px;color:var(--faint);padding:16px 12px 6px;font-weight:500}
+.install-btn{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:6px;min-height:30px;padding:4px 10px;border:1px dashed var(--line-hi);border-radius:var(--r-ctl);background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
+.install-btn:hover{color:var(--text);border-color:var(--accent)}
+.install-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.install-btn + .ver{margin-top:6px}
+.install-nudge{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 12px;background:var(--raised);border:1px solid var(--line-hi);border-radius:var(--r-card);box-shadow:var(--shadow);font-size:13.5px}
+.install-nudge img{width:32px;height:32px;border-radius:8px}
+.install-nudge span{flex:1 1 160px}
+.install-steps{margin:0;padding-left:20px;display:grid;gap:6px;line-height:1.5}
 .ver{margin-top:auto;border:1px solid var(--line);border-radius:var(--r-ctl);padding:10px 12px;font-size:12px;color:var(--faint);display:grid;gap:2px;background:var(--card)}
 .ver div{display:flex;justify-content:space-between;gap:8px}
 .ver b{font-family:var(--mono);font-weight:400;color:var(--muted)}
@@ -233,7 +241,7 @@ fieldset.plain{border:0;margin:0;padding:0;min-width:0}
 /* the collapsed rail: icons only */
 .app.mini .rail{padding:14px 10px}
 .app.mini .rail .nav a{justify-content:center;padding:0}
-.app.mini .rail .nav a .lbl,.app.mini .rail .nav a .k,.app.mini .rail .nav-sep,.app.mini .rail .ver,.app.mini .rail .switch b,.app.mini .rail .switch small,.app.mini .rail .switch svg{display:none}
+.app.mini .rail .nav a .lbl,.app.mini .rail .nav a .k,.app.mini .rail .nav-sep,.app.mini .rail .ver,.app.mini .rail .install-btn,.app.mini .rail .switch b,.app.mini .rail .switch small,.app.mini .rail .switch svg{display:none}
 .app.mini .rail .nav-sep{display:block;height:12px;padding:0;font-size:0}
 .app.mini .rail .switch{justify-content:center;padding:0}
 

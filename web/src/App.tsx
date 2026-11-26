@@ -6,6 +6,7 @@ import { Gate } from "./shell/Gate";
 import { DomainSwitcher } from "./shell/DomainSwitcher";
 import { Palette } from "./shell/Palette";
 import { Rail, TopBar } from "./shell/Rail";
+import { InstallNudge } from "./shell/InstallApp";
 import { canSee, isOwner, seesRoles } from "./perms";
 import { useOpenSheets } from "./shell/Sheet";
 import { GLOBAL_KEYS, GO_KEYS, Shortcuts } from "./shell/Shortcuts";
@@ -80,6 +81,7 @@ function Shell() {
     <div className={mini ? "app mini" : "app"}>
       <TopBar mini={mini} onMini={toggleMini} />
       <Rail />
+      <InstallNudge />
       <main>
         {signedOut && (
           <div className="banner" role="alert">

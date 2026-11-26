@@ -10,6 +10,7 @@ import { PHONE, useMedia } from "./narrow";
 import { Sheet } from "./Sheet";
 import { Icon, Seg } from "./ui";
 import { withBase } from "../base";
+import { InstallButton } from "./InstallApp";
 
 // Paths copied from the mockup's <symbol> set.
 const ICONS: Record<Screen, ReactNode> = {
@@ -216,21 +217,24 @@ export function Rail() {
     </button>
   );
   const ver = (
-    <div className="ver">
-      <div>
-        Version <b>{__APP_VERSION__}</b>
+    <>
+      <InstallButton />
+      <div className="ver">
+        <div>
+          Version <b>{__APP_VERSION__}</b>
+        </div>
+        <div>
+          Domains <b>{domains.length}</b>
+        </div>
+        {instance?.update && (
+          <a href={instance.update.url} target="_blank" rel="noopener noreferrer">v{instance.update.latest} available</a>
+        )}
+        <a className="pb" href="https://linkwarren.dev" target="_blank" rel="noopener noreferrer">
+          <img src={withBase("/linkwarren-mark.svg")} alt="" />
+          Powered by linkwarren
+        </a>
       </div>
-      <div>
-        Domains <b>{domains.length}</b>
-      </div>
-      {instance?.update && (
-        <a href={instance.update.url} target="_blank" rel="noopener noreferrer">v{instance.update.latest} available</a>
-      )}
-      <a className="pb" href="https://linkwarren.dev" target="_blank" rel="noopener noreferrer">
-        <img src={withBase("/linkwarren-mark.svg")} alt="" />
-        Powered by linkwarren
-      </a>
-    </div>
+    </>
   );
   if (phone)
     return menuOpen ? (
