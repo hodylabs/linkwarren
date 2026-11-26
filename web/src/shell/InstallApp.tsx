@@ -24,10 +24,14 @@ function IosSteps({ onClose }: { onClose: () => void }) {
   );
 }
 
-function useStart(kind: InstallKind) {
+function useStart(kind: InstallKind, afterClose?: () => void) {
   const [steps, setSteps] = useState(false);
   const start = () => (kind === "ios" ? setSteps(true) : void promptInstall());
-  return { start, sheet: steps && <IosSteps onClose={() => setSteps(false)} /> };
+  const close = () => {
+    setSteps(false);
+    afterClose?.();
+  };
+  return { start, sheet: steps && <IosSteps onClose={close} /> };
 }
 
 /** The small rail button above the version box. Shown only when this browser can install and the app isn't installed. */
@@ -51,7 +55,8 @@ export function InstallNudge() {
   const kind = useInstall();
   const phone = useMedia(PHONE);
   const [stored, setStored] = useState(countVisit);
-  const { start, sheet } = useStart(kind);
+  // The nudge is gone once the steps close, so focus lands on the menu, where Install app stays (after the Sheet's own restore).
+  const { start, sheet } = useStart(kind, () => setTimeout(() => document.querySelector<HTMLElement>(".menu-btn, .install-btn")?.focus()));
   const done = () => {
     markDone();
     setStored("done");
